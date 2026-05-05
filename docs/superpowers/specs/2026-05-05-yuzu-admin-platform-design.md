@@ -56,6 +56,28 @@ The Credentials module is first-class. It must show provider cards for AWS, Cogn
 
 Production AWS writes use the runtime's IAM role to access Secrets Manager. The admin should not ask operators for long-lived AWS account credentials in production. For local development only, an AWS access key can be stored in the encrypted dev secret backend to test AWS Secrets Manager before the app is deployed with an IAM role.
 
+## Responsive Requirements
+
+The storefront and admin must be responsive across mobile, tablet, and desktop. No primary workflow can require a desktop-only viewport.
+
+Desktop:
+- Use the full control-room layout with persistent left navigation, top command area, multi-column metrics, list/detail panels, and right-side provider or action panels.
+- Dense tables are allowed, but columns must have stable widths, truncation, readable labels, and clear horizontal behavior only where unavoidable.
+
+Tablet:
+- Collapse the left navigation into a compact rail or drawer.
+- Keep list/detail workflows usable by stacking detail panels below the selected list or opening them in a sheet.
+- Preserve credential setup, provider test actions, compliance review, and product editing without clipped controls.
+
+Mobile:
+- Use a drawer or bottom-accessible navigation pattern for admin modules.
+- Convert dense tables into scannable cards or stacked rows with the most important fields first.
+- Put destructive and credential actions behind explicit confirmations.
+- Keep forms single-column with readable labels, large touch targets, visible validation, and no horizontal page overflow.
+- Ensure credential setup, provider test results, order hold review, product edit, and audit search are fully usable on a phone.
+
+All responsive layouts must keep text inside its container, avoid overlapping controls, preserve touch targets, and maintain the Yuzu visual system without shrinking typography to unreadable sizes.
+
 ## Data Flow
 
 1. The Next admin authenticates an operator and calls the Yuzu admin API.
@@ -163,7 +185,8 @@ UI tests:
 
 Verification:
 - Typecheck, lint, build.
-- Browser verification for desktop and mobile admin layouts.
+- Browser verification for desktop, tablet, and mobile admin layouts.
+- Browser verification for no horizontal overflow, no clipped primary controls, and readable responsive tables/cards.
 - Browser verification for credential setup and provider test flows.
 
 ## Implementation Boundaries
