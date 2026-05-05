@@ -78,6 +78,36 @@ Mobile:
 
 All responsive layouts must keep text inside its container, avoid overlapping controls, preserve touch targets, and maintain the Yuzu visual system without shrinking typography to unreadable sizes.
 
+## Shop Inventory Source
+
+The supplied shop inventory source is `C:\Users\qfash\Downloads\yuzu-export-phase2-enhanced.json`. It is a Woo-style export for YUZU CIGAR CLUB with:
+
+- 1,103 published products.
+- 47 categories.
+- 53 posts.
+- 1,103 products marked `instock`.
+- 0 products with managed stock enabled.
+- 0 products with stock quantities.
+- 2 products missing SKU values.
+- 14 products missing prices.
+- 20 duplicate SKU groups covering 40 products.
+- 930 products with sale prices.
+- Product metadata for member and nonmember pricing, cigar attributes, category taxonomy, tags, descriptions, image ids, and external image URLs embedded in metadata.
+
+This export is the first catalog import source for the shop and Medusa seed process. It should be treated as product catalog plus availability data, not as exact warehouse quantity inventory. Because `manage_stock` is false and `stock_quantity` is null across the source, the importer must not invent on-hand counts. The first import should map `stock_status: "instock"` to a purchasable availability state and leave precise stock quantity management to the admin inventory module.
+
+The import pipeline must:
+
+- Validate required fields before import.
+- Report missing prices and missing SKU values.
+- Resolve duplicate SKUs deterministically before syncing to Medusa.
+- Map regular price and sale/member pricing into Medusa-compatible prices and Yuzu membership metadata.
+- Preserve source ids for traceability.
+- Map categories and tags into storefront filters.
+- Extract cigar attributes such as strength, country, filler, binder, wrapper, length, and ring gauge when available.
+- Store image references without downloading images during the first pass unless an operator starts a media import job.
+- Write an audit event for imports, skipped records, conflicts, and manual resolutions.
+
 ## Data Flow
 
 1. The Next admin authenticates an operator and calls the Yuzu admin API.
