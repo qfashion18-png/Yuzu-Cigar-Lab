@@ -1,0 +1,18 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowPrepareYccPhase4BedrockAgents",
+      "Effect": "Allow",
+      "Action": "bedrock:PrepareAgent",
+      "Resource": [
+        "arn:aws:bedrock:us-east-1:374587466106:agent/NDIEDXNZAV",
+        "arn:aws:bedrock:us-east-1:374587466106:agent/EJI2VA7AVF",
+        "arn:aws:bedrock:us-east-1:374587466106:agent/SJJ2DVNYES",
+        "arn:aws:bedrock:us-east-1:374587466106:agent/XLN9JKVRDA",
+        "arn:aws:bedrock:us-east-1:374587466106:agent/UQWB6AKMBT",
+        "arn:aws:bedrock:us-east-1:374587466106:agent/TUVBTVKNXG"
+      ]
+    }
+  ]
+}

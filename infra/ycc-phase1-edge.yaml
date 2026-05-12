@@ -1,0 +1,609 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: YCC Phase 1 edge architecture - Cognito User Pool, HTTP API, JWT authorizer, and Lambda routes.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: prod
+    AllowedPattern: "^[a-z0-9-]+$"
+  ExistingLambdaName:
+    Type: String
+    Default: ycyyy
+  ExistingLambdaArn:
+    Type: String
+    Default: arn:aws:lambda:us-east-1:374587466106:function:ycyyy
+  CognitoDomainPrefix:
+    Type: String
+    Default: ycc-members-374587466106
+    AllowedPattern: "^[a-z0-9-]+$"
+  AmplifyCallbackUrl:
+    Type: String
+    Default: https://yuzucigarclub.com/auth/callback
+  AmplifyWwwCallbackUrl:
+    Type: String
+    Default: https://www.yuzucigarclub.com/auth/callback
+  AmplifyStagingCallbackUrl:
+    Type: String
+    Default: https://staging.d2yxcklt245wh0.amplifyapp.com/auth/callback
+  LocalCallbackUrl:
+    Type: String
+    Default: ""
+  AmplifyLogoutUrl:
+    Type: String
+    Default: https://yuzucigarclub.com/auth/logout
+  AmplifyWwwLogoutUrl:
+    Type: String
+    Default: https://www.yuzucigarclub.com/auth/logout
+  AmplifyStagingLogoutUrl:
+    Type: String
+    Default: https://staging.d2yxcklt245wh0.amplifyapp.com/auth/logout
+  AmplifyStagingOrigin:
+    Type: String
+    Default: https://staging.d2yxcklt245wh0.amplifyapp.com
+  LocalLogoutUrl:
+    Type: String
+    Default: ""
+  LocalCorsOrigin:
+    Type: String
+    Default: ""
+
+Conditions:
+  IsProdEnvironment: !Equals [!Ref EnvironmentName, prod]
+  IsNonProdEnvironment: !Not [!Equals [!Ref EnvironmentName, prod]]
+  HasLocalCallbackUrl: !And
+    - !Condition IsNonProdEnvironment
+    - !Not [!Equals [!Ref LocalCallbackUrl, ""]]
+  HasLocalLogoutUrl: !And
+    - !Condition IsNonProdEnvironment
+    - !Not [!Equals [!Ref LocalLogoutUrl, ""]]
+  HasLocalCorsOrigin: !And
+    - !Condition IsNonProdEnvironment
+    - !Not [!Equals [!Ref LocalCorsOrigin, ""]]
+
+Resources:
+  CognitoSmsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: YccCognitoSmsRole
+      Description: Allows the YCC Cognito user pool to send SMS MFA messages through Amazon SNS.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cognito-idp.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                sts:ExternalId: !Sub ycc-cognito-sms-${AWS::AccountId}-${AWS::Region}-${EnvironmentName}
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/*
+      Policies:
+        - PolicyName: YccCognitoSmsPublishPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: sns:Publish
+                Resource: "*"
+      Tags:
+        - Key: Project
+          Value: YCC
+        - Key: ManagedBy
+          Value: CodexMCP
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: YCCMembers
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      DeletionProtection: ACTIVE
+      MfaConfiguration: "OPTIONAL"
+      EnabledMfas:
+        - SMS_MFA
+      SmsAuthenticationMessage: "Your YCC sign-in code is {####}."
+      SmsConfiguration:
+        ExternalId: !Sub ycc-cognito-sms-${AWS::AccountId}-${AWS::Region}-${EnvironmentName}
+        SnsCallerArn: !GetAtt CognitoSmsRole.Arn
+        SnsRegion: !Ref AWS::Region
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+          RequireUppercase: true
+          TemporaryPasswordValidityDays: 7
+      UserAttributeUpdateSettings:
+        AttributesRequireVerificationBeforeUpdate:
+          - email
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: false
+      Schema:
+        - Name: email
+          AttributeDataType: String
+          Mutable: true
+          Required: true
+        - Name: name
+          AttributeDataType: String
+          Mutable: true
+          Required: false
+        - Name: membership_tier
+          AttributeDataType: String
+          Mutable: true
+          Required: false
+        - Name: member_status
+          AttributeDataType: String
+          Mutable: true
+          Required: false
+      UserPoolTags:
+        Project: YCC
+        ManagedBy: CodexMCP
+        Environment: !Ref EnvironmentName
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: ycc-storefront
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      PreventUserExistenceErrors: ENABLED
+      EnableTokenRevocation: true
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      RefreshTokenValidity: 30
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+      ExplicitAuthFlows:
+        - ALLOW_REFRESH_TOKEN_AUTH
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_USER_PASSWORD_AUTH
+      SupportedIdentityProviders:
+        - COGNITO
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthScopes:
+        - email
+        - openid
+        - profile
+      CallbackURLs:
+        - !Ref AmplifyCallbackUrl
+        - !Ref AmplifyWwwCallbackUrl
+        - !Ref AmplifyStagingCallbackUrl
+        - !If [HasLocalCallbackUrl, !Ref LocalCallbackUrl, !Ref AWS::NoValue]
+      LogoutURLs:
+        - !Ref AmplifyLogoutUrl
+        - !Ref AmplifyWwwLogoutUrl
+        - !Ref AmplifyStagingLogoutUrl
+        - !If [HasLocalLogoutUrl, !Ref LocalLogoutUrl, !Ref AWS::NoValue]
+
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Ref CognitoDomainPrefix
+      ManagedLoginVersion: 2
+      UserPoolId: !Ref UserPool
+
+  AdminGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: admin
+      Description: YCC platform administrators.
+      Precedence: 10
+      UserPoolId: !Ref UserPool
+
+  MemberGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: member
+      Description: Active YCC members.
+      Precedence: 100
+      UserPoolId: !Ref UserPool
+
+  KishaGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: kisha
+      Description: Kisha membership tier.
+      Precedence: 50
+      UserPoolId: !Ref UserPool
+
+  SenseiGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: sensei
+      Description: Sensei membership tier.
+      Precedence: 40
+      UserPoolId: !Ref UserPool
+
+  DaimyoGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: daimyo
+      Description: Daimyo membership tier.
+      Precedence: 30
+      UserPoolId: !Ref UserPool
+
+  ConciergeOperatorGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: concierge_operator
+      Description: YCC concierge and support operators.
+      Precedence: 20
+      UserPoolId: !Ref UserPool
+
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: ycc-api
+      Description: YCC authenticated application API.
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowCredentials: false
+        AllowHeaders:
+          - accept
+          - authorization
+          - content-type
+          - stripe-signature
+          - x-request-id
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        AllowOrigins:
+          - https://yuzucigarclub.com
+          - https://www.yuzucigarclub.com
+          - !Ref AmplifyStagingOrigin
+          - !If [HasLocalCorsOrigin, !Ref LocalCorsOrigin, !Ref AWS::NoValue]
+        ExposeHeaders:
+          - x-request-id
+        MaxAge: 300
+      Tags:
+        Project: YCC
+        ManagedBy: CodexMCP
+        Environment: !Ref EnvironmentName
+
+  JwtAuthorizer:
+    Type: AWS::ApiGatewayV2::Authorizer
+    Properties:
+      ApiId: !Ref HttpApi
+      AuthorizerType: JWT
+      Name: ycc-cognito-jwt
+      IdentitySource:
+        - "$request.header.Authorization"
+      JwtConfiguration:
+        Audience:
+          - !Ref UserPoolClient
+        Issuer: !Sub https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}
+
+  LambdaIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      Description: YCC API Lambda proxy integration.
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Ref ExistingLambdaArn
+      PayloadFormatVersion: "2.0"
+      TimeoutInMillis: 29000
+
+  ApiInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ExistingLambdaName
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*/*
+
+  BedrockYccConciergeInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ExistingLambdaName
+      Principal: bedrock.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:agent/NDIEDXNZAV
+
+  BedrockYccCigarGuideInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ExistingLambdaName
+      Principal: bedrock.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:agent/EJI2VA7AVF
+
+  BedrockYccSupportInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ExistingLambdaName
+      Principal: bedrock.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:agent/SJJ2DVNYES
+
+  BedrockYccHumidorInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ExistingLambdaName
+      Principal: bedrock.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:agent/XLN9JKVRDA
+
+  BedrockYccAdminInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ExistingLambdaName
+      Principal: bedrock.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:agent/UQWB6AKMBT
+
+  BedrockYccNewsInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ExistingLambdaName
+      Principal: bedrock.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:agent/TUVBTVKNXG
+
+  DefaultStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: "$default"
+      AutoDeploy: true
+
+  HealthRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /health
+      AuthorizationType: NONE
+      Target: !Sub integrations/${LambdaIntegration}
+
+  NewsletterSubscribeRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /newsletter/subscribe
+      AuthorizationType: NONE
+      Target: !Sub integrations/${LambdaIntegration}
+
+  ContentPagesReadRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /content/pages
+      AuthorizationType: NONE
+      Target: !Sub integrations/${LambdaIntegration}
+
+  ContentPagesPublishRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /content/pages
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${LambdaIntegration}
+
+  NewsStoriesReadRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /news/stories
+      AuthorizationType: NONE
+      Target: !Sub integrations/${LambdaIntegration}
+
+  NewsStoryDraftRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /news/story-drafts
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${LambdaIntegration}
+
+  NewsStoryPublishRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /news/stories
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${LambdaIntegration}
+
+  CommerceCheckoutSessionRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /commerce/checkout-session
+      AuthorizationType: NONE
+      Target: !Sub integrations/${LambdaIntegration}
+
+  CommerceMembershipSessionRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /commerce/membership-session
+      AuthorizationType: NONE
+      Target: !Sub integrations/${LambdaIntegration}
+
+  CommerceWebhookStripeRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /commerce/webhook/stripe
+      AuthorizationType: NONE
+      Target: !Sub integrations/${LambdaIntegration}
+
+  CommerceCheckoutSessionStatusRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: "GET /commerce/checkout-session/{id}"
+      AuthorizationType: NONE
+      Target: !Sub integrations/${LambdaIntegration}
+
+  CommerceCustomerPortalSessionRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /commerce/customer-portal-session
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${LambdaIntegration}
+
+  CommerceMembershipRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /commerce/membership
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${LambdaIntegration}
+
+  CommerceOrdersRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /commerce/orders
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${LambdaIntegration}
+
+  CommerceOrderStatusRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: "GET /commerce/orders/{id}"
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${LambdaIntegration}
+
+  AdminCommerceStripeSyncProductsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /admin/commerce/stripe-sync-products
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${LambdaIntegration}
+
+  AdminCommerceWebhookEventsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /admin/commerce/webhook-events
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${LambdaIntegration}
+
+  AdminCommerceComplianceHoldsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /admin/commerce/compliance-holds
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${LambdaIntegration}
+
+  ChatRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /concierge/chat
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${LambdaIntegration}
+
+  ConciergeVoiceRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /concierge/voice
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${LambdaIntegration}
+
+  SupportEmailDraftRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /support/email-draft
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${LambdaIntegration}
+
+  SupportEmailSendRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /support/email-send
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${LambdaIntegration}
+
+  HumidorIdentifyCigarRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /humidor/identify-cigar
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${LambdaIntegration}
+
+  HumidorItemsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /humidor/items
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${LambdaIntegration}
+
+  HumidorItemsReadRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /humidor/items
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${LambdaIntegration}
+
+  AccountMeRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /account/me
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${LambdaIntegration}
+
+Outputs:
+  UserPoolId:
+    Value: !Ref UserPool
+  UserPoolClientId:
+    Value: !Ref UserPoolClient
+  CognitoIssuer:
+    Value: !Sub https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}
+  CognitoHostedUiBase:
+    Value: !Sub https://${CognitoDomainPrefix}.auth.${AWS::Region}.amazoncognito.com
+  HttpApiId:
+    Value: !Ref HttpApi
+  HttpApiEndpoint:
+    Value: !GetAtt HttpApi.ApiEndpoint

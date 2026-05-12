@@ -1,0 +1,185 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  assessLaunchReadiness,
+  findPlaceholderKeys,
+  parseEnvSource,
+  planGeneratedArtifactCleanup,
+  validateDeployZipEntries,
+} from "../scripts/launch-readiness";
+
+const fakeLiveStripeSecret = ["sk", "live_validlaunchkey"].join("_");
+const fakeWebhookSecret = ["whsec", "validlaunchsecret"].join("_");
+
+const completeEnv = {
+  NEXT_PUBLIC_BASE_URL: "https://www.yuzucigarclub.com",
+  BASE_URL: "https://www.yuzucigarclub.com",
+  NEXT_PUBLIC_YCC_API_BASE_URL: "https://13710cp67l.execute-api.us-east-1.amazonaws.com",
+  NEXT_PUBLIC_COGNITO_USER_POOL_ID: "us-east-1_63U9PflAX",
+  NEXT_PUBLIC_COGNITO_USER_POOL_CLIENT_ID: "2i2nvtt41l94n0mivc4tu4f9ms",
+  NEXT_PUBLIC_COGNITO_ISSUER: "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_63U9PflAX",
+  NEXT_PUBLIC_COGNITO_HOSTED_UI_BASE: "https://ycc-members-374587466106.auth.us-east-1.amazoncognito.com",
+  NEXT_PUBLIC_COGNITO_REDIRECT_PATH: "/auth/callback",
+  NEXT_PUBLIC_COGNITO_LOGOUT_PATH: "/auth/logout",
+  NEXT_PUBLIC_REQUIRE_LIVE_AUTH: "true",
+  NEXT_PUBLIC_ENABLE_BACKUP_ADMIN: "false",
+  NEXT_PUBLIC_ADMIN_APP_URL: "https://admin.yuzucigarclub.com",
+  STRIPE_TOBACCO_APPROVAL_CONFIRMED: "true",
+  STRIPE_SECRET_KEY: fakeLiveStripeSecret,
+  STRIPE_WEBHOOK_SECRET: fakeWebhookSecret,
+  STRIPE_CUSTOMER_PORTAL_CONFIGURATION_ID: "bpc_validlaunchportal",
+  STRIPE_PRICE_BOX_ACCESS_PASS_MONTHLY: "price_boxmonthly",
+  STRIPE_PRICE_BOX_ACCESS_PASS_QUARTERLY: "price_boxquarterly",
+  STRIPE_PRICE_BOX_ACCESS_PASS_YEARLY: "price_boxyearly",
+  STRIPE_PRICE_KISHA_MONTHLY: "price_kishamonthly",
+  STRIPE_PRICE_KISHA_QUARTERLY: "price_kishaquarterly",
+  STRIPE_PRICE_KISHA_YEARLY: "price_kishayearly",
+  STRIPE_PRICE_SENSEI_MONTHLY: "price_senseimonthly",
+  STRIPE_PRICE_SENSEI_QUARTERLY: "price_senseiquarterly",
+  STRIPE_PRICE_SENSEI_YEARLY: "price_senseiyearly",
+  STRIPE_PRICE_DAIMYO_MONTHLY: "price_daimyomonthly",
+  STRIPE_PRICE_DAIMYO_QUARTERLY: "price_daimyoquarterly",
+  STRIPE_PRICE_DAIMYO_YEARLY: "price_daimyoyearly",
+  STRIPE_TEST_MODE_E2E_CONFIRMED: "true",
+  AGE_VERIFICATION_PROVIDER_CONFIRMED: "true",
+  TAX_PROVIDER_CONFIRMED: "true",
+  ADULT_SIGNATURE_CARRIER_APPROVED: "true",
+  AWS_RESTORE_DRILL_COMPLETED: "true",
+  STAGING_BROWSER_QA_PASSED: "true",
+  WAF_OR_RATE_LIMITING_ACCEPTED: "true",
+};
+
+test("parses env files without retaining comments or quotes", () => {
+  assert.deepEqual(
+    parseEnvSource(`
+      # Comment
+      NEXT_PUBLIC_BASE_URL="https://www.yuzucigarclub.com"
+      EMPTY=
+      STRIPE_SECRET_KEY='sk_test_replace_me'
+    `),
+    {
+      NEXT_PUBLIC_BASE_URL: "https://www.yuzucigarclub.com",
+      EMPTY: "",
+      STRIPE_SECRET_KEY: "sk_test_replace_me",
+    },
+  );
+});
+
+test("detects placeholders without exposing secret values", () => {
+  assert.deepEqual(
+    findPlaceholderKeys({
+      STRIPE_SECRET_KEY: "sk_test_replace_me",
+      STRIPE_WEBHOOK_SECRET: "whsec_replace_me",
+      STRIPE_PRICE_SENSEI_MONTHLY: "price_123",
+    }),
+    ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"],
+  );
+});
+
+test("go-live readiness passes when storefront, commerce, compliance, QA, and AWS gates are confirmed", () => {
+  const checks = assessLaunchReadiness(completeEnv, { strictExternal: true });
+  assert.deepEqual(
+    checks.filter((check) => check.status === "fail"),
+    [],
+  );
+});
+
+test("local ops readiness warns instead of blocking on external launch gates", () => {
+  const checks = assessLaunchReadiness(
+    {
+      ...completeEnv,
+      STRIPE_TOBACCO_APPROVAL_CONFIRMED: "false",
+      STRIPE_SECRET_KEY: "",
+      ADULT_SIGNATURE_CARRIER_APPROVED: "false",
+    },
+    { strictExternal: false },
+  );
+
+  assert.deepEqual(
+    checks.filter((check) => check.status === "fail"),
+    [],
+  );
+  assert.ok(checks.some((check) => check.status === "warn" && check.id === "stripe-approval"));
+  assert.ok(checks.some((check) => check.status === "warn" && check.id === "stripe-secret"));
+  assert.ok(checks.some((check) => check.status === "warn" && check.id === "adult-signature-carrier"));
+});
+
+test("strict readiness fails when external launch gates are missing or unsafe", () => {
+  const checks = assessLaunchReadiness(
+    {
+      ...completeEnv,
+      NEXT_PUBLIC_ADMIN_APP_URL: "admin.example.com",
+      NEXT_PUBLIC_REQUIRE_LIVE_AUTH: "false",
+      NEXT_PUBLIC_ENABLE_BACKUP_ADMIN: "true",
+      STRIPE_TOBACCO_APPROVAL_CONFIRMED: "false",
+      STRIPE_SECRET_KEY: "sk_test_replace_me",
+      AGE_VERIFICATION_PROVIDER_CONFIRMED: "false",
+    },
+    { strictExternal: true },
+  );
+  const failedIds = checks.filter((check) => check.status === "fail").map((check) => check.id);
+
+  assert.deepEqual(failedIds.sort(), [
+    "live-auth-required",
+    "backup-admin-disabled",
+    "stripe-approval",
+    "stripe-secret",
+    "age-verification-provider",
+    "next-public-admin-app-url-configured",
+    "admin-url-format",
+  ].sort());
+});
+
+test("non-strict readiness warns if admin app URL is not configured", () => {
+  const checks = assessLaunchReadiness(
+    {
+      ...completeEnv,
+      NEXT_PUBLIC_ADMIN_APP_URL: "",
+    },
+    { strictExternal: false },
+  );
+
+  const adminAppCheck = checks.find((check) => check.id === "admin-url-format");
+  assert.ok(adminAppCheck, "admin app URL check should be present in readiness output");
+  assert.equal(adminAppCheck.status, "warn");
+});
+
+test("admin hand-off URL fails strict checks when not absolute", () => {
+  const checks = assessLaunchReadiness(
+    {
+      ...completeEnv,
+      NEXT_PUBLIC_ADMIN_APP_URL: "admin.example.com",
+    },
+    { strictExternal: true },
+  );
+
+  const adminUrlFormatCheck = checks.find((check) => check.id === "admin-url-format");
+  assert.ok(adminUrlFormatCheck, "admin URL format check should run");
+  assert.equal(adminUrlFormatCheck.status, "fail");
+});
+
+test("deploy zip validation rejects Windows paths and nested build folders", () => {
+  assert.deepEqual(validateDeployZipEntries(["index.html", "_next/static/app.js", "assets/yuzu-logo.png"]), []);
+  assert.deepEqual(validateDeployZipEntries(["out/index.html", "assets\\yuzu-logo.png", ".next/server/app.js"]), [
+    "out/index.html",
+    "assets\\yuzu-logo.png",
+    ".next/server/app.js",
+  ]);
+});
+
+test("artifact cleanup plan preserves the newest deploy zip and removes generated leftovers", () => {
+  const plan = planGeneratedArtifactCleanup(
+    [
+      { name: "old.zip", fullName: "C:/repo/old.zip", lastWriteTimeMs: 10 },
+      { name: "new.zip", fullName: "C:/repo/new.zip", lastWriteTimeMs: 20 },
+    ],
+    "C:/repo/output",
+  );
+
+  assert.equal(plan.keepZip?.name, "new.zip");
+  assert.deepEqual(
+    plan.removePaths,
+    ["C:/repo/old.zip", "C:/repo/output"],
+  );
+});

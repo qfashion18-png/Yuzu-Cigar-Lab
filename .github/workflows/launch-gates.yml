@@ -1,0 +1,94 @@
+name: Launch Gates
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  quality:
+    name: Quality Gates
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  go-live-readiness:
+    name: Strict Go-Live Readiness
+    needs: quality
+    if: github.event_name == 'workflow_dispatch' || (github.ref == 'refs/heads/main' && secrets.NEXT_PUBLIC_BASE_URL != '')
+    runs-on: ubuntu-latest
+    env:
+      NEXT_PUBLIC_BASE_URL: ${{ secrets.NEXT_PUBLIC_BASE_URL }}
+      BASE_URL: ${{ secrets.BASE_URL }}
+      NEXT_PUBLIC_ADMIN_APP_URL: ${{ secrets.NEXT_PUBLIC_ADMIN_APP_URL }}
+      NEXT_PUBLIC_YCC_API_BASE_URL: ${{ secrets.NEXT_PUBLIC_YCC_API_BASE_URL }}
+      NEXT_PUBLIC_COGNITO_USER_POOL_ID: ${{ secrets.NEXT_PUBLIC_COGNITO_USER_POOL_ID }}
+      NEXT_PUBLIC_COGNITO_USER_POOL_CLIENT_ID: ${{ secrets.NEXT_PUBLIC_COGNITO_USER_POOL_CLIENT_ID }}
+      NEXT_PUBLIC_COGNITO_ISSUER: ${{ secrets.NEXT_PUBLIC_COGNITO_ISSUER }}
+      NEXT_PUBLIC_COGNITO_HOSTED_UI_BASE: ${{ secrets.NEXT_PUBLIC_COGNITO_HOSTED_UI_BASE }}
+      NEXT_PUBLIC_COGNITO_REDIRECT_PATH: ${{ secrets.NEXT_PUBLIC_COGNITO_REDIRECT_PATH }}
+      NEXT_PUBLIC_COGNITO_LOGOUT_PATH: ${{ secrets.NEXT_PUBLIC_COGNITO_LOGOUT_PATH }}
+      NEXT_PUBLIC_REQUIRE_LIVE_AUTH: ${{ secrets.NEXT_PUBLIC_REQUIRE_LIVE_AUTH }}
+      NEXT_PUBLIC_ENABLE_BACKUP_ADMIN: ${{ secrets.NEXT_PUBLIC_ENABLE_BACKUP_ADMIN }}
+      STRIPE_TOBACCO_APPROVAL_CONFIRMED: ${{ secrets.STRIPE_TOBACCO_APPROVAL_CONFIRMED }}
+      STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+      STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+      STRIPE_CUSTOMER_PORTAL_CONFIGURATION_ID: ${{ secrets.STRIPE_CUSTOMER_PORTAL_CONFIGURATION_ID }}
+      STRIPE_PRICE_BOX_ACCESS_PASS_MONTHLY: ${{ secrets.STRIPE_PRICE_BOX_ACCESS_PASS_MONTHLY }}
+      STRIPE_PRICE_BOX_ACCESS_PASS_QUARTERLY: ${{ secrets.STRIPE_PRICE_BOX_ACCESS_PASS_QUARTERLY }}
+      STRIPE_PRICE_BOX_ACCESS_PASS_YEARLY: ${{ secrets.STRIPE_PRICE_BOX_ACCESS_PASS_YEARLY }}
+      STRIPE_PRICE_KISHA_MONTHLY: ${{ secrets.STRIPE_PRICE_KISHA_MONTHLY }}
+      STRIPE_PRICE_KISHA_QUARTERLY: ${{ secrets.STRIPE_PRICE_KISHA_QUARTERLY }}
+      STRIPE_PRICE_KISHA_YEARLY: ${{ secrets.STRIPE_PRICE_KISHA_YEARLY }}
+      STRIPE_PRICE_SENSEI_MONTHLY: ${{ secrets.STRIPE_PRICE_SENSEI_MONTHLY }}
+      STRIPE_PRICE_SENSEI_QUARTERLY: ${{ secrets.STRIPE_PRICE_SENSEI_QUARTERLY }}
+      STRIPE_PRICE_SENSEI_YEARLY: ${{ secrets.STRIPE_PRICE_SENSEI_YEARLY }}
+      STRIPE_PRICE_DAIMYO_MONTHLY: ${{ secrets.STRIPE_PRICE_DAIMYO_MONTHLY }}
+      STRIPE_PRICE_DAIMYO_QUARTERLY: ${{ secrets.STRIPE_PRICE_DAIMYO_QUARTERLY }}
+      STRIPE_PRICE_DAIMYO_YEARLY: ${{ secrets.STRIPE_PRICE_DAIMYO_YEARLY }}
+      STRIPE_TEST_MODE_E2E_CONFIRMED: ${{ secrets.STRIPE_TEST_MODE_E2E_CONFIRMED }}
+      AGE_VERIFICATION_PROVIDER_CONFIRMED: ${{ secrets.AGE_VERIFICATION_PROVIDER_CONFIRMED }}
+      TAX_PROVIDER_CONFIRMED: ${{ secrets.TAX_PROVIDER_CONFIRMED }}
+      ADULT_SIGNATURE_CARRIER_APPROVED: ${{ secrets.ADULT_SIGNATURE_CARRIER_APPROVED }}
+      AWS_RESTORE_DRILL_COMPLETED: ${{ secrets.AWS_RESTORE_DRILL_COMPLETED }}
+      STAGING_BROWSER_QA_PASSED: ${{ secrets.STAGING_BROWSER_QA_PASSED }}
+      WAF_OR_RATE_LIMITING_ACCEPTED: ${{ secrets.WAF_OR_RATE_LIMITING_ACCEPTED }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Strict readiness gate
+        run: npm run launch:go-live-check

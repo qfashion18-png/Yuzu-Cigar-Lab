@@ -1,0 +1,104 @@
+{
+  "functions": [
+    {
+      "name": "GetMemberProfile",
+      "description": "Return a privacy-minimized membership snapshot from authenticated YCC session attributes.",
+      "requireConfirmation": "DISABLED",
+      "parameters": {
+        "scope": {
+          "type": "string",
+          "description": "Optional profile scope. Use summary for the default privacy-minimized membership view.",
+          "required": false
+        }
+      }
+    },
+    {
+      "name": "DraftSupportReply",
+      "description": "Create an operator-reviewed support reply draft and, when authenticated member context is present, persist a support case and draft email.",
+      "requireConfirmation": "DISABLED",
+      "parameters": {
+        "subject": {
+          "type": "string",
+          "description": "Short support subject such as renewal charge, damaged shipment, missing item, cancellation, or account question.",
+          "required": true
+        },
+        "message": {
+          "type": "string",
+          "description": "The member issue or operator notes to summarize into a support draft.",
+          "required": true
+        },
+        "caseId": {
+          "type": "string",
+          "description": "Optional caller-provided support case correlation ID.",
+          "required": false
+        }
+      }
+    },
+    {
+      "name": "AddHumidorItem",
+      "description": "Add a cigar to the authenticated member's humidor inventory using provided cigar details.",
+      "requireConfirmation": "ENABLED",
+      "parameters": {
+        "name": {
+          "type": "string",
+          "description": "Cigar display name when brand and line are not enough.",
+          "required": false
+        },
+        "brand": {
+          "type": "string",
+          "description": "Cigar brand, for example Padron or Davidoff.",
+          "required": false
+        },
+        "line": {
+          "type": "string",
+          "description": "Cigar line, for example 1964 Anniversary or Signature.",
+          "required": false
+        },
+        "vitola": {
+          "type": "string",
+          "description": "Vitola or shape, for example Toro, Robusto, Churchill, Panetela, or Perfecto.",
+          "required": false
+        },
+        "quantity": {
+          "type": "integer",
+          "description": "Quantity of cigars to add.",
+          "required": false
+        }
+      }
+    },
+    {
+      "name": "GetAdminQueueSummary",
+      "description": "Return safe admin support queue triage guidance for authorized admin or concierge operator sessions.",
+      "requireConfirmation": "DISABLED",
+      "parameters": {
+        "queue": {
+          "type": "string",
+          "description": "Queue to summarize, such as support, billing, compliance, catalog, or humidor.",
+          "required": false
+        }
+      }
+    },
+    {
+      "name": "DraftWeeklyNews",
+      "description": "Create an operator-review-only weekly cigar education/news draft with newsletter copy, source-note placeholders, and compliance review reminders for adult members of legal tobacco age.",
+      "requireConfirmation": "DISABLED",
+      "parameters": {
+        "topic": {
+          "type": "string",
+          "description": "Topic or theme for the weekly cigar news draft.",
+          "required": false
+        },
+        "timeframe": {
+          "type": "string",
+          "description": "News window, for example this week or May 2026.",
+          "required": false
+        },
+        "audience": {
+          "type": "string",
+          "description": "Audience label. Defaults to adult YCC members of legal tobacco age.",
+          "required": false
+        }
+      }
+    }
+  ]
+}

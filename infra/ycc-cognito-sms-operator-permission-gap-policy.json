@@ -1,0 +1,35 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ManageYccCognitoSmsRole",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateRole",
+        "iam:TagRole",
+        "iam:UpdateAssumeRolePolicy",
+        "iam:PutRolePolicy",
+        "iam:GetRole",
+        "iam:GetRolePolicy"
+      ],
+      "Resource": "arn:aws:iam::374587466106:role/YccCognitoSmsRole"
+    },
+    {
+      "Sid": "PassYccCognitoSmsRoleToCognito",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::374587466106:role/YccCognitoSmsRole"
+    },
+    {
+      "Sid": "ConfigureYccUserPoolSmsMfa",
+      "Effect": "Allow",
+      "Action": [
+        "cognito-idp:SetUserPoolMfaConfig",
+        "cognito-idp:UpdateUserPool",
+        "cognito-idp:DescribeUserPool",
+        "cognito-idp:GetUserPoolMfaConfig"
+      ],
+      "Resource": "arn:aws:cognito-idp:us-east-1:374587466106:userpool/us-east-1_63U9PflAX"
+    }
+  ]
+}

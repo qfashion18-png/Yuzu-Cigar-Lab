@@ -1,0 +1,132 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadRdsProxyCredentialSecret",
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:GetSecretValue"
+      ],
+      "Resource": "arn:aws:secretsmanager:us-east-1:374587466106:secret:rds-db-credentials/database-1ycc/postgresycc/1778040454500-6vRH4q"
+    },
+    {
+      "Sid": "ReadYccCommerceProviderSecrets",
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:GetSecretValue"
+      ],
+      "Resource": "arn:aws:secretsmanager:us-east-1:374587466106:secret:ycc/commerce/*"
+    },
+    {
+      "Sid": "PutYccApplicationEvents",
+      "Effect": "Allow",
+      "Action": "events:PutEvents",
+      "Resource": "arn:aws:events:us-east-1:374587466106:event-bus/ycc-events"
+    },
+    {
+      "Sid": "WriteYccApiCloudWatchLogs",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "Resource": "arn:aws:logs:us-east-1:374587466106:log-group:/aws/lambda/ycyyy:*"
+    },
+    {
+      "Sid": "ListApprovedYccS3Prefixes",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::classroom2",
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": [
+            "lambda/*",
+            "ycc/*"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "ReadWriteApprovedYccS3Prefixes",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::classroom2/lambda/*",
+        "arn:aws:s3:::classroom2/ycc/*"
+      ]
+    },
+    {
+      "Sid": "TranscribeYccConciergeVoiceMessages",
+      "Effect": "Allow",
+      "Action": [
+        "transcribe:StartTranscriptionJob",
+        "transcribe:GetTranscriptionJob",
+        "transcribe:DeleteTranscriptionJob"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "SynthesizeYccConciergeSpeech",
+      "Effect": "Allow",
+      "Action": "polly:SynthesizeSpeech",
+      "Resource": "*"
+    },
+    {
+      "Sid": "InvokeSelectedBedrockFoundationModels",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-micro-v1:0",
+        "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-lite-v1:0"
+      ]
+    },
+    {
+      "Sid": "ApplyYccConciergeGuardrail",
+      "Effect": "Allow",
+      "Action": "bedrock:ApplyGuardrail",
+      "Resource": "arn:aws:bedrock:us-east-1:374587466106:guardrail/xczjnv3f1wzs"
+    },
+    {
+      "Sid": "InvokeTaggedYccBedrockAgentAliases",
+      "Effect": "Allow",
+      "Action": "bedrock:InvokeAgent",
+      "Resource": "arn:aws:bedrock:us-east-1:374587466106:agent-alias/*/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/Project": "YCC"
+        }
+      }
+    },
+    {
+      "Sid": "SendEmailFromVerifiedYccIdentities",
+      "Effect": "Allow",
+      "Action": [
+        "ses:SendEmail",
+        "ses:SendRawEmail"
+      ],
+      "Resource": [
+        "arn:aws:ses:us-east-1:374587466106:identity/yuzucigarclub.com",
+        "arn:aws:ses:us-east-1:374587466106:identity/support@yuzucigarclub.com",
+        "arn:aws:ses:us-east-1:374587466106:identity/concierge@yuzucigarclub.com",
+        "arn:aws:ses:us-east-1:374587466106:identity/no-reply@yuzucigarclub.com"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "ses:FromAddress": [
+            "support@yuzucigarclub.com",
+            "concierge@yuzucigarclub.com",
+            "no-reply@yuzucigarclub.com"
+          ]
+        }
+      }
+    }
+  ]
+}

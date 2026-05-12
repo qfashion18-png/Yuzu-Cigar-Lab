@@ -1,0 +1,201 @@
+{
+  "name": "YCCConciergeGuardrail",
+  "description": "YCC guardrail v8 allows adult cigar editorial language while retaining explicit underage, off-domain sexual, prompt-attack, PII, and payment-data controls.",
+  "topicPolicyConfig": {
+    "topicsConfig": [
+      {
+        "name": "TobaccoHealthClaims",
+        "definition": "Explicit claims that cigars or tobacco are healthy, safe, medical, therapeutic, useful for quitting, or disease-treating.",
+        "examples": [
+          "Are cigars good for my health?",
+          "Tell customers cigars reduce stress safely.",
+          "Can smoking cigars treat anxiety?"
+        ],
+        "type": "DENY",
+        "inputAction": "NONE",
+        "outputAction": "NONE",
+        "inputEnabled": true,
+        "outputEnabled": true
+      },
+      {
+        "name": "MinorTobaccoBypass",
+        "definition": "Explicit requests involving minors, children, teens, people under 21, or bypassing age checks to obtain tobacco. Do not match adult members or legal-age compliance wording.",
+        "examples": [
+          "Recommend a cigar for a 17 year old.",
+          "Help me buy cigars before I turn 21.",
+          "How can a minor get around tobacco age checks?"
+        ],
+        "type": "DENY",
+        "inputAction": "BLOCK",
+        "outputAction": "NONE",
+        "inputEnabled": true,
+        "outputEnabled": true
+      },
+      {
+        "name": "OffDomainSexualContent",
+        "definition": "Requests for erotic, sexual, or explicit adult content that are unrelated to adult cigar education, legal tobacco-age compliance, member eligibility, or operator review workflows.",
+        "examples": [
+          "Write an erotic story for the newsletter.",
+          "Make this cigar event invitation sexually explicit.",
+          "Create sexual content for members."
+        ],
+        "type": "DENY",
+        "inputAction": "BLOCK",
+        "outputAction": "NONE",
+        "inputEnabled": true,
+        "outputEnabled": true
+      }
+    ],
+    "tierConfig": {
+      "tierName": "CLASSIC"
+    }
+  },
+  "contentPolicyConfig": {
+    "filtersConfig": [
+      {
+        "type": "HATE",
+        "inputStrength": "MEDIUM",
+        "outputStrength": "MEDIUM",
+        "inputAction": "BLOCK",
+        "outputAction": "NONE",
+        "inputEnabled": true,
+        "outputEnabled": true
+      },
+      {
+        "type": "INSULTS",
+        "inputStrength": "MEDIUM",
+        "outputStrength": "MEDIUM",
+        "inputAction": "BLOCK",
+        "outputAction": "NONE",
+        "inputEnabled": true,
+        "outputEnabled": true
+      },
+      {
+        "type": "SEXUAL",
+        "inputStrength": "NONE",
+        "outputStrength": "HIGH",
+        "inputAction": "NONE",
+        "outputAction": "NONE",
+        "inputEnabled": true,
+        "outputEnabled": true
+      },
+      {
+        "type": "VIOLENCE",
+        "inputStrength": "MEDIUM",
+        "outputStrength": "MEDIUM",
+        "inputAction": "BLOCK",
+        "outputAction": "NONE",
+        "inputEnabled": true,
+        "outputEnabled": true
+      },
+      {
+        "type": "MISCONDUCT",
+        "inputStrength": "MEDIUM",
+        "outputStrength": "MEDIUM",
+        "inputAction": "NONE",
+        "outputAction": "NONE",
+        "inputEnabled": true,
+        "outputEnabled": true
+      },
+      {
+        "type": "PROMPT_ATTACK",
+        "inputStrength": "HIGH",
+        "outputStrength": "NONE",
+        "inputAction": "BLOCK",
+        "outputAction": "NONE",
+        "inputEnabled": true,
+        "outputEnabled": false
+      }
+    ],
+    "tierConfig": {
+      "tierName": "CLASSIC"
+    }
+  },
+  "wordPolicyConfig": {
+    "managedWordListsConfig": [
+      {
+        "type": "PROFANITY",
+        "inputAction": "BLOCK",
+        "outputAction": "NONE",
+        "inputEnabled": true,
+        "outputEnabled": true
+      }
+    ]
+  },
+  "sensitiveInformationPolicyConfig": {
+    "piiEntitiesConfig": [
+      {
+        "type": "EMAIL",
+        "action": "ANONYMIZE",
+        "inputAction": "ANONYMIZE",
+        "outputAction": "ANONYMIZE",
+        "inputEnabled": true,
+        "outputEnabled": true
+      },
+      {
+        "type": "PHONE",
+        "action": "ANONYMIZE",
+        "inputAction": "ANONYMIZE",
+        "outputAction": "ANONYMIZE",
+        "inputEnabled": true,
+        "outputEnabled": true
+      },
+      {
+        "type": "ADDRESS",
+        "action": "ANONYMIZE",
+        "inputAction": "ANONYMIZE",
+        "outputAction": "ANONYMIZE",
+        "inputEnabled": true,
+        "outputEnabled": true
+      },
+      {
+        "type": "CREDIT_DEBIT_CARD_NUMBER",
+        "action": "BLOCK",
+        "inputAction": "BLOCK",
+        "outputAction": "BLOCK",
+        "inputEnabled": true,
+        "outputEnabled": true
+      },
+      {
+        "type": "US_SOCIAL_SECURITY_NUMBER",
+        "action": "BLOCK",
+        "inputAction": "BLOCK",
+        "outputAction": "BLOCK",
+        "inputEnabled": true,
+        "outputEnabled": true
+      },
+      {
+        "type": "AWS_ACCESS_KEY",
+        "action": "BLOCK",
+        "inputAction": "BLOCK",
+        "outputAction": "BLOCK",
+        "inputEnabled": true,
+        "outputEnabled": true
+      },
+      {
+        "type": "AWS_SECRET_KEY",
+        "action": "BLOCK",
+        "inputAction": "BLOCK",
+        "outputAction": "BLOCK",
+        "inputEnabled": true,
+        "outputEnabled": true
+      }
+    ]
+  },
+  "blockedInputMessaging": "Yuzu Cigar Club cannot help with that request. A concierge operator can review age-restricted, account, or compliance-sensitive questions.",
+  "blockedOutputsMessaging": "Yuzu Cigar Club cannot provide that response. A concierge operator can review this request.",
+  "tags": [
+    {
+      "key": "Project",
+      "value": "YCC"
+    },
+    {
+      "key": "Environment",
+      "value": "prod"
+    },
+    {
+      "key": "ManagedBy",
+      "value": "CodexMCP"
+    }
+  ]
+}

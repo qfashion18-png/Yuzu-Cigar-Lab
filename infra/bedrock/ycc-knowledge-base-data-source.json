@@ -1,0 +1,25 @@
+{
+  "clientToken": "ycc-phase45-knowledge-source-20260506-002",
+  "name": "YCCKnowledgeBaseS3SourceV2",
+  "description": "Curated YCC markdown source documents for Bedrock Knowledge Base retrieval.",
+  "dataSourceConfiguration": {
+    "type": "S3",
+    "s3Configuration": {
+      "bucketArn": "arn:aws:s3:::classroom2",
+      "inclusionPrefixes": [
+        "ycc/knowledge-base/"
+      ],
+      "bucketOwnerAccountId": "374587466106"
+    }
+  },
+  "dataDeletionPolicy": "RETAIN",
+  "vectorIngestionConfiguration": {
+    "chunkingConfiguration": {
+      "chunkingStrategy": "FIXED_SIZE",
+      "fixedSizeChunkingConfiguration": {
+        "maxTokens": 500,
+        "overlapPercentage": 20
+      }
+    }
+  }
+}

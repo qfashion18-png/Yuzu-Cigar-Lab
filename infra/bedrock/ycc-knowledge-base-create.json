@@ -1,0 +1,30 @@
+{
+  "clientToken": "ycc-phase45-knowledge-base-20260506-002",
+  "name": "YCCKnowledgeBaseV2",
+  "description": "Yuzu Cigar Club retrieval base for catalog, education, membership, support, humidor, and compliance guidance using S3 Vectors with Bedrock metadata marked non-filterable.",
+  "roleArn": "arn:aws:iam::374587466106:role/YccBedrockKnowledgeBaseRole",
+  "knowledgeBaseConfiguration": {
+    "type": "VECTOR",
+    "vectorKnowledgeBaseConfiguration": {
+      "embeddingModelArn": "arn:aws:bedrock:us-east-1::foundation-model/amazon.titan-embed-text-v2:0",
+      "embeddingModelConfiguration": {
+        "bedrockEmbeddingModelConfiguration": {
+          "dimensions": 1024,
+          "embeddingDataType": "FLOAT32"
+        }
+      }
+    }
+  },
+  "storageConfiguration": {
+    "type": "S3_VECTORS",
+    "s3VectorsConfiguration": {
+      "vectorBucketArn": "arn:aws:s3vectors:us-east-1:374587466106:bucket/ycc-kb-vectors-374587466106-us-east-1",
+      "indexArn": "arn:aws:s3vectors:us-east-1:374587466106:bucket/ycc-kb-vectors-374587466106-us-east-1/index/ycc-kb-index-v2"
+    }
+  },
+  "tags": {
+    "Project": "YCC",
+    "Environment": "prod",
+    "ManagedBy": "CodexMCP"
+  }
+}

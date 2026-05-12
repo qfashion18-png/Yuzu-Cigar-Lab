@@ -15,7 +15,11 @@ Approved concept image:
 
 ![Yuzu admin control room concept](assets/yuzu-admin-control-room-concept.png)
 
-The admin should feel like a dense but organized operations dashboard, not a marketing page. It should preserve the current Yuzu visual language: near-black green backgrounds, forest panels, warm gold accents, cream text, muted secondary text, and clear red/amber/green provider states.
+Admin sidebar and operations style reference:
+
+![Yuzu admin sidebar reference](assets/admin-sidebar-reference.png)
+
+The admin should feel like a dense but organized operations dashboard, not a marketing page. It should preserve the current Yuzu visual language: near-black green backgrounds, forest panels, warm gold accents, cream text, muted secondary text, and clear red/amber/green provider states. The admin shell should match the screenshot direction: brand-led left navigation, clear gold active states, dense work tables, compact controls, and a serious operations-console rhythm.
 
 ## Architecture
 
@@ -46,6 +50,7 @@ The admin app uses a persistent left navigation with these modules:
 - Allocations
 - Humidor
 - Events
+- Website Editor
 - Credentials
 - Audit Log
 - Settings
@@ -82,10 +87,10 @@ All responsive layouts must keep text inside its container, avoid overlapping co
 
 The supplied shop inventory source is `C:\Users\qfash\Downloads\yuzu-export-phase2-enhanced.json`. It is a Woo-style export for YUZU CIGAR CLUB with:
 
-- 1,103 published products.
-- 47 categories.
+- 1,118 normalized inventory rows, with 1,042 publishable storefront catalog products after filtering duplicate SKUs, missing prices, placeholder SKUs, and missing image assets.
+- 28 source categories, resulting in 24 published catalog categories after filtering and price-tier normalization, and 25 storefront categories when curated boxes are counted.
 - 53 posts.
-- 1,103 products marked `instock`.
+- 1,118 rows marked `instock`.
 - 0 products with managed stock enabled.
 - 0 products with stock quantities.
 - 2 products missing SKU values.
@@ -152,6 +157,16 @@ Humidor:
 Events:
 - Tasting events, RSVP/member access, and publication status.
 
+Website Editor:
+- Edit website pages, visible copy, hero text, section copy, navigation labels, footer copy, and call-to-action text.
+- Change images for hero sections, product features, education stories, event promos, membership cards, and editorial content.
+- Manage global theme tokens including font pairing, heading style, body font, brand colors, accent colors, panel colors, border colors, and button styling.
+- Create, edit, publish, unpublish, and schedule education stories.
+- Manage story metadata, reading time, category, level, images, chapters, field notes, tasting cues, pairing notes, and humidor actions.
+- Preview desktop, tablet, and mobile versions before publishing.
+- Track draft, published, scheduled, and archived states.
+- Write audit records for page edits, image changes, theme changes, story publishing, and navigation changes.
+
 Credentials:
 - Real credential entry for AWS, Cognito, Medusa, AgeChecker/Veratad, Avalara, payment, shipping, email/SNS, and IoT.
 - Local encrypted development storage.
@@ -208,6 +223,7 @@ API tests:
 
 UI tests:
 - Admin navigation
+- Website editor page/theme/story editing
 - Credential setup
 - Product edit
 - Order hold resolution

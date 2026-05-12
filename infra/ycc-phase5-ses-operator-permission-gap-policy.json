@@ -1,0 +1,27 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ManageYccSesReceiptRules",
+      "Effect": "Allow",
+      "Action": [
+        "ses:CreateReceiptRuleSet",
+        "ses:CreateReceiptRule",
+        "ses:UpdateReceiptRule",
+        "ses:DescribeReceiptRuleSet",
+        "ses:ListReceiptRuleSets",
+        "ses:SetActiveReceiptRuleSet"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ManageYccSupportEmailBucketPolicy",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetBucketPolicy",
+        "s3:PutBucketPolicy"
+      ],
+      "Resource": "arn:aws:s3:::classroom2"
+    }
+  ]
+}

@@ -1,0 +1,93 @@
+const CACHE_NAME = "yuzu-cigar-club-v3";
+const APP_SHELL = [
+  "/",
+  "/manifest.webmanifest",
+  "/yuzu-icon.svg",
+  "/assets/yuzu-logo-180.png",
+  "/assets/yuzu-logo-192.png"
+];
+
+const IMAGE_PATH_PREFIXES = ["/assets/", "/refs/"];
+
+function isSameOrigin(request) {
+  return new URL(request.url).origin === self.location.origin;
+}
+
+function canCache(response) {
+  return response && response.status === 200 && response.type !== "opaque";
+}
+
+function cacheResponse(request, response) {
+  if (!canCache(response)) {
+    return Promise.resolve();
+  }
+
+  const responseToCache = response.clone();
+  return caches.open(CACHE_NAME).then((cache) => cache.put(request, responseToCache));
+}
+
+async function networkFirst(event) {
+  try {
+    const response = await fetch(event.request);
+    event.waitUntil(cacheResponse(event.request, response));
+    return response;
+  } catch {
+    const cached = await caches.match(event.request);
+    return cached || caches.match("/") || Response.error();
+  }
+}
+
+async function staleWhileRevalidate(event) {
+  const cached = await caches.match(event.request);
+  const networked = fetch(event.request)
+    .then((response) => {
+      event.waitUntil(cacheResponse(event.request, response));
+      return response;
+    })
+    .catch(() => undefined);
+
+  if (cached) {
+    return cached;
+  }
+
+  return (await networked) || Response.error();
+}
+
+self.addEventListener("install", (event) => {
+  event.waitUntil(
+    caches.open(CACHE_NAME)
+      .then((cache) => cache.addAll(APP_SHELL))
+      .catch(() => undefined)
+      .then(() => self.skipWaiting())
+  );
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    caches.keys()
+      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
+      .then(() => self.clients.claim())
+  );
+});
+
+self.addEventListener("fetch", (event) => {
+  if (event.request.method !== "GET" || !isSameOrigin(event.request)) {
+    return;
+  }
+
+  if (event.request.mode === "navigate") {
+    event.respondWith(networkFirst(event));
+    return;
+  }
+
+  const { pathname } = new URL(event.request.url);
+
+  if (pathname.startsWith("/_next/static/")) {
+    event.respondWith(networkFirst(event));
+    return;
+  }
+
+  if (APP_SHELL.includes(pathname) || IMAGE_PATH_PREFIXES.some((prefix) => pathname.startsWith(prefix))) {
+    event.respondWith(staleWhileRevalidate(event));
+  }
+});

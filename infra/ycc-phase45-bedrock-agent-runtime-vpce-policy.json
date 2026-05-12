@@ -1,0 +1,19 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowYccAgentAliasInvocations",
+      "Effect": "Allow",
+      "Principal": "*",
+      "Action": "bedrock:InvokeAgent",
+      "Resource": [
+        "arn:aws:bedrock:us-east-1:374587466106:agent-alias/NDIEDXNZAV/XXAQKDKDC0",
+        "arn:aws:bedrock:us-east-1:374587466106:agent-alias/EJI2VA7AVF/1JO8IAN4BL",
+        "arn:aws:bedrock:us-east-1:374587466106:agent-alias/SJJ2DVNYES/LIFBQL76AE",
+        "arn:aws:bedrock:us-east-1:374587466106:agent-alias/XLN9JKVRDA/SOHCW5780U",
+        "arn:aws:bedrock:us-east-1:374587466106:agent-alias/UQWB6AKMBT/IHCMS7T9PB",
+        "arn:aws:bedrock:us-east-1:374587466106:agent-alias/TUVBTVKNXG/G25GBEUUMG"
+      ]
+    }
+  ]
+}

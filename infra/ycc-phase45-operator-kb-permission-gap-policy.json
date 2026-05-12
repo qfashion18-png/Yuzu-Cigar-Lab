@@ -1,0 +1,36 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowYccAgentKnowledgeBaseAssociations",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:AssociateAgentKnowledgeBase",
+        "bedrock:GetAgentKnowledgeBase",
+        "bedrock:ListAgentKnowledgeBases",
+        "bedrock:UpdateAgentKnowledgeBase"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:us-east-1:374587466106:agent/NDIEDXNZAV",
+        "arn:aws:bedrock:us-east-1:374587466106:agent/EJI2VA7AVF",
+        "arn:aws:bedrock:us-east-1:374587466106:agent/SJJ2DVNYES",
+        "arn:aws:bedrock:us-east-1:374587466106:agent/XLN9JKVRDA",
+        "arn:aws:bedrock:us-east-1:374587466106:agent/UQWB6AKMBT",
+        "arn:aws:bedrock:us-east-1:374587466106:agent/TUVBTVKNXG",
+        "arn:aws:bedrock:us-east-1:374587466106:knowledge-base/*"
+      ]
+    },
+    {
+      "Sid": "AllowDescribeYccS3Vectors",
+      "Effect": "Allow",
+      "Action": [
+        "s3vectors:GetIndex",
+        "s3vectors:GetVectorBucket",
+        "s3vectors:ListIndexes",
+        "s3vectors:ListVectorBuckets",
+        "s3vectors:ListTagsForResource"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

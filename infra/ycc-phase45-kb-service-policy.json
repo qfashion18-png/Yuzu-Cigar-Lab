@@ -1,0 +1,57 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ListBedrockEmbeddingModels",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:ListFoundationModels",
+        "bedrock:ListCustomModels"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "InvokeYccEmbeddingModel",
+      "Effect": "Allow",
+      "Action": "bedrock:InvokeModel",
+      "Resource": "arn:aws:bedrock:us-east-1::foundation-model/amazon.titan-embed-text-v2:0"
+    },
+    {
+      "Sid": "ReadYccKnowledgeBaseSource",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::classroom2",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceAccount": "374587466106"
+        },
+        "StringLike": {
+          "s3:prefix": "ycc/knowledge-base/*"
+        }
+      }
+    },
+    {
+      "Sid": "GetYccKnowledgeBaseObjects",
+      "Effect": "Allow",
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::classroom2/ycc/knowledge-base/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceAccount": "374587466106"
+        }
+      }
+    },
+    {
+      "Sid": "UseYccS3VectorIndex",
+      "Effect": "Allow",
+      "Action": [
+        "s3vectors:PutVectors",
+        "s3vectors:GetVectors",
+        "s3vectors:DeleteVectors",
+        "s3vectors:QueryVectors",
+        "s3vectors:GetIndex"
+      ],
+      "Resource": "arn:aws:s3vectors:us-east-1:374587466106:bucket/ycc-kb-vectors-374587466106-us-east-1/index/ycc-kb-index-v2"
+    }
+  ]
+}
