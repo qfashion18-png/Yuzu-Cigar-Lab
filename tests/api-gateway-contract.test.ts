@@ -6,6 +6,7 @@ const templateSource = readFileSync(new URL("../infra/ycc-phase1-edge.yaml", imp
 
 const expectedRouteAuth = new Map([
   ["GET /health", "NONE"],
+  ["GET /account/me", "JWT"],
   ["GET /content/pages", "NONE"],
   ["POST /newsletter/subscribe", "NONE"],
   ["GET /news/stories", "NONE"],

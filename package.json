@@ -12,6 +12,7 @@
     "launch:check": "npm run lint && npx tsc --noEmit && npm test && npm run build && npm audit --omit=dev",
     "launch:ops-check": "tsx scripts/launch-readiness.ts",
     "launch:go-live-check": "tsx scripts/launch-readiness.ts --strict",
+    "lambda:package": "node scripts/package-ycc-api-lambda.mjs",
     "db:check": "tsx scripts/check-rds-connection.ts"
   },
   "dependencies": {

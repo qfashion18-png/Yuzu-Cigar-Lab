@@ -274,18 +274,21 @@ async function handleHealth(event, requestId) {
   const deep = event.queryStringParameters?.deep === "1" || event.queryStringParameters?.deep === "true";
   const dbProxyEndpoint = process.env.DB_PROXY_ENDPOINT || "";
   const dbPort = Number(process.env.DB_PORT || "5432");
+  const ssl = getPgSslReadiness();
   const db = {
     proxyConfigured: Boolean(dbProxyEndpoint),
     secretConfigured: Boolean(process.env.DB_SECRET_ARN),
     databaseConfigured: Boolean(process.env.DB_NAME),
     deepCheck: deep ? "requested" : "skipped",
+    ssl,
   };
 
   if (deep) {
     db.proxyReachable = dbProxyEndpoint ? await canOpenTcpConnection(dbProxyEndpoint, dbPort, 1400) : false;
   }
 
-  const healthy = !deep || db.proxyReachable === true;
+  const databaseReady = !shouldPersistDatabaseWrites() || ssl.ready;
+  const healthy = databaseReady && (!deep || db.proxyReachable === true);
 
   return json(healthy ? 200 : 503, requestId, {
     status: healthy ? "ok" : "degraded",
@@ -2176,7 +2179,8 @@ function createPgClient(databaseName, secret, applicationName) {
 }
 
 function getPgSslConfig() {
-  const sslMode = (process.env.DB_SSLMODE || process.env.RDS_SSLMODE || "verify-full").toLowerCase();
+  const readiness = getPgSslReadiness();
+  const sslMode = readiness.mode;
   if (sslMode === "disable") {
     return false;
   }
@@ -2184,13 +2188,36 @@ function getPgSslConfig() {
   const sslConfig = {
     rejectUnauthorized: sslMode !== "require",
   };
-  const rootCertPath = process.env.DB_SSLROOTCERT || process.env.RDS_SSLROOTCERT || process.env.PGSSLROOTCERT;
+  const rootCertPath = getPgSslRootCertPath();
 
   if (rootCertPath) {
+    if (!readiness.rootCertReadable) {
+      const error = new Error(`Configured PostgreSQL SSL root certificate is not readable: ${rootCertPath}`);
+      error.code = "db_ssl_root_cert_missing";
+      throw error;
+    }
+
     sslConfig.ca = tls.rootCertificates.concat(fsSync.readFileSync(resolveLambdaPath(rootCertPath), "utf8"));
   }
 
   return sslConfig;
+}
+
+function getPgSslReadiness() {
+  const sslMode = (process.env.DB_SSLMODE || process.env.RDS_SSLMODE || "verify-full").toLowerCase();
+  const rootCertPath = getPgSslRootCertPath();
+  const rootCertReadable = rootCertPath ? fsSync.existsSync(resolveLambdaPath(rootCertPath)) : null;
+
+  return {
+    mode: sslMode,
+    rootCertConfigured: Boolean(rootCertPath),
+    rootCertReadable,
+    ready: sslMode === "disable" || !rootCertPath || rootCertReadable === true,
+  };
+}
+
+function getPgSslRootCertPath() {
+  return process.env.DB_SSLROOTCERT || process.env.RDS_SSLROOTCERT || process.env.PGSSLROOTCERT || "";
 }
 
 function resolveLambdaPath(value) {

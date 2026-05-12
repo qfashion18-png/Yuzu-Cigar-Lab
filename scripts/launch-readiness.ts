@@ -67,6 +67,17 @@ const placeholderPatterns = [
 ];
 
 const disallowedZipEntryPatterns = [/\\/u, /^out\//u, /^\.next\//u, /^node_modules\//u, /^output\//u, /^\.git\//u];
+const requiredLambdaZipEntries = [
+  "index.js",
+  "commerce-rules.js",
+  "stripe-commerce.js",
+  "global-bundle.pem",
+  "migrations/0001_phase3_app_schema.sql",
+  "migrations/0002_commerce_schema.sql",
+  "migrations/0003_site_content_schema.sql",
+  "migrations/0004_newsroom_schema.sql",
+];
+const disallowedLambdaZipEntryPatterns = [/\\/u, /^out\//u, /^\.next\//u, /^output\//u, /^\.git\//u, /^infra\//u, /^src\//u];
 
 export function parseEnvSource(source: string): Record<string, string> {
   const env: Record<string, string> = {};
@@ -140,6 +151,18 @@ export function assessLaunchReadiness(env: EnvMap, options: LaunchReadinessOptio
 
 export function validateDeployZipEntries(entries: string[]): string[] {
   return entries.filter((entry) => disallowedZipEntryPatterns.some((pattern) => pattern.test(entry)));
+}
+
+export function validateLambdaDeployZipEntries(entries: string[]): string[] {
+  const entrySet = new Set(entries);
+  const missingEntries = requiredLambdaZipEntries
+    .filter((entry) => !entrySet.has(entry))
+    .map((entry) => `missing:${entry}`);
+  const invalidEntries = entries
+    .filter((entry) => disallowedLambdaZipEntryPatterns.some((pattern) => pattern.test(entry)))
+    .map((entry) => `invalid:${entry}`);
+
+  return [...missingEntries, ...invalidEntries];
 }
 
 export function planGeneratedArtifactCleanup(zipFiles: ArtifactInfo[], outputPath: string | null): ArtifactCleanupPlan {

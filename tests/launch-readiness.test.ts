@@ -7,6 +7,7 @@ import {
   parseEnvSource,
   planGeneratedArtifactCleanup,
   validateDeployZipEntries,
+  validateLambdaDeployZipEntries,
 } from "../scripts/launch-readiness";
 
 const fakeLiveStripeSecret = ["sk", "live_validlaunchkey"].join("_");
@@ -165,6 +166,35 @@ test("deploy zip validation rejects Windows paths and nested build folders", () 
     "out/index.html",
     "assets\\yuzu-logo.png",
     ".next/server/app.js",
+  ]);
+});
+
+test("Lambda deploy zip validation requires runtime files, CA bundle, and migrations", () => {
+  assert.deepEqual(
+    validateLambdaDeployZipEntries([
+      "index.js",
+      "commerce-rules.js",
+      "stripe-commerce.js",
+      "global-bundle.pem",
+      "migrations/0001_phase3_app_schema.sql",
+      "migrations/0002_commerce_schema.sql",
+      "migrations/0003_site_content_schema.sql",
+      "migrations/0004_newsroom_schema.sql",
+      "node_modules/pg/package.json",
+    ]),
+    [],
+  );
+
+  assert.deepEqual(validateLambdaDeployZipEntries(["index.js", "infra/lambda/ycc-api/index.js", "assets\\bad.js"]), [
+    "missing:commerce-rules.js",
+    "missing:stripe-commerce.js",
+    "missing:global-bundle.pem",
+    "missing:migrations/0001_phase3_app_schema.sql",
+    "missing:migrations/0002_commerce_schema.sql",
+    "missing:migrations/0003_site_content_schema.sql",
+    "missing:migrations/0004_newsroom_schema.sql",
+    "invalid:infra/lambda/ycc-api/index.js",
+    "invalid:assets\\bad.js",
   ]);
 });
 

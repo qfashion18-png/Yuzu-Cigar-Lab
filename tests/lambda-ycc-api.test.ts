@@ -1,7 +1,11 @@
 import { createRequire } from "node:module";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
+import tls from "node:tls";
 
 const require = createRequire(import.meta.url);
 const Module = require("node:module");
@@ -870,6 +874,49 @@ test("health route returns service contract", async () => {
   assert.equal(body.capabilities.conciergeContract, true);
 });
 
+test("health route reports degraded when the configured RDS CA bundle is missing", async () => {
+  const previousFeatureDbWrites = process.env.FEATURE_DB_WRITES;
+  const previousSslMode = process.env.RDS_SSLMODE;
+  const previousSslRootCert = process.env.RDS_SSLROOTCERT;
+
+  try {
+    process.env.FEATURE_DB_WRITES = "schema_ready";
+    process.env.RDS_SSLMODE = "verify-full";
+    process.env.RDS_SSLROOTCERT = "missing-global-bundle.pem";
+
+    const response = await handler({
+      routeKey: "GET /health",
+      rawPath: "/health",
+      requestContext: { requestId: "req-health-missing-ca", http: { method: "GET" } },
+    });
+
+    assert.equal(response.statusCode, 503);
+    const body = JSON.parse(response.body);
+    assert.equal(body.status, "degraded");
+    assert.equal(body.db.ssl.mode, "verify-full");
+    assert.equal(body.db.ssl.rootCertConfigured, true);
+    assert.equal(body.db.ssl.rootCertReadable, false);
+  } finally {
+    if (previousFeatureDbWrites === undefined) {
+      delete process.env.FEATURE_DB_WRITES;
+    } else {
+      process.env.FEATURE_DB_WRITES = previousFeatureDbWrites;
+    }
+
+    if (previousSslMode === undefined) {
+      delete process.env.RDS_SSLMODE;
+    } else {
+      process.env.RDS_SSLMODE = previousSslMode;
+    }
+
+    if (previousSslRootCert === undefined) {
+      delete process.env.RDS_SSLROOTCERT;
+    } else {
+      process.env.RDS_SSLROOTCERT = previousSslRootCert;
+    }
+  }
+});
+
 test("protected routes reject missing Cognito claims", async () => {
   const response = await handler({
     routeKey: "GET /account/me",
@@ -1400,9 +1447,12 @@ test("account route upserts the authenticated member when schema writes are read
 
 test("database clients verify the RDS Proxy TLS certificate with the configured CA bundle", async () => {
   const mock = installPersistenceMocks();
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "ycc-ca-bundle-"));
+  const rootCertPath = path.join(tempDir, "global-bundle.pem");
   try {
+    writeFileSync(rootCertPath, `${tls.rootCertificates[0]}\n`, "utf8");
     process.env.RDS_SSLMODE = "verify-full";
-    process.env.RDS_SSLROOTCERT = `${process.cwd()}\\global-bundle.pem`;
+    process.env.RDS_SSLROOTCERT = rootCertPath;
 
     const response = await handler(createAuthenticatedEvent("GET /account/me"));
 
@@ -1414,6 +1464,7 @@ test("database clients verify the RDS Proxy TLS certificate with the configured 
     assert.ok(ssl.ca.length > 1);
     assert.match(ssl.ca.join("\n"), /BEGIN CERTIFICATE/);
   } finally {
+    rmSync(tempDir, { recursive: true, force: true });
     mock.restore();
   }
 });
