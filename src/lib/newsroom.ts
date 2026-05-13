@@ -158,7 +158,8 @@ export function normalizeNewsSourceCandidate(value: string): NewsSourceCandidate
   }
 }
 
-export function buildNewsAgentPrompt(input: NewsroomDraftInput) {
+export function buildNewsAgentPrompt(input: NewsroomDraftInput, options: { strictNoPlaceholder?: boolean } = {}) {
+  const strictNoPlaceholder = options.strictNoPlaceholder === true;
   const vettedSources = input.sourceUrls.map(normalizeNewsSourceCandidate);
   const officialSources = vettedSources.filter((source) => source.status === "official" || source.status === "needs_review");
   const blockedSources = vettedSources.filter((source) => source.status === "blocked_secondary" || source.status === "invalid");
@@ -168,7 +169,7 @@ export function buildNewsAgentPrompt(input: NewsroomDraftInput) {
   const noteLines = (input.sourceNotes ?? []).filter(Boolean).map((note, index) => `${index + 1}. ${note}`).join("\n") || "No operator notes supplied.";
   const blockedLines = blockedSources.map((source) => `- ${source.input}: ${source.reviewNote}`).join("\n") || "None.";
 
-  return [
+  const promptLines = [
     "You are YCCNewsAgent, an internal editorial agent for authorized Yuzu operators.",
     "Draft original cigar-industry news copy for adult readers of legal tobacco age.",
     "Use facts only from official brand, company, distributor, event, regulator, or wire sources supplied below.",
@@ -176,6 +177,9 @@ export function buildNewsAgentPrompt(input: NewsroomDraftInput) {
     "Do not copy source wording beyond short attributed names or product titles. Use a new structure and Yuzu's own editorial voice.",
     "Avoid health, cessation, medical, therapeutic, disease, safety, or underage tobacco claims.",
     "Every factual claim must be tied to a source note. Publication requires human approval.",
+    "Do not return template scaffolding, checklists, or placeholder section headings.",
+    "Do not use the placeholder headings: What changed; Why adult members may care; Operator review notes.",
+    "The draft must contain concrete details (dates, product names, events, claims) from the accepted source list.",
     "Return JSON only with no prose before or after the object.",
     "bodyMarkdown must be a fully written story in publication-ready prose, not an outline, checklist, or operator note scaffold.",
     "Each section body must contain the same substantive reporting as the article body, not editorial instructions.",
@@ -195,7 +199,18 @@ export function buildNewsAgentPrompt(input: NewsroomDraftInput) {
     "",
     "Return JSON with title, dek, category, bodyMarkdown (a complete publication-ready story in markdown), sections[{heading,body}], and sourceNotes[{label,url,note}].",
     "BodyMarkdown should be a full draft article for operator approval; sections should be a readable breakdown of that article.",
-  ].join("\n");
+  ];
+
+  if (strictNoPlaceholder) {
+    promptLines.push(
+      "STRICT MODE: If your draft is uncertain, still provide a real story draft and never output placeholder copy.",
+      "Never include the exact text from fallback template sections or the required placeholder phrases.",
+      "If source details are insufficient, explicitly note which fields are unverified in bodyMarkdown and still provide concrete available facts.",
+      "Do not reuse heading names that look like templates.",
+    );
+  }
+
+  return promptLines.join("\n");
 }
 
 export function normalizeNewsDraftFromAgentReply(reply: string, input: NewsroomDraftInput): NewsroomDraft {
