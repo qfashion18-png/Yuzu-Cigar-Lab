@@ -1,3 +1,6 @@
+import { request as httpRequest, type OutgoingHttpHeaders } from "node:http";
+import { request as httpsRequest } from "node:https";
+
 import {
   resolveCognitoConfig,
   signInWithCognitoPassword,
@@ -23,7 +26,7 @@ type NewsroomAuthFetch = (
 
 export async function resolveNewsroomAutomationAuth(
   env: NewsroomAutomationEnv = process.env,
-  fetchImpl: NewsroomAuthFetch = globalThis.fetch.bind(globalThis) as NewsroomAuthFetch,
+  fetchImpl?: NewsroomAuthFetch,
 ): Promise<NewsroomAutomationAuth> {
   const username = readEnv(env, "YCC_NEWSROOM_COGNITO_USERNAME");
   const password = readEnv(env, "YCC_NEWSROOM_COGNITO_PASSWORD");
@@ -38,7 +41,7 @@ export async function resolveNewsroomAutomationAuth(
       throw new Error("Cognito public environment is not configured for newsroom automation sign-in.");
     }
 
-    const result = await signInWithCognitoPassword(config, { username, password }, fetchImpl);
+    const result = await signInWithCognitoPassword(config, { username, password }, fetchImpl ?? buildCognitoFetch(env));
     if (result.status !== "signed_in") {
       throw new Error(`Cognito newsroom sign-in failed: ${result.message}`);
     }
@@ -69,4 +72,60 @@ export async function resolveNewsroomAutomationAuth(
 function readEnv(env: NewsroomAutomationEnv, name: string) {
   const value = env[name];
   return value?.trim() ? value.trim() : "";
+}
+
+function readBooleanEnv(env: NewsroomAutomationEnv, name: string) {
+  return readEnv(env, name).toLowerCase() === "true";
+}
+
+function buildCognitoFetch(env: NewsroomAutomationEnv): NewsroomAuthFetch {
+  if (!readBooleanEnv(env, "YCC_NEWSROOM_COGNITO_TLS_INSECURE")) {
+    return globalThis.fetch.bind(globalThis) as NewsroomAuthFetch;
+  }
+
+  return async (url: string, init: RequestInit) => {
+    const target = new URL(url);
+    const requestImpl = target.protocol === "https:" ? httpsRequest : httpRequest;
+    const headers: OutgoingHttpHeaders | undefined = init.headers
+      ? Object.fromEntries(new Headers(init.headers))
+      : undefined;
+
+    return await new Promise((resolve, reject) => {
+      const request = requestImpl(
+        target,
+        {
+          method: init.method || "GET",
+          headers,
+          ...(target.protocol === "https:" ? { rejectUnauthorized: false } : {}),
+        },
+        (response) => {
+          const chunks: Buffer[] = [];
+          response.on("data", (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+          response.on("end", () => {
+            const text = Buffer.concat(chunks).toString("utf8");
+            resolve({
+              ok: (response.statusCode || 500) >= 200 && (response.statusCode || 500) < 300,
+              async json() {
+                try {
+                  return text ? JSON.parse(text) : {};
+                } catch {
+                  return {};
+                }
+              },
+            });
+          });
+        },
+      );
+
+      request.on("error", reject);
+
+      if (typeof init.body === "string" || Buffer.isBuffer(init.body)) {
+        request.write(init.body);
+      } else if (init.body) {
+        request.write(String(init.body));
+      }
+
+      request.end();
+    });
+  };
 }
