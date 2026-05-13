@@ -98,6 +98,8 @@ function installPersistenceMocks(
     pollyAudio?: string;
     retrieveText?: string;
     transcribeTranscript?: string;
+    dispatchRows?: Array<Record<string, unknown>>;
+    webPushOutcomes?: Record<string, "ok" | "gone" | "not_found">;
   } = {}
 ) {
   const clients: Array<{
@@ -146,12 +148,12 @@ function installPersistenceMocks(
       }
 
       if (normalized.includes("from public.schema_migrations")) {
-        const version = normalized.includes("'0003'") ? "0003" : "0001";
+        const version = normalized.includes("'0003'") ? "0003" : normalized.includes("'0002'") ? "0002" : "0001";
         return {
           rows: [
             {
               version,
-              name: version === "0003" ? "site_content_schema" : "phase3_app_schema",
+              name: version === "0003" ? "site_content_schema" : version === "0002" ? "commerce_schema" : "phase3_app_schema",
               applied_at: "2026-05-08T10:00:00.000Z",
             },
           ],
@@ -244,6 +246,50 @@ function installPersistenceMocks(
               role: "customer",
               membership_tier: "sensei",
               member_status: "active",
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+
+      if (normalized.includes("select preferences") && normalized.includes("from public.member_profiles")) {
+        return {
+          rows: [
+            {
+              preferences: {
+                pushEnabled: true,
+                reorderRemindersEnabled: true,
+                climateAlertsEnabled: false,
+                pushSubscription: {
+                  endpoint: "https://example.com/endpoint",
+                  keys: {
+                    p256dh: "p256dh-key",
+                    auth: "auth-key",
+                  },
+                },
+              },
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+
+      if (normalized.includes("insert into public.member_profiles")) {
+        return {
+          rows: [
+            {
+              preferences: {
+                pushEnabled: true,
+                reorderRemindersEnabled: true,
+                climateAlertsEnabled: false,
+                pushSubscription: {
+                  endpoint: "https://example.com/endpoint",
+                  keys: {
+                    p256dh: "p256dh-key",
+                    auth: "auth-key",
+                  },
+                },
+              },
             },
           ],
           rowCount: 1,
@@ -349,6 +395,24 @@ function installPersistenceMocks(
         };
       }
 
+      if (
+        normalized.includes("from public.members m") &&
+        normalized.includes("join public.member_profiles mp") &&
+        normalized.includes("join public.humidor_items hi")
+      ) {
+        return {
+          rows: options.dispatchRows || [],
+          rowCount: options.dispatchRows?.length || 0,
+        };
+      }
+
+      if (normalized.includes("update public.humidor_items") && normalized.includes("metadata = coalesce(metadata")) {
+        return {
+          rows: [{ id: String(params[1] || "55555555-5555-4555-8555-555555555555"), metadata: {} }],
+          rowCount: 1,
+        };
+      }
+
       if (normalized.includes("select route, edits, published_at, updated_at from public.site_page_content")) {
         return {
           rows: [
@@ -388,6 +452,53 @@ function installPersistenceMocks(
   const s3Invocations: Array<Record<string, unknown>> = [];
   const sesInvocations: Array<Record<string, unknown>> = [];
   const transcribeInvocations: Array<Record<string, unknown>> = [];
+  type WebPushSetVapidDetails = (vapidSubject: string, vapidPublicKey: string, vapidPrivateKey: string) => void;
+  type WebPushSendNotification = (subscription: Record<string, unknown>, payload: string) => Promise<unknown>;
+  type WebPushModule = {
+    setVapidDetails: WebPushSetVapidDetails;
+    sendNotification: WebPushSendNotification;
+  };
+  const webPushInvocations: Array<{ subscription: unknown; payload: string }> = [];
+  let webPushModule: WebPushModule | null = null;
+  let originalWebPushSetVapidDetails: WebPushSetVapidDetails | undefined;
+  let originalWebPushSendNotification: WebPushSendNotification | undefined;
+
+  try {
+    webPushModule = require("web-push") as WebPushModule;
+    originalWebPushSetVapidDetails = webPushModule.setVapidDetails;
+    originalWebPushSendNotification = webPushModule.sendNotification;
+  } catch {
+    webPushModule = null;
+  }
+
+  if (webPushModule) {
+    webPushModule.setVapidDetails = (vapidSubject: string, vapidPublicKey: string, vapidPrivateKey: string) => {
+      webPushInvocations.push({
+        subscription: { action: "setVapidDetails", vapidSubject, vapidPublicKey, vapidPrivateKey },
+        payload: "",
+      });
+    };
+
+    webPushModule.sendNotification = async (subscription: Record<string, unknown>, payload: string) => {
+      webPushInvocations.push({ subscription, payload });
+
+      const endpoint = String(subscription.endpoint || "unknown");
+      const result = options.webPushOutcomes?.[endpoint] || "ok";
+      if (result === "gone") {
+        const error = new Error("Endpoint gone") as Error & { statusCode: number };
+        error.statusCode = 410;
+        error.name = "WebPushEndpointGone";
+        throw error;
+      }
+
+      if (result === "not_found") {
+        const error = new Error("Endpoint not found") as Error & { statusCode: number };
+        error.statusCode = 404;
+        error.name = "WebPushEndpointNotFound";
+        throw error;
+      }
+    };
+  }
 
   class InvokeAgentCommand {
     input: Record<string, unknown>;
@@ -612,6 +723,35 @@ function installPersistenceMocks(
     }
   }
 
+  class WebPushClient {
+    setVapidDetails(vapidSubject: string, vapidPublicKey: string, vapidPrivateKey: string) {
+      webPushInvocations.push({
+        subscription: { action: "setVapidDetails", vapidSubject, vapidPublicKey, vapidPrivateKey },
+        payload: "",
+      });
+    }
+
+    async sendNotification(subscription: Record<string, unknown>, payload: string) {
+      webPushInvocations.push({ subscription, payload });
+
+      const endpoint = String((subscription as { endpoint?: string }).endpoint || "unknown");
+      const result = options.webPushOutcomes?.[endpoint] || "ok";
+      if (result === "gone") {
+        const error = new Error("Endpoint gone") as Error & { statusCode: number };
+        error.statusCode = 410;
+        error.name = "WebPushEndpointGone";
+        throw error;
+      }
+
+      if (result === "not_found") {
+        const error = new Error("Endpoint not found") as Error & { statusCode: number };
+        error.statusCode = 404;
+        error.name = "WebPushEndpointNotFound";
+        throw error;
+      }
+    }
+  }
+
   class SecretsManagerClient {
     async send() {
       return {
@@ -623,6 +763,10 @@ function installPersistenceMocks(
   Module._load = function load(request: string, parent: unknown, isMain: boolean) {
     if (request === "pg") {
       return { Client: RecordingPgClient };
+    }
+
+    if (request === "web-push") {
+      return webPushModule || new WebPushClient();
     }
 
     if (request === "@aws-sdk/client-secrets-manager") {
@@ -660,6 +804,10 @@ function installPersistenceMocks(
     DB_PROXY_ENDPOINT: process.env.DB_PROXY_ENDPOINT,
     DB_SECRET_ARN: process.env.DB_SECRET_ARN,
     DB_NAME: process.env.DB_NAME,
+    HUMIDOR_ALERT_DISPATCH_SECRET: process.env.HUMIDOR_ALERT_DISPATCH_SECRET,
+    VAPID_PUBLIC_KEY: process.env.VAPID_PUBLIC_KEY,
+    VAPID_PRIVATE_KEY: process.env.VAPID_PRIVATE_KEY,
+    VAPID_SUBJECT: process.env.VAPID_SUBJECT,
     FEATURE_DB_WRITES: process.env.FEATURE_DB_WRITES,
     FEATURE_BEDROCK: process.env.FEATURE_BEDROCK,
     FEATURE_CONCIERGE_VOICE: process.env.FEATURE_CONCIERGE_VOICE,
@@ -689,6 +837,10 @@ function installPersistenceMocks(
   process.env.DB_PROXY_ENDPOINT = "proxy.test.local";
   process.env.DB_SECRET_ARN = "arn:aws:secretsmanager:us-east-1:123456789012:secret:ycc/test";
   process.env.DB_NAME = "postgresycc";
+  process.env.HUMIDOR_ALERT_DISPATCH_SECRET = "humidor-dispatch-secret";
+  process.env.VAPID_PUBLIC_KEY = "BOGUS_PUBLIC_KEY";
+  process.env.VAPID_PRIVATE_KEY = "BOGUS_PRIVATE_KEY";
+  process.env.VAPID_SUBJECT = "mailto:alerts@yuzucigarclub.com";
   process.env.FEATURE_DB_WRITES = "schema_ready";
   process.env.FEATURE_BEDROCK = "runtime_ready";
   process.env.FEATURE_CONCIERGE_VOICE = "ready";
@@ -721,7 +873,16 @@ function installPersistenceMocks(
     s3Invocations,
     sesInvocations,
     transcribeInvocations,
+    webPushInvocations,
     restore() {
+      if (webPushModule) {
+        if (originalWebPushSetVapidDetails) {
+          webPushModule.setVapidDetails = originalWebPushSetVapidDetails;
+        }
+        if (originalWebPushSendNotification) {
+          webPushModule.sendNotification = originalWebPushSendNotification;
+        }
+      }
       Module._load = originalModuleLoad;
       for (const [key, value] of Object.entries(previousEnv)) {
         if (value === undefined) {
@@ -2403,6 +2564,289 @@ test("humidor image identification logs pulled field coverage without image or n
   }
 });
 
+test("humidor alerts GET endpoint returns stored preferences from the member profile", async () => {
+  const mock = installPersistenceMocks();
+
+  try {
+    const response = await handler(createAuthenticatedEvent("GET /humidor/alerts"));
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.persistence, "stored");
+    assert.equal(body.preferences.pushEnabled, true);
+    assert.equal(body.preferences.reorderRemindersEnabled, true);
+    assert.equal(body.preferences.climateAlertsEnabled, false);
+    assert.equal(body.preferences.pushSubscription?.endpoint, "https://example.com/endpoint");
+
+    const queries = mock.clients.flatMap((client) => client.queries);
+    assert.ok(queries.some((query) => query.sql.includes("select preferences from public.member_profiles")), "alert preferences should be read from member_profiles");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("humidor alerts update endpoint stores member profile preferences", async () => {
+  const mock = installPersistenceMocks();
+
+  try {
+    const response = await handler(
+      createAuthenticatedEvent("POST /humidor/alerts", {
+        pushEnabled: true,
+        reorderRemindersEnabled: true,
+        climateAlertsEnabled: true,
+        pushSubscription: {
+          endpoint: "https://example.com/updated",
+          keys: {
+            p256dh: "p256dh-key-2",
+            auth: "auth-key-2",
+          },
+        },
+      })
+    );
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.persistence, "stored");
+    assert.equal(body.preferences.pushEnabled, true);
+    assert.equal(body.preferences.climateAlertsEnabled, true);
+    assert.equal(body.preferences.pushSubscription.endpoint, "https://example.com/endpoint");
+
+    const queries = mock.clients.flatMap((client) => client.queries);
+    assert.ok(queries.some((query) => query.sql.includes("insert into public.member_profiles")), "alert preferences should be upserted in member_profiles");
+    assert.ok(queries.some((query) => query.sql.includes("insert into public.audit_log")), "alert preferences update should be audited");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("humidor alert dispatch rejects missing or invalid dispatch secret", async () => {
+  const mock = installPersistenceMocks();
+  try {
+    const missingSecret = await handler({
+      routeKey: "POST /humidor/alerts/dispatch",
+      rawPath: "/humidor/alerts/dispatch",
+      requestContext: {
+        requestId: "req-humidor-dispatch-missing-secret",
+        http: { method: "POST" },
+      },
+    });
+
+    assert.equal(missingSecret.statusCode, 403);
+    const missingBody = JSON.parse(missingSecret.body);
+    assert.equal(missingBody.error, "humidor_dispatch_forbidden");
+
+    const wrongSecret = await handler({
+      routeKey: "POST /humidor/alerts/dispatch",
+      rawPath: "/humidor/alerts/dispatch",
+      headers: {
+        "x-humidor-alert-dispatch-secret": "wrong-secret",
+      },
+      requestContext: {
+        requestId: "req-humidor-dispatch-wrong-secret",
+        http: { method: "POST" },
+      },
+    });
+
+    assert.equal(wrongSecret.statusCode, 403);
+    const wrongBody = JSON.parse(wrongSecret.body);
+    assert.equal(wrongBody.error, "humidor_dispatch_forbidden");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("humidor alert dispatch reports no due items when none are eligible", async () => {
+  const mock = installPersistenceMocks({
+    dispatchRows: [],
+  });
+
+  try {
+    const response = await handler({
+      routeKey: "POST /humidor/alerts/dispatch",
+      rawPath: "/humidor/alerts/dispatch",
+      headers: {
+        "x-humidor-alert-dispatch-secret": "humidor-dispatch-secret",
+      },
+      requestContext: {
+        requestId: "req-humidor-dispatch-no-due",
+        http: { method: "POST" },
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.status, "no_due_items");
+    assert.equal(body.summary.dueItems, 0);
+    assert.equal(body.summary.sentNotifications, 0);
+    assert.equal(mock.webPushInvocations.length, 1);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("humidor alert dispatch sends grouped reminders, updates metadata, and emits one audit row per member", async () => {
+  const mock = installPersistenceMocks({
+    dispatchRows: [
+      {
+        member_id: "11111111-1111-4111-8111-111111111111",
+        member_sub: "member-111111111111",
+        push_subscription: {
+          endpoint: "https://example.com/endpoints/member-a",
+          keys: { p256dh: "p256dh-a", auth: "auth-a" },
+        },
+        humidor_item_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        name: "Padron 1964 Anniversary",
+        brand: "Padron",
+        line: "1964 Anniversary",
+        vitola: "Toro",
+        reorder_reminder: "2026-05-10",
+      },
+      {
+        member_id: "11111111-1111-4111-8111-111111111111",
+        member_sub: "member-111111111111",
+        push_subscription: {
+          endpoint: "https://example.com/endpoints/member-a",
+          keys: { p256dh: "p256dh-a", auth: "auth-a" },
+        },
+        humidor_item_id: "aaaaaaaa-aaaa-4aaa-8aaa-bbbbbbbbbbbb",
+        name: "Cohiba Behike",
+        brand: "Cohiba",
+        line: "Behike",
+        vitola: "Corona",
+        reorder_reminder: "2026-05-10",
+      },
+      {
+        member_id: "22222222-2222-4222-8222-222222222222",
+        member_sub: "member-222222222222",
+        push_subscription: {
+          endpoint: "https://example.com/endpoints/member-b",
+          keys: { p256dh: "p256dh-b", auth: "auth-b" },
+        },
+        humidor_item_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        name: "Montecristo No. 2",
+        brand: "Montecristo",
+        line: "Corona",
+        vitola: "Toro",
+        reorder_reminder: "2026-05-10",
+      },
+    ],
+  });
+
+  try {
+    const response = await handler({
+      routeKey: "POST /humidor/alerts/dispatch",
+      rawPath: "/humidor/alerts/dispatch",
+      headers: {
+        "x-humidor-alert-dispatch-secret": "humidor-dispatch-secret",
+      },
+      requestContext: {
+        requestId: "req-humidor-dispatch-success",
+        http: { method: "POST" },
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.status, "dispatched");
+    assert.equal(body.summary.dueItems, 3);
+    assert.equal(body.summary.attemptedMembers, 2);
+    assert.equal(body.summary.sentNotifications, 2);
+    assert.equal(body.summary.failedNotifications, 0);
+    assert.equal(body.summary.sentItems, 3);
+    assert.equal(body.summary.invalidSubscriptionItems, 0);
+
+    const sendInvocations = mock.webPushInvocations.filter((invocation) => invocation.payload !== "");
+    assert.equal(sendInvocations.length, 2);
+    assert.equal(sendInvocations[0].subscription.endpoint, "https://example.com/endpoints/member-a");
+    assert.equal(sendInvocations[1].subscription.endpoint, "https://example.com/endpoints/member-b");
+
+    const firstPayload = JSON.parse(sendInvocations[0].payload);
+    assert.equal(firstPayload.title, "Humidor reorder reminders");
+    assert.match(firstPayload.body, /are due for reorder reminders as of/);
+    assert.equal(firstPayload.data.tag, "digital-humidor-alert");
+    assert.equal(firstPayload.data.url, "/humidor?section=alerts");
+
+    const updates = mock.clients
+      .flatMap((client) => client.queries)
+      .filter((query) => query.sql.includes("update public.humidor_items") && query.sql.includes("metadata"));
+    assert.equal(updates.length, 3);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("humidor alert dispatch disables push when endpoint is gone and records the failure", async () => {
+  const mock = installPersistenceMocks({
+    dispatchRows: [
+      {
+        member_id: "33333333-3333-4333-8333-333333333333",
+        member_sub: "member-333333333333",
+        push_subscription: {
+          endpoint: "https://example.com/endpoints/gone",
+          keys: { p256dh: "p256dh-gone", auth: "auth-gone" },
+        },
+        humidor_item_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        name: "Arturo Fuente Anejo",
+        brand: "Arturo Fuente",
+        line: "Anejo",
+        vitola: "Double Corona",
+        reorder_reminder: "2026-05-10",
+      },
+    ],
+    webPushOutcomes: {
+      "https://example.com/endpoints/gone": "gone",
+    },
+  });
+
+  try {
+    const response = await handler({
+      routeKey: "POST /humidor/alerts/dispatch",
+      rawPath: "/humidor/alerts/dispatch",
+      headers: {
+        "x-humidor-alert-dispatch-secret": "humidor-dispatch-secret",
+      },
+      requestContext: {
+        requestId: "req-humidor-dispatch-gone",
+        http: { method: "POST" },
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.status, "dispatched");
+    assert.equal(body.summary.dueItems, 1);
+    assert.equal(body.summary.sentNotifications, 0);
+    assert.equal(body.summary.failedNotifications, 1);
+    assert.equal(body.summary.sentItems, 0);
+    assert.equal(body.summary.invalidSubscriptionItems, 0);
+    assert.equal(body.failed.length, 1);
+    assert.equal(body.failed[0].reason, "push_send_status_410");
+    assert.equal(body.failed[0].statusCode, 410);
+
+    const sendInvocations = mock.webPushInvocations.filter((invocation) => invocation.payload !== "");
+    assert.equal(sendInvocations.length, 1);
+    assert.equal(sendInvocations[0].subscription.endpoint, "https://example.com/endpoints/gone");
+
+    const queries = mock.clients.flatMap((client) => client.queries);
+    assert.equal(
+      queries.filter((query) => query.sql.includes("update public.humidor_items") && query.sql.includes("metadata")).length,
+      0,
+      "metadata should not be updated when web-push fails"
+    );
+
+    assert.ok(
+      queries.some((query) => query.sql.includes("insert into public.member_profiles")),
+      "invalid push should disable member alert preferences"
+    );
+    assert.ok(
+      queries.some((query) => query.sql.includes("insert into public.audit_log")),
+      "failure should record a dispatch failure audit row"
+    );
+  } finally {
+    mock.restore();
+  }
+});
+
 test("humidor item route persists the item and audit row", async () => {
   const mock = installPersistenceMocks();
   try {
@@ -2512,6 +2956,51 @@ test("site content migration invoke requires explicit confirmation", async () =>
   assert.equal(response.statusCode, 403);
   const body = JSON.parse(response.body);
   assert.equal(body.error, "migration_confirmation_required");
+});
+
+test("commerce migration invoke requires explicit confirmation", async () => {
+  const response = await handler({
+    source: "ycc.commerce.migration",
+    action: "apply_commerce_schema",
+    requestContext: { requestId: "req-commerce-migration-guard" },
+  });
+
+  assert.equal(response.statusCode, 403);
+  const body = JSON.parse(response.body);
+  assert.equal(body.error, "migration_confirmation_required");
+});
+
+test("commerce migration applies and verifies order tables", async () => {
+  const mock = installPersistenceMocks();
+
+  try {
+    const response = await handler({
+      source: "ycc.commerce.migration",
+      action: "apply_commerce_schema",
+      confirm: "APPLY_YCC_COMMERCE_SCHEMA",
+      requestContext: { requestId: "req-commerce-migration-apply" },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.status, "applied");
+    assert.equal(body.migration, "0002_commerce_schema");
+    assert.deepEqual(body.missingTables, []);
+    assert.ok(body.tables.includes("commerce_orders"));
+    assert.equal(body.migrationRow.version, "0002");
+
+    const queries = mock.clients.flatMap((client) => client.queries);
+    assert.ok(
+      queries.some((query) => query.sql.includes("create table if not exists public.commerce_orders")),
+      "commerce migration SQL should be executed"
+    );
+    assert.ok(
+      queries.some((query) => query.sql.includes("where version = '0002'")),
+      "commerce verification should check migration version 0002"
+    );
+  } finally {
+    mock.restore();
+  }
 });
 
 test("site content migration applies and verifies the live page table", async () => {

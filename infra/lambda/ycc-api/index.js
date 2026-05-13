@@ -6,6 +6,7 @@ const fsSync = require("node:fs");
 const net = require("node:net");
 const path = require("node:path");
 const tls = require("node:tls");
+const webPush = require("web-push");
 const { invalidAgeVerificationTokens, validateCheckoutReadiness } = require("./commerce-rules");
 const {
   buildCustomerPortalSessionParams,
@@ -55,6 +56,28 @@ const VOICE_AUDIO_MIME_FORMATS = new Map([
   ["audio/flac", "flac"],
 ]);
 const LIVE_PAGE_ROUTES = new Set(["/", "/membership", "/education"]);
+const HUMIDOR_ROUTES = new Set([
+  "GET /humidor/items",
+  "GET /humidor/alerts",
+  "POST /humidor/identify-cigar",
+  "POST /humidor/alerts",
+  "POST /humidor/items",
+]);
+const HUMIDOR_ALERT_DISPATCH_ROUTE = "POST /humidor/alerts/dispatch";
+const HUMIDOR_ALERT_DISPATCH_SECRET_HEADER = "x-humidor-alert-dispatch-secret";
+const HUMIDOR_REORDER_REMINDER_DISPATCH_MARKER = "humidorReorderReminderDispatchedOn";
+const HUMIDOR_ALERT_DISPATCH_NOTIFICATION_TAG = "digital-humidor-alert";
+const HUMIDOR_DISPATCH_ACTOR_SUB = "system.humidor-dispatch";
+const ADMIN_ROUTES = new Set([
+  "POST /admin/commerce/stripe-sync-products",
+  "GET /admin/commerce/webhook-events",
+  "GET /admin/commerce/compliance-holds",
+  "POST /content/pages",
+  "POST /news/story-drafts",
+  "POST /news/stories",
+  "POST /support/email-send",
+]);
+const COMMERCE_MIGRATION_CONFIRM = "APPLY_YCC_COMMERCE_SCHEMA";
 const SITE_CONTENT_MIGRATION_CONFIRM = "APPLY_YCC_SITE_CONTENT_SCHEMA";
 const NEWSROOM_MIGRATION_CONFIRM = "APPLY_YCC_NEWSROOM_SCHEMA";
 const OFFICIAL_CIGAR_NEWS_DOMAINS = new Set([
@@ -109,6 +132,12 @@ const CIGAR_GUIDE_TERMS = [
   "smoke",
 ];
 const HUMIDOR_AGENT_TERMS = ["humidor", "humidity", "hygrometer", "temperature", "aging", "reorder", "inventory"];
+const DEFAULT_HUMIDOR_ALERT_PREFERENCES = Object.freeze({
+  pushEnabled: false,
+  reorderRemindersEnabled: true,
+  climateAlertsEnabled: false,
+  pushSubscription: null,
+});
 const CHECKOUT_AGE_TOKEN_VERSION = "yccav1";
 const CHECKOUT_AGE_TOKEN_TTL_SECONDS = 30 * 60;
 const DEFAULT_CORS_ALLOW_ORIGINS = ["https://yuzucigarclub.com", "https://www.yuzucigarclub.com"];
@@ -121,7 +150,12 @@ exports.handler = async function handler(event = {}, context = {}) {
   activeRequestOrigin = sanitizeText(getHeader(event, "origin"), 240);
 
   try {
-    if (event.source === "ycc.phase3.migration" || event.source === "ycc.site_content.migration" || event.source === "ycc.newsroom.migration") {
+    if (
+      event.source === "ycc.phase3.migration" ||
+      event.source === "ycc.commerce.migration" ||
+      event.source === "ycc.site_content.migration" ||
+      event.source === "ycc.newsroom.migration"
+    ) {
       const response = await handlePhase3Migration(event, requestId);
       logCompleted(event, routeKey, response.statusCode, startedAt, requestId);
       return response;
@@ -173,6 +207,12 @@ exports.handler = async function handler(event = {}, context = {}) {
       return response;
     }
 
+    if (routeKey === HUMIDOR_ALERT_DISPATCH_ROUTE) {
+      const response = await handleHumidorAlertDispatch(event, requestId);
+      logCompleted(event, routeKey, response.statusCode, startedAt, requestId);
+      return response;
+    }
+
     if (isCheckoutSessionStatusRoute(routeKey)) {
       const response = await handleCheckoutSessionStatus(event, requestId);
       logCompleted(event, routeKey, response.statusCode, startedAt, requestId);
@@ -212,18 +252,27 @@ exports.handler = async function handler(event = {}, context = {}) {
       response = await handleCommerceOrders(event, actor, requestId);
     } else if (isCommerceOrderRoute(routeKey)) {
       response = await handleCommerceOrderStatus(event, actor, requestId);
-    } else if (routeKey === "POST /admin/commerce/stripe-sync-products") {
-      response = await handleAdminStripeSyncProducts(event, actor, requestId);
-    } else if (routeKey === "GET /admin/commerce/webhook-events") {
-      response = await handleAdminWebhookEvents(event, actor, requestId);
-    } else if (routeKey === "GET /admin/commerce/compliance-holds") {
-      response = await handleAdminComplianceHolds(event, actor, requestId);
-    } else if (routeKey === "POST /content/pages") {
-      response = await handleLivePagePublish(event, actor, requestId);
-    } else if (routeKey === "POST /news/story-drafts") {
-      response = await handleNewsStoryDraft(event, actor, requestId);
-    } else if (routeKey === "POST /news/stories") {
-      response = await handleNewsStoryPublish(event, actor, requestId);
+    } else if (isAdminRoute(routeKey)) {
+      if (routeKey === "POST /admin/commerce/stripe-sync-products") {
+        response = await handleAdminStripeSyncProducts(event, actor, requestId);
+      } else if (routeKey === "GET /admin/commerce/webhook-events") {
+        response = await handleAdminWebhookEvents(event, actor, requestId);
+      } else if (routeKey === "GET /admin/commerce/compliance-holds") {
+        response = await handleAdminComplianceHolds(event, actor, requestId);
+      } else if (routeKey === "POST /content/pages") {
+        response = await handleLivePagePublish(event, actor, requestId);
+      } else if (routeKey === "POST /news/story-drafts") {
+        response = await handleNewsStoryDraft(event, actor, requestId);
+      } else if (routeKey === "POST /news/stories") {
+        response = await handleNewsStoryPublish(event, actor, requestId);
+      } else if (routeKey === "POST /support/email-send") {
+        response = await handleSupportEmailSend(event, actor, requestId);
+      } else {
+        response = json(404, requestId, {
+          error: "not_found",
+          message: `No YCC API route is registered for ${routeKey}.`,
+        });
+      }
     } else if (routeKey === "POST /concierge/chat") {
       response = await handleConciergeChat(event, actor, requestId);
     } else if (routeKey === "POST /concierge/voice") {
@@ -232,12 +281,21 @@ exports.handler = async function handler(event = {}, context = {}) {
       response = await handleSupportEmailDraft(event, actor, requestId);
     } else if (routeKey === "POST /support/email-send") {
       response = await handleSupportEmailSend(event, actor, requestId);
-    } else if (routeKey === "GET /humidor/items") {
-      response = await handleHumidorItems(event, actor, requestId);
-    } else if (routeKey === "POST /humidor/identify-cigar") {
-      response = await handleHumidorCigarIdentification(event, actor, requestId);
-    } else if (routeKey === "POST /humidor/items") {
-      response = await handleHumidorItem(event, actor, requestId);
+    } else if (isHumidorRoute(routeKey)) {
+      const humidorMembershipDenied = buildHumidorMembershipDeniedPayload(actor);
+      if (humidorMembershipDenied) {
+        response = json(403, requestId, humidorMembershipDenied);
+      } else if (routeKey === "GET /humidor/items") {
+        response = await handleHumidorItems(event, actor, requestId);
+      } else if (routeKey === "GET /humidor/alerts") {
+        response = await handleHumidorAlertPreferences(event, actor, requestId);
+      } else if (routeKey === "POST /humidor/identify-cigar") {
+        response = await handleHumidorCigarIdentification(event, actor, requestId);
+      } else if (routeKey === "POST /humidor/alerts") {
+        response = await handleHumidorAlertPreferencesUpdate(event, actor, requestId);
+      } else if (routeKey === "POST /humidor/items") {
+        response = await handleHumidorItem(event, actor, requestId);
+      }
     } else {
       response = json(404, requestId, {
         error: "not_found",
@@ -549,7 +607,7 @@ async function handleStripeWebhook(event, requestId) {
     };
 
     if (shouldPersistDatabaseWrites()) {
-      processing = await processStripeWebhookEvent(event, requestId, stripeEvent, action);
+      processing = await processStripeWebhookEvent(event, requestId, stripeEvent, action, stripe);
     }
 
     return json(200, requestId, {
@@ -723,12 +781,39 @@ async function handleCommerceMembership(event, actor, requestId) {
 }
 
 async function handleCommerceOrderStatus(event, actor, requestId) {
-  return json(200, requestId, {
-    order: {
-      id: extractLastPathSegment(event),
-      status: "pending_backend_sync",
-      actor: actor.email,
-    },
+  const orderId = extractLastPathSegment(event);
+  if (!orderId) {
+    return json(400, requestId, {
+      error: "missing_order_id",
+      message: "Commerce order id is required in the request path.",
+    });
+  }
+
+  if (!shouldPersistDatabaseWrites()) {
+    return json(200, requestId, {
+      order: {
+        id: orderId,
+        status: "pending_backend_sync",
+        actor: actor.email,
+      },
+      persistence: getDatabasePersistenceStatus(),
+    });
+  }
+
+  return withDatabaseClient("ycc-api-commerce-order", async (client) => {
+    const member = await upsertMember(client, actor, requestId);
+    const order = await findCommerceOrderByIdForActor(client, orderId, member.id, actor.email);
+    if (!order) {
+      return json(404, requestId, {
+        error: "order_not_found",
+        message: "The requested order was not found or is not visible to this account.",
+      });
+    }
+
+    return json(200, requestId, {
+      order,
+      persistence: "stored",
+    });
   });
 }
 
@@ -1474,6 +1559,22 @@ async function handleBedrockActionGroup(event, requestId) {
     const timeframe = sanitizeText(params.timeframe || params.week, 80) || "this week";
     const audience = sanitizeText(params.audience, 120) || "adult YCC members of legal tobacco age";
     const titleTopic = topic.charAt(0).toUpperCase() + topic.slice(1);
+    const draftInput = normalizeNewsDraftInput({
+      angle: topic,
+      timeframe,
+      audience,
+      sourceUrls: [],
+      sourceNotes: [],
+    });
+    const weeklyDraftPrompt = buildWeeklyNewsAgentPrompt(draftInput);
+    const conversationId = `weekly_${crypto.randomUUID()}`;
+    const bedrock = await maybeBuildBedrockReply("YCCNewsAgent", actor, weeklyDraftPrompt, conversationId);
+    const weeklyArticle = normalizeNewsDraftFromAgentReply(bedrock.reply || "", draftInput);
+    const defaultSourceNotes = [
+      "Placeholder: add verified source URLs or internal notes for each factual news item before approval.",
+      "Placeholder: confirm dates, brands, releases, events, and quoted claims against primary or reputable trade sources.",
+      "Placeholder: record the reviewing operator and approval timestamp before publication.",
+    ];
 
     return bedrockFunctionResponse(event, {
       action: "weekly_news_draft",
@@ -1483,37 +1584,21 @@ async function handleBedrockActionGroup(event, requestId) {
       publishStatus: "draft",
       operatorReviewRequired: true,
       educationArticle: {
-        title: `${titleTopic}: ${timeframe} operator brief`,
-        dek: "A human-reviewed Yuzu Cigar Club education draft for adult members, pending verified source notes.",
-        sections: [
-          {
-            heading: "What changed",
-            body:
-              `Draft a concise overview of ${topic} for ${audience}. Keep the tone educational, avoid sales pressure, and mark every claim that needs a verified source before publication.`,
-          },
-          {
-            heading: "Why members may care",
-            body:
-              "Frame the update around cigar education, releases, events, storage, craftsmanship, or membership context. Do not make health, cessation, medical, therapeutic, disease, or safety claims.",
-          },
-          {
-            heading: "Operator review notes",
-            body:
-              "Confirm source accuracy, destination compliance, age-gating language, product availability, and whether any section should stay internal before queueing the newsletter.",
-          },
-        ],
+        title: weeklyArticle.title,
+        dek: weeklyArticle.dek,
+        category: weeklyArticle.category,
+        bodyMarkdown: weeklyArticle.bodyMarkdown,
+        sections: weeklyArticle.sections,
       },
       newsletter: {
         subjectLine: `YCC weekly cigar brief: ${titleTopic}`,
         previewText: "Operator-reviewed cigar education notes for adult members.",
-        body:
-          `This draft is ready for operator review. Verify the source notes for ${topic}, remove any unverified claims, and approve before sending to adult members of legal tobacco age.`,
+        body: `This draft is ready for operator review. Verify the source notes for ${topic}, remove any unverified claims, and approve before sending to adult members of legal tobacco age.\n\n${sanitizeText(
+          weeklyArticle.bodyMarkdown,
+          180
+        )}`,
       },
-      sourceNotes: [
-        "Placeholder: add verified source URLs or internal notes for each factual news item before approval.",
-        "Placeholder: confirm dates, brands, releases, events, and quoted claims against primary or reputable trade sources.",
-        "Placeholder: record the reviewing operator and approval timestamp before publication.",
-      ],
+      sourceNotes: weeklyArticle.sourceNotes.length ? weeklyArticle.sourceNotes : defaultSourceNotes,
       complianceReview: {
         ageRestricted: true,
         humanApprovalRequired: true,
@@ -1529,6 +1614,10 @@ async function handleBedrockActionGroup(event, requestId) {
         error: "identity_required",
         message: "Humidor writes require authenticated member session attributes.",
       }, "REPROMPT");
+    }
+    const humidorMembershipDenied = buildHumidorMembershipDeniedPayload(actor);
+    if (humidorMembershipDenied) {
+      return bedrockFunctionResponse(event, humidorMembershipDenied, "REPROMPT");
     }
 
     const item = normalizeHumidorItem({
@@ -1681,6 +1770,204 @@ async function handleHumidorCigarIdentification(event, actor, requestId) {
   });
 }
 
+async function handleHumidorAlertDispatch(event, requestId) {
+  const dispatchSecret = sanitizeText(process.env.HUMIDOR_ALERT_DISPATCH_SECRET || "", 240);
+  const providedSecret = getHeader(event, HUMIDOR_ALERT_DISPATCH_SECRET_HEADER);
+  if (!dispatchSecret || !isValidDispatchSecret(providedSecret, dispatchSecret)) {
+    return json(403, requestId, {
+      error: "humidor_dispatch_forbidden",
+      message: "Dispatch secret is required and must match the configured humidor dispatch secret.",
+    });
+  }
+
+  if (!shouldPersistDatabaseWrites()) {
+    return json(503, requestId, {
+      error: "humidor_dispatch_not_ready",
+      message: "Humidor dispatch requires schema-ready writes for reminder evaluation and status persistence.",
+      persistence: getDatabasePersistenceStatus(),
+    });
+  }
+
+  const vapidPublicKey = sanitizeText(process.env.VAPID_PUBLIC_KEY || "", 900);
+  const vapidPrivateKey = sanitizeText(process.env.VAPID_PRIVATE_KEY || "", 900);
+  const vapidSubject = sanitizeText(process.env.VAPID_SUBJECT || "", 320);
+  if (!vapidPublicKey || !vapidPrivateKey || !vapidSubject) {
+    return json(503, requestId, {
+      error: "humidor_dispatch_not_ready",
+      message: "Push dispatch is waiting for VAPID settings (VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT).",
+    });
+  }
+
+  webPush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey);
+  const dispatchDate = new Date().toISOString().slice(0, 10);
+
+  return withDatabaseClient("ycc-api-humidor-alert-dispatch", async (client) => {
+    const dueResult = await client.query(
+      `
+        select
+          m.id as member_id,
+          m.cognito_sub as member_sub,
+          mp.preferences->'pushSubscription' as push_subscription,
+          hi.id as humidor_item_id,
+          hi.name,
+          hi.brand,
+          hi.line,
+          hi.vitola,
+          hi.reorder_reminder
+        from public.members m
+        join public.member_profiles mp on mp.member_id = m.id
+        join public.humidor_items hi on hi.member_id = m.id
+        where coalesce((mp.preferences->>'pushEnabled')::boolean, false) = true
+          and coalesce((mp.preferences->>'reorderRemindersEnabled')::boolean, true) = true
+          and mp.preferences->'pushSubscription' is not null
+          and hi.reorder_reminder is not null
+          and hi.reorder_reminder::date <= $1::date
+          and coalesce(hi.metadata#>>'{${HUMIDOR_REORDER_REMINDER_DISPATCH_MARKER}}', '') <> $1
+          and hi.archived_at is null
+        order by m.id, hi.reorder_reminder asc
+      `,
+      [dispatchDate]
+    );
+
+    if (dueResult.rows.length === 0) {
+      return json(200, requestId, {
+        status: "no_due_items",
+        summary: {
+          notificationDate: dispatchDate,
+          dueItems: 0,
+          sentNotifications: 0,
+          failedNotifications: 0,
+          sentItems: 0,
+        },
+      });
+    }
+
+    const systemActor = buildHumidorDispatchActor();
+    const memberGroups = new Map();
+    const failedMembers = [];
+    let sentNotifications = 0;
+    let failedNotifications = 0;
+    let sentItems = 0;
+    let invalidSubscriptionItems = 0;
+
+    for (const row of dueResult.rows) {
+      const memberId = String(row.member_id || "");
+      if (!memberId) {
+        continue;
+      }
+
+      const item = {
+        itemId: String(row.humidor_item_id || ""),
+        name: buildHumidorItemDisplayName(row),
+      };
+
+      if (!item.itemId) {
+        continue;
+      }
+
+      let group = memberGroups.get(memberId);
+      if (!group) {
+        const pushSubscription = normalizeHumidorPushSubscription(row.push_subscription);
+        group = {
+          memberId,
+          memberSub: String(row.member_sub || ""),
+          pushSubscription,
+          items: [],
+          hasInvalidSubscription: !pushSubscription,
+        };
+        memberGroups.set(memberId, group);
+      }
+
+      group.items.push(item);
+    }
+
+    for (const group of memberGroups.values()) {
+      if (group.items.length === 0) {
+        continue;
+      }
+
+      if (group.hasInvalidSubscription || !group.pushSubscription) {
+        invalidSubscriptionItems += group.items.length;
+        failedNotifications += 1;
+        failedMembers.push({
+          memberId: group.memberId,
+          reason: "invalid_push_subscription",
+          itemCount: group.items.length,
+          action: "subscription_invalid",
+        });
+        continue;
+      }
+
+      const payload = buildHumidorReorderReminderPayload(group, dispatchDate);
+      try {
+        await webPush.sendNotification(group.pushSubscription, JSON.stringify(payload));
+        sentNotifications += 1;
+
+        for (const item of group.items) {
+          await markHumidorReminderDispatched(client, item.itemId, dispatchDate, requestId);
+          sentItems += 1;
+        }
+
+        await insertAuditLog(client, event, {
+          action: "humidor_reorder_reminder.dispatched",
+          actor: systemActor,
+          afterData: {
+            memberSub: group.memberSub,
+            notificationDate: dispatchDate,
+            itemCount: group.items.length,
+          },
+          memberId: group.memberId,
+          requestId,
+          resourceId: group.memberId,
+          resourceType: "humidor_item",
+        });
+      } catch (error) {
+        failedNotifications += 1;
+        const statusCode = Number(error instanceof Error ? error.statusCode : NaN);
+        const pushErrorStatus = Number.isFinite(statusCode) ? statusCode : null;
+        failedMembers.push({
+          memberId: group.memberId,
+          reason: pushErrorStatus ? `push_send_status_${pushErrorStatus}` : "push_send_error",
+          statusCode: pushErrorStatus,
+          itemCount: group.items.length,
+          errorName: error instanceof Error ? error.name : "UnknownError",
+        });
+
+        if (pushErrorStatus === 404 || pushErrorStatus === 410) {
+          await upsertHumidorAlertPreferences(client, systemActor, requestId, group.memberId, { pushEnabled: false });
+          await insertAuditLog(client, event, {
+            action: "humidor_alert_preferences.push_subscription_disabled",
+            actor: systemActor,
+            afterData: {
+              reason: "invalid_push_subscription",
+              statusCode: pushErrorStatus,
+              notificationDate: dispatchDate,
+            },
+            memberId: group.memberId,
+            requestId,
+            resourceId: group.memberId,
+            resourceType: "member_profile",
+          });
+        }
+      }
+    }
+
+    return json(200, requestId, {
+      status: "dispatched",
+      summary: {
+        notificationDate: dispatchDate,
+        dueItems: dueResult.rows.length,
+        attemptedMembers: memberGroups.size,
+        sentNotifications,
+        failedNotifications,
+        sentItems,
+        invalidSubscriptionItems,
+      },
+      failed: failedMembers,
+    });
+  });
+}
+
 async function maybeIdentifyCigarFromImage(actor, image, notes) {
   const modelId = process.env.BEDROCK_VISION_MODEL_ID || process.env.BEDROCK_MODEL_ID || DEFAULT_BEDROCK_MODEL_ID;
 
@@ -1797,6 +2084,163 @@ async function handleHumidorItems(event, actor, requestId) {
   });
 }
 
+async function handleHumidorAlertPreferences(event, actor, requestId) {
+  if (!shouldPersistDatabaseWrites()) {
+    return json(200, requestId, {
+      preferences: DEFAULT_HUMIDOR_ALERT_PREFERENCES,
+      persistence: getDatabasePersistenceStatus(),
+    });
+  }
+
+  return withDatabaseClient("ycc-api-humidor-alerts-read", async (client) => {
+    const member = await upsertMember(client, actor, requestId);
+    const result = await client.query(
+      "select preferences from public.member_profiles where member_id = $1",
+      [member.id]
+    );
+
+    const row = result.rows[0];
+    const savedPreferences = row?.preferences || {};
+    const preferences = normalizeHumidorAlertPreferences(savedPreferences);
+
+    return json(200, requestId, {
+      preferences,
+      persistence: "stored",
+    });
+  });
+}
+
+async function handleHumidorAlertPreferencesUpdate(event, actor, requestId) {
+  if (!shouldPersistDatabaseWrites()) {
+    return json(202, requestId, {
+      preferences: DEFAULT_HUMIDOR_ALERT_PREFERENCES,
+      persistence: getDatabasePersistenceStatus(),
+    });
+  }
+
+  const body = parseJsonBody(event);
+  if (body.error) {
+    return body.error;
+  }
+
+  const settings = normalizeHumidorAlertPreferencesInput(body.value);
+  if (settings.pushEnabled && !settings.pushSubscription) {
+    return json(400, requestId, {
+      error: "missing_push_subscription",
+      message: "Push subscription details are required when push alerts are enabled.",
+    });
+  }
+
+  return withDatabaseTransaction("ycc-api-humidor-alerts-write", async (client) => {
+    const member = await upsertMember(client, actor, requestId);
+    const preferences = await upsertHumidorAlertPreferences(client, actor, requestId, member.id, settings);
+
+    await insertAuditLog(client, event, {
+      action: "humidor_alert_preferences.updated",
+      actor,
+      afterData: {
+        pushEnabled: preferences.pushEnabled,
+        reorderRemindersEnabled: preferences.reorderRemindersEnabled,
+        climateAlertsEnabled: preferences.climateAlertsEnabled,
+        hasPushSubscription: Boolean(preferences.pushSubscription),
+      },
+      memberId: member.id,
+      requestId,
+      resourceId: member.id,
+      resourceType: "member_profile",
+    });
+
+    return json(200, requestId, {
+      preferences,
+      persistence: "stored",
+    });
+  });
+}
+
+function buildHumidorDispatchActor() {
+  return {
+    sub: HUMIDOR_DISPATCH_ACTOR_SUB,
+    email: "system@yuzucigarclub.com",
+    emailVerified: true,
+    name: "Yuzu Digital Humidor Dispatcher",
+    username: "humidor-dispatch",
+    groups: [],
+    membershipTier: null,
+    memberStatus: null,
+    stripeCustomerId: null,
+  };
+}
+
+function buildHumidorReorderReminderPayload(group, dispatchDate) {
+  const itemCount = group.items.length;
+  const preview = group.items
+    .slice(0, 2)
+    .map((item) => item.name)
+    .filter(Boolean)
+    .join(", ");
+
+  return {
+    title: itemCount === 1 ? "Humidor reorder reminder" : "Humidor reorder reminders",
+    body:
+      itemCount === 1
+        ? `${preview} is due for reorder review as of ${dispatchDate}.`
+        : `${preview}${itemCount > 2 ? ` and ${itemCount - 2} more` : ""} are due for reorder reminders as of ${dispatchDate}.`,
+    data: {
+      tag: HUMIDOR_ALERT_DISPATCH_NOTIFICATION_TAG,
+      url: "/humidor?section=alerts",
+    },
+  };
+}
+
+function buildHumidorItemDisplayName(row) {
+  const brand = sanitizeText(row.brand || "", 120);
+  const line = sanitizeText(row.line || "", 120);
+  const vitola = sanitizeText(row.vitola || "", 120);
+  const fallback = sanitizeText(row.name || "", 200);
+
+  return [brand, line, vitola].filter(Boolean).join(" ") || fallback || "Unnamed cigar";
+}
+
+function isValidDispatchSecret(providedSecret, expectedSecret) {
+  const supplied = Buffer.from(String(providedSecret || ""), "utf8");
+  const expected = Buffer.from(String(expectedSecret || ""), "utf8");
+
+  if (!supplied.length || !expected.length || supplied.length !== expected.length) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(supplied, expected);
+}
+
+async function markHumidorReminderDispatched(client, itemId, dispatchDate, requestId) {
+  const result = await client.query(
+    `
+      update public.humidor_items
+      set metadata = coalesce(metadata, '{}'::jsonb) || $1::jsonb,
+          updated_at = now()
+      where id = $2
+      returning id, metadata
+    `,
+    [
+      JSON.stringify({
+        [HUMIDOR_REORDER_REMINDER_DISPATCH_MARKER]: dispatchDate,
+      }),
+      itemId,
+    ]
+  );
+
+  const row = result.rows[0];
+  if (!row) {
+    throw new Error(`Humidor reminder dispatch marker update failed for item ${itemId}.`);
+  }
+
+  return {
+    id: row.id,
+    metadata: row.metadata,
+    requestId,
+  };
+}
+
 async function handlePhase3Migration(event, requestId) {
   if (event.action === "verify_phase3_schema") {
     return verifyPhase3Schema(requestId);
@@ -1804,6 +2248,14 @@ async function handlePhase3Migration(event, requestId) {
 
   if (event.action === "verify_site_content_schema") {
     return verifySiteContentSchema(requestId);
+  }
+
+  if (event.action === "verify_commerce_schema") {
+    return verifyCommerceSchema(requestId);
+  }
+
+  if (event.action === "apply_commerce_schema") {
+    return applyCommerceSchema(event, requestId);
   }
 
   if (event.action === "apply_site_content_schema") {
@@ -1821,7 +2273,7 @@ async function handlePhase3Migration(event, requestId) {
   if (event.action !== "apply_phase3_schema") {
     return json(400, requestId, {
       error: "invalid_migration_action",
-      message: "Use apply_phase3_schema, verify_phase3_schema, apply_site_content_schema, verify_site_content_schema, apply_newsroom_schema, or verify_newsroom_schema.",
+      message: "Use apply_phase3_schema, verify_phase3_schema, apply_commerce_schema, verify_commerce_schema, apply_site_content_schema, verify_site_content_schema, apply_newsroom_schema, or verify_newsroom_schema.",
     });
   }
 
@@ -1866,6 +2318,52 @@ async function verifyPhase3Schema(requestId) {
     status: "verified",
     database: databaseName,
     migration: "0001_phase3_app_schema",
+    ...verification,
+  });
+}
+
+async function applyCommerceSchema(event, requestId) {
+  if (event.confirm !== COMMERCE_MIGRATION_CONFIRM) {
+    return json(403, requestId, {
+      error: "migration_confirmation_required",
+      message: "Direct migration invokes must include the commerce confirmation token.",
+    });
+  }
+
+  const secret = await getDatabaseSecret();
+  const databaseName = getDatabaseName();
+  await ensureDatabaseExists(databaseName, secret);
+
+  const sql = await readMigrationSql("0002_commerce_schema.sql");
+  const client = createPgClient(databaseName, secret, "ycc-commerce-migration");
+
+  await client.connect();
+  try {
+    await client.query("set statement_timeout = '45s'");
+    await client.query(sql);
+  } finally {
+    await client.end();
+  }
+
+  const verification = await collectCommerceVerification(databaseName, secret);
+
+  return json(200, requestId, {
+    status: "applied",
+    database: databaseName,
+    migration: "0002_commerce_schema",
+    ...verification,
+  });
+}
+
+async function verifyCommerceSchema(requestId) {
+  const secret = await getDatabaseSecret();
+  const databaseName = getDatabaseName();
+  const verification = await collectCommerceVerification(databaseName, secret);
+
+  return json(200, requestId, {
+    status: "verified",
+    database: databaseName,
+    migration: "0002_commerce_schema",
     ...verification,
   });
 }
@@ -1979,6 +2477,57 @@ async function readMigrationSql(fileName) {
   }
 
   throw new Error(`Migration file not found: ${fileName}`);
+}
+
+async function collectCommerceVerification(databaseName, secret) {
+  const expectedTables = getCommerceTables();
+  const client = createPgClient(databaseName, secret, "ycc-commerce-verify");
+
+  await client.connect();
+  try {
+    const tableResult = await client.query(
+      `
+        select table_name
+        from information_schema.tables
+        where table_schema = 'public'
+          and table_name = any($1::text[])
+        order by table_name
+      `,
+      [expectedTables]
+    );
+    const migrationResult = await client.query(
+      `
+        select version, name, applied_at
+        from public.schema_migrations
+        where version = '0002'
+      `
+    );
+    const indexResult = await client.query(
+      `
+        select count(*)::int as index_count
+        from pg_indexes
+        where schemaname = 'public'
+          and (
+            indexname like 'commerce_%'
+            or indexname like 'member_subscriptions_%'
+            or indexname like 'stripe_events_%'
+          )
+      `
+    );
+
+    const tables = tableResult.rows.map((row) => row.table_name);
+    const missingTables = expectedTables.filter((table) => !tables.includes(table));
+
+    return {
+      tables,
+      missingTables,
+      tableCount: tables.length,
+      indexCount: indexResult.rows[0]?.index_count || 0,
+      migrationRow: migrationResult.rows[0] || null,
+    };
+  } finally {
+    await client.end();
+  }
 }
 
 async function collectSiteContentVerification(databaseName, secret) {
@@ -2265,6 +2814,17 @@ function getPhase3Tables() {
     "site_page_content",
     "audit_log",
     "provider_connections",
+  ];
+}
+
+function getCommerceTables() {
+  return [
+    "stripe_events",
+    "commerce_orders",
+    "commerce_order_items",
+    "member_subscriptions",
+    "commerce_compliance_holds",
+    "commerce_audit_log",
   ];
 }
 
@@ -2631,6 +3191,66 @@ async function persistHumidorItem(event, actor, requestId, item) {
       createdAt: toIsoString(row.created_at),
     };
   });
+}
+
+async function upsertHumidorAlertPreferences(client, actor, requestId, memberId, settings) {
+  const existingResult = await client.query(
+    `
+      select preferences
+      from public.member_profiles
+      where member_id = $1
+    `,
+    [memberId]
+  );
+
+  const mergedPreferences = {
+    ...normalizeHumidorAlertPreferences(existingResult.rows[0]?.preferences),
+    ...settings,
+  };
+
+  if (!settings.pushEnabled) {
+    mergedPreferences.pushSubscription = null;
+  }
+
+  const result = await client.query(
+    `
+      insert into public.member_profiles (
+        member_id,
+        preferences,
+        actor_id,
+        request_id
+      )
+      values ($1, $2::jsonb, $3, $4)
+      on conflict (member_id) do update
+      set preferences = $2::jsonb,
+          actor_id = excluded.actor_id,
+          request_id = excluded.request_id,
+          updated_at = now()
+      returning preferences
+    `,
+    [memberId, JSON.stringify(mergedPreferences), actor.sub, requestId]
+  );
+
+  const row = result.rows[0];
+  if (!row) {
+    throw new Error("Humidor alert preference upsert did not return a row.");
+  }
+
+  const persistedPreferences = normalizeHumidorAlertPreferences(row.preferences);
+  const responsePreferences = {
+    ...persistedPreferences,
+    ...settings,
+  };
+
+  if (!settings.pushEnabled) {
+    responsePreferences.pushSubscription = null;
+  } else if (persistedPreferences.pushSubscription) {
+    responsePreferences.pushSubscription = persistedPreferences.pushSubscription;
+  } else if (settings.pushSubscription) {
+    responsePreferences.pushSubscription = settings.pushSubscription;
+  }
+
+  return normalizeHumidorAlertPreferences(responsePreferences);
 }
 
 async function withDatabaseClient(applicationName, callback) {
@@ -3475,7 +4095,7 @@ async function findMemberStripeCustomerIdForMember(client, memberId, email) {
   return sanitizeText(orderResult.rows[0]?.stripe_customer_id, 160);
 }
 
-async function processStripeWebhookEvent(event, requestId, stripeEvent, action) {
+async function processStripeWebhookEvent(event, requestId, stripeEvent, action, stripeClient) {
   return withDatabaseTransaction("ycc-api-stripe-webhook", async (client) => {
     const existing = await client.query("select id from public.stripe_events where id = $1 limit 1", [stripeEvent.id]);
     const processedEventIds = new Set(existing.rows.map((row) => String(row.id)));
@@ -3496,9 +4116,19 @@ async function processStripeWebhookEvent(event, requestId, stripeEvent, action) 
       [stripeEvent.id, stripeEvent.type, JSON.stringify(stripeEvent)]
     );
 
-    const order = action === "record_checkout_completion" || action === "record_payment_failure"
-      ? await upsertCommerceOrderFromStripeCheckoutEvent(client, stripeEvent)
-      : null;
+    const actionResult = await applyStripeCommerceWebhookAction(client, stripeEvent, action, stripeClient);
+    let order = actionResult?.order || (actionResult && actionResult.id ? actionResult : null);
+
+    if (!order && (action === "record_checkout_completion" || action === "record_payment_failure")) {
+      const checkoutSessionId = sanitizeText(stripeEvent?.data?.object?.id, 200);
+      if (checkoutSessionId) {
+        const persistedOrder = await findCommerceOrderByCheckoutSessionId(checkoutSessionId);
+        if (persistedOrder) {
+          order = persistedOrder;
+        }
+      }
+    }
+
     const processingStatus = action === "ignore" ? "ignored" : "processed";
 
     await client.query(
@@ -3551,7 +4181,29 @@ async function processStripeWebhookEvent(event, requestId, stripeEvent, action) 
   });
 }
 
-async function upsertCommerceOrderFromStripeCheckoutEvent(client, stripeEvent) {
+async function applyStripeCommerceWebhookAction(client, stripeEvent, action, stripeClient) {
+  if (!stripeEvent || typeof stripeEvent !== "object") {
+    return null;
+  }
+
+  if (action === "record_checkout_completion" || action === "record_payment_failure") {
+    return upsertCommerceOrderFromStripeCheckoutEvent(client, stripeClient, stripeEvent);
+  }
+
+  if (action === "record_refund") {
+    return upsertCommerceOrderFromStripeRefund(client, stripeEvent);
+  }
+
+  if (action === "record_subscription_payment" || action === "record_subscription_update" || action === "record_subscription_cancellation" || action === "record_subscription_payment_failure") {
+    return {
+      subscription: await upsertCommerceSubscriptionFromStripeEvent(client, stripeEvent, action),
+    };
+  }
+
+  return null;
+}
+
+async function upsertCommerceOrderFromStripeCheckoutEvent(client, stripe, stripeEvent) {
   const session = stripeEvent?.data?.object;
   if (!session || typeof session !== "object") {
     return null;
@@ -3655,6 +4307,10 @@ async function upsertCommerceOrderFromStripeCheckoutEvent(client, stripeEvent) {
   );
 
   const row = result.rows[0];
+  if (row?.id) {
+    await upsertCommerceOrderItemsFromStripeSession(client, stripe, row.id, session);
+  }
+
   return row
     ? {
         id: row.id,
@@ -3662,6 +4318,226 @@ async function upsertCommerceOrderFromStripeCheckoutEvent(client, stripeEvent) {
         fulfillmentStatus: row.fulfillment_status,
       }
     : null;
+}
+
+async function upsertCommerceOrderFromStripeRefund(client, stripeEvent) {
+  const charge = stripeEvent?.data?.object;
+  const paymentIntentId = sanitizeText(charge?.payment_intent, 200);
+  if (!paymentIntentId) {
+    return null;
+  }
+
+  const status = "refunded";
+  const result = await client.query(
+    `
+      update public.commerce_orders
+      set status = coalesce($3, status),
+          fulfillment_status = 'cancelled',
+          stripe_event_id = $1,
+          updated_at = now()
+      where stripe_payment_intent_id = $2
+      returning id, status, fulfillment_status
+    `,
+    [stripeEvent.id, paymentIntentId, status || null]
+  );
+
+  const row = result.rows[0];
+  return row
+    ? {
+        id: row.id,
+        status: row.status,
+        fulfillmentStatus: row.fulfillment_status,
+      }
+    : null;
+}
+
+async function upsertCommerceSubscriptionFromStripeEvent(client, stripeEvent, action) {
+  const subscriptionLike = stripeEvent?.data?.object;
+  if (!subscriptionLike || typeof subscriptionLike !== "object") {
+    return null;
+  }
+
+  const subscriptionId = sanitizeText(
+    subscriptionLike.id || subscriptionLike.subscription || subscriptionLike.subscription_id || subscriptionLike.stripe_subscription_id,
+    200
+  );
+  if (!subscriptionId) {
+    return null;
+  }
+
+  const subscriptionPriceId =
+    sanitizeText(
+      subscriptionLike.items?.data?.[0]?.price?.id || subscriptionLike.price?.id || subscriptionLike.plan?.id,
+      160
+    ) || null;
+  const subscriptionCheckoutSessionId = sanitizeText(
+    subscriptionLike.checkout_session || subscriptionLike.checkout?.session || subscriptionLike.checkout_session_id || null,
+    200
+  ) || null;
+  const tierKey =
+    sanitizeText(
+      subscriptionLike.metadata?.tier_key || subscriptionLike.plan?.metadata?.tier_key || subscriptionLike.items?.data?.[0]?.price?.metadata?.tier_key,
+      120
+    ) || null;
+  const billingPeriod =
+    sanitizeText(
+      subscriptionLike.metadata?.billing_period || subscriptionLike.items?.data?.[0]?.price?.recurring?.interval || subscriptionLike.billing_period,
+      80
+    ) || null;
+
+  const status =
+    action === "record_subscription_payment_failure"
+      ? "past_due"
+      : action === "record_subscription_cancellation"
+        ? "canceled"
+        : "active";
+  const currentPeriodEnd = Number(subscriptionLike.current_period_end);
+  const currentPeriodEndIso = Number.isFinite(currentPeriodEnd) ? new Date(currentPeriodEnd * 1000).toISOString() : null;
+
+  const result = await client.query(
+    `
+      update public.member_subscriptions
+      set status = $1,
+          stripe_price_id = coalesce($2, public.member_subscriptions.stripe_price_id),
+          stripe_checkout_session_id = coalesce($3, public.member_subscriptions.stripe_checkout_session_id),
+          tier_key = coalesce($4, public.member_subscriptions.tier_key),
+          billing_period = coalesce($5, public.member_subscriptions.billing_period),
+          current_period_end = coalesce($6::timestamptz, public.member_subscriptions.current_period_end),
+          updated_at = now()
+      where stripe_subscription_id = $7
+      returning id
+    `,
+    [status, subscriptionPriceId, subscriptionCheckoutSessionId, tierKey, billingPeriod, currentPeriodEndIso, subscriptionId]
+  );
+
+  const row = result.rows[0];
+  return row ? { id: row.id, status } : null;
+}
+
+async function upsertCommerceOrderItemsFromStripeSession(client, stripe, orderId, session) {
+  const lineItems = await getCheckoutSessionLineItemsFromStripe(stripe, session);
+  if (!lineItems.length) {
+    return;
+  }
+
+  await client.query("delete from public.commerce_order_items where order_id = $1", [orderId]);
+
+  for (let index = 0; index < lineItems.length; index += 1) {
+    const normalized = normalizeCommerceOrderItemFromStripeLineItem(lineItems[index], index);
+    if (!normalized) {
+      continue;
+    }
+
+    await client.query(
+      `
+        insert into public.commerce_order_items (
+          order_id,
+          sku,
+          product_slug,
+          product_name,
+          stripe_product_id,
+          stripe_price_id,
+          unit_amount_cents,
+          quantity,
+          line_total_cents
+        )
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `,
+      [
+        orderId,
+        normalized.sku,
+        normalized.productSlug,
+        normalized.productName,
+        normalized.stripeProductId,
+        normalized.stripePriceId,
+        normalized.unitAmountCents,
+        normalized.quantity,
+        normalized.lineTotalCents,
+      ]
+    );
+  }
+}
+
+async function getCheckoutSessionLineItemsFromStripe(stripe, session) {
+  const inline = session?.line_items;
+  const inlineLineItems = Array.isArray(inline?.data) ? inline.data : Array.isArray(inline) ? inline : null;
+  if (inlineLineItems && inlineLineItems.length) {
+    return inlineLineItems;
+  }
+
+  if (!stripe?.checkout?.sessions?.listLineItems || !session?.id) {
+    return [];
+  }
+
+  const allItems = [];
+  let startingAfter;
+  let hasMore = true;
+
+  while (hasMore) {
+    let response;
+
+    try {
+      response = await stripe.checkout.sessions.listLineItems(session.id, {
+        limit: 100,
+        starting_after: startingAfter,
+        expand: ["data.price.product"],
+      });
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          level: "error",
+          event: "commerce_webhook_stripe_list_line_items_failed",
+          sessionId: session.id,
+          message: error instanceof Error ? error.message : String(error),
+        })
+      );
+      return allItems;
+    }
+
+    const data = Array.isArray(response?.data) ? response.data : [];
+    allItems.push(...data);
+
+    hasMore = Boolean(response?.has_more);
+    startingAfter = hasMore ? data.at(-1)?.id : undefined;
+    if (data.length === 0 && hasMore) {
+      hasMore = false;
+    }
+  }
+
+  return allItems;
+}
+
+function normalizeCommerceOrderItemFromStripeLineItem(item, index) {
+  if (!item || typeof item !== "object") {
+    return null;
+  }
+
+  const price = item.price && typeof item.price === "object" ? item.price : {};
+  const product = price.product && typeof price.product === "object" ? price.product : {};
+  const quantity = toNonNegativeInteger(item.quantity) || 1;
+  const amountTotal = toNonNegativeInteger(item.amount_total);
+  const amountSubtotal = toNonNegativeInteger(item.amount_subtotal);
+  const amountUnit = toNonNegativeInteger(price.unit_amount);
+  const unitAmountCents = amountUnit || (amountSubtotal > 0 && quantity ? Math.floor(amountSubtotal / quantity) : amountUnit || 0);
+  const lineTotalCents =
+    amountTotal || toNonNegativeInteger(price.unit_amount_decimal ? Number(price.unit_amount_decimal) * 100 : 0) * quantity || 0;
+  const normalizedName = sanitizeText(
+    item.description || product.name || price.nickname || `Item ${index + 1}`,
+    160
+  ) || `Item ${index + 1}`;
+  const fallbackSku = sanitizeText(product.id || price.id || item.price?.product || item.id || `ITEM_${index + 1}`, 200) || `ITEM_${index + 1}`;
+  const productSlug = slugify(product.slug || product.metadata?.slug || normalizedName || fallbackSku || `item-${index + 1}`);
+
+  return {
+    sku: fallbackSku.toUpperCase(),
+    productSlug: productSlug || sanitizeText(`item_${index + 1}`, 120),
+    productName: normalizedName,
+    stripeProductId: sanitizeText(product.id, 160) || null,
+    stripePriceId: sanitizeText(price.id, 160) || null,
+    unitAmountCents,
+    quantity,
+    lineTotalCents: Math.max(lineTotalCents, 0),
+  };
 }
 
 async function findMemberIdByEmail(client, email) {
@@ -3704,6 +4580,98 @@ function toNonNegativeInteger(value) {
   }
 
   return Math.floor(normalized);
+}
+
+async function findCommerceOrderByIdForActor(client, orderId, memberId, actorEmail) {
+  if (!orderId || !/^[0-9a-fA-F-]{36}$/.test(orderId)) {
+    return null;
+  }
+
+  const rowResult = await client.query(
+    `
+      select
+        o.id,
+        o.stripe_checkout_session_id,
+        o.status,
+        o.fulfillment_status,
+        o.email,
+        o.subtotal_cents,
+        o.tax_cents,
+        o.shipping_cents,
+        o.total_cents,
+        o.currency,
+        o.compliance_status,
+        o.created_at,
+        o.updated_at,
+        coalesce(sum(i.quantity), 0)::integer as item_count
+      from public.commerce_orders o
+      left join public.commerce_order_items i on i.order_id = o.id
+      where o.id = $1
+        and (
+          o.member_id = $2
+          or lower(o.email) = lower($3)
+        )
+      group by
+        o.id,
+        o.stripe_checkout_session_id,
+        o.status,
+        o.fulfillment_status,
+        o.email,
+        o.subtotal_cents,
+        o.tax_cents,
+        o.shipping_cents,
+        o.total_cents,
+        o.currency,
+        o.compliance_status,
+        o.created_at,
+        o.updated_at
+      limit 1
+    `,
+    [orderId, memberId, actorEmail || ""]
+  );
+
+  const row = rowResult.rows[0];
+  if (!row) {
+    return null;
+  }
+
+  const itemsResult = await client.query(
+    `
+      select id, sku, product_slug, product_name, stripe_product_id, stripe_price_id, unit_amount_cents, quantity, line_total_cents
+      from public.commerce_order_items
+      where order_id = $1
+      order by product_name, sku
+    `,
+    [row.id]
+  );
+
+  return {
+    id: row.id,
+    orderNumber: row.stripe_checkout_session_id,
+    status: row.status,
+    fulfillmentStatus: row.fulfillment_status,
+    email: row.email,
+    subtotal: Number(row.subtotal_cents || 0) / 100,
+    tax: Number(row.tax_cents || 0) / 100,
+    shipping: Number(row.shipping_cents || 0) / 100,
+    total: Number(row.total_cents || 0) / 100,
+    currency: row.currency || "usd",
+    complianceStatus: row.compliance_status,
+    itemCount: Number(row.item_count || 0),
+    placedAt: toIsoString(row.created_at),
+    updatedAt: toIsoString(row.updated_at),
+    items: itemsResult.rows.map((item) => ({
+      id: item.id,
+      sku: item.sku,
+      productSlug: item.product_slug,
+      productName: item.product_name,
+      stripeProductId: item.stripe_product_id,
+      stripePriceId: item.stripe_price_id,
+      unitAmountCents: Number(item.unit_amount_cents || 0),
+      quantity: Number(item.quantity || 0),
+      lineTotalCents: Number(item.line_total_cents || 0),
+    })),
+  };
 }
 
 async function findCommerceOrderByCheckoutSessionId(sessionId) {
@@ -3952,13 +4920,42 @@ function buildNewsAgentPrompt(input) {
     "Blocked or invalid sources:",
     blockedLines,
     "",
-    "Return JSON with title, dek, category, sections[{heading,body}], and sourceNotes[{label,url,note}].",
+    "Return JSON with title, dek, category, bodyMarkdown (a complete publication-ready story in markdown), sections[{heading,body}], and sourceNotes[{label,url,note}].",
+    "BodyMarkdown should be a full draft article for operator approval; sections should be a readable breakdown of that article.",
+  ].join("\n");
+}
+
+function buildWeeklyNewsAgentPrompt(input) {
+  const noteLines = input.sourceNotes.length
+    ? input.sourceNotes.map((note, index) => `${index + 1}. ${note}`).join("\n")
+    : "No operator notes supplied.";
+
+  return [
+    "You are YCCNewsAgent, an internal editorial agent for authorized Yuzu admins and concierge operators.",
+    "Draft complete, operator-review-only cigar industry copy for adult readers of legal tobacco age.",
+    "Write a publication-ready markdown story with clear structure and explicit operator verification points.",
+    "Use only the context below and avoid health, cessation, medical, therapeutic, disease, safety, or underage tobacco claims.",
+    "Return factual statements in a way that can be traced to source notes.",
+    "",
+    `Topic: ${input.angle}`,
+    `Timeframe: ${input.timeframe}`,
+    `Audience: ${input.audience}`,
+    "",
+    "Operator notes:",
+    noteLines,
+    "",
+    "Return JSON with title, dek, category, bodyMarkdown, sections[{heading,body}], and sourceNotes[{label,url,note}].",
+    "If a factual source is unavailable, write an explicit operator-verified placeholder note in the source notes and source body.",
   ].join("\n");
 }
 
 function normalizeNewsDraftFromAgentReply(reply, input) {
   const parsed = parseAgentJson(reply);
-  const sections = normalizeNewsSections(parsed?.sections);
+  const bodyMarkdown = sanitizeMultilineText(parsed?.bodyMarkdown, 12000);
+  const parsedSections = normalizeNewsSections(parsed?.sections);
+  const splitSections = splitNewsMarkdownToSections(bodyMarkdown);
+  const sections =
+    parsedSections.length ? parsedSections : splitSections.length ? splitSections : buildFallbackNewsSections(input);
 
   return {
     title: sanitizeText(parsed?.title, 120) || `${toTitleCase(input.angle)} brief`,
@@ -3966,7 +4963,8 @@ function normalizeNewsDraftFromAgentReply(reply, input) {
       sanitizeText(parsed?.dek || parsed?.summary, 220) ||
       "A human-reviewed Yuzu Cigar Club news draft built from primary source notes.",
     category: sanitizeText(parsed?.category, 80) || "Industry News",
-    sections: sections.length ? sections : buildFallbackNewsSections(input),
+    bodyMarkdown: bodyMarkdown || draftNewsSectionsToMarkdown(sections),
+    sections,
     sourceNotes: normalizeNewsSourceNotes(parsed?.sourceNotes, input),
     publishStatus: "draft",
     operatorReviewRequired: true,
@@ -4145,7 +5143,35 @@ function normalizeNewsSections(value) {
       }
 
       const heading = sanitizeText(section.heading, 100);
-      const body = sanitizeMultilineText(section.body, 2500);
+      const body = sanitizeMultilineText(section.body, 5000);
+      return heading && body ? { heading, body } : null;
+    })
+    .filter(Boolean);
+}
+
+function splitNewsMarkdownToSections(markdown) {
+  const normalized = sanitizeMultilineText(markdown, 12000);
+  if (!normalized) {
+    return [];
+  }
+
+  const headings = [...normalized.matchAll(/^##\s+(.+)$/gm)];
+  if (!headings.length) {
+    return [
+      {
+        heading: "Story",
+        body: normalized,
+      },
+    ];
+  }
+
+  return headings
+    .map((current, index) => {
+      const heading = sanitizeText(current[1], 100);
+      const start = current.index + current[0].length;
+      const end = index + 1 < headings.length ? headings[index + 1].index : normalized.length;
+      const body = sanitizeMultilineText(normalized.slice(start, end).trim(), 5000);
+
       return heading && body ? { heading, body } : null;
     })
     .filter(Boolean);
@@ -4265,6 +5291,61 @@ function mapHumidorItemRow(row) {
     estimatedValueSource: estimatedValue === null ? "" : sanitizeText(metadata.estimatedValueSource, 120),
     cigarImage,
     createdAt: toIsoString(row.created_at),
+  };
+}
+
+function normalizeHumidorAlertPreferences(value) {
+  const raw = value && typeof value === "object" ? value : {};
+  const normalized = {
+    pushEnabled: Boolean(raw.pushEnabled),
+    reorderRemindersEnabled: raw.reorderRemindersEnabled === undefined ? true : Boolean(raw.reorderRemindersEnabled),
+    climateAlertsEnabled: Boolean(raw.climateAlertsEnabled),
+    pushSubscription: normalizeHumidorPushSubscription(raw.pushSubscription),
+  };
+
+  return {
+    ...DEFAULT_HUMIDOR_ALERT_PREFERENCES,
+    ...normalized,
+  };
+}
+
+function normalizeHumidorAlertPreferencesInput(value) {
+  const raw = value && typeof value === "object" ? value : {};
+  const pushEnabled = Boolean(raw.pushEnabled);
+  const reorderRemindersEnabled = raw.reorderRemindersEnabled === undefined ? true : Boolean(raw.reorderRemindersEnabled);
+  const climateAlertsEnabled = Boolean(raw.climateAlertsEnabled);
+
+  return {
+    ...DEFAULT_HUMIDOR_ALERT_PREFERENCES,
+    pushEnabled,
+    reorderRemindersEnabled,
+    climateAlertsEnabled,
+    pushSubscription: pushEnabled ? normalizeHumidorPushSubscription(raw.pushSubscription) : null,
+  };
+}
+
+function normalizeHumidorPushSubscription(value) {
+  const raw = value && typeof value === "object" ? value : {};
+  const endpoint = sanitizeText(raw.endpoint, 1024);
+
+  if (!endpoint) {
+    return null;
+  }
+
+  const keys = raw.keys && typeof raw.keys === "object" ? raw.keys : {};
+  const p256dh = sanitizeText(keys.p256dh, 200);
+  const auth = sanitizeText(keys.auth, 200);
+
+  if (!p256dh || !auth) {
+    return null;
+  }
+
+  return {
+    endpoint,
+    keys: {
+      p256dh,
+      auth,
+    },
   };
 }
 
@@ -5066,6 +6147,43 @@ function canUseAdminAgent(actor) {
 
 function canSendSupportEmail(actor) {
   return actor.groups.some((group) => ["admin", "concierge_operator"].includes(String(group).toLowerCase()));
+}
+
+function getHumidorMembershipAccess(actor) {
+  if (!actor) {
+    return {
+      allowed: false,
+      role: null,
+      status: null,
+    };
+  }
+
+  const normalized = normalizeActorForMember(actor);
+  const allowed =
+    ["admin", "operator"].includes(normalized.role) ||
+    ["active", "paused"].includes(normalized.memberStatus);
+
+  return {
+    allowed,
+    role: normalized.role,
+    status: normalized.memberStatus,
+  };
+}
+
+function buildHumidorMembershipDeniedPayload(actor) {
+  const membership = getHumidorMembershipAccess(actor);
+  if (membership.allowed) {
+    return null;
+  }
+
+  return {
+    error: "humidor_membership_forbidden",
+    message: "Humidor access is limited to active or paused members.",
+    membership: {
+      role: membership.role,
+      status: membership.status,
+    },
+  };
 }
 
 function normalizeLivePageRoute(value) {
@@ -5899,6 +7017,14 @@ function isCommerceOrderRoute(routeKey) {
   return routeKey === "GET /commerce/orders/{id}" || /^GET \/commerce\/orders\/[^/]+$/.test(routeKey);
 }
 
+function isAdminRoute(routeKey) {
+  return ADMIN_ROUTES.has(routeKey);
+}
+
+function isHumidorRoute(routeKey) {
+  return HUMIDOR_ROUTES.has(routeKey);
+}
+
 function getRouteKey(event) {
   if (event.routeKey) {
     return event.routeKey;
@@ -5988,7 +7114,7 @@ function corsHeaders() {
   return {
     "access-control-allow-origin": getCorsAllowOrigin(),
     "access-control-allow-methods": "GET,POST,OPTIONS",
-    "access-control-allow-headers": "accept,authorization,content-type,stripe-signature,x-request-id",
+    "access-control-allow-headers": "accept,authorization,content-type,stripe-signature,x-request-id,x-humidor-alert-dispatch-secret",
     vary: "origin",
   };
 }
