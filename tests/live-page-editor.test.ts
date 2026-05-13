@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
+  fetchHumidorDashboardBootstrap,
   fetchLivePageContent,
   fetchPublishedNewsStories,
   identifyCigarFromImage,
@@ -14,6 +15,7 @@ import {
   type CigarImageIdentifyResponse,
   type ConciergeChatResponse,
   type ConciergeVoiceResponse,
+  type HumidorItemsResponse,
   type LivePageContentResponse,
   type NewsStoryDraftResponse,
   type PublishedNewsStoriesResponse,
@@ -483,6 +485,82 @@ test("live API client sends authenticated cigar image identification requests", 
   }
 });
 
+test("live API client keeps humidor inventory when alert preferences fail", async () => {
+  const originalFetch = globalThis.fetch;
+  const previousApiBase = process.env.NEXT_PUBLIC_YCC_API_BASE_URL;
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+
+  process.env.NEXT_PUBLIC_YCC_API_BASE_URL = "https://api.yuzucigarclub.test/";
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+
+    if (calls.length === 1) {
+      const payload = {
+        items: [
+          {
+            id: "humidor-1",
+            name: "Padron 1964 Anniversary Toro",
+            brand: "Padron",
+            line: "1964 Anniversary",
+            vitola: "Toro",
+            wrapper: "Nicaraguan",
+            origin: "Nicaragua",
+            strength: "Full",
+            quantity: 2,
+            rating: 94,
+            purchaseDate: "2026-03-12",
+            agingStartDate: "2026-03-12",
+            reorderReminder: "2026-06-15",
+            humidorLocation: "Locker A",
+            tray: "Drawer 2",
+            tastingNotes: "Cocoa and cedar.",
+            source: "member_humidor",
+            estimatedValue: 18.5,
+            estimatedValueCurrency: "USD",
+            estimatedValueSource: "member_estimate",
+            cigarImage: null,
+            createdAt: "2026-05-08T10:00:00.000Z",
+          },
+        ],
+        persistence: "stored",
+      } satisfies HumidorItemsResponse;
+
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    return new Response(JSON.stringify({
+      message: "Internal Server Error",
+    }), {
+      status: 500,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  try {
+    const response = await fetchHumidorDashboardBootstrap({ Authorization: "Bearer member-token" });
+
+    assert.equal(response.items.items.length, 1);
+    assert.equal(response.items.items[0].name, "Padron 1964 Anniversary Toro");
+    assert.equal(response.items.persistence, "stored");
+    assert.equal(response.alerts, null);
+    assert.equal(response.alertsError, "The live Yuzu API is temporarily unavailable.");
+    assert.equal(calls[0].url, "https://api.yuzucigarclub.test/humidor/items");
+    assert.equal(calls[1].url, "https://api.yuzucigarclub.test/humidor/alerts");
+    assert.equal((calls[0].init?.headers as Record<string, string>).Authorization, "Bearer member-token");
+    assert.equal((calls[1].init?.headers as Record<string, string>).Authorization, "Bearer member-token");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousApiBase === undefined) {
+      delete process.env.NEXT_PUBLIC_YCC_API_BASE_URL;
+    } else {
+      process.env.NEXT_PUBLIC_YCC_API_BASE_URL = previousApiBase;
+    }
+  }
+});
+
 test("live API client drafts, publishes, and reads newsroom stories through Lambda", async () => {
   const originalFetch = globalThis.fetch;
   const previousApiBase = process.env.NEXT_PUBLIC_YCC_API_BASE_URL;
@@ -498,6 +576,8 @@ test("live API client drafts, publishes, and reads newsroom stories through Lamb
           title: "Rocky Patel Updates Its Release Calendar",
           dek: "A concise official-source update for adult cigar readers.",
           category: "Industry News",
+          bodyMarkdown:
+            "## What changed\nRocky Patel shared release timing through its official news channel.",
           sections: [{ heading: "What changed", body: "Rocky Patel shared release timing through its official news channel." }],
           sourceNotes: [
             {
