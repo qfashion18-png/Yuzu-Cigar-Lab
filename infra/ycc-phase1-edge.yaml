@@ -257,6 +257,7 @@ Resources:
           - accept
           - authorization
           - content-type
+          - x-humidor-alert-dispatch-secret
           - stripe-signature
           - x-request-id
         AllowMethods:
@@ -581,6 +582,32 @@ Resources:
     Properties:
       ApiId: !Ref HttpApi
       RouteKey: GET /humidor/items
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${LambdaIntegration}
+
+  HumidorAlertsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /humidor/alerts
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${LambdaIntegration}
+
+  HumidorAlertDispatchRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /humidor/alerts/dispatch
+      AuthorizationType: NONE
+      Target: !Sub integrations/${LambdaIntegration}
+
+  HumidorAlertsReadRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /humidor/alerts
       AuthorizationType: JWT
       AuthorizerId: !Ref JwtAuthorizer
       Target: !Sub integrations/${LambdaIntegration}

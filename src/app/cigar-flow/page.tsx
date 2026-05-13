@@ -193,7 +193,7 @@ export default function CigarFlowPage() {
           <Card className="luxury-card">
             <CardContent className="grid gap-4 p-5">
               <Newspaper className="size-6 text-yuzu-gold" />
-              <h2 className="font-heading text-3xl text-yuzu-cream">Friday refresh scheduled</h2>
+              <h2 className="font-heading text-3xl text-yuzu-cream">Daily refresh scheduled</h2>
               <p className="text-sm leading-6 text-yuzu-muted">
                 {cigarFlowAutomation.cadence}. The recurring workspace agent refreshes the feed data, education article, and newsletter draft from the same verified source set.
               </p>

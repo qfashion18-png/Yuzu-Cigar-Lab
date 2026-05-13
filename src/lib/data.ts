@@ -875,6 +875,7 @@ export const events: EventExperience[] = [
 export type CuratedCigarEvent = {
   title: string;
   date: string;
+  recurrence?: "daily" | "weekly" | "monthly" | "single" | "special";
   venue: string;
   area: string;
   distance: string;
@@ -925,6 +926,7 @@ export const curatedCigarMarkets: CuratedCigarMarket[] = [
       {
         title: "Downtown Chandler Patio Signal",
         date: "This week",
+        recurrence: "daily",
         venue: "Puro Cigar Bar",
         area: "Chandler",
         distance: "East Valley",
@@ -938,6 +940,7 @@ export const curatedCigarMarkets: CuratedCigarMarket[] = [
       {
         title: "Scottsdale Brand Event Watch",
         date: "Check calendar",
+        recurrence: "daily",
         venue: "Owl Ear Smoke Shop",
         area: "Scottsdale",
         distance: "Central Scottsdale",
@@ -951,6 +954,7 @@ export const curatedCigarMarkets: CuratedCigarMarket[] = [
       {
         title: "Polished Bourbon Lounge Night",
         date: "Evening pick",
+        recurrence: "daily",
         venue: "Churchill's Fine Cigars",
         area: "Phoenix / Scottsdale",
         distance: "Multiple Valley locations",

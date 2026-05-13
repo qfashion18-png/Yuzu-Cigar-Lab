@@ -83,12 +83,18 @@ export type CognitoPasswordSignInResult =
 
 export const cognitoPendingLoginStorageKey = "yuzu-cognito-pkce-login-v1";
 export const cognitoSessionStorageKey = "yuzu-cognito-auth-session-v1";
+export const cognitoProfileCacheStorageKey = "yuzu-cognito-auth-profile-cache-v1";
 
 const defaultRedirectPath = "/auth/callback";
 const defaultLogoutPath = "/auth/logout";
-const defaultScopes = ["openid", "email", "profile"];
+const defaultScopes = ["openid", "email", "profile", "phone"];
 const expirationSkewMs = 60_000;
 const cognitoInitiateAuthTarget = "AWSCognitoIdentityProviderService.InitiateAuth";
+type CognitoProfileSnapshot = {
+  name: string;
+  phone: string;
+  shippingAddress: AccountShippingAddress;
+};
 
 type CognitoFetch = (
   url: string,
@@ -271,7 +277,12 @@ export function createCognitoSessionFromTokens(tokens: CognitoTokenResponse, now
   const groups = parseGroups(idClaims["cognito:groups"]);
   const sub = stringClaim(idClaims.sub) || "cognito-user";
   const email = stringClaim(idClaims.email) || "";
-  const name = stringClaim(idClaims.name) || stringClaim(idClaims["cognito:username"]) || email || "Yuzu Member";
+  const name =
+    stringClaim(idClaims.name) ||
+    buildDisplayNameFromPersonClaims(idClaims.given_name, idClaims.family_name) ||
+    stringClaim(idClaims["cognito:username"]) ||
+    email ||
+    "Yuzu Member";
   const phone = stringClaim(idClaims.phone_number) || stringClaim(idClaims.phone) || "";
   const shippingAddress = getCognitoShippingAddress(idClaims);
   const membershipTier = stringClaim(idClaims["custom:membership_tier"]);
@@ -353,6 +364,62 @@ export function updateCognitoSessionProfile(
   };
 }
 
+export function hydrateCognitoSessionFromProfile(session: CognitoAuthSession, snapshot: CognitoProfileSnapshot | null): CognitoAuthSession {
+  if (!snapshot) {
+    return session;
+  }
+
+  const name = session.user.name || snapshot.name;
+  const phone = session.user.phone || snapshot.phone;
+  const shippingAddress = normalizeAccountShippingAddress({
+    address1: session.user.shippingAddress.address1 || snapshot.shippingAddress.address1,
+    address2: session.user.shippingAddress.address2 || snapshot.shippingAddress.address2,
+    city: session.user.shippingAddress.city || snapshot.shippingAddress.city,
+    state: session.user.shippingAddress.state || snapshot.shippingAddress.state,
+    postalCode: session.user.shippingAddress.postalCode || snapshot.shippingAddress.postalCode,
+    country: session.user.shippingAddress.country || snapshot.shippingAddress.country,
+  });
+
+  return {
+    ...session,
+    user: {
+      ...session.user,
+      name,
+      phone,
+      shippingAddress,
+    },
+    claims: {
+      ...session.claims,
+      name,
+      phoneNumber: phone || null,
+      shippingAddress,
+    },
+  };
+}
+
+export function readStoredCognitoProfile(storage: Storage, subject: string): CognitoProfileSnapshot | null {
+  const cache = normalizeCognitoProfileCache(readJson(storage, cognitoProfileCacheStorageKey));
+  if (!cache) {
+    return null;
+  }
+
+  return cache[subject] ? cache[subject] : null;
+}
+
+export function writeStoredCognitoProfile(storage: Storage, session: CognitoAuthSession) {
+  const cache = normalizeCognitoProfileCache(readJson(storage, cognitoProfileCacheStorageKey)) ?? {};
+  const nextCache = {
+    ...cache,
+    [session.user.id]: {
+      name: session.user.name,
+      phone: session.user.phone,
+      shippingAddress: session.user.shippingAddress,
+    },
+  };
+
+  storage.setItem(cognitoProfileCacheStorageKey, JSON.stringify(nextCache));
+}
+
 export function shouldStartSeamlessCognitoLogin(input: {
   isReady: boolean;
   isSignedIn: boolean;
@@ -390,6 +457,20 @@ export function writeStoredCognitoSession(storage: Storage, session: CognitoAuth
 
 export function clearStoredCognitoSession(storage: Storage) {
   storage.removeItem(cognitoSessionStorageKey);
+}
+
+export function clearStoredCognitoProfile(storage: Storage, subject: string | null) {
+  if (!subject) {
+    return;
+  }
+
+  const cache = normalizeCognitoProfileCache(readJson(storage, cognitoProfileCacheStorageKey));
+  if (!cache) {
+    return;
+  }
+
+  delete cache[subject];
+  storage.setItem(cognitoProfileCacheStorageKey, JSON.stringify(cache));
 }
 
 export function readPendingCognitoLogin(storage: Storage) {
@@ -629,6 +710,47 @@ function numericClaim(value: unknown) {
 
 function normalizeProfileText(value: string) {
   return value.trim().replace(/\s+/g, " ");
+}
+
+function buildDisplayNameFromPersonClaims(givenName: unknown, familyName: unknown) {
+  const firstName = stringClaim(givenName);
+  const lastName = stringClaim(familyName);
+  const displayName = `${firstName || ""} ${lastName || ""}`.trim();
+
+  return displayName || null;
+}
+
+function normalizeCognitoProfileCache(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const snapshotIndex = value as Record<string, unknown>;
+  const result: Record<string, CognitoProfileSnapshot> = {};
+
+  for (const [subject, snapshotValue] of Object.entries(snapshotIndex)) {
+    if (typeof subject !== "string" || !subject.trim()) {
+      continue;
+    }
+
+    if (!snapshotValue || typeof snapshotValue !== "object") {
+      continue;
+    }
+
+    const snapshot = snapshotValue as {
+      name?: unknown;
+      phone?: unknown;
+      shippingAddress?: Partial<AccountShippingAddress>;
+    };
+
+    result[subject] = {
+      name: normalizeProfileText(stringClaim(snapshot.name) || ""),
+      phone: normalizeProfileText(stringClaim(snapshot.phone) || ""),
+      shippingAddress: normalizeAccountShippingAddress(snapshot.shippingAddress),
+    };
+  }
+
+  return result;
 }
 
 function isCognitoAuthSession(value: unknown): value is CognitoAuthSession {

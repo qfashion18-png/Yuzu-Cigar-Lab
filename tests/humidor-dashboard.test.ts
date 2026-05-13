@@ -7,7 +7,7 @@ import { demoHumidorItems } from "../src/lib/humidor-demo";
 test("humidor dashboard loads and writes member records through the live API", () => {
   const source = readFileSync(new URL("../src/components/humidor-dashboard.tsx", import.meta.url), "utf8");
 
-  assert.ok(source.includes("fetchHumidorItems"), "missing live humidor read path");
+  assert.ok(source.includes("fetchHumidorDashboardBootstrap"), "missing live humidor bootstrap read path");
   assert.ok(source.includes("createHumidorItem"), "missing live humidor create path");
   assert.ok(source.includes("auth.createApiHeaders()"), "humidor API calls must use Cognito headers");
   assert.ok(source.includes("Loading live humidor data"), "missing live loading state");

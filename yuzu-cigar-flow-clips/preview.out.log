@@ -1,0 +1,20 @@
+
+> dev
+> npx --yes hyperframes@0.4.45 preview --port 3027
+
+
+  ⚠ composition_file_too_large: This HTML composition file has 925 lines. Agents produce better results when large scenes are split into smaller sub-compositions.
+    Fix: Split coherent scenes or layers into separate .html files under compositions/, then mount them from the parent with data-composition-src so each file stays small enough to inspect, revise, and validate independently.
+
+T  hyperframes preview
+[?25l|
+o  Studio running
+[?25h
+  Project   yuzu-cigar-flow-clips
+  Studio    http://localhost:3027
+
+  Edit with your AI agent — it has HyperFrames skills installed.
+  Changes reload automatically in the studio.
+
+  Press Ctrl+C to stop
+

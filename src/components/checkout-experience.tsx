@@ -18,7 +18,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { readCheckoutAgeVerificationToken } from "@/lib/age-verification";
 import type { BackupAuthSession } from "@/lib/backup-auth";
-import { calculateCartTotals, formatCurrency } from "@/lib/shopping-cart";
+import {
+  calculateCartTotals,
+  formatCurrency,
+  isMemberOnlyCart,
+} from "@/lib/shopping-cart";
 import { createCheckoutSession, getCheckoutErrorMessage } from "@/lib/stripe-checkout";
 
 const taxRate = 0.066;
@@ -54,6 +58,7 @@ export function CheckoutExperience() {
 }
 
 function CheckoutExperienceContent({ accountSession }: { accountSession: BackupAuthSession | null }) {
+  const auth = useBackupAuth();
   const { cart, itemCount } = useCart();
   const [form, setForm] = useState(() => createCheckoutFormStateFromAccount(accountSession));
   const [deliveryMethodId, setDeliveryMethodId] = useState(defaultDeliveryMethods[0].id);
@@ -63,6 +68,7 @@ function CheckoutExperienceContent({ accountSession }: { accountSession: BackupA
   const [isSubmitting, setIsSubmitting] = useState(false);
   const selectedDelivery = defaultDeliveryMethods.find((method) => method.id === deliveryMethodId) ?? defaultDeliveryMethods[0];
   const selectedPayment = checkoutPaymentMethods.find((method) => method.id === paymentMethodId) ?? checkoutPaymentMethods[0];
+  const isMemberOnlyLocked = isMemberOnlyCart(cart) && !auth.isMember;
   const totals = useMemo(
     () =>
       calculateCartTotals(cart, {
@@ -84,6 +90,11 @@ function CheckoutExperienceContent({ accountSession }: { accountSession: BackupA
 
     if (cart.items.length === 0) {
       setError("Add at least one item before checkout.");
+      return;
+    }
+
+    if (isMemberOnlyLocked) {
+      setError("Membership is required before checking out with member-only items.");
       return;
     }
 
@@ -114,6 +125,7 @@ function CheckoutExperienceContent({ accountSession }: { accountSession: BackupA
           phone: form.phone,
           fullName: form.fullName,
         },
+        isMember: auth.isMember,
         shippingAddress: {
           address1: form.address1,
           address2: form.address2,
@@ -146,6 +158,25 @@ function CheckoutExperienceContent({ accountSession }: { accountSession: BackupA
           </div>
           <Button className="h-12 bg-yuzu-gold px-8 text-yuzu-ink hover:bg-yuzu-gold-light" render={<Link href="/shop" />}>
             Shop Catalog
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (isMemberOnlyLocked) {
+    return (
+      <div className="mx-auto grid min-h-[62vh] max-w-[920px] place-items-center px-5 py-16 text-center">
+        <div className="luxury-card grid gap-6 p-8">
+          <ShieldCheck className="mx-auto size-12 text-yuzu-gold" />
+          <div>
+            <h1 className="font-heading text-4xl text-yuzu-cream">Membership required</h1>
+            <p className="mt-3 text-sm leading-6 text-yuzu-muted">
+              Your cart has member-only products. Sign in as a member or join now to complete checkout.
+            </p>
+          </div>
+          <Button className="h-12 bg-yuzu-gold px-8 text-yuzu-ink hover:bg-yuzu-gold-light" render={<Link href="/membership" />}>
+            Open membership
           </Button>
         </div>
       </div>

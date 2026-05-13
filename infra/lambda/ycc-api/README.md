@@ -27,6 +27,9 @@ Stripe owns payment processing, hosted Checkout, Billing/subscriptions, Products
 - `GET /humidor/items`
 - `POST /humidor/items`
 - `POST /humidor/identify-cigar`
+- `GET /humidor/alerts`
+- `POST /humidor/alerts`
+- `POST /humidor/alerts/dispatch`
 
 `GET /health`, `GET /content/pages`, `GET /news/stories`, and `POST /newsletter/subscribe` are public. All other routes expect API Gateway to provide Cognito JWT claims at `requestContext.authorizer.jwt.claims`; the handler also checks this defensively. `POST /content/pages`, `POST /news/story-drafts`, and `POST /news/stories` additionally require an `admin` or `concierge_operator` group.
 
@@ -89,9 +92,17 @@ When `FEATURE_DB_WRITES=schema_ready`, protected routes write through RDS Proxy 
 - `GET /news/stories` reads published stories for the public static storefront without Cognito.
 - `POST /humidor/identify-cigar` uses Bedrock Runtime vision to identify a member-uploaded cigar image, returns editable humidor fields plus richer cigar-reference details, and writes a safe field-coverage log without image bytes or raw member notes.
 - `POST /humidor/items` stores the member, humidor item, and audit row after the member confirms the fields.
+- `GET /humidor/alerts` reads stored humidor notification preference settings from `member_profiles.preferences`.
+- `POST /humidor/alerts` writes humidor alert preference settings (including push subscription details) to `member_profiles.preferences` and writes an audit row.
+- `POST /humidor/alerts/dispatch` sends reorder reminder pushes for due items after checking `HUMIDOR_ALERT_DISPATCH_SECRET`, writes `humidorReorderReminderDispatchedOn` into item metadata for sent items, and disables invalid push subscriptions when web-push returns 404/410.
 - `POST /concierge/voice` accepts a short member voice message, uses Amazon Transcribe for speech-to-text when `FEATURE_CONCIERGE_VOICE=ready`, routes the transcript through the same concierge exchange, and uses Amazon Polly for spoken replies.
 
 If schema writes are not enabled, the same routes keep returning the contract response with persistence marked as pending. The handler reads the RDS credentials from Secrets Manager at runtime and never exposes database credentials in API responses.
+
+## Push dispatch settings
+
+- `HUMIDOR_ALERT_DISPATCH_SECRET` authorizes `POST /humidor/alerts/dispatch` calls.
+- `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, and `VAPID_SUBJECT` are required for web-push VAPID signing.
 
 ## Schema Migrations
 
@@ -99,6 +110,8 @@ Direct Lambda migration invokes are guarded and intended for operator use from t
 
 - `source=ycc.phase3.migration`, `action=apply_phase3_schema`, confirm `APPLY_YCC_PHASE3_SCHEMA`
 - `source=ycc.phase3.migration`, `action=verify_phase3_schema`
+- `source=ycc.commerce.migration`, `action=apply_commerce_schema`, confirm `APPLY_YCC_COMMERCE_SCHEMA`
+- `source=ycc.commerce.migration`, `action=verify_commerce_schema`
 - `source=ycc.site_content.migration`, `action=apply_site_content_schema`, confirm `APPLY_YCC_SITE_CONTENT_SCHEMA`
 - `source=ycc.site_content.migration`, `action=verify_site_content_schema`
 - `source=ycc.newsroom.migration`, `action=apply_newsroom_schema`, confirm `APPLY_YCC_NEWSROOM_SCHEMA`

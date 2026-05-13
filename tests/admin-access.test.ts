@@ -18,7 +18,16 @@ test("explicit admin hand-off URL resolves to the live backend admin", () => {
       NEXT_PUBLIC_ADMIN_APP_URL: "https://admin.yuzucigarclub.com",
       NEXT_PUBLIC_BASE_URL: "https://www.yuzucigarclub.com",
     }),
-    "https://admin.yuzucigarclub.com/"
+    "https://admin.yuzucigarclub.com/admin/console/"
+  );
+});
+
+test("explicit admin console URL is preserved", () => {
+  assert.equal(
+    resolveAdminAppUrl({
+      NEXT_PUBLIC_ADMIN_APP_URL: "https://admin.yuzucigarclub.com/admin/console/",
+    }),
+    "https://admin.yuzucigarclub.com/admin/console/"
   );
 });
 

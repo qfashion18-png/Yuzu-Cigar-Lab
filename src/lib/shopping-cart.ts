@@ -10,6 +10,7 @@ export type ShoppingCartItemInput = {
   category: string;
   unitPrice: number;
   maxQuantity: number;
+  memberOnly?: boolean;
 };
 
 export type ShoppingCartItem = ShoppingCartItemInput & {
@@ -132,6 +133,14 @@ export function addCartItem(
       ];
 
   return touchCart(cart, nextItems, now);
+}
+
+export function isMemberOnlyCartItem(item: ShoppingCartItem) {
+  return Boolean(item.memberOnly);
+}
+
+export function isMemberOnlyCart(cart: ShoppingCart) {
+  return cart.items.some(isMemberOnlyCartItem);
 }
 
 export function updateCartItemQuantity(

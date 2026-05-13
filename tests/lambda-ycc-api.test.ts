@@ -2237,6 +2237,50 @@ test("news story publish route stores approved story and audit row", async () =>
   }
 });
 
+test("news story publish route rejects placeholder scaffold copy", async () => {
+  const mock = installPersistenceMocks();
+
+  try {
+    const response = await handler(
+      createAuthenticatedEvent(
+        "POST /news/stories",
+        {
+          title: "Cigar Industry Brand Announcements brief",
+          dek: "A human-reviewed Yuzu Cigar Club news draft built from primary source notes.",
+          category: "Industry News",
+          publishStatus: "published",
+          bodyMarkdown: [
+            "## What changed",
+            "Yuzu is tracking cigar industry brand announcements based on the official source notes supplied for this week. Keep this section factual and concise until an operator verifies each detail against the source URLs.",
+            "",
+            "## Why adult members may care",
+            "Frame the update around release timing, availability, craftsmanship, events, or education value. Avoid sales pressure and do not make health, cessation, medical, therapeutic, disease, or safety claims.",
+            "",
+            "## Operator review notes",
+            "Verify every product name, date, quote, MSRP, distributor note, and availability claim before publication. Attribute the company announcement and link to the primary source.",
+          ].join("\n"),
+          sourceNotes: [
+            {
+              label: "Rocky Patel",
+              url: "https://www.rockypatel.com/cigar-news/sixty-release/",
+              note: "Official brand page.",
+              sourceType: "official",
+            },
+          ],
+          operatorApproved: true,
+        },
+        adminClaims
+      )
+    );
+
+    assert.equal(response.statusCode, 400);
+    const body = JSON.parse(response.body);
+    assert.equal(body.error, "news_story_placeholder_body");
+  } finally {
+    mock.restore();
+  }
+});
+
 test("public news stories route returns published stories without Cognito", async () => {
   const mock = installPersistenceMocks();
 
@@ -2757,8 +2801,10 @@ test("humidor alert dispatch sends grouped reminders, updates metadata, and emit
 
     const sendInvocations = mock.webPushInvocations.filter((invocation) => invocation.payload !== "");
     assert.equal(sendInvocations.length, 2);
-    assert.equal(sendInvocations[0].subscription.endpoint, "https://example.com/endpoints/member-a");
-    assert.equal(sendInvocations[1].subscription.endpoint, "https://example.com/endpoints/member-b");
+    const firstNotificationSubscription = sendInvocations[0].subscription as { endpoint?: string };
+    const secondNotificationSubscription = sendInvocations[1].subscription as { endpoint?: string };
+    assert.equal(firstNotificationSubscription.endpoint, "https://example.com/endpoints/member-a");
+    assert.equal(secondNotificationSubscription.endpoint, "https://example.com/endpoints/member-b");
 
     const firstPayload = JSON.parse(sendInvocations[0].payload);
     assert.equal(firstPayload.title, "Humidor reorder reminders");
@@ -2825,7 +2871,8 @@ test("humidor alert dispatch disables push when endpoint is gone and records the
 
     const sendInvocations = mock.webPushInvocations.filter((invocation) => invocation.payload !== "");
     assert.equal(sendInvocations.length, 1);
-    assert.equal(sendInvocations[0].subscription.endpoint, "https://example.com/endpoints/gone");
+    const goneNotificationSubscription = sendInvocations[0].subscription as { endpoint?: string };
+    assert.equal(goneNotificationSubscription.endpoint, "https://example.com/endpoints/gone");
 
     const queries = mock.clients.flatMap((client) => client.queries);
     assert.equal(

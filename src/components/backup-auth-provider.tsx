@@ -33,14 +33,17 @@ import {
   clearStoredCognitoSession,
   createCognitoApiHeaders,
   isCognitoSessionExpired,
+  hydrateCognitoSessionFromProfile,
   createCognitoSessionFromTokens,
   getTokenEndpoint,
   readPendingCognitoLogin,
   readStoredCognitoSession,
+  readStoredCognitoProfile,
   resolveCognitoConfig,
   resolveRedirectUri,
   signInWithCognitoPassword as signInWithCognitoPasswordRequest,
   getCognitoTokenResponse,
+  writeStoredCognitoProfile,
   updateCognitoSessionProfile,
   writeStoredCognitoSession,
   type CognitoAuthConfig,
@@ -109,7 +112,15 @@ export function BackupAuthProvider({ children }: { children: React.ReactNode }) 
     const storedSession = liveAuthRequired ? null : (readStorage(sessionStorageKey) as BackupAuthSession | null);
     const storedSessionUser = getSessionUser(nextDatabase, storedSession);
     const nextSession = storedSessionUser && storedSession ? createBackupAuthSession(storedSessionUser, storedSession.signedInAt) : null;
-    const nextCognitoSession = readStoredCognitoSession(window.localStorage);
+    const nextCognitoSession = (() => {
+      const cachedSession = readStoredCognitoSession(window.localStorage);
+      if (!cachedSession) {
+        return null;
+      }
+
+      const cachedProfile = readStoredCognitoProfile(window.localStorage, cachedSession.user.id);
+      return hydrateCognitoSessionFromProfile(cachedSession, cachedProfile);
+    })();
 
     window.queueMicrotask(() => {
       if (cancelled) {
@@ -205,10 +216,15 @@ export function BackupAuthProvider({ children }: { children: React.ReactNode }) 
       return null;
     }
 
-    return createCognitoSessionFromTokens({
+    const refreshedSession = createCognitoSessionFromTokens({
       ...nextTokenResponse,
       refresh_token: nextTokenResponse.refresh_token ?? cognitoSession.tokens.refreshToken,
     });
+
+    return hydrateCognitoSessionFromProfile(
+      refreshedSession,
+      readStoredCognitoProfile(window.localStorage, refreshedSession.user.id)
+    );
   }, [cognitoConfig, cognitoSession]);
 
   const signInWithCognitoPassword = useCallback(
@@ -226,11 +242,17 @@ export function BackupAuthProvider({ children }: { children: React.ReactNode }) 
       const result = await signInWithCognitoPasswordRequest(cognitoConfig, input);
 
       if (result.status === "signed_in") {
-        writeStoredCognitoSession(window.localStorage, result.session);
+        const nextCognitoSession = hydrateCognitoSessionFromProfile(
+          result.session,
+          readStoredCognitoProfile(window.localStorage, result.session.user.id)
+        );
+
+        writeStoredCognitoSession(window.localStorage, nextCognitoSession);
+        writeStoredCognitoProfile(window.localStorage, nextCognitoSession);
         clearPendingCognitoLogin(window.sessionStorage);
         window.localStorage.removeItem(sessionStorageKey);
         setSession(null);
-        setCognitoSession(result.session);
+        setCognitoSession(nextCognitoSession);
         setAuthError("");
         return result;
       }
@@ -305,9 +327,14 @@ export function BackupAuthProvider({ children }: { children: React.ReactNode }) 
         };
       }
 
-      const nextCognitoSession = createCognitoSessionFromTokens(tokenResponse);
+      const tokenSession = createCognitoSessionFromTokens(tokenResponse);
+      const nextCognitoSession = hydrateCognitoSessionFromProfile(
+        tokenSession,
+        readStoredCognitoProfile(window.localStorage, tokenSession.user.id)
+      );
 
       writeStoredCognitoSession(window.localStorage, nextCognitoSession);
+      writeStoredCognitoProfile(window.localStorage, nextCognitoSession);
       clearPendingCognitoLogin(window.sessionStorage);
       window.localStorage.removeItem(sessionStorageKey);
       setSession(null);
@@ -338,6 +365,7 @@ export function BackupAuthProvider({ children }: { children: React.ReactNode }) 
         const nextCognitoSession = updateCognitoSessionProfile(cognitoSession, input);
 
         writeStoredCognitoSession(window.localStorage, nextCognitoSession);
+        writeStoredCognitoProfile(window.localStorage, nextCognitoSession);
         setCognitoSession(nextCognitoSession);
         setAuthError("");
 
@@ -380,6 +408,7 @@ export function BackupAuthProvider({ children }: { children: React.ReactNode }) 
     }
 
     writeStoredCognitoSession(window.localStorage, nextSession);
+    writeStoredCognitoProfile(window.localStorage, nextSession);
     setCognitoSession(nextSession);
     setAuthError("");
     return createCognitoApiHeaders(nextSession);

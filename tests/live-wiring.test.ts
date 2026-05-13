@@ -35,7 +35,7 @@ test("humidor experience keeps demo data anonymous and live data authenticated",
   const humidorDevices = source("../src/lib/humidor-devices.ts");
   const humidorAging = source("../src/lib/humidor-aging.ts");
 
-  assert.ok(humidorDashboard.includes("fetchHumidorItems"));
+  assert.ok(humidorDashboard.includes("fetchHumidorDashboardBootstrap"));
   assert.ok(humidorDashboard.includes("createHumidorItem"));
   assert.ok(humidorDashboard.includes("demoHumidorItems"));
   assert.ok(humidorDashboard.includes("const items = isAnonymousDemo ? demoHumidorItems : liveState.items"));

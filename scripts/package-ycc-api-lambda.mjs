@@ -35,6 +35,7 @@ const lambdaDependencies = [
   "@aws-sdk/client-transcribe",
   "pg",
   "stripe",
+  "web-push",
 ];
 
 main();
@@ -60,7 +61,7 @@ function main() {
   }
 
   writeLambdaPackageJson();
-  installProductionDependencies();
+  stageProductionDependencies();
   validateStage();
   zipStage();
 
@@ -87,7 +88,17 @@ function writeLambdaPackageJson() {
   );
 }
 
-function installProductionDependencies() {
+function stageProductionDependencies() {
+  const cachedNodeModules = resolve(
+    workspace,
+    process.env.YCC_LAMBDA_NODE_MODULES_SOURCE || "tmp-ycc-api-lambda-package/node_modules",
+  );
+
+  if (existsSync(cachedNodeModules)) {
+    cpSync(cachedNodeModules, join(stageDir, "node_modules"), { recursive: true });
+    return;
+  }
+
   const result = spawnSync("npm", ["install", "--omit=dev", "--no-audit", "--no-fund", "--package-lock=false"], {
     cwd: stageDir,
     encoding: "utf8",

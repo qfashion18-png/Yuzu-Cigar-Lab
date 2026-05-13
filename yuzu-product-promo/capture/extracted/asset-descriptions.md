@@ -1,0 +1,41 @@
+# Asset Descriptions
+
+One line per file. Read this instead of opening every image individually.
+
+- svgs/lucide-arrow-right.svg — icon: lucide-arrow-right
+- svgs/lucide-calendar-days.svg — icon: lucide-calendar-days
+- svgs/lucide-cigarette.svg — icon: lucide-cigarette
+- svgs/lucide-droplets.svg — icon: lucide-droplets
+- svgs/lucide-flame.svg — icon: lucide-flame
+- svgs/lucide-gauge.svg — icon: lucide-gauge
+- svgs/lucide-heart.svg — icon: lucide-heart
+- svgs/lucide-lock-keyhole.svg — icon: lucide-lock-keyhole
+- svgs/lucide-map-pin.svg — icon: lucide-map-pin
+- svgs/lucide-menu.svg — icon: lucide-menu
+- svgs/lucide-package.svg — icon: lucide-package
+- svgs/lucide-plus.svg — icon: lucide-plus
+- svgs/lucide-ruler.svg — icon: lucide-ruler
+- svgs/lucide-search.svg — icon: lucide-search
+- svgs/lucide-shield-check.svg — icon: lucide-shield-check
+- svgs/lucide-shopping-cart.svg — icon: lucide-shopping-cart
+- svgs/lucide-tag.svg — icon: lucide-tag
+- svgs/lucide-thermometer.svg — icon: lucide-thermometer
+- svgs/lucide-truck.svg — icon: lucide-truck
+- site/hero-boxes.png — wide hero photograph of premium cigar boxes on a polished lounge table, warm amber lighting, overlaid humidor UI on the right edge.
+- site/membership-boxes.png — horizontal lounge still with green and black Yuzu boxes, open wooden cigar box, cigar, and whiskey glass; strong brand mark visibility.
+- site/shop-hero.png — product hero image of an open Padron Anniversary cigar box on a dark wood table with glassware and warm highlights.
+- site/about-lounge.png — private Yuzu lounge event image with branded boxes and cigars, dark green and amber atmosphere.
+- site/mobile-layout.png — three tall mobile app/reference screens showing membership, journal, and about pages with Yuzu branding and cigar imagery.
+- site/frontpage.png — full-page reference screenshot of the home experience, useful for UI collage treatments.
+- site/shop.png — full-page reference screenshot of the shop page with product grids and cigar box cards.
+- site/membership.png — full-page reference screenshot of membership tiers and benefit panels.
+- site/humidor.png — full-page reference screenshot of the digital humidor dashboard.
+- site/journal.png — full-page reference screenshot of the cigar journal and tasting history interface.
+- site/checkout.png — full-page reference screenshot of checkout flow, useful for compliance/adult-signature moment.
+- site/product-padron.png — product card crop of Padron 1964 Anniversary Series box with red lid and cigars.
+- site/product-davidoff.png — product card crop of Davidoff Signature No. 2 box with pale wood interior and cigars.
+- site/product-liga.png — product card crop of Liga Privada T52 box with dark lid and rows of cigars.
+- site/product-fuente.png — product card crop of Arturo Fuente box with dark lid and cigars.
+- site/product-plasencia.png — product card crop of Plasencia Alma Fuerte box with golden lid and cigars.
+- site/yuzu-logo.png — yellow Yuzu icon mark on transparent background.
+- site/yuzu-icon.svg — compact vector Yuzu icon mark.

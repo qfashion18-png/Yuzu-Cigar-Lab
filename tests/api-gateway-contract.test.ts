@@ -30,6 +30,9 @@ const expectedRouteAuth = new Map([
   ["POST /humidor/identify-cigar", "JWT"],
   ["GET /humidor/items", "JWT"],
   ["POST /humidor/items", "JWT"],
+  ["GET /humidor/alerts", "JWT"],
+  ["POST /humidor/alerts", "JWT"],
+  ["POST /humidor/alerts/dispatch", "NONE"],
 ]);
 
 function getRouteAuthorization(routeKey: string) {
@@ -55,6 +58,7 @@ test("API Gateway template allows Bedrock action groups to invoke the shared Lam
 
 test("API Gateway CORS allows Stripe webhook signatures", () => {
   assert.match(templateSource, /AllowHeaders:[\s\S]*stripe-signature/);
+  assert.match(templateSource, /AllowHeaders:[\s\S]*x-humidor-alert-dispatch-secret/);
 });
 
 test("API Gateway CORS allows the deployed storefront origins", () => {

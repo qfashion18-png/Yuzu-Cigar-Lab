@@ -70,6 +70,53 @@ self.addEventListener("activate", (event) => {
   );
 });
 
+self.addEventListener("push", (event) => {
+  let payload = {};
+  if (event.data) {
+    try {
+      payload = event.data.json();
+    } catch {
+      payload = { body: event.data.text() };
+    }
+  }
+
+  const title = payload.title || "Digital Humidor Alert";
+  const body = payload.body || "You have a new alert from your humidor.";
+  const data = payload.data || {};
+
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      badge: "/assets/yuzu-logo-192.png",
+      body,
+      data: {
+        url: data.url || "/humidor?section=alerts",
+      },
+      icon: "/assets/yuzu-logo-192.png",
+      tag: data.tag || "digital-humidor-alert",
+      vibrate: [120, 60, 120],
+    })
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const targetUrl = event.notification.data?.url || "/humidor?section=alerts";
+
+  event.waitUntil(
+    self.clients
+      .matchAll({ includeUncontrolled: true, type: "window" })
+      .then((clients) => {
+        const existing = clients.find((client) => client.url.includes(targetUrl) && "focus" in client);
+
+        if (existing) {
+          return existing.focus();
+        }
+
+        return self.clients.openWindow(targetUrl);
+      })
+  );
+});
+
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET" || !isSameOrigin(event.request)) {
     return;

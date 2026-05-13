@@ -109,6 +109,11 @@ const BLOCKED_SECONDARY_NEWS_DOMAINS = new Set([
   "stogieguys.com",
   "tobaccobusiness.com",
 ]);
+const FALLBACK_NEWS_BODY_PATTERNS = [
+  "keep this section factual and concise until an operator verifies each detail against the source urls.",
+  "frame the update around release timing, availability, craftsmanship, events, or education value.",
+  "verify every product name, date, quote, msrp, distributor note, and availability claim before publication.",
+];
 const BEDROCK_AGENT_NAMES = new Set([
   "YCCConcierge",
   "YCCCigarGuide",
@@ -873,11 +878,7 @@ async function handleAdminStripeSyncProducts(event, actor, requestId) {
   }
 
   return json(202, requestId, {
-    sync: {
-      status: "queued",
-      seedScope: "featured_products_and_memberships",
-      liveApprovalRequired: true,
-    },
+    sync: buildAdminStripeSyncSnapshot(process.env),
   });
 }
 
@@ -889,9 +890,23 @@ async function handleAdminWebhookEvents(event, actor, requestId) {
     });
   }
 
-  return json(200, requestId, {
-    events: [],
-    persistence: getDatabasePersistenceStatus(),
+  if (!shouldPersistDatabaseWrites()) {
+    return json(200, requestId, {
+      events: [],
+      summary: buildEmptyAdminOverview().counts.webhooks,
+      persistence: getDatabasePersistenceStatus(),
+    });
+  }
+
+  return withDatabaseClient("ycc-api-admin-webhook-events", async (client) => {
+    const overview = await loadAdminOperationsOverview(client);
+    const events = await loadAdminWebhookEventRows(client);
+
+    return json(200, requestId, {
+      events,
+      summary: overview.counts.webhooks,
+      persistence: "stored",
+    });
   });
 }
 
@@ -903,10 +918,700 @@ async function handleAdminComplianceHolds(event, actor, requestId) {
     });
   }
 
-  return json(200, requestId, {
-    holds: [],
-    persistence: getDatabasePersistenceStatus(),
+  if (!shouldPersistDatabaseWrites()) {
+    return json(200, requestId, {
+      holds: [],
+      orders: [],
+      subscriptions: [],
+      audit: [],
+      overview: buildEmptyAdminOverview(),
+      summary: buildEmptyAdminOverview().counts.holds,
+      persistence: getDatabasePersistenceStatus(),
+    });
+  }
+
+  return withDatabaseClient("ycc-api-admin-compliance-holds", async (client) => {
+    const overview = await loadAdminOperationsOverview(client);
+    const holds = await loadAdminComplianceHoldRows(client);
+    const orders = await loadRecentAdminOrders(client);
+    const subscriptions = await loadRecentAdminSubscriptions(client);
+    const audit = await loadRecentAdminAuditEntries(client);
+
+    return json(200, requestId, {
+      holds,
+      orders,
+      subscriptions,
+      audit,
+      overview,
+      summary: overview.counts.holds,
+      persistence: "stored",
+    });
   });
+}
+
+function buildEmptyAdminOverview() {
+  return {
+    counts: {
+      orders: {
+        total: 0,
+        paid: 0,
+        pending: 0,
+        refunded: 0,
+      },
+      subscriptions: {
+        total: 0,
+        active: 0,
+        pastDue: 0,
+        canceled: 0,
+      },
+      holds: {
+        total: 0,
+        open: 0,
+        resolved: 0,
+      },
+      webhooks: {
+        total: 0,
+        processed: 0,
+        pending: 0,
+        failed: 0,
+      },
+      audit: {
+        total: 0,
+        last24h: 0,
+      },
+    },
+    latest: {
+      orderAt: null,
+      subscriptionAt: null,
+      holdAt: null,
+      webhookAt: null,
+      auditAt: null,
+    },
+  };
+}
+
+async function loadAdminOperationsOverview(client) {
+  const result = await client.query(
+    `
+      select
+        (select count(*)::integer from public.commerce_orders) as orders_total,
+        (
+          select count(*)::integer
+          from public.commerce_orders
+          where lower(status) in ('paid', 'complete', 'completed', 'succeeded')
+        ) as orders_paid,
+        (
+          select count(*)::integer
+          from public.commerce_orders
+          where lower(status) in ('pending', 'open', 'processing', 'requires_review')
+        ) as orders_pending,
+        (
+          select count(*)::integer
+          from public.commerce_orders
+          where lower(status) in ('refunded', 'refund_pending', 'partially_refunded')
+        ) as orders_refunded,
+        (select max(created_at) from public.commerce_orders) as latest_order_at,
+        (select count(*)::integer from public.member_subscriptions) as subscriptions_total,
+        (
+          select count(*)::integer
+          from public.member_subscriptions
+          where lower(status) in ('active', 'trialing')
+        ) as subscriptions_active,
+        (
+          select count(*)::integer
+          from public.member_subscriptions
+          where lower(status) = 'past_due'
+        ) as subscriptions_past_due,
+        (
+          select count(*)::integer
+          from public.member_subscriptions
+          where lower(status) in ('canceled', 'cancelled', 'unpaid', 'incomplete_expired')
+        ) as subscriptions_canceled,
+        (select max(coalesce(updated_at, created_at)) from public.member_subscriptions) as latest_subscription_at,
+        (select count(*)::integer from public.commerce_compliance_holds) as holds_total,
+        (
+          select count(*)::integer
+          from public.commerce_compliance_holds
+          where lower(status) not in ('resolved', 'closed')
+        ) as holds_open,
+        (
+          select count(*)::integer
+          from public.commerce_compliance_holds
+          where lower(status) in ('resolved', 'closed')
+        ) as holds_resolved,
+        (select max(created_at) from public.commerce_compliance_holds) as latest_hold_at,
+        (select count(*)::integer from public.stripe_events) as webhooks_total,
+        (
+          select count(*)::integer
+          from public.stripe_events
+          where processed_at is not null or lower(processing_status) = 'processed'
+        ) as webhooks_processed,
+        (
+          select count(*)::integer
+          from public.stripe_events
+          where lower(processing_status) in ('failed', 'error')
+        ) as webhooks_failed,
+        (select max(received_at) from public.stripe_events) as latest_webhook_at,
+        (select count(*)::integer from public.commerce_audit_log) as audit_total,
+        (
+          select count(*)::integer
+          from public.commerce_audit_log
+          where created_at >= now() - interval '24 hours'
+        ) as audit_last_24h,
+        (select max(created_at) from public.commerce_audit_log) as latest_audit_at
+    `
+  );
+
+  const row = result.rows[0] || {};
+  const webhookTotal = Number(row.webhooks_total || 0);
+  const webhookProcessed = Number(row.webhooks_processed || 0);
+  const webhookFailed = Number(row.webhooks_failed || 0);
+
+  return {
+    counts: {
+      orders: {
+        total: Number(row.orders_total || 0),
+        paid: Number(row.orders_paid || 0),
+        pending: Number(row.orders_pending || 0),
+        refunded: Number(row.orders_refunded || 0),
+      },
+      subscriptions: {
+        total: Number(row.subscriptions_total || 0),
+        active: Number(row.subscriptions_active || 0),
+        pastDue: Number(row.subscriptions_past_due || 0),
+        canceled: Number(row.subscriptions_canceled || 0),
+      },
+      holds: {
+        total: Number(row.holds_total || 0),
+        open: Number(row.holds_open || 0),
+        resolved: Number(row.holds_resolved || 0),
+      },
+      webhooks: {
+        total: webhookTotal,
+        processed: webhookProcessed,
+        pending: Math.max(0, webhookTotal - webhookProcessed - webhookFailed),
+        failed: webhookFailed,
+      },
+      audit: {
+        total: Number(row.audit_total || 0),
+        last24h: Number(row.audit_last_24h || 0),
+      },
+    },
+    latest: {
+      orderAt: row.latest_order_at ? toIsoString(row.latest_order_at) : null,
+      subscriptionAt: row.latest_subscription_at ? toIsoString(row.latest_subscription_at) : null,
+      holdAt: row.latest_hold_at ? toIsoString(row.latest_hold_at) : null,
+      webhookAt: row.latest_webhook_at ? toIsoString(row.latest_webhook_at) : null,
+      auditAt: row.latest_audit_at ? toIsoString(row.latest_audit_at) : null,
+    },
+  };
+}
+
+async function loadAdminComplianceHoldRows(client) {
+  const result = await client.query(
+    `
+      select
+        h.id,
+        h.order_id,
+        h.reason,
+        h.status,
+        h.details,
+        h.created_at,
+        h.resolved_at,
+        o.email,
+        o.status as order_status,
+        o.fulfillment_status,
+        o.compliance_status,
+        o.stripe_checkout_session_id,
+        o.total_cents,
+        o.currency
+      from public.commerce_compliance_holds h
+      left join public.commerce_orders o on o.id = h.order_id
+      order by
+        case when lower(h.status) in ('open', 'pending') then 0 else 1 end,
+        h.created_at desc
+      limit 12
+    `
+  );
+
+  return result.rows.map((row) => {
+    const details = row.details && typeof row.details === "object" ? row.details : {};
+
+    return {
+      id: row.id,
+      caseId: row.id,
+      orderId: row.order_id,
+      orderNumber: row.stripe_checkout_session_id,
+      reason: row.reason,
+      status: row.status,
+      email: row.email,
+      orderStatus: row.order_status,
+      fulfillmentStatus: row.fulfillment_status,
+      complianceStatus: row.compliance_status,
+      total: Number(row.total_cents || 0) / 100,
+      currency: row.currency || "usd",
+      createdAt: toIsoString(row.created_at),
+      resolvedAt: row.resolved_at ? toIsoString(row.resolved_at) : null,
+      message: buildAdminDetailsPreview(details) || "Compliance review pending.",
+      details,
+    };
+  });
+}
+
+async function loadAdminWebhookEventRows(client) {
+  const result = await client.query(
+    `
+      select
+        e.id,
+        e.type,
+        e.received_at,
+        e.processed_at,
+        e.processing_status,
+        o.id as order_id,
+        o.stripe_checkout_session_id,
+        o.status as order_status,
+        o.fulfillment_status,
+        o.compliance_status,
+        audit.request_id,
+        audit.action as audit_action,
+        audit.actor_email
+      from public.stripe_events e
+      left join public.commerce_orders o on o.stripe_event_id = e.id
+      left join lateral (
+        select request_id, action, actor_email, created_at
+        from public.commerce_audit_log
+        where stripe_event_id = e.id
+        order by created_at desc
+        limit 1
+      ) audit on true
+      order by e.received_at desc
+      limit 12
+    `
+  );
+
+  return result.rows.map((row) => ({
+    id: row.id,
+    type: row.type,
+    requestId: row.request_id || null,
+    status: row.processing_status || "received",
+    processingStatus: row.processing_status || "received",
+    orderId: row.order_id || null,
+    orderNumber: row.stripe_checkout_session_id || null,
+    orderStatus: row.order_status || null,
+    fulfillmentStatus: row.fulfillment_status || null,
+    complianceStatus: row.compliance_status || null,
+    actorEmail: row.actor_email || null,
+    lastAction: row.audit_action || null,
+    createdAt: toIsoString(row.received_at),
+    processedAt: row.processed_at ? toIsoString(row.processed_at) : null,
+  }));
+}
+
+async function loadRecentAdminOrders(client) {
+  const result = await client.query(
+    `
+      select
+        id,
+        stripe_checkout_session_id,
+        email,
+        status,
+        fulfillment_status,
+        compliance_status,
+        total_cents,
+        currency,
+        created_at
+      from public.commerce_orders
+      order by created_at desc
+      limit 8
+    `
+  );
+
+  return result.rows.map((row) => ({
+    id: row.id,
+    orderNumber: row.stripe_checkout_session_id,
+    email: row.email,
+    status: row.status,
+    fulfillmentStatus: row.fulfillment_status,
+    complianceStatus: row.compliance_status,
+    total: Number(row.total_cents || 0) / 100,
+    currency: row.currency || "usd",
+    placedAt: toIsoString(row.created_at),
+  }));
+}
+
+async function loadRecentAdminSubscriptions(client) {
+  const result = await client.query(
+    `
+      select
+        id,
+        email,
+        tier_key,
+        billing_period,
+        status,
+        current_period_end,
+        created_at,
+        updated_at
+      from public.member_subscriptions
+      order by coalesce(updated_at, created_at) desc
+      limit 8
+    `
+  );
+
+  return result.rows.map((row) => ({
+    id: row.id,
+    email: row.email,
+    tierKey: row.tier_key,
+    billingPeriod: row.billing_period,
+    status: row.status,
+    currentPeriodEnd: row.current_period_end ? toIsoString(row.current_period_end) : null,
+    createdAt: toIsoString(row.created_at),
+    updatedAt: row.updated_at ? toIsoString(row.updated_at) : null,
+  }));
+}
+
+async function loadRecentAdminAuditEntries(client) {
+  const result = await client.query(
+    `
+      select
+        id,
+        actor_email,
+        action,
+        target_type,
+        target_id,
+        request_id,
+        stripe_event_id,
+        order_id,
+        compliance_hold_id,
+        created_at
+      from public.commerce_audit_log
+      order by created_at desc
+      limit 10
+    `
+  );
+
+  return result.rows.map((row) => ({
+    id: row.id,
+    actorEmail: row.actor_email || null,
+    action: row.action,
+    targetType: row.target_type,
+    targetId: row.target_id || null,
+    requestId: row.request_id || null,
+    stripeEventId: row.stripe_event_id || null,
+    orderId: row.order_id || null,
+    complianceHoldId: row.compliance_hold_id || null,
+    createdAt: toIsoString(row.created_at),
+  }));
+}
+
+function buildAdminDetailsPreview(details) {
+  if (!details || typeof details !== "object") {
+    return "";
+  }
+
+  const preferredKeys = ["message", "summary", "note", "notes", "reason"];
+  for (const key of preferredKeys) {
+    const value = details[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  const fragments = [];
+  for (const [key, value] of Object.entries(details)) {
+    if (typeof value === "string" && value.trim()) {
+      fragments.push(`${humanizeStatus(key)}: ${value.trim()}`);
+    } else if (typeof value === "number" || typeof value === "boolean") {
+      fragments.push(`${humanizeStatus(key)}: ${String(value)}`);
+    }
+
+    if (fragments.length === 3) {
+      break;
+    }
+  }
+
+  return fragments.join("; ");
+}
+
+function humanizeStatus(value) {
+  return String(value || "")
+    .trim()
+    .replace(/_/g, " ");
+}
+
+function buildAdminStripeSyncSnapshot(env = process.env) {
+  const launchCatalog = loadStripeLaunchCatalog(env);
+  const catalog = Array.isArray(launchCatalog.catalog) ? launchCatalog.catalog : [];
+  const membershipPriceKeys = Object.entries(env)
+    .filter(([key, value]) => /^STRIPE_PRICE_[A-Z0-9_]+$/.test(key) && Boolean(value))
+    .map(([key]) => key)
+    .sort((left, right) => left.localeCompare(right));
+  const notes = [];
+
+  if (!env.STRIPE_SECRET_KEY) {
+    notes.push("Stripe secret key is missing.");
+  }
+  if (!env.STRIPE_WEBHOOK_SECRET) {
+    notes.push("Stripe webhook signing secret is missing.");
+  }
+  if (!env.STRIPE_LAUNCH_CATALOG_READY) {
+    notes.push("Approved launch catalog is not marked ready.");
+  }
+  if (launchCatalog.error) {
+    notes.push(launchCatalog.message || "Launch catalog needs review.");
+  } else if (!catalog.length) {
+    notes.push("Launch catalog has no checkout-ready products.");
+  }
+  if (!membershipPriceKeys.length) {
+    notes.push("No membership Stripe price environment keys are configured.");
+  }
+  if (env.FEATURE_STRIPE_TAX !== "ready") {
+    notes.push("Stripe Tax is not marked ready.");
+  }
+
+  let status = "queued";
+  if (launchCatalog.error) {
+    status = "catalog_invalid";
+  } else if (!env.STRIPE_SECRET_KEY) {
+    status = "stripe_not_ready";
+  } else if (!env.STRIPE_LAUNCH_CATALOG_READY || !catalog.length) {
+    status = "catalog_review_required";
+  } else if (!membershipPriceKeys.length) {
+    status = "membership_prices_pending";
+  }
+
+  const seedScope =
+    catalog.length && membershipPriceKeys.length
+      ? "featured_products_and_memberships"
+      : catalog.length
+        ? "featured_products"
+        : membershipPriceKeys.length
+          ? "memberships_only"
+          : "pending_configuration";
+
+  return {
+    status,
+    seedScope,
+    liveApprovalRequired: true,
+    catalogReady: Boolean(env.STRIPE_LAUNCH_CATALOG_READY),
+    stripeConfigured: Boolean(env.STRIPE_SECRET_KEY),
+    webhookConfigured: Boolean(env.STRIPE_WEBHOOK_SECRET),
+    catalogSource: launchCatalog.source,
+    configuredProductCount: catalog.length,
+    publishedProductCount: catalog.filter((product) => String(product.publishStatus || "").toLowerCase() === "published").length,
+    membershipPriceKeys,
+    taxStatus: env.FEATURE_STRIPE_TAX === "ready" ? "ready" : sanitizeText(env.FEATURE_STRIPE_TAX, 60) || "unavailable",
+    apiVersion: sanitizeText(env.STRIPE_API_VERSION, 80) || null,
+    sampleSkus: catalog.slice(0, 4).map((product) => product.sku),
+    catalogPreview: catalog.slice(0, 6).map((product) => ({
+      sku: product.sku,
+      name: product.name,
+      price: product.price,
+      publishStatus: product.publishStatus,
+      stripePriceId: product.stripePriceId,
+    })),
+    notes,
+  };
+}
+
+function shouldUseLocalAdminSummary(message) {
+  const normalized = String(message || "").toLowerCase();
+  return /(backend health|admin follow|queue|summary|webhook|hold|stripe sync|catalog|orders|memberships|audit)/.test(normalized);
+}
+
+function getAdminQueueFromMessage(message) {
+  const normalized = String(message || "").toLowerCase();
+  if (normalized.includes("compliance") || normalized.includes("hold")) {
+    return "compliance";
+  }
+  if (normalized.includes("webhook") || normalized.includes("stripe")) {
+    return "webhooks";
+  }
+  if (normalized.includes("catalog")) {
+    return "catalog";
+  }
+  if (normalized.includes("membership") || normalized.includes("subscription")) {
+    return "memberships";
+  }
+  if (normalized.includes("audit")) {
+    return "audit";
+  }
+  if (normalized.includes("billing")) {
+    return "billing";
+  }
+  return "support";
+}
+
+function isAdminGuardrailReply(reply) {
+  const normalized = String(reply || "").toLowerCase();
+  return normalized.includes("cannot help with that request") || normalized.includes("concierge operator can review");
+}
+
+async function buildAdminQueueSummarySnapshot(queue) {
+  const normalizedQueue = sanitizeText(queue, 40) || "support";
+  const sync = buildAdminStripeSyncSnapshot(process.env);
+
+  if (!shouldPersistDatabaseWrites()) {
+    const overview = buildEmptyAdminOverview();
+    const persistence = getDatabasePersistenceStatus();
+    const summary = buildAdminQueueSummaryLines({
+      queue: normalizedQueue,
+      overview,
+      holds: [],
+      events: [],
+      orders: [],
+      subscriptions: [],
+      audit: [],
+      persistence,
+      sync,
+    });
+
+    return {
+      queue: normalizedQueue,
+      overview,
+      holds: [],
+      events: [],
+      orders: [],
+      subscriptions: [],
+      audit: [],
+      persistence,
+      sync,
+      summary,
+      reply: summary.join("\n"),
+      nextActions: buildAdminQueueFollowUps({ overview, sync, persistence }),
+    };
+  }
+
+  return withDatabaseClient("ycc-api-admin-summary", async (client) => {
+    const overview = await loadAdminOperationsOverview(client);
+    const holds = await loadAdminComplianceHoldRows(client);
+    const events = await loadAdminWebhookEventRows(client);
+    const orders = await loadRecentAdminOrders(client);
+    const subscriptions = await loadRecentAdminSubscriptions(client);
+    const audit = await loadRecentAdminAuditEntries(client);
+    const persistence = "stored";
+    const summary = buildAdminQueueSummaryLines({
+      queue: normalizedQueue,
+      overview,
+      holds,
+      events,
+      orders,
+      subscriptions,
+      audit,
+      persistence,
+      sync,
+    });
+
+    return {
+      queue: normalizedQueue,
+      overview,
+      holds,
+      events,
+      orders,
+      subscriptions,
+      audit,
+      persistence,
+      sync,
+      summary,
+      reply: summary.join("\n"),
+      nextActions: buildAdminQueueFollowUps({ overview, sync, persistence }),
+    };
+  });
+}
+
+function buildAdminQueueSummaryLines(details) {
+  const queueLabel = humanizeStatus(details.queue || "support");
+  const openHold = details.holds.find((hold) => String(hold.status || "").toLowerCase() !== "resolved");
+  const pendingEvent = details.events.find((event) => !["processed", "succeeded"].includes(String(event.status || "").toLowerCase()));
+  const latestOrder = details.orders[0] || null;
+  const latestSubscription = details.subscriptions[0] || null;
+  const latestAudit = details.audit[0] || null;
+  const lines = [];
+
+  lines.push(
+    `${queueLabel} queue health: ${details.overview.counts.holds.open} open compliance holds, ` +
+      `${details.overview.counts.webhooks.pending} pending webhook events, ` +
+      `${details.overview.counts.orders.pending} pending orders, and ` +
+      `${details.overview.counts.subscriptions.pastDue} past-due memberships.`
+  );
+
+  if (openHold) {
+    lines.push(
+      `Top hold: ${openHold.orderNumber || openHold.caseId || openHold.id} ` +
+        `for ${openHold.email || "unknown customer"} is ${humanizeStatus(openHold.status || "open")} because ${openHold.reason || "review is pending"}.`
+    );
+  } else {
+    lines.push("No open compliance holds are currently visible in the live backend.");
+  }
+
+  if (pendingEvent) {
+    lines.push(
+      `Webhook follow-up: ${pendingEvent.type || pendingEvent.id} is ${humanizeStatus(pendingEvent.status || "received")}` +
+        `${pendingEvent.orderNumber ? ` for ${pendingEvent.orderNumber}` : ""}.`
+    );
+  } else {
+    lines.push("Webhook backlog is clear based on the latest persisted Stripe events.");
+  }
+
+  if (latestOrder) {
+    lines.push(
+      `Latest order: ${latestOrder.orderNumber || latestOrder.id} for ${latestOrder.email || "unknown customer"} ` +
+        `is ${humanizeStatus(latestOrder.status || "pending")} with ${humanizeStatus(latestOrder.fulfillmentStatus || "not_started")} fulfillment.`
+    );
+  }
+
+  if (latestSubscription) {
+    lines.push(
+      `Latest membership: ${latestSubscription.email || "unknown member"} is ${humanizeStatus(latestSubscription.status || "unknown")} ` +
+        `on ${humanizeStatus(latestSubscription.tierKey || "membership")} ${humanizeStatus(latestSubscription.billingPeriod || "plan")}.`
+    );
+  }
+
+  if (details.sync.notes.length) {
+    lines.push(`Stripe sync follow-up: ${details.sync.notes[0]}`);
+  } else {
+    lines.push(
+      `Stripe sync configuration shows ${details.sync.configuredProductCount} launch products and ` +
+        `${details.sync.membershipPriceKeys.length} membership price keys ready for review.`
+    );
+  }
+
+  if (latestAudit) {
+    lines.push(
+      `Latest audited action: ${humanizeStatus(latestAudit.action || "unknown")} by ${latestAudit.actorEmail || "system"} ` +
+        `at ${toIsoString(latestAudit.createdAt)}.`
+    );
+  }
+
+  if (details.persistence !== "stored") {
+    lines.push(`Persistence status is ${humanizeStatus(details.persistence)} until schema-backed writes are enabled.`);
+  }
+
+  return lines.slice(0, 7);
+}
+
+function buildAdminQueueFollowUps(details) {
+  const actions = [];
+
+  if (details.persistence !== "stored") {
+    actions.push("Enable schema-backed writes before expecting live queue records.");
+  }
+  if (details.overview.counts.holds.open > 0) {
+    actions.push("Review open compliance holds before releasing fulfillment.");
+  }
+  if (details.overview.counts.webhooks.pending > 0) {
+    actions.push("Inspect pending Stripe webhook events and reconcile order status.");
+  }
+  if (details.overview.counts.subscriptions.pastDue > 0) {
+    actions.push("Follow up on past-due memberships before the next billing reminder.");
+  }
+  if (details.sync.notes.length) {
+    actions.push(details.sync.notes[0]);
+  }
+  if (!actions.length) {
+    actions.push("No immediate blockers were detected in the current backend snapshot.");
+  }
+
+  return actions.slice(0, 4);
 }
 
 async function handleLivePageContent(event, requestId) {
@@ -1239,7 +1944,28 @@ async function buildConciergeExchange(event, actor, requestId, details) {
   }
 
   const conversationId = sanitizeText(details.conversationId, 120) || `conv_${crypto.randomUUID()}`;
-  const bedrock = await maybeBuildBedrockReply(agent, actor, message, conversationId);
+  let adminSummary = null;
+  let bedrock;
+
+  if (agent === "YCCAdminAgent" && shouldUseLocalAdminSummary(message)) {
+    adminSummary = await buildAdminQueueSummarySnapshot(getAdminQueueFromMessage(message));
+    bedrock = {
+      status: "admin_queue_summary",
+      reply: adminSummary.reply,
+    };
+  } else {
+    bedrock = await maybeBuildBedrockReply(agent, actor, message, conversationId);
+
+    if (agent === "YCCAdminAgent" && isAdminGuardrailReply(bedrock.reply)) {
+      adminSummary = await buildAdminQueueSummarySnapshot(getAdminQueueFromMessage(message));
+      bedrock = {
+        ...bedrock,
+        status: "admin_queue_summary_fallback",
+        reply: adminSummary.reply,
+      };
+    }
+  }
+
   const reply = bedrock.reply || buildConciergeReply(agent, actor);
 
   let persistedConversation = null;
@@ -1276,7 +2002,7 @@ async function buildConciergeExchange(event, actor, requestId, details) {
         tobaccoHealthClaims: "not_provided",
         humanHandoff: agent === "YCCSupportAgent" || messageNeedsHumanSupport(message),
       },
-      nextActions: getAgentNextActions(agent, bedrock.status),
+      nextActions: adminSummary?.nextActions || getAgentNextActions(agent, bedrock.status),
     },
   };
 }
@@ -1668,14 +2394,17 @@ async function handleBedrockActionGroup(event, requestId) {
       }, "REPROMPT");
     }
 
+    const summary = await buildAdminQueueSummarySnapshot(params.queue);
+
     return bedrockFunctionResponse(event, {
       action: "admin_queue_summary",
-      queue: sanitizeText(params.queue, 80) || "support",
-      summary: [
-        "Review high-priority billing, damaged, missing, refund, cancellation, and compliance-sensitive cases first.",
-        "Keep payment data out of notes and route destructive account changes to a human operator.",
-        "Use the audit trail and support case context before changing status or drafting outbound email.",
-      ],
+      queue: summary.queue,
+      summary: summary.summary,
+      reply: summary.reply,
+      nextActions: summary.nextActions,
+      overview: summary.overview,
+      sync: summary.sync,
+      persistence: summary.persistence,
       destructiveActionsAllowed: false,
       operatorReviewRequired: true,
     });
@@ -4906,6 +5635,9 @@ function buildNewsAgentPrompt(input) {
     "Do not copy source wording beyond short attributed names or product titles. Use a new structure and Yuzu's own editorial voice.",
     "Avoid health, cessation, medical, therapeutic, disease, safety, or underage tobacco claims.",
     "Every factual claim must be tied to a source note. Publication requires human approval.",
+    "Return JSON only with no prose before or after the object.",
+    "bodyMarkdown must be a fully written story in publication-ready prose, not an outline, checklist, or operator note scaffold.",
+    "Each section body must contain the same substantive reporting as the article body, not editorial instructions.",
     "",
     `Angle: ${input.angle}`,
     `Timeframe: ${input.timeframe}`,
@@ -4936,6 +5668,8 @@ function buildWeeklyNewsAgentPrompt(input) {
     "Write a publication-ready markdown story with clear structure and explicit operator verification points.",
     "Use only the context below and avoid health, cessation, medical, therapeutic, disease, safety, or underage tobacco claims.",
     "Return factual statements in a way that can be traced to source notes.",
+    "Return JSON only with no prose before or after the object.",
+    "bodyMarkdown must be a fully written story in publication-ready prose, not an outline, checklist, or operator note scaffold.",
     "",
     `Topic: ${input.angle}`,
     `Timeframe: ${input.timeframe}`,
@@ -4955,7 +5689,15 @@ function normalizeNewsDraftFromAgentReply(reply, input) {
   const parsedSections = normalizeNewsSections(parsed?.sections);
   const splitSections = splitNewsMarkdownToSections(bodyMarkdown);
   const sections =
-    parsedSections.length ? parsedSections : splitSections.length ? splitSections : buildFallbackNewsSections(input);
+    bodyMarkdown
+      ? splitSections.length
+        ? splitSections
+        : parsedSections.length
+          ? parsedSections
+          : buildFallbackNewsSections(input)
+      : parsedSections.length
+        ? parsedSections
+        : buildFallbackNewsSections(input);
 
   return {
     title: sanitizeText(parsed?.title, 120) || `${toTitleCase(input.angle)} brief`,
@@ -4993,6 +5735,15 @@ function normalizeNewsStoryInput(value) {
       error: {
         error: "missing_news_body",
         message: "Add story body copy before publishing.",
+      },
+    };
+  }
+
+  if (isPlaceholderNewsBodyMarkdown(bodyMarkdown)) {
+    return {
+      error: {
+        error: "news_story_placeholder_body",
+        message: "Replace the placeholder scaffold with a real story before publishing.",
       },
     };
   }
@@ -5195,7 +5946,29 @@ function buildFallbackNewsSections(input) {
 }
 
 function draftNewsSectionsToMarkdown(sections) {
-  return sections.map((section) => `## ${section.heading}\n${section.body}`).join("\n\n");
+  return sections
+    .map((section) => ({
+      heading: sanitizeText(section.heading, 90),
+      body: sanitizeMultilineText(section.body, 5000),
+    }))
+    .filter((section) => Boolean(section.heading && section.body))
+    .map((section) => `## ${section.heading}\n${section.body}`)
+    .join("\n\n");
+}
+
+function isPlaceholderNewsBodyMarkdown(value) {
+  const normalized = sanitizeMultilineText(value, 12000).toLowerCase();
+
+  if (!normalized) {
+    return true;
+  }
+
+  return (
+    normalized.includes("## what changed") &&
+    normalized.includes("## why adult members may care") &&
+    normalized.includes("## operator review notes") &&
+    FALLBACK_NEWS_BODY_PATTERNS.every((pattern) => normalized.includes(pattern))
+  );
 }
 
 function buildNewsComplianceReview() {

@@ -1,0 +1,19 @@
+This is the Yuzu Digital Humidor, your private workspace for managing cigars after they enter your collection.
+
+Start on Overview. This is the health check. Confirm your humidity, temperature, environment score, total cigars, boxes, ready smokes, and active alerts before you open the humidor.
+
+If you are not signed in as a member, use the demo profile. It lets you explore sample cigar records, climate logs, alerts, and smoke history without exposing private member data.
+
+Use My Cigars to build the collection. Add a cigar from a photo, a QR label, or the manual form. Review the AI match, then confirm brand, line, vitola, wrapper, origin, strength, quantity, purchase date, aging start date, location, tray, notes, rating, pairings, and reorder reminder.
+
+Once saved, each cigar becomes searchable inventory. The card shows where it lives, how many remain, how it is rated, whether it is on the wishlist, and when you should reorder.
+
+Open Aging Tracker when you want to choose what to smoke. The humidor compares each aging start date against the readiness window. Too Young should rest. Aging Well should stay stable. Ready Now is a good candidate for tonight.
+
+Use Alerts to keep conditions steady. Enter a manual humidity and temperature reading, or register a Bluetooth or WiFi hygrometer thermometer. The latest reading updates the climate chart, the overview status, and any warnings.
+
+Alerts also surface reorder reminders, wishlist allocations, climate swings, and maintenance tasks. Treat this as the daily command center before you select a cigar.
+
+After a smoke, open Log A Smoke. Choose the cigar, add your rating, pairing, and tasting notes, then save. The humidor updates quantity, last smoked date, smoke count, rating, and the tasting history.
+
+Finally, use Settings for privacy, member access, QR labels, climate thresholds, and connected devices. The Digital Humidor works best as a loop: check conditions, add inventory, track aging, respond to alerts, and log each smoke.

@@ -12,14 +12,15 @@ export type CuratedAreaSearchResult = {
 
 export function searchCuratedArea(market: CuratedCigarMarket, query: string): CuratedAreaSearchResult {
   const cleanQuery = query.trim();
-  const areaOptions = getCuratedAreaOptions(market);
+  const dailyEvents = market.cigarEvents.filter(isDailyCigarEvent);
+  const areaOptions = getCuratedAreaOptions(market, dailyEvents);
 
   if (!cleanQuery || normalizeSearchText(cleanQuery) === normalizeSearchText(market.label)) {
-    return getAllMarketResults(market, cleanQuery, areaOptions);
+    return getAllMarketResults(dailyEvents, market, cleanQuery, areaOptions);
   }
 
   const terms = tokenize(cleanQuery);
-  const events = market.cigarEvents.filter((event) => matchesTerms(getEventSearchText(event), terms));
+  const events = dailyEvents.filter((event) => matchesTerms(getEventSearchText(event), terms));
   const lounges = market.cigarLounges.filter((lounge) => matchesTerms(getLoungeSearchText(lounge), terms));
   const matchedAreas = getMatchedAreas(areaOptions, terms, events, lounges);
 
@@ -34,11 +35,11 @@ export function searchCuratedArea(market: CuratedCigarMarket, query: string): Cu
   };
 }
 
-export function getCuratedAreaOptions(market: CuratedCigarMarket) {
+export function getCuratedAreaOptions(market: CuratedCigarMarket, events: CuratedCigarEvent[] = market.cigarEvents) {
   return uniqueLabels([
     market.label,
     ...splitAreaLabel(market.region),
-    ...market.cigarEvents.flatMap((event) => [
+    ...events.flatMap((event) => [
       ...splitAreaLabel(event.area),
       ...splitAreaLabel(event.distance),
       ...(event.areaAliases ?? []),
@@ -51,15 +52,20 @@ export function getCuratedAreaOptions(market: CuratedCigarMarket) {
   ]).slice(0, 12);
 }
 
-function getAllMarketResults(market: CuratedCigarMarket, query: string, areaOptions: string[]): CuratedAreaSearchResult {
+function getAllMarketResults(
+  dailyEvents: CuratedCigarEvent[],
+  market: CuratedCigarMarket,
+  query: string,
+  areaOptions: string[]
+): CuratedAreaSearchResult {
   return {
     query,
     hasQuery: Boolean(query),
     areaOptions,
     matchedAreas: areaOptions.slice(0, 6),
-    events: market.cigarEvents,
+    events: dailyEvents,
     lounges: market.cigarLounges,
-    totalMatches: market.cigarEvents.length + market.cigarLounges.length,
+    totalMatches: dailyEvents.length + market.cigarLounges.length,
   };
 }
 
@@ -76,6 +82,13 @@ function getEventSearchText(event: CuratedCigarEvent) {
     ...(event.areaAliases ?? []),
     ...(event.searchTerms ?? []),
   ].join(" ");
+}
+
+function isDailyCigarEvent(event: CuratedCigarEvent) {
+  const dateText = normalizeSearchText(event.date);
+  const recurrenceText = event.recurrence ? normalizeSearchText(event.recurrence) : "";
+
+  return recurrenceText === "daily" || dateText === "daily" || dateText === "every day" || dateText.includes("daily");
 }
 
 function getLoungeSearchText(lounge: CuratedCigarLounge) {

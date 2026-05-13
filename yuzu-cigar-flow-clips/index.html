@@ -1,0 +1,925 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1080, height=1920" />
+    <title>Yuzu Cigar Flow Info Clips</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 1080px;
+        height: 1920px;
+        margin: 0;
+        overflow: hidden;
+        background: #030504;
+        color: #f8edd7;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      #root {
+        position: relative;
+        width: 1080px;
+        height: 1920px;
+        overflow: hidden;
+        background: #030504;
+      }
+
+      .scene {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        opacity: 0;
+        background: #030504;
+      }
+
+      .scene::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        background:
+          linear-gradient(180deg, rgba(3, 5, 4, 0.1) 0%, rgba(3, 5, 4, 0.92) 100%),
+          linear-gradient(90deg, rgba(220, 169, 58, 0.1) 0%, rgba(220, 169, 58, 0) 34%);
+      }
+
+      .scene-content {
+        position: relative;
+        z-index: 5;
+        width: 100%;
+        height: 100%;
+        padding: 70px 64px;
+        display: flex;
+        flex-direction: column;
+        gap: 24px;
+      }
+
+      .photo-bg,
+      .photo-bg img,
+      .texture,
+      .line-field {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+      }
+
+      .photo-bg {
+        z-index: 0;
+        overflow: hidden;
+        background: #07110d;
+      }
+
+      .photo-bg img {
+        object-fit: cover;
+      }
+
+      .texture {
+        z-index: 3;
+        opacity: 0.14;
+        background-image:
+          linear-gradient(rgba(248, 237, 215, 0.04) 1px, rgba(248, 237, 215, 0) 1px),
+          linear-gradient(90deg, rgba(248, 237, 215, 0.035) 1px, rgba(248, 237, 215, 0) 1px);
+        background-size: 54px 54px;
+      }
+
+      .line-field {
+        z-index: 2;
+        opacity: 0.24;
+        background:
+          linear-gradient(90deg, rgba(220, 169, 58, 0.2) 1px, rgba(220, 169, 58, 0) 1px),
+          linear-gradient(rgba(220, 169, 58, 0.13) 1px, rgba(220, 169, 58, 0) 1px);
+        background-size: 216px 180px;
+      }
+
+      .brand-row,
+      .topbar,
+      .source-row,
+      .metric-row,
+      .tag-row,
+      .source-card-header {
+        display: flex;
+        align-items: center;
+      }
+
+      .brand-row {
+        gap: 18px;
+      }
+
+      .brand-logo {
+        width: 92px;
+        height: 92px;
+        object-fit: contain;
+        filter: drop-shadow(0 0 22px rgba(220, 169, 58, 0.38));
+      }
+
+      .brand-lockup {
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
+      }
+
+      .brand-lockup strong,
+      h1,
+      h2,
+      .source-title,
+      .outro-title,
+      .stat-value {
+        font-family: Georgia, "Times New Roman", serif;
+        font-weight: 400;
+        color: #f8edd7;
+      }
+
+      .brand-lockup strong {
+        font-size: 44px;
+        line-height: 1;
+        letter-spacing: 0.18em;
+      }
+
+      .brand-lockup span,
+      .kicker,
+      .eyebrow,
+      .pill,
+      .stat-label,
+      .metric span,
+      .clip-rule {
+        font-size: 18px;
+        font-weight: 900;
+        letter-spacing: 0.18em;
+        line-height: 1.25;
+        text-transform: uppercase;
+      }
+
+      .brand-lockup span,
+      .kicker,
+      .eyebrow,
+      .pill.gold,
+      .metric span,
+      .clip-rule {
+        color: #dca93a;
+      }
+
+      h1,
+      h2,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        max-width: 900px;
+        font-size: 92px;
+        line-height: 1.04;
+      }
+
+      h2 {
+        font-size: 58px;
+        line-height: 1.06;
+      }
+
+      p {
+        font-size: 28px;
+        line-height: 1.42;
+        color: #b8aa8f;
+      }
+
+      .gold {
+        color: #dca93a;
+      }
+
+      .cream {
+        color: #f8edd7;
+      }
+
+      .muted {
+        color: #b8aa8f;
+      }
+
+      .topbar {
+        min-height: 72px;
+        justify-content: space-between;
+        gap: 18px;
+        border: 1px solid #dca93a57;
+        background: rgba(7, 17, 13, 0.8);
+        padding: 16px 20px;
+      }
+
+      .topbar span {
+        font-size: 17px;
+        font-weight: 900;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: #f8edd7;
+      }
+
+      .topbar strong {
+        color: #dca93a;
+      }
+
+      .intro-content,
+      .outro-content {
+        justify-content: center;
+      }
+
+      .intro-stack,
+      .outro-stack {
+        display: flex;
+        flex-direction: column;
+        gap: 28px;
+      }
+
+      .intro-copy {
+        max-width: 820px;
+        font-size: 31px;
+        color: #f8edd7;
+      }
+
+      .stat-strip {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+        margin-top: 10px;
+      }
+
+      .stat-card {
+        min-height: 154px;
+        padding: 24px;
+        border: 1px solid #dca93a57;
+        background: rgba(16, 24, 18, 0.82);
+      }
+
+      .stat-value {
+        font-size: 56px;
+        line-height: 1;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .stat-label {
+        margin-top: 13px;
+        color: #b8aa8f;
+      }
+
+      .clip-rule {
+        width: max-content;
+        max-width: 100%;
+        border-left: 3px solid #dca93a;
+        padding: 14px 18px;
+        background: rgba(7, 17, 13, 0.76);
+      }
+
+      .media-frame {
+        position: relative;
+        flex: 0 0 650px;
+        overflow: hidden;
+        border: 1px solid #dca93a57;
+        background:
+          linear-gradient(135deg, #101812 0%, #07110d 58%, #030504 100%);
+      }
+
+      .media-frame img {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        opacity: 0.95;
+      }
+
+      .media-frame.is-fallback img {
+        display: none;
+      }
+
+      .media-wash {
+        position: absolute;
+        inset: 0;
+        z-index: 2;
+        background:
+          linear-gradient(180deg, rgba(3, 5, 4, 0) 0%, rgba(3, 5, 4, 0.18) 48%, rgba(3, 5, 4, 0.82) 100%),
+          linear-gradient(90deg, rgba(3, 5, 4, 0.68) 0%, rgba(3, 5, 4, 0.14) 58%);
+      }
+
+      .kind-pill,
+      .duration-pill {
+        position: absolute;
+        z-index: 4;
+        top: 24px;
+        padding: 13px 16px;
+        border: 1px solid #dca93a57;
+        background: rgba(7, 17, 13, 0.82);
+        color: #dca93a;
+        font-size: 16px;
+        font-weight: 900;
+        letter-spacing: 0.16em;
+        line-height: 1;
+        text-transform: uppercase;
+        white-space: nowrap;
+      }
+
+      .kind-pill {
+        left: 24px;
+        background: #030504;
+        color: #f8edd7;
+      }
+
+      .duration-pill {
+        right: 24px;
+        border-color: #dca93a;
+        background: #dca93a;
+        color: #07110d;
+      }
+
+      .feed-card {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 22px;
+        border: 1px solid #dca93a57;
+        background:
+          linear-gradient(180deg, rgba(16, 24, 18, 0.95) 0%, rgba(7, 17, 13, 0.96) 100%);
+        padding: 36px;
+      }
+
+      .source-row {
+        flex-wrap: wrap;
+        gap: 12px;
+        font-size: 17px;
+        font-weight: 900;
+        letter-spacing: 0.15em;
+        text-transform: uppercase;
+      }
+
+      .source-row span {
+        color: #b8aa8f;
+      }
+
+      .source-row .handle {
+        color: #dca93a;
+      }
+
+      .divider {
+        width: 1px;
+        height: 20px;
+        background: #dca93a57;
+      }
+
+      .feed-copy {
+        max-width: 890px;
+        color: rgba(248, 237, 215, 0.84);
+      }
+
+      .tag-row {
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .tag {
+        border: 1px solid #dca93a57;
+        background: rgba(3, 5, 4, 0.42);
+        padding: 10px 13px;
+        color: #f8edd7;
+        font-size: 16px;
+        font-weight: 900;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+
+      .metric-row {
+        margin-top: auto;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .metric {
+        min-height: 110px;
+        border: 1px solid rgba(220, 169, 58, 0.32);
+        background: rgba(3, 5, 4, 0.42);
+        padding: 18px;
+      }
+
+      .metric strong {
+        display: block;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 42px;
+        line-height: 1;
+        color: #f8edd7;
+        font-weight: 400;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .metric span {
+        display: block;
+        margin-top: 10px;
+        font-size: 14px;
+      }
+
+      .source-layout {
+        justify-content: center;
+      }
+
+      .source-title {
+        max-width: 900px;
+        font-size: 76px;
+        line-height: 1.05;
+      }
+
+      .source-lede {
+        max-width: 860px;
+        color: #f8edd7;
+      }
+
+      .source-grid {
+        display: grid;
+        gap: 14px;
+        margin-top: 6px;
+      }
+
+      .source-card {
+        min-height: 142px;
+        border: 1px solid #dca93a57;
+        background: rgba(16, 24, 18, 0.86);
+        padding: 22px;
+      }
+
+      .source-card-header {
+        justify-content: space-between;
+        gap: 16px;
+      }
+
+      .source-card strong {
+        color: #f8edd7;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 34px;
+        font-weight: 400;
+      }
+
+      .source-card span {
+        color: #dca93a;
+        font-size: 15px;
+        font-weight: 900;
+        letter-spacing: 0.15em;
+        text-transform: uppercase;
+      }
+
+      .source-card p {
+        margin-top: 10px;
+        font-size: 22px;
+      }
+
+      .outro-stack {
+        align-items: center;
+        text-align: center;
+      }
+
+      .outro-logo {
+        width: 138px;
+        height: 138px;
+        object-fit: contain;
+        filter: drop-shadow(0 0 30px rgba(220, 169, 58, 0.42));
+      }
+
+      .outro-title {
+        max-width: 900px;
+        font-size: 84px;
+        line-height: 1.06;
+      }
+
+      .outro-copy {
+        max-width: 820px;
+        color: #f8edd7;
+      }
+
+      .cta-row {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 14px;
+      }
+
+      .pill {
+        border: 1px solid #dca93a57;
+        background: rgba(7, 17, 13, 0.82);
+        padding: 16px 19px;
+        color: #f8edd7;
+      }
+
+      .pill.primary {
+        border-color: #dca93a;
+        background: #dca93a;
+        color: #07110d;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="56.2"
+      data-width="1080"
+      data-height="1920"
+    >
+      <section id="intro" class="scene">
+        <div class="photo-bg" data-layout-allow-overflow>
+          <img class="intro-bg" src="assets/site/membership-boxes.png" alt="" />
+        </div>
+        <div class="line-field" data-layout-ignore></div>
+        <div class="texture" data-layout-ignore></div>
+        <div class="scene-content intro-content">
+          <div class="intro-stack">
+            <div class="brand-row intro-brand">
+              <img class="brand-logo" src="assets/site/yuzu-logo-192.png" alt="" />
+              <div class="brand-lockup">
+                <strong>YUZU</strong>
+                <span>Cigar Club</span>
+              </div>
+            </div>
+            <div class="kicker intro-kicker">Cigar Flow / clip 1</div>
+            <h1 class="intro-title">The lounge feed, cut into short info clips.</h1>
+            <p class="intro-copy">News, maker drops, and member smoke logs move one card at a time, with ten feed cards reserved for each clip.</p>
+            <div class="stat-strip">
+              <div class="stat-card intro-stat">
+                <div class="stat-value">9</div>
+                <div class="stat-label">Current cards</div>
+              </div>
+              <div class="stat-card intro-stat">
+                <div class="stat-value">10</div>
+                <div class="stat-label">Feeds per clip</div>
+              </div>
+              <div class="stat-card intro-stat">
+                <div class="stat-value">5</div>
+                <div class="stat-label">Source monitors</div>
+              </div>
+            </div>
+            <div class="clip-rule intro-rule">Built from the Cigar Flow feed model</div>
+          </div>
+        </div>
+      </section>
+
+      <div id="feed-scenes"></div>
+
+      <section id="sources" class="scene">
+        <div class="line-field" data-layout-ignore></div>
+        <div class="texture" data-layout-ignore></div>
+        <div class="scene-content source-layout">
+          <div class="topbar sources-topbar">
+            <span><strong>Clip 1</strong> source map</span>
+            <span>5 monitored feeds</span>
+          </div>
+          <div class="kicker sources-kicker">Where the flow comes from</div>
+          <div class="source-title sources-title">A quick desk for cigar signals.</div>
+          <p class="source-lede sources-copy">The clip format keeps the reader moving: publisher news, manufacturer watches, and member logs stay visible without forcing a long scroll.</p>
+          <div class="source-grid" id="source-grid"></div>
+        </div>
+      </section>
+
+      <section id="outro" class="scene">
+        <div class="photo-bg" data-layout-allow-overflow>
+          <img class="outro-bg" src="assets/site/membership-boxes-outro.png" alt="" />
+        </div>
+        <div class="texture" data-layout-ignore></div>
+        <div class="scene-content outro-content">
+          <div class="outro-stack">
+            <img class="outro-logo" src="assets/site/yuzu-logo-outro.png" alt="" />
+            <div class="kicker outro-kicker">Clip 1 complete</div>
+            <div class="outro-title">Watch the next ten signals in Yuzu.</div>
+            <p class="outro-copy">Cigar Flow turns a long feed into short, member-friendly watch sessions.</p>
+            <div class="cta-row">
+              <div class="pill primary outro-pill">Open Cigar Flow</div>
+              <div class="pill outro-pill">Save the box watch</div>
+              <div class="pill outro-pill">Read in Yuzu</div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      (function () {
+        const FEEDS_PER_CLIP = 10;
+        const CLIP_NUMBER = 1;
+        const INTRO_DURATION = 3.6;
+        const FEED_DURATION = 4.8;
+        const SOURCES_DURATION = 5.4;
+        const OUTRO_DURATION = 4.0;
+        const TRANSITION = 0.64;
+
+        const feedItems = [
+          {
+            id: "matilde-limited-exposure-no-3",
+            kind: "RSS News",
+            mediaType: "Image",
+            sourceName: "halfwheel",
+            sourceHandle: "@halfwheel",
+            title: "Matilde Limited Exposure No. 3 Robusto",
+            excerpt: "A current release review signal for members tracking limited-production boxes and rest-worthy blends.",
+            image: "assets/site/matilde-limited-exposure-no-3.jpg",
+            imagePosition: "50% 52%",
+            publishedAt: "May 2026",
+            readTime: "Review",
+            tags: ["Review", "Limited", "Box watch"],
+            likes: 428,
+            comments: 36,
+            saves: 119,
+          },
+          {
+            id: "cromagnon-visigoth-2026",
+            kind: "Manufacturer",
+            mediaType: "Video",
+            sourceName: "Roma Craft watch",
+            sourceHandle: "@makerwatch",
+            title: "CroMagnon Visigoth Targeted for Late 2026",
+            excerpt: "A maker-release watch card for collectors who want early allocation reminders before the buying rush.",
+            image: "assets/site/cromagnon-visigoth-2026.jpeg",
+            imagePosition: "44% 50%",
+            publishedAt: "May 2026",
+            readTime: "Release watch",
+            tags: ["Manufacturer", "2026", "Allocation"],
+            likes: 612,
+            comments: 58,
+            saves: 184,
+            videoDuration: "0:38",
+          },
+          {
+            id: "cigar-dojo-brand-market",
+            kind: "RSS News",
+            mediaType: "Image",
+            sourceName: "halfwheel",
+            sourceHandle: "@halfwheel",
+            title: "Rocky Patel Thirtieth Anniversary Limited Edition",
+            excerpt: "Release coverage for a milestone anniversary cigar members may want to monitor for box availability.",
+            image: "assets/site/rocky-patel-thirtieth.jpg",
+            imagePosition: "50% 45%",
+            publishedAt: "May 2026",
+            readTime: "Trend",
+            tags: ["Culture", "Brands", "Market"],
+            likes: 344,
+            comments: 41,
+            saves: 92,
+          },
+          {
+            id: "aganorsa-single-cask-release",
+            kind: "Manufacturer",
+            mediaType: "Image",
+            sourceName: "Camacho watch",
+            sourceHandle: "@makerwatch",
+            title: "Camacho Factory Unleashed 3",
+            excerpt: "A manufacturer release signal pulled from the feed for members tracking bolder seasonal drops.",
+            image: "assets/site/camacho-factory-unleashed-3.jpg",
+            imagePosition: "55% 50%",
+            publishedAt: "May 2026",
+            readTime: "Drop",
+            tags: ["New drop", "Aganorsa", "Pairing"],
+            likes: 535,
+            comments: 63,
+            saves: 201,
+          },
+          {
+            id: "loaisiga-infiel-box-press",
+            kind: "Manufacturer",
+            mediaType: "Image",
+            sourceName: "Loaisiga Cigars",
+            sourceHandle: "@makerwatch",
+            title: "Loaisiga Announces Infiel Limited Edition Box Press Toro",
+            excerpt: "A new limited box-press release surfaced from RSS for members watching allocation timing.",
+            image: "assets/site/loaisiga-infiel-box-press.jpg",
+            imagePosition: "50% 52%",
+            publishedAt: "May 2026",
+            readTime: "Industry",
+            tags: ["Industry", "Dominican Republic", "Trade"],
+            likes: 219,
+            comments: 18,
+            saves: 67,
+          },
+          {
+            id: "founder-reserve-ash-shot",
+            kind: "Member Post",
+            mediaType: "Video",
+            sourceName: "Yuzu member post",
+            sourceHandle: "@lockerA12",
+            title: "Founder Reserve first-third check-in",
+            excerpt: "Member clip: clean draw, cocoa lift, and a slow burn line after 42 days of rest in a 69% locker.",
+            image: "assets/site/journal-aging.png",
+            imagePosition: "48% 50%",
+            publishedAt: "May 7, 2026",
+            readTime: "Member video",
+            tags: ["Member post", "Aging", "Smoke log"],
+            likes: 187,
+            comments: 24,
+            saves: 51,
+            videoDuration: "1:12",
+          },
+          {
+            id: "padron-box-note",
+            kind: "Member Post",
+            mediaType: "Image",
+            sourceName: "Yuzu member post",
+            sourceHandle: "@senseitable",
+            title: "Padron box note after six months",
+            excerpt: "Cedar sharpened, cocoa settled down, and the final third now carries a cleaner espresso finish.",
+            image: "assets/site/product-padron.png",
+            imagePosition: "50% 50%",
+            publishedAt: "May 7, 2026",
+            readTime: "Smoke log",
+            tags: ["Member post", "Padron", "Aging note"],
+            likes: 246,
+            comments: 31,
+            saves: 83,
+          },
+          {
+            id: "cigar-prop-anniversary",
+            kind: "Manufacturer",
+            mediaType: "Image",
+            sourceName: "Cigar Prop",
+            sourceHandle: "@cigarpropwatch",
+            title: "Cigar Prop Releases 10th Anniversary Commemorative Cigar",
+            excerpt: "A commemorative release card for members who follow creator-led collaborations and short-window drops.",
+            image: "assets/site/cigar-prop-anniversary.jpg",
+            imagePosition: "50% 52%",
+            publishedAt: "May 2026",
+            readTime: "Drop",
+            tags: ["Commemorative", "Creator", "New release"],
+            likes: 303,
+            comments: 28,
+            saves: 96,
+          },
+          {
+            id: "weekly-news-may-4-2026",
+            kind: "RSS News",
+            mediaType: "Image",
+            sourceName: "halfwheel",
+            sourceHandle: "@halfwheel",
+            title: "Weekly News: May 4, 2026",
+            excerpt: "A broad industry roundup card for members who want the quick scan before diving into individual releases.",
+            image: "assets/site/weekly-news-may-4-2026.jpg",
+            imagePosition: "50% 50%",
+            publishedAt: "May 2026",
+            readTime: "Allocation",
+            tags: ["Allocation", "International", "Limited"],
+            likes: 268,
+            comments: 22,
+            saves: 111,
+          },
+        ];
+
+        const sources = [
+          { name: "halfwheel", cadence: "Daily cigar desk", focus: "Industry news, reviews, and release coverage" },
+          { name: "Cigar Dojo", cadence: "Several posts weekly", focus: "Reviews, cigar culture, videos, and events" },
+          { name: "Cigar Journal", cadence: "International dispatches", focus: "Global cigar news and manufacturer updates" },
+          { name: "JR Cigars", cadence: "Retail editorial feed", focus: "New cigar education, lists, and retail editorial" },
+          { name: "Cigar Aficionado", cadence: "Homepage monitor", focus: "Ratings, cigar news, blogs, videos, and magazine coverage" },
+        ];
+
+        const escapeHtml = (value) =>
+          String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
+
+        const clipItems = feedItems.slice((CLIP_NUMBER - 1) * FEEDS_PER_CLIP, CLIP_NUMBER * FEEDS_PER_CLIP);
+        const totalDuration = INTRO_DURATION + clipItems.length * FEED_DURATION + SOURCES_DURATION + OUTRO_DURATION;
+        document.getElementById("root").setAttribute("data-duration", totalDuration.toFixed(1));
+
+        document.getElementById("feed-scenes").innerHTML = clipItems
+          .map((item, index) => {
+            const tags = item.tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join("");
+            const durationMeta = item.videoDuration ? `<span class="divider"></span><span>${escapeHtml(item.videoDuration)}</span>` : "";
+
+            return `
+              <section id="feed-${index}" class="scene feed-scene">
+                <div class="line-field" data-layout-ignore></div>
+                <div class="texture" data-layout-ignore></div>
+                <div class="scene-content">
+                  <div class="topbar feed-topbar">
+                    <span><strong>Clip ${CLIP_NUMBER}</strong> / feed ${String(index + 1).padStart(2, "0")} of ${clipItems.length}</span>
+                    <span>${FEEDS_PER_CLIP} feeds per clip</span>
+                  </div>
+                  <div class="media-frame" data-layout-allow-overflow data-layout-ignore>
+                    <img class="feed-image" src="${escapeHtml(item.image)}" alt="" style="object-position: ${escapeHtml(item.imagePosition)}" onerror="this.closest('.media-frame').classList.add('is-fallback')" />
+                    <div class="media-wash"></div>
+                    <span class="kind-pill">${escapeHtml(item.kind)}</span>
+                  </div>
+                  <article class="feed-card">
+                    <div class="source-row">
+                      <span class="handle">${escapeHtml(item.sourceHandle)}</span>
+                      <span class="divider"></span>
+                      <span>${escapeHtml(item.publishedAt)}</span>
+                      <span class="divider"></span>
+                      <span>${escapeHtml(item.readTime)}</span>
+                      ${durationMeta}
+                    </div>
+                    <h2 class="feed-title">${escapeHtml(item.title)}</h2>
+                    <p class="feed-copy">${escapeHtml(item.excerpt)}</p>
+                    <div class="tag-row">${tags}</div>
+                    <div class="metric-row">
+                      <div class="metric"><strong>${item.likes}</strong><span>Likes</span></div>
+                      <div class="metric"><strong>${item.comments}</strong><span>Comments</span></div>
+                      <div class="metric"><strong>${item.saves}</strong><span>Saves</span></div>
+                    </div>
+                  </article>
+                </div>
+              </section>
+            `;
+          })
+          .join("");
+
+        document.getElementById("source-grid").innerHTML = sources
+          .map(
+            (source) => `
+              <article class="source-card">
+                <div class="source-card-header">
+                  <strong>${escapeHtml(source.name)}</strong>
+                  <span>${escapeHtml(source.cadence)}</span>
+                </div>
+                <p>${escapeHtml(source.focus)}</p>
+              </article>
+            `,
+          )
+          .join("");
+
+        window.__timelines = window.__timelines || {};
+        const tl = gsap.timeline({ paused: true });
+
+        function revealScene(selector, at, previousSelector) {
+          tl.set(selector, { zIndex: 10 }, at);
+          tl.fromTo(selector, { opacity: 0, filter: "blur(18px)" }, { opacity: 1, filter: "blur(0px)", duration: TRANSITION, ease: "power1.inOut" }, at);
+
+          if (previousSelector) {
+            tl.set(previousSelector, { opacity: 0, zIndex: 0 }, at + TRANSITION + 0.02);
+          }
+        }
+
+        function enterIntro() {
+          tl.set(".scene", { opacity: 0, zIndex: 0 }, 0);
+          tl.set("#intro", { opacity: 1, zIndex: 10 }, 0);
+          tl.from(".intro-bg", { scale: 1.04, duration: INTRO_DURATION, ease: "none" }, 0);
+          tl.from(".intro-brand", { y: 36, opacity: 0, duration: 0.5, ease: "power3.out" }, 0.16);
+          tl.from(".intro-kicker", { x: -36, opacity: 0, duration: 0.46, ease: "sine.out" }, 0.34);
+          tl.from(".intro-title", { y: 50, opacity: 0, duration: 0.58, ease: "expo.out" }, 0.52);
+          tl.from(".intro-copy", { y: 28, opacity: 0, duration: 0.48, ease: "power2.out" }, 0.88);
+          tl.from(".intro-stat", { y: 34, opacity: 0, duration: 0.42, stagger: 0.08, ease: "back.out(1.4)" }, 1.16);
+          tl.from(".intro-rule", { x: -24, opacity: 0, duration: 0.42, ease: "power2.out" }, 1.58);
+        }
+
+        function enterFeed(index, at, previousSelector) {
+          const selector = `#feed-${index}`;
+          const sceneElement = document.getElementById("feed-" + index);
+          revealScene(selector, at, previousSelector);
+          tl.from(`${selector} .feed-topbar`, { y: -28, opacity: 0, duration: 0.4, ease: "power3.out" }, at + 0.18);
+          tl.from(`${selector} .media-frame`, { y: 44, opacity: 0, duration: 0.54, ease: "expo.out" }, at + 0.3);
+          tl.fromTo(`${selector} .feed-image`, { scale: 1.03 }, { scale: 1.085, duration: FEED_DURATION, ease: "none" }, at + 0.28);
+          tl.from(`${selector} .kind-pill`, { x: -22, opacity: 0, duration: 0.36, ease: "sine.out" }, at + 0.62);
+          if (sceneElement.querySelector(".duration-pill")) {
+            tl.from(`${selector} .duration-pill`, { x: 22, opacity: 0, duration: 0.36, ease: "sine.out" }, at + 0.66);
+          }
+          tl.from(`${selector} .feed-card`, { y: 54, opacity: 0, duration: 0.52, ease: "power3.out" }, at + 0.72);
+          tl.from(`${selector} .source-row`, { y: 18, opacity: 0, duration: 0.34, ease: "sine.out" }, at + 0.98);
+          tl.from(`${selector} .feed-title`, { y: 36, opacity: 0, duration: 0.46, ease: "expo.out" }, at + 1.12);
+          tl.from(`${selector} .feed-copy`, { y: 24, opacity: 0, duration: 0.38, ease: "power2.out" }, at + 1.34);
+          tl.from(`${selector} .tag`, { y: 18, opacity: 0, duration: 0.28, stagger: 0.05, ease: "back.out(1.3)" }, at + 1.56);
+          tl.from(`${selector} .metric`, { y: 24, opacity: 0, duration: 0.34, stagger: 0.06, ease: "power2.out" }, at + 1.82);
+        }
+
+        function enterSources(at, previousSelector) {
+          revealScene("#sources", at, previousSelector);
+          tl.from(".sources-topbar", { y: -28, opacity: 0, duration: 0.42, ease: "power3.out" }, at + 0.18);
+          tl.from(".sources-kicker", { x: -32, opacity: 0, duration: 0.4, ease: "sine.out" }, at + 0.42);
+          tl.from(".sources-title", { y: 46, opacity: 0, duration: 0.52, ease: "expo.out" }, at + 0.58);
+          tl.from(".sources-copy", { y: 24, opacity: 0, duration: 0.42, ease: "power2.out" }, at + 0.9);
+          tl.from(".source-card", { y: 34, opacity: 0, duration: 0.36, stagger: 0.08, ease: "back.out(1.25)" }, at + 1.18);
+        }
+
+        function enterOutro(at, previousSelector) {
+          revealScene("#outro", at, previousSelector);
+          tl.fromTo(".outro-bg", { scale: 1.02 }, { scale: 1.08, duration: OUTRO_DURATION, ease: "none" }, at);
+          tl.from(".outro-logo", { scale: 0.72, opacity: 0, duration: 0.5, ease: "back.out(1.5)" }, at + 0.28);
+          tl.from(".outro-kicker", { y: 24, opacity: 0, duration: 0.38, ease: "sine.out" }, at + 0.56);
+          tl.from(".outro-title", { y: 46, opacity: 0, duration: 0.52, ease: "expo.out" }, at + 0.74);
+          tl.from(".outro-copy", { y: 24, opacity: 0, duration: 0.4, ease: "power2.out" }, at + 1.08);
+          tl.from(".outro-pill", { y: 24, opacity: 0, duration: 0.34, stagger: 0.08, ease: "back.out(1.3)" }, at + 1.34);
+          tl.to("#outro", { opacity: 0, duration: 0.54, ease: "sine.inOut" }, totalDuration - 0.54);
+        }
+
+        enterIntro();
+
+        let cursor = INTRO_DURATION;
+        let previous = "#intro";
+        clipItems.forEach((item, index) => {
+          enterFeed(index, cursor, previous);
+          previous = `#feed-${index}`;
+          cursor += FEED_DURATION;
+        });
+
+        enterSources(cursor, previous);
+        previous = "#sources";
+        cursor += SOURCES_DURATION;
+
+        enterOutro(cursor, previous);
+
+        window.__timelines["main"] = tl;
+      })();
+    </script>
+  </body>
+</html>

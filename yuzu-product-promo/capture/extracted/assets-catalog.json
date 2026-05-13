@@ -1,0 +1,143 @@
+[
+  {
+    "url": "http://127.0.0.1:4174/assets/yuzu-logo.png",
+    "type": "Image",
+    "contexts": [
+      "img[src]",
+      "link[rel=\"preload\"]"
+    ],
+    "notes": null,
+    "sectionClasses": "sticky top-0 z-40 border-b border-yuzu-line/70 bg-yuzu-night/95 backdrop-blur-xl",
+    "aboveFold": true,
+    "nearestHeading": "Club"
+  },
+  {
+    "url": "http://127.0.0.1:4174/assets/hero-boxes.png",
+    "type": "Image",
+    "contexts": [
+      "img[src]",
+      "link[rel=\"preload\"]"
+    ],
+    "notes": "Yuzu cigar boxes on a polished lounge table",
+    "description": "Yuzu cigar boxes on a polished lounge table",
+    "nearestHeading": "Premium Cigars by the Box. Curated Membership. Smart Digital Humidor.",
+    "sectionClasses": "overflow-hidden border-b border-yuzu-line bg-yuzu-night",
+    "aboveFold": true
+  },
+  {
+    "url": "http://127.0.0.1:4174/assets/about-lounge.png",
+    "type": "Image",
+    "contexts": [
+      "img[src]"
+    ],
+    "notes": "Yuzu lounge prepared for a private cigar event",
+    "description": "Yuzu lounge prepared for a private cigar event",
+    "nearestHeading": "Founder Reserve Tasting",
+    "sectionClasses": "mx-auto grid max-w-[1520px] gap-0 px-5 pt-10 lg:grid-cols-[0.92fr_1.08fr] lg:px-10",
+    "aboveFold": true
+  },
+  {
+    "url": "http://127.0.0.1:4174/assets/product-padron.png",
+    "type": "Image",
+    "contexts": [
+      "img[src]"
+    ],
+    "notes": "Padron 1964 Anniversary Series product image",
+    "description": "Padron 1964 Anniversary Series product image",
+    "nearestHeading": "Boxes worth making room for.",
+    "sectionClasses": "mx-auto grid max-w-[1520px] gap-8 px-5 py-12 lg:grid-cols-[1.1fr_0.9fr] lg:px-10",
+    "aboveFold": false
+  },
+  {
+    "url": "http://127.0.0.1:4174/assets/product-davidoff.png",
+    "type": "Image",
+    "contexts": [
+      "img[src]"
+    ],
+    "notes": "Davidoff Signature No. 2 product image",
+    "description": "Davidoff Signature No. 2 product image",
+    "nearestHeading": "Boxes worth making room for.",
+    "sectionClasses": "mx-auto grid max-w-[1520px] gap-8 px-5 py-12 lg:grid-cols-[1.1fr_0.9fr] lg:px-10",
+    "aboveFold": false
+  },
+  {
+    "url": "http://127.0.0.1:4174/assets/product-liga.png",
+    "type": "Image",
+    "contexts": [
+      "img[src]"
+    ],
+    "notes": "Liga Privada T52 product image",
+    "description": "Liga Privada T52 product image",
+    "nearestHeading": "Boxes worth making room for.",
+    "sectionClasses": "mx-auto grid max-w-[1520px] gap-8 px-5 py-12 lg:grid-cols-[1.1fr_0.9fr] lg:px-10",
+    "aboveFold": false
+  },
+  {
+    "url": "http://127.0.0.1:4174/assets/product-plasencia.png",
+    "type": "Image",
+    "contexts": [
+      "img[src]"
+    ],
+    "notes": "Plasencia Alma Fuerte Sixto I product image",
+    "description": "Plasencia Alma Fuerte Sixto I product image",
+    "nearestHeading": "Boxes worth making room for.",
+    "sectionClasses": "mx-auto grid max-w-[1520px] gap-8 px-5 py-12 lg:grid-cols-[1.1fr_0.9fr] lg:px-10",
+    "aboveFold": false
+  },
+  {
+    "url": "http://127.0.0.1:4174/refs/mobile-layout.png",
+    "type": "Image",
+    "contexts": [
+      "img[src]"
+    ],
+    "notes": "Yuzu digital humidor mobile screen",
+    "description": "Yuzu digital humidor mobile screen",
+    "nearestHeading": "Boxes worth making room for.",
+    "sectionClasses": "mx-auto grid max-w-[1520px] gap-8 px-5 py-12 lg:grid-cols-[1.1fr_0.9fr] lg:px-10",
+    "aboveFold": false
+  },
+  {
+    "url": "http://127.0.0.1:4174/assets/membership-boxes.png",
+    "type": "Background",
+    "contexts": [
+      "css url()",
+      "html inline style url()"
+    ],
+    "notes": null,
+    "nearestHeading": "Premium Cigars by the Box. Curated Membership. Smart Digital Humidor.",
+    "sectionClasses": "overflow-hidden border-b border-yuzu-line bg-yuzu-night",
+    "aboveFold": true
+  },
+  {
+    "url": "http://127.0.0.1:4174/_next/static/chunks/05tsy9pxtuyv0.js",
+    "type": "Other",
+    "contexts": [
+      "link[rel=\"preload\"]"
+    ],
+    "notes": null
+  },
+  {
+    "url": "http://127.0.0.1:4174/favicon.ico?favicon.0x3dzn~oxb6tn.ico",
+    "type": "Icon",
+    "contexts": [
+      "link[rel=\"icon\"]"
+    ],
+    "notes": null
+  },
+  {
+    "url": "http://127.0.0.1:4174/assets/yuzu-logo-192.png",
+    "type": "Icon",
+    "contexts": [
+      "link[rel=\"icon\"]"
+    ],
+    "notes": null
+  },
+  {
+    "url": "http://127.0.0.1:4174/assets/yuzu-logo-180.png",
+    "type": "Icon",
+    "contexts": [
+      "link[rel=\"apple-touch-icon\"]"
+    ],
+    "notes": null
+  }
+]

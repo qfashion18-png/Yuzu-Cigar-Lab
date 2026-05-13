@@ -19,6 +19,7 @@ import {
   TicketCheck,
 } from "lucide-react";
 
+import { AdminHostRedirect } from "@/components/admin/admin-host-redirect";
 import { BenefitStrip } from "@/components/benefit-strip";
 import { HumidorDemoVideo } from "@/components/humidor-demo-video";
 import { MembershipCard } from "@/components/membership-card";
@@ -128,6 +129,7 @@ function HeroHumidorWidget() {
 export default function Home() {
   return (
     <>
+      <AdminHostRedirect />
       <section className="overflow-hidden border-b border-yuzu-line bg-yuzu-night">
         <div className="mx-auto grid max-w-[1760px] lg:min-h-[560px] lg:grid-cols-[minmax(0,0.44fr)_minmax(0,0.56fr)]">
           <div className="relative z-10 flex items-center bg-[radial-gradient(circle_at_0%_15%,rgba(31,84,56,0.32),transparent_24rem),linear-gradient(90deg,#06120d_0%,#06120d_72%,rgba(6,18,13,0.92)_100%)] px-5 py-12 sm:px-8 lg:min-h-[560px] lg:px-10">

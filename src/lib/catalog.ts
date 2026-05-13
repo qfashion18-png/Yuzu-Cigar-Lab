@@ -4164,6 +4164,16 @@ export function getStorefrontProductBySlug(slug: string) {
   return storefrontProducts.find((product) => product.slug === slug);
 }
 
+const catalogProductsBySkuOrId = new Map<string, CatalogProduct>();
+for (const product of catalogProducts) {
+  catalogProductsBySkuOrId.set(product.sku, product);
+  catalogProductsBySkuOrId.set(product.id, product);
+}
+
+export function getCatalogProductBySkuOrId(identifier: string) {
+  return catalogProductsBySkuOrId.get(identifier);
+}
+
 export function getCatalogProductDetails(product: CatalogProduct): CatalogProductDetails {
   const priceSignal = product.nonMemberPrice > 0 ? `${formatCatalogPrice(product.nonMemberPrice)} public catalog price` : "Price pending";
   const cigarSpecs = [

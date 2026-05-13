@@ -58,6 +58,8 @@ test("commerce migration declares launch indexes and idempotent guards", () => {
 
   assert.doesNotMatch(sql, /drop\s+table/i, "launch migration must not drop existing data");
   assert.match(sql, /gen_random_uuid\(\)/i, "order tables should use generated UUIDs");
+  assert.match(sql, /insert\s+into\s+public\.schema_migrations/i, "commerce migration should record its applied version");
+  assert.match(sql, /values\s*\(\s*'0002'\s*,\s*'commerce_schema'/i, "commerce migration should record version 0002");
 });
 
 test("catalog products expose launch commerce controls without losing imported catalog scale", () => {

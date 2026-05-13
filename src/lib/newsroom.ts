@@ -35,6 +35,7 @@ export type NewsroomDraft = {
   title: string;
   dek: string;
   category: string;
+  bodyMarkdown: string;
   sections: NewsroomSection[];
   sourceNotes: NewsSourceNote[];
   publishStatus: "draft";
@@ -94,6 +95,12 @@ const blockedSecondaryDomains = new Set([
   "stogieguys.com",
   "tobaccobusiness.com",
 ]);
+
+const fallbackNewsBodyPatterns = [
+  "keep this section factual and concise until an operator verifies each detail against the source urls.",
+  "frame the update around release timing, availability, craftsmanship, events, or education value.",
+  "verify every product name, date, quote, msrp, distributor note, and availability claim before publication.",
+];
 
 export function normalizeNewsSourceCandidate(value: string): NewsSourceCandidate {
   const input = value.trim();
@@ -169,6 +176,9 @@ export function buildNewsAgentPrompt(input: NewsroomDraftInput) {
     "Do not copy source wording beyond short attributed names or product titles. Use a new structure and Yuzu's own editorial voice.",
     "Avoid health, cessation, medical, therapeutic, disease, safety, or underage tobacco claims.",
     "Every factual claim must be tied to a source note. Publication requires human approval.",
+    "Return JSON only with no prose before or after the object.",
+    "bodyMarkdown must be a fully written story in publication-ready prose, not an outline, checklist, or operator note scaffold.",
+    "Each section body must contain the same substantive reporting as the article body, not editorial instructions.",
     "",
     `Angle: ${input.angle || "weekly cigar industry news"}`,
     `Timeframe: ${input.timeframe || "this week"}`,
@@ -183,15 +193,27 @@ export function buildNewsAgentPrompt(input: NewsroomDraftInput) {
     "Blocked or invalid sources:",
     blockedLines,
     "",
-    "Return JSON with title, dek, category, sections[{heading,body}], and sourceNotes[{label,url,note}].",
+    "Return JSON with title, dek, category, bodyMarkdown (a complete publication-ready story in markdown), sections[{heading,body}], and sourceNotes[{label,url,note}].",
+    "BodyMarkdown should be a full draft article for operator approval; sections should be a readable breakdown of that article.",
   ].join("\n");
 }
 
 export function normalizeNewsDraftFromAgentReply(reply: string, input: NewsroomDraftInput): NewsroomDraft {
   const parsed = parseAgentJson(reply);
+  const bodyMarkdown = trimNewsMarkdownText(parsed?.bodyMarkdown, 12000);
   const sourceNotes = normalizeSourceNotes(parsed?.sourceNotes, input);
+  const parsedSections = normalizeSections(parsed?.sections);
+  const splitSections = splitStoryMarkdownToSections(bodyMarkdown);
+  const sections = bodyMarkdown
+    ? splitSections.length
+      ? splitSections
+      : parsedSections.length
+        ? parsedSections
+        : buildFallbackSections(input)
+    : parsedSections.length
+      ? parsedSections
+      : buildFallbackSections(input);
   const title = cleanText(parsed?.title, 120) || `${toTitleCase(input.angle || "Weekly cigar industry news")} brief`;
-  const sections = normalizeSections(parsed?.sections);
 
   return {
     title,
@@ -199,7 +221,8 @@ export function normalizeNewsDraftFromAgentReply(reply: string, input: NewsroomD
       cleanText(parsed?.dek || parsed?.summary, 220) ||
       "A human-reviewed Yuzu Cigar Club news draft built from primary source notes.",
     category: cleanText(parsed?.category, 80) || "Industry News",
-    sections: sections.length ? sections : buildFallbackSections(input),
+    bodyMarkdown: bodyMarkdown || draftToBodyMarkdown({ sections }),
+    sections,
     sourceNotes,
     publishStatus: "draft",
     operatorReviewRequired: true,
@@ -209,9 +232,29 @@ export function normalizeNewsDraftFromAgentReply(reply: string, input: NewsroomD
 
 export function draftToBodyMarkdown(draft: Pick<NewsroomDraft, "sections">) {
   return draft.sections
+    .map((section) => ({
+      heading: cleanText(section.heading, 90),
+      body: trimNewsMarkdownText(section.body, 5000),
+    }))
+    .filter((section) => Boolean(section.heading && section.body))
     .map((section) => `## ${section.heading}\n${section.body}`)
     .join("\n\n")
     .trim();
+}
+
+export function isPlaceholderNewsBodyMarkdown(value: unknown) {
+  const normalized = trimNewsMarkdownText(value, 12000).toLowerCase();
+
+  if (!normalized) {
+    return true;
+  }
+
+  return (
+    normalized.includes("## what changed") &&
+    normalized.includes("## why adult members may care") &&
+    normalized.includes("## operator review notes") &&
+    fallbackNewsBodyPatterns.every((pattern) => normalized.includes(pattern))
+  );
 }
 
 export function slugifyNewsTitle(value: string) {
@@ -290,11 +333,43 @@ function normalizeSections(value: unknown): NewsroomSection[] {
 
       const section = item as { heading?: unknown; body?: unknown };
       const heading = cleanText(section.heading, 90);
-      const body = cleanText(section.body, 1200);
+      const body = cleanText(section.body, 5000);
 
       return heading && body ? { heading, body } : null;
     })
     .filter((item): item is NewsroomSection => Boolean(item));
+}
+
+function splitStoryMarkdownToSections(markdown: string): NewsroomSection[] {
+  const normalized = trimNewsMarkdownText(markdown, 12000);
+  if (!normalized) {
+    return [];
+  }
+
+  const headings = [...normalized.matchAll(/^##\s+(.+)$/gm)];
+  if (!headings.length) {
+    return [{ heading: "Story", body: normalized }];
+  }
+
+  return headings
+    .map((headingMatch, index) => {
+      const heading = cleanText(headingMatch[1], 90);
+      const start = headingMatch.index + headingMatch[0].length;
+      const end = index + 1 < headings.length ? headings[index + 1].index : normalized.length;
+      const body = trimNewsMarkdownText(normalized.slice(start, end), 5000);
+
+      return heading && body ? { heading, body } : null;
+    })
+    .filter((section): section is NewsroomSection => Boolean(section));
+}
+
+function trimNewsMarkdownText(value: unknown, maxLength: number) {
+  return String(value || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
+    .slice(0, maxLength);
 }
 
 function buildFallbackSections(input: NewsroomDraftInput): NewsroomSection[] {

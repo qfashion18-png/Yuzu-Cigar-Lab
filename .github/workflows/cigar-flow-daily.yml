@@ -1,0 +1,31 @@
+name: Cigar Flow Daily Newsroom Refresh
+
+on:
+  schedule:
+    - cron: "0 15 * * *"
+  workflow_dispatch:
+
+jobs:
+  daily-cigar-news-refresh:
+    name: Create daily Cigar Flow draft / publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run daily Cigar Flow automation
+        env:
+          NEXT_PUBLIC_YCC_API_BASE_URL: ${{ secrets.NEXT_PUBLIC_YCC_API_BASE_URL }}
+          YCC_NEWSROOM_BEARER_TOKEN: ${{ secrets.YCC_NEWSROOM_BEARER_TOKEN }}
+          YCC_DAILY_NEWSROOM_AUTO_PUBLISH: "true"
+          YCC_DAILY_NEWSROOM_SOURCE_LIMIT: "3"
+        run: npm run cigar-flow:daily

@@ -1,0 +1,298 @@
+[span] YUZU
+[span] Cigar Club
+[a] Shop Boxes
+[a] Membership
+[a] Education
+[a] Log in
+[a] Join Now
+[p] Premium cigars. Curated for you.
+[h1] Premium Cigars by the Box. Curated Membership. Smart Digital Humidor.
+[p] We sell by the box, not by the stick, because every great cigar experience deserves more than one.
+[a] Shop Boxes
+[a] Explore Humidor
+[span] Box only
+[span] No singles, ever.
+[span] Curated quality
+[span] Hand-selected boxes.
+[span] Member pricing
+[span] Best value always.
+[span] Secure shipping
+[span] Adult signature required.
+[span] Humidity
+[div] 69%
+[div] Stable
+[span] Temp
+[div] 70 F
+[div] Ideal
+[span] Boxes
+[div] Aging
+[p] Smart Humidor
+[p] Live conditions, aging windows, and reorder notes in one view.
+[a] View Humidor
+[p] Non-member View
+[p] Non-member view active. Sign in or join to unlock member-cost boxes and private drops.
+[a] Log In
+[a] Join
+[span] May 22, 2026
+[span] Members
+[span] access
+[p] Upcoming Events
+[h2] Founder Reserve Tasting
+[p] A guided evening around founder-selected boxes, slow-pour pairings, and private lounge conversation.
+[p] 7:00 PM - 9:00 PM
+[p] Yuzu Lounge, Phoenix
+[a] Explore Events
+[p] Featured Boxes
+[h2] Boxes worth making room for.
+[a] View all boxes
+[span] View details for
+[span] Padron 1964 Anniversary Series
+[a] Padron 1964 Anniversary Series
+[p] Box of 25
+[p] Nicaragua natural wrapper, medium strength, curated for balanced aging.
+[p] Product
+[p] Churchill
+[p] Length
+[p] Gauge
+[p] Strength
+[p] Medium
+[span] Best Seller
+[span] Aging Well
+[span] $585
+[span] / box
+[button] Add
+[div] Adult signature and age verification required
+[span] View details for
+[span] Davidoff Signature No. 2
+[a] Davidoff Signature No. 2
+[p] Box of 25
+[p] Dominican Republic ecuador wrapper, mild-medium strength, curated for balanced aging.
+[p] Product
+[p] Panetela
+[p] Length
+[p] Gauge
+[p] Strength
+[p] Mild-Medium
+[span] New Arrival
+[span] Ready Now
+[span] $650
+[span] / box
+[button] Add
+[div] Adult signature and age verification required
+[span] View details for
+[span] Liga Privada T52
+[span] Member
+[a] Liga Privada T52
+[p] Box of 24
+[p] Nicaragua u.s.a./conn. habano wrapper, full strength, curated for balanced aging.
+[p] Product
+[p] Toro
+[p] Length
+[p] Gauge
+[p] Strength
+[p] Full
+[span] Limited Release
+[span] Member Drop
+[span] $695
+[span] / box
+[button] Add
+[div] Adult signature and age verification required
+[span] View details for
+[span] Plasencia Alma Fuerte Sixto I
+[a] Plasencia Alma Fuerte Sixto I
+[p] Box of 20
+[p] Nicaragua nicaragua wrapper, medium-full strength, curated for balanced aging.
+[p] Product
+[p] Hexagono
+[p] Length
+[p] Gauge
+[p] Strength
+[p] Medium-Full
+[span] Award Winner
+[span] Limited
+[span] $620
+[span] / box
+[button] Add
+[div] Adult signature and age verification required
+[div] Membership Tiers
+[h3] Yuzu
+[h3] Box Access Pass
+[p] / month /
+[p] cigars /
+[p] Wholesale boxes only
+[h3] Yuzu
+[h3] Kisha
+[p] / month /
+[p] cigars /
+[p] 5% off eligible non-box store products
+[h3] Yuzu
+[h3] Sensei
+[p] / month /
+[p] cigars /
+[p] 10% off eligible non-box store products
+[span] Most Popular
+[h3] Yuzu
+[h3] Daimyo
+[p] 199
+[p] / month /
+[p] cigars /
+[p] 15% off eligible non-box store products
+[a] Compare Tiers
+[h3] Your cigar collection, perfectly managed.
+[p] Track purchase dates, aging windows, ratings, tasting notes, pairings, humidity, temperature, and reorder reminders.
+[div] 69% humidity
+[div] 70 F temp
+[div] 128 cigars
+[a] Explore Humidor
+[h3] Member Cost Boxes
+[p] Boxes priced at direct member cost.
+[h3] Early Access
+[p] First look at rare releases.
+[h3] Shipping Controls
+[p] Included shipping is capped by tier.
+[h3] Digital Humidor
+[p] Track, age, and reorder.
+[h3] Concierge Service
+[p] Personal cigar guidance.
+[h3] Exclusive Events
+[p] Private tastings and drops.
+[p] Club Platform
+[h2] A storefront that behaves like a member system.
+[p] The MVP keeps the front end fast and static for Amplify while preparing MedusaJS, compliance vendors, tax, and smart-humidor data flows for production.
+[a] View Admin Dashboard
+[p] Create age-restricted cigar product type and adult-signature shipping class.
+[p] Attach membership tier metadata to customer groups for Kisha, Sensei, and Daimyo pricing.
+[p] Use allocations for member-only drops and club subscriptions.
+[p] Write purchased boxes into humidor_items after payment capture.
+[p] Hold orders until age verification and shipping-rule checks pass.
+[p] Emit order events to EventBridge for audit, fulfillment, email, and tax workflows.
+[p] Digital Humidor
+[h2] Manual entry now. QR and sensors next.
+[p] Version one is PWA-first with inventory, smoke history, tasting notes, favorite pairings, humidity logs, and reorder reminders.
+[span] Manual entry
+[span] QR-based add
+[span] Scan labels
+[span] Humidity log
+[span] Reorder reminders
+[span] Pairing notes
+[p] / month
+[div] Box Access Pass
+[p] The Wholesale Box Membership
+[p] Monthly cigars
+[p] Yearly dues
+[p] No monthly cigars
+[p] Wholesale boxes only
+[p] Member pays shipping
+[p] Wholesale boxes only
+[p] Quarterly $
+[p] saves $
+[p] ; yearly saves $
+[span] Wholesale/member-cost pricing on cigar boxes
+[span] Access to private box catalog
+[span] Member-only box drops
+[span] Digital humidor access
+[span] Email support
+[span] Shipping paid by member
+[span] No monthly cigars
+[span] No standalone physical welcome kit
+[span] Shipping
+[p] Wholesale box orders ship at member cost.
+[span] Welcome
+[p] Digital welcome kit; physical insert with first box order
+[button] Join Box Access Pass
+[p] / month
+[div] Kisha
+[p] The Refined Introduction
+[p] Monthly cigars
+[p] Yearly dues
+[p] 499
+[p] 4 curated premium cigars monthly
+[p] Wholesale boxes + member store perks
+[p] Member pays shipping
+[p] 5% off eligible non-box store products
+[p] Quarterly $
+[p] 139
+[p] saves $
+[p] ; yearly saves $
+[span] Wholesale/member-cost pricing on boxes
+[span] Hand-selected premium cigars
+[span] Early access to new releases
+[span] Digital humidor access
+[span] Email member support
+[span] Basic welcome kit
+[span] Shipping
+[p] Monthly cigar and wholesale box orders ship at member cost.
+[span] Welcome
+[p] Cutter, Boveda/humidity pack, tasting guide
+[button] Join Kisha
+[span] Most Popular
+[p] / month
+[div] Sensei
+[p] The Connoisseur Experience
+[p] Monthly cigars
+[p] Yearly dues
+[p] 999
+[p] 8 curated premium cigars monthly
+[p] Wholesale boxes + stronger store perks
+[p] Monthly cigar shipping included
+[p] 10% off eligible non-box store products
+[p] Quarterly $
+[p] 279
+[p] saves $
+[p] ; yearly saves $
+[p] 189
+[span] Wholesale/member-cost pricing on boxes
+[span] Premium monthly selections
+[span] Monthly cigar shipping included
+[span] Priority drop allocations
+[span] Concierge recommendations
+[span] Upgraded welcome kit
+[span] Shipping
+[p] Includes 1 wholesale-box shipment per month; additional box orders ship at cost.
+[span] Welcome
+[p] Cutter, Boveda, tasting journal, upgraded pouch, optional 1 bonus cigar
+[button] Join Sensei
+[p] 199
+[p] / month
+[div] Daimyo
+[p] The Ultimate Indulgence
+[p] Monthly cigars
+[p] Yearly dues
+[p] 1999
+[p] 12 curated cigars monthly
+[p] Wholesale boxes + VIP access
+[p] Monthly cigar shipping included
+[p] 15% off eligible non-box store products
+[p] Quarterly $
+[p] 559
+[p] saves $
+[p] ; yearly saves $
+[p] 389
+[span] Wholesale/member-cost pricing on boxes
+[span] Ultra-premium, rare, aged, or limited-release selections
+[span] VIP concierge support
+[span] Private events and tastings
+[span] First access to member-only drops
+[span] Premium welcome kit
+[span] Highest priority allocations
+[span] Shipping
+[p] Includes 2 wholesale-box shipments per month; additional orders ship at cost.
+[span] Welcome
+[p] Premium travel case or accessory, tasting journal, Boveda, 1-2 bonus limited cigars
+[button] Join Daimyo
+[span] Cigar Club
+[p] Premium cigar boxes, member pricing, digital humidor tracking, and compliance-first checkout for the modern aficionado.
+[a] Shop Boxes
+[a] Membership
+[a] Education
+[h3] Storefront
+[a] New Arrivals
+[a] Member Drops
+[a] Checkout
+[h3] Compliance Stack
+[li] Age gate before browsing
+[li] AgeChecker.Net / Veratad checkout verification
+[li] Adult signature required shipping
+[li] State-level shipping rules
+[p] Amplify Hosting / S3 / RDS PostgreSQL / ECS Fargate
+[div] © 2026 Yuzu Cigar Club. Tobacco products are for adults 21+ only.

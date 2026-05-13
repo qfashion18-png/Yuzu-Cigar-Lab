@@ -113,6 +113,7 @@ export function NewsroomAgentPanel() {
         title: draft.title,
         dek: draft.dek,
         category: draft.category,
+        bodyMarkdown: draftToBodyMarkdown(draft),
         sections: draft.sections,
         sourceNotes: draft.sourceNotes,
         operatorReviewRequired: draft.operatorReviewRequired,

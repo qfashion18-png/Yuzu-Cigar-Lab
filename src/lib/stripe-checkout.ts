@@ -1,4 +1,5 @@
-import type { ShoppingCart } from "@/lib/shopping-cart";
+import { getCatalogProductBySkuOrId } from "@/lib/catalog";
+import { isMemberOnlyCart, type ShoppingCart } from "@/lib/shopping-cart";
 
 export type CheckoutCustomerInput = {
   email: string;
@@ -57,7 +58,18 @@ export function buildCheckoutSessionRequest(input: {
   shippingAddress: CheckoutShippingAddressInput;
   shippingMethodId: string;
   complianceToken: string;
+  isMember?: boolean;
 }): CheckoutSessionRequest {
+  const hasMemberOnlyItems = isCartMemberOnlyLocked(input.cart);
+  const isMember = Boolean(input.isMember);
+
+  if (hasMemberOnlyItems && !isMember) {
+    throw createCommerceError(
+      "membership_required",
+      "Sign in with an active membership before checking out member-only products."
+    );
+  }
+
   return {
     cartId: input.cart.id,
     items: input.cart.items.map((item) => ({
@@ -80,6 +92,29 @@ export function buildCheckoutSessionRequest(input: {
   };
 }
 
+function isCartMemberOnlyLocked(cart: ShoppingCart) {
+  const membershipMismatchLocked = cart.items.find((item) => {
+    if (item.category === "Membership") {
+      return false;
+    }
+
+    const catalogProduct = getCatalogProductBySkuOrId(item.sku);
+    const catalogMemberOnly = catalogProduct?.memberOnly;
+
+    if (typeof catalogMemberOnly !== "boolean") {
+      return false;
+    }
+
+    if (item.memberOnly) {
+      return catalogMemberOnly === false;
+    }
+
+    return catalogMemberOnly === true;
+  });
+
+  return Boolean(membershipMismatchLocked) || isMemberOnlyCart(cart);
+}
+
 export async function createCheckoutSession(input: Parameters<typeof buildCheckoutSessionRequest>[0]) {
   return postCommerce<CheckoutSessionResponse>("/commerce/checkout-session", buildCheckoutSessionRequest(input));
 }
@@ -100,6 +135,7 @@ export function getCheckoutErrorMessage(error: unknown) {
   const code = getCommerceErrorCode(error);
   const fallback = error instanceof Error ? error.message : "Checkout is temporarily unavailable. Please try again.";
   const messages: Record<string, string> = {
+    membership_required: "Sign in as a member before checking out member-only products.",
     age_verification_required: "Please verify your age before continuing to secure checkout.",
     age_verification_untrusted: "Your age verification session expired. Verify your age again before continuing.",
     restricted_destination: "Yuzu cannot ship this order to the selected destination.",

@@ -33,9 +33,14 @@ export function AddToCartButton({
   const isMember = Boolean(auth?.isReady && auth.isMember);
   const cartItem = useMemo(() => toShoppingCartItemInput(product, isMember), [isMember, product]);
   const isAvailable = product.availability !== "Out of stock" && product.status !== "Out of stock" && cartItem.unitPrice > 0;
+  const isMembersOnlyProduct = product.memberOnly && !isMember;
   const Icon = icon === "bag" ? ShoppingBag : Plus;
 
   function handleAddToCart() {
+    if (isMembersOnlyProduct) {
+      return;
+    }
+
     if (!isAvailable) {
       return;
     }
@@ -51,16 +56,16 @@ export function AddToCartButton({
         type="button"
         className={className}
         variant={variant}
-        disabled={!isAvailable}
+        disabled={!isAvailable || isMembersOnlyProduct}
         onClick={handleAddToCart}
         aria-label={`Add ${product.name} to cart`}
       >
         <Icon data-icon="inline-start" />
-        {isAvailable ? label : "Unavailable"}
+        {isMembersOnlyProduct ? "Members only" : isAvailable ? label : "Unavailable"}
       </Button>
       {showInlineStatus && (
         <p className="min-h-5 text-xs font-bold uppercase tracking-[0.16em] text-yuzu-gold" aria-live="polite">
-          {added ? "Added to cart" : ""}
+          {isMembersOnlyProduct ? "Members only item. Join now to add this product." : added ? "Added to cart" : ""}
         </p>
       )}
     </div>
@@ -83,6 +88,7 @@ export function toShoppingCartItemInput(product: ProductCardItem, isMember = fal
     imagePosition: product.imagePosition,
     packageLabel,
     category,
+    memberOnly: product.memberOnly,
     unitPrice,
     maxQuantity: stockLimit,
   };

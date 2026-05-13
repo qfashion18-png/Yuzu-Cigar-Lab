@@ -1,6 +1,17 @@
 -- Phase 3 commerce backbone for Stripe Checkout, subscriptions, order fulfillment,
 -- compliance holds, and auditable operator actions.
 
+begin;
+
+create extension if not exists pgcrypto;
+
+create table if not exists public.schema_migrations (
+  version text primary key,
+  name text not null,
+  checksum text not null,
+  applied_at timestamptz not null default now()
+);
+
 create table if not exists public.stripe_events (
   id text primary key,
   type text not null,
@@ -92,3 +103,12 @@ create index if not exists member_subscriptions_email_idx on public.member_subsc
 create index if not exists commerce_compliance_holds_status_idx on public.commerce_compliance_holds(status);
 create index if not exists stripe_events_processing_status_idx on public.stripe_events(processing_status);
 create index if not exists commerce_audit_log_order_id_idx on public.commerce_audit_log(order_id);
+
+insert into public.schema_migrations (version, name, checksum)
+values ('0002', 'commerce_schema', 'managed-by-ycc-commerce-0002')
+on conflict (version) do update
+set name = excluded.name,
+    checksum = excluded.checksum,
+    applied_at = now();
+
+commit;

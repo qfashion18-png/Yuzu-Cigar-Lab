@@ -4,6 +4,7 @@ import test from "node:test";
 
 const adminPageSource = readFileSync(new URL("../src/app/admin/page.tsx", import.meta.url), "utf8");
 const adminConsolePageSource = readFileSync(new URL("../src/app/admin/console/page.tsx", import.meta.url), "utf8");
+const backendAdminConsoleSource = readFileSync(new URL("../src/components/admin/backend-admin-console.tsx", import.meta.url), "utf8");
 const adminGateSource = readFileSync(new URL("../src/components/admin/admin-access-gate.tsx", import.meta.url), "utf8");
 const backupAuthPanelSource = readFileSync(new URL("../src/components/backup-auth-panel.tsx", import.meta.url), "utf8");
 const envExampleSource = readFileSync(new URL("../.env.example", import.meta.url), "utf8");
@@ -40,6 +41,10 @@ test("static admin hand-off uses a configured backend URL instead of looping to 
 
 test("admin console route does not render the seeded local console", () => {
   assert.match(adminConsolePageSource, /AdminAccessGate/);
+  assert.match(adminConsolePageSource, /BackendAdminConsole/);
+  assert.match(backendAdminConsoleSource, /fetchAdminComplianceHolds/);
+  assert.match(backendAdminConsoleSource, /sendConciergeChat/);
   assert.equal(adminConsolePageSource.includes("YuzuAdminConsole"), false);
   assert.equal(adminConsolePageSource.includes("createAdminSeedState"), false);
+  assert.equal(backendAdminConsoleSource.includes("createAdminSeedState"), false);
 });

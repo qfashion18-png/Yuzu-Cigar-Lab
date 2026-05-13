@@ -1,0 +1,1239 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Yuzu Cigar Club Product Promo</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 1920px;
+        height: 1080px;
+        margin: 0;
+        overflow: hidden;
+        background: #030504;
+        color: #f8edd7;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: #030504;
+      }
+
+      .scene {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        opacity: 0;
+        background: #030504;
+      }
+
+      .scene-content {
+        position: relative;
+        z-index: 4;
+        width: 100%;
+        height: 100%;
+        padding: 92px 120px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 28px;
+      }
+
+      .photo-bg,
+      .photo-bg img,
+      .wash,
+      .grain,
+      .line-grid {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+      }
+
+      .photo-bg {
+        z-index: 1;
+        overflow: hidden;
+      }
+
+      .photo-bg img {
+        object-fit: cover;
+      }
+
+      .wash {
+        z-index: 2;
+        background:
+          radial-gradient(circle at 20% 20%, rgba(220, 169, 58, 0.16), rgba(220, 169, 58, 0) 28%),
+          linear-gradient(90deg, rgba(3, 5, 4, 0.96) 0%, rgba(3, 5, 4, 0.72) 44%, rgba(3, 5, 4, 0.32) 100%);
+      }
+
+      .grain {
+        z-index: 3;
+        opacity: 0.16;
+        pointer-events: none;
+        background-image:
+          linear-gradient(rgba(248, 237, 215, 0.03) 1px, rgba(248, 237, 215, 0) 1px),
+          linear-gradient(90deg, rgba(248, 237, 215, 0.025) 1px, rgba(248, 237, 215, 0) 1px);
+        background-size: 42px 42px;
+      }
+
+      .line-grid {
+        z-index: 3;
+        opacity: 0.2;
+        background:
+          linear-gradient(90deg, rgba(220, 169, 58, 0.16) 1px, rgba(220, 169, 58, 0) 1px),
+          linear-gradient(rgba(220, 169, 58, 0.12) 1px, rgba(220, 169, 58, 0) 1px);
+        background-size: 240px 180px;
+      }
+
+      .brand-row {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+      }
+
+      .brand-logo {
+        width: 76px;
+        height: 76px;
+        object-fit: contain;
+        filter: drop-shadow(0 0 22px rgba(220, 169, 58, 0.28));
+      }
+
+      .brand-name {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+      }
+
+      .brand-name strong {
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 43px;
+        font-weight: 400;
+        letter-spacing: 0.16em;
+        color: #f8edd7;
+      }
+
+      .brand-name span,
+      .kicker,
+      .micro-label {
+        font-size: 17px;
+        font-weight: 900;
+        letter-spacing: 0.28em;
+        text-transform: uppercase;
+        color: #dca93a;
+      }
+
+      h1,
+      h2,
+      .serif-title {
+        margin: 0;
+        font-family: Georgia, "Times New Roman", serif;
+        font-weight: 400;
+        line-height: 1.02;
+        color: #f8edd7;
+      }
+
+      h1 {
+        max-width: 760px;
+        font-size: 98px;
+      }
+
+      h2 {
+        font-size: 76px;
+      }
+
+      p {
+        margin: 0;
+        max-width: 760px;
+        font-size: 27px;
+        line-height: 1.48;
+        color: #f8edd7;
+      }
+
+      .muted {
+        color: #b8aa8f;
+      }
+
+      .gold {
+        color: #dca93a;
+      }
+
+      .hairline {
+        height: 1px;
+        width: 100%;
+        background: #dca93a57;
+      }
+
+      .panel {
+        border: 1px solid #dca93a57;
+        background: rgba(16, 24, 18, 0.84);
+        box-shadow: 0 36px 90px rgba(0, 0, 0, 0.42);
+      }
+
+      .stat-row {
+        display: grid;
+        grid-template-columns: repeat(3, 180px);
+        gap: 14px;
+      }
+
+      .stat-chip {
+        min-height: 118px;
+        padding: 18px 18px 16px;
+        border: 1px solid #dca93a57;
+        background: rgba(7, 17, 13, 0.74);
+      }
+
+      .stat-chip .label {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        font-size: 15px;
+        font-weight: 900;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: #dca93a;
+      }
+
+      .stat-chip img {
+        width: 21px;
+        height: 21px;
+      }
+
+      .stat-chip img,
+      .proof-pill img,
+      .feature-tile img,
+      .benefit-tile img {
+        filter: brightness(0) saturate(100%) invert(67%) sepia(77%) saturate(455%) hue-rotate(3deg) brightness(92%) contrast(90%);
+      }
+
+      .stat-chip .value {
+        margin-top: 13px;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 48px;
+        line-height: 1;
+        color: #f8edd7;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .stat-chip .detail {
+        margin-top: 8px;
+        font-size: 14px;
+        font-weight: 900;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: #dca93a;
+      }
+
+      .gold-frame {
+        position: absolute;
+        inset: 82px 84px;
+        z-index: 5;
+        pointer-events: none;
+      }
+
+      .gold-frame path {
+        fill: none;
+        stroke: #dca93a;
+        stroke-width: 2;
+        stroke-linecap: square;
+        opacity: 0.9;
+      }
+
+      .floating-icon {
+        position: absolute;
+        z-index: 6;
+        width: 42px;
+        height: 42px;
+        padding: 9px;
+        border: 1px solid #dca93a57;
+        background: rgba(7, 17, 13, 0.72);
+      }
+
+      #beat1 .floating-icon.one {
+        right: 180px;
+        top: 180px;
+      }
+
+      #beat1 .floating-icon.two {
+        right: 420px;
+        bottom: 180px;
+      }
+
+      .split-layout {
+        width: 100%;
+        height: 100%;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 560px;
+        gap: 42px;
+        align-items: center;
+      }
+
+      .product-stage {
+        position: relative;
+        height: 720px;
+        perspective: 1200px;
+      }
+
+      .product-card {
+        position: absolute;
+        width: 230px;
+        min-height: 426px;
+        padding: 0 0 18px;
+        border: 1px solid #dca93a57;
+        background: #101812;
+        overflow: hidden;
+      }
+
+      .product-card .img-wrap {
+        width: 100%;
+        height: 152px;
+        overflow: hidden;
+        border-bottom: 1px solid #dca93a57;
+      }
+
+      .product-card img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .product-card .card-body {
+        padding: 18px 18px 0;
+      }
+
+      .product-card .name {
+        min-height: 76px;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 24px;
+        line-height: 1.08;
+        color: #f8edd7;
+      }
+
+      .product-card .meta {
+        margin-top: 10px;
+        font-size: 17px;
+        line-height: 1.32;
+        color: #b8aa8f;
+      }
+
+      .product-card .price {
+        margin-top: 22px;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 36px;
+        color: #dca93a;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .product-card .note {
+        margin-top: 16px;
+        font-size: 15px;
+        line-height: 1.35;
+        color: #b8aa8f;
+      }
+
+      .card-a {
+        left: 0;
+        top: 108px;
+      }
+
+      .card-b {
+        left: 208px;
+        top: 52px;
+      }
+
+      .card-c {
+        left: 416px;
+        top: 86px;
+      }
+
+      .card-d {
+        left: 624px;
+        top: 28px;
+      }
+
+      .card-e {
+        left: 832px;
+        top: 116px;
+      }
+
+      .proof-strip {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+        max-width: 940px;
+      }
+
+      .proof-pill,
+      .feature-tile,
+      .cta-chip {
+        border: 1px solid #dca93a57;
+        background: rgba(7, 17, 13, 0.78);
+        color: #f8edd7;
+      }
+
+      .proof-pill {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 17px 18px;
+        font-size: 18px;
+        font-weight: 900;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+      }
+
+      .proof-pill img,
+      .feature-tile img,
+      .benefit-tile img {
+        width: 26px;
+        height: 26px;
+      }
+
+      .tier-strip {
+        align-self: center;
+        padding: 28px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+
+      .tier {
+        padding: 20px 22px;
+        border: 1px solid #dca93a57;
+        background: rgba(3, 5, 4, 0.55);
+      }
+
+      .tier .tier-name {
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 32px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+      }
+
+      .tier .tier-meta {
+        margin-top: 8px;
+        font-size: 18px;
+        color: #b8aa8f;
+      }
+
+      .humidor-layout {
+        width: 100%;
+        height: 100%;
+        display: grid;
+        grid-template-columns: 730px minmax(0, 1fr);
+        gap: 56px;
+        align-items: center;
+      }
+
+      .screen-stack {
+        position: relative;
+        height: 760px;
+        perspective: 1400px;
+      }
+
+      .screen-panel {
+        position: absolute;
+        border: 1px solid #dca93a57;
+        background: #101812;
+        overflow: hidden;
+        box-shadow: 0 32px 86px rgba(0, 0, 0, 0.46);
+      }
+
+      .screen-panel img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .screen-main {
+        left: 82px;
+        top: 40px;
+        width: 520px;
+        height: 690px;
+      }
+
+      .screen-side-a {
+        left: 0;
+        top: 120px;
+        width: 320px;
+        height: 500px;
+      }
+
+      .screen-side-b {
+        right: 0;
+        top: 155px;
+        width: 340px;
+        height: 500px;
+      }
+
+      .feature-map {
+        position: relative;
+        min-height: 610px;
+      }
+
+      .feature-copy {
+        position: relative;
+        z-index: 3;
+      }
+
+      .feature-grid {
+        position: relative;
+        z-index: 3;
+        display: grid;
+        grid-template-columns: repeat(2, 270px);
+        gap: 16px;
+        margin-top: 38px;
+      }
+
+      .feature-tile {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        min-height: 82px;
+        padding: 18px;
+        font-size: 18px;
+        font-weight: 900;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+
+      .data-path {
+        position: absolute;
+        inset: 20px 0 auto 0;
+        z-index: 2;
+        width: 680px;
+        height: 420px;
+        pointer-events: none;
+      }
+
+      .data-path path {
+        fill: none;
+        stroke: #dca93a;
+        stroke-width: 3;
+        stroke-linecap: round;
+        stroke-dasharray: 12 18;
+        opacity: 0.62;
+      }
+
+      .data-stats {
+        display: grid;
+        grid-template-columns: repeat(2, 210px);
+        gap: 14px;
+        margin-top: 28px;
+      }
+
+      .data-stat {
+        border: 1px solid #dca93a57;
+        background: rgba(16, 24, 18, 0.82);
+        padding: 18px;
+      }
+
+      .data-stat .big {
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 52px;
+        color: #dca93a;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .data-stat .small {
+        margin-top: 6px;
+        font-size: 15px;
+        font-weight: 900;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: #f8edd7;
+      }
+
+      .proof-layout {
+        width: 100%;
+        height: 100%;
+        display: grid;
+        grid-template-columns: 520px minmax(0, 1fr);
+        gap: 46px;
+        align-items: center;
+      }
+
+      .proof-shots {
+        position: relative;
+        height: 780px;
+        perspective: 1100px;
+      }
+
+      .page-shot {
+        position: absolute;
+        border: 1px solid #dca93a57;
+        background: #101812;
+        overflow: hidden;
+        box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45);
+      }
+
+      .page-shot img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        object-position: top center;
+      }
+
+      .membership-shot {
+        left: 10px;
+        top: 22px;
+        width: 430px;
+        height: 710px;
+      }
+
+      .checkout-shot {
+        left: 235px;
+        top: 220px;
+        width: 300px;
+        height: 460px;
+      }
+
+      .benefit-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+        margin-top: 34px;
+      }
+
+      .benefit-tile {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        min-height: 92px;
+        padding: 20px;
+        border: 1px solid #dca93a57;
+        background: rgba(7, 17, 13, 0.82);
+        font-size: 18px;
+        font-weight: 900;
+        letter-spacing: 0.15em;
+        text-transform: uppercase;
+      }
+
+      .compliance-stamp {
+        position: relative;
+        width: 360px;
+        height: 108px;
+        margin-top: 28px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: 2px solid #dca93a;
+        color: #dca93a;
+        font-size: 21px;
+        font-weight: 900;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+
+      .roadmap-row {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 14px;
+        margin-top: 24px;
+      }
+
+      .road-card {
+        min-height: 100px;
+        padding: 18px;
+        border: 1px solid #dca93a57;
+        background: rgba(16, 24, 18, 0.74);
+        font-size: 17px;
+        line-height: 1.35;
+        color: #b8aa8f;
+      }
+
+      .road-card strong {
+        display: block;
+        margin-bottom: 6px;
+        color: #dca93a;
+        font-size: 17px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+
+      .close-content {
+        width: 100%;
+        height: 100%;
+        padding: 80px 120px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 30px;
+        text-align: center;
+      }
+
+      .collage {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        opacity: 0.1;
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 18px;
+        padding: 78px;
+      }
+
+      .collage img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        border: 1px solid #dca93a57;
+        filter: saturate(0.8);
+      }
+
+      .close-wash {
+        position: absolute;
+        inset: 0;
+        z-index: 2;
+        background:
+          radial-gradient(circle at 50% 42%, rgba(220, 169, 58, 0.18), rgba(220, 169, 58, 0) 32%),
+          rgba(3, 5, 4, 0.76);
+      }
+
+      .close-logo {
+        position: relative;
+        z-index: 4;
+        width: 138px;
+        height: 138px;
+        object-fit: contain;
+        filter: drop-shadow(0 0 34px rgba(220, 169, 58, 0.42));
+      }
+
+      .close-title {
+        position: relative;
+        z-index: 4;
+        max-width: 980px;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 82px;
+        line-height: 1.08;
+        color: #f8edd7;
+      }
+
+      .cta-bar {
+        position: relative;
+        z-index: 4;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+      }
+
+      .cta-chip {
+        padding: 18px 24px;
+        font-size: 17px;
+        font-weight: 900;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: #dca93a;
+      }
+
+      .cta-chip.primary {
+        background: #dca93a;
+        color: #07110d;
+      }
+
+      #host {
+        position: absolute;
+        top: 30px;
+        right: 74px;
+        z-index: 20;
+        width: 392px;
+        min-height: 142px;
+        pointer-events: none;
+        opacity: 0;
+      }
+
+      .host-card {
+        display: grid;
+        grid-template-columns: 92px minmax(0, 1fr);
+        gap: 14px;
+        align-items: center;
+        width: 100%;
+        min-height: 142px;
+        padding: 13px 15px 13px 13px;
+        border: 1px solid #dca93a57;
+        background:
+          radial-gradient(circle at 18% 18%, rgba(243, 200, 108, 0.16), rgba(243, 200, 108, 0) 44%),
+          rgba(7, 17, 13, 0.91);
+        box-shadow: 0 28px 78px rgba(0, 0, 0, 0.5);
+        backdrop-filter: blur(8px);
+      }
+
+      .host-portrait {
+        position: relative;
+        width: 88px;
+        height: 108px;
+        overflow: hidden;
+        border: 1px solid #dca93a57;
+        background:
+          radial-gradient(circle at 50% 24%, rgba(243, 200, 108, 0.2), rgba(243, 200, 108, 0) 36%),
+          linear-gradient(180deg, #101812 0%, #030504 100%);
+      }
+
+      .host-portrait::before {
+        content: "";
+        position: absolute;
+        left: 21px;
+        top: 18px;
+        width: 47px;
+        height: 52px;
+        border-radius: 44% 44% 46% 46%;
+        background: linear-gradient(180deg, #b7835c 0%, #7b513b 100%);
+        box-shadow:
+          0 -10px 0 #2b1a12,
+          0 0 28px rgba(243, 200, 108, 0.18);
+      }
+
+      .host-portrait::after {
+        content: "";
+        position: absolute;
+        left: 10px;
+        bottom: -18px;
+        width: 68px;
+        height: 56px;
+        border-radius: 48% 48% 0 0;
+        background: linear-gradient(180deg, #0a1c14 0%, #030504 100%);
+        border: 1px solid #dca93a57;
+      }
+
+      .host-mouth {
+        position: absolute;
+        left: 39px;
+        top: 55px;
+        z-index: 2;
+        width: 12px;
+        height: 5px;
+        border-radius: 999px;
+        background: #030504;
+        transform-origin: center center;
+      }
+
+      .host-copy {
+        position: relative;
+        min-width: 0;
+      }
+
+      .host-eyebrow {
+        margin-bottom: 5px;
+        font-size: 12px;
+        font-weight: 900;
+        letter-spacing: 0.24em;
+        text-transform: uppercase;
+        color: #dca93a;
+      }
+
+      .host-name {
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 24px;
+        line-height: 1.04;
+        color: #f8edd7;
+      }
+
+      .host-cue-stack {
+        position: relative;
+        height: 42px;
+        margin-top: 6px;
+      }
+
+      .host-cue {
+        position: absolute;
+        inset: 0;
+        font-size: 16px;
+        line-height: 1.3;
+        color: #b8aa8f;
+        opacity: 0;
+      }
+
+      .voice-meter {
+        display: flex;
+        align-items: end;
+        gap: 4px;
+        height: 16px;
+        margin-top: 6px;
+      }
+
+      .voice-meter span {
+        display: block;
+        width: 5px;
+        height: 9px;
+        background: #dca93a;
+        opacity: 0.74;
+        transform-origin: center bottom;
+      }
+
+      .word {
+        display: inline-block;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="yuzu-promo"
+      data-start="0"
+      data-duration="20"
+      data-width="1920"
+      data-height="1080"
+    >
+      <audio
+        id="narration"
+        src="narration.wav"
+        data-start="0"
+        data-duration="20"
+        data-track-index="0"
+        data-volume="1"
+      ></audio>
+
+      <aside id="host" aria-label="Club guide talking about Yuzu Cigar Club">
+        <div class="host-card">
+          <div class="host-portrait" aria-hidden="true">
+            <span class="host-mouth"></span>
+          </div>
+          <div class="host-copy">
+            <div class="host-eyebrow">Host walkthrough</div>
+            <div class="host-name">Club Guide</div>
+            <div class="host-cue-stack">
+              <div class="host-cue host-cue-1">Premium cigars should feel curated, not transactional.</div>
+              <div class="host-cue host-cue-2">Yuzu sells by the box with member-aware pricing.</div>
+              <div class="host-cue host-cue-3">The digital humidor keeps the collection in view.</div>
+              <div class="host-cue host-cue-4">Membership adds private drops, events, and compliant checkout.</div>
+              <div class="host-cue host-cue-5">Build a box-worthy cellar with Yuzu Cigar Club.</div>
+            </div>
+            <div class="voice-meter" aria-hidden="true">
+              <span class="meter-a"></span>
+              <span class="meter-b"></span>
+              <span class="meter-c"></span>
+              <span class="meter-d"></span>
+              <span class="meter-e"></span>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <section id="beat1" class="scene">
+        <div class="photo-bg" data-layout-allow-overflow><img class="kenburns" src="capture/assets/site/hero-boxes.png" alt="" /></div>
+        <div class="wash"></div>
+        <div class="grain" data-layout-ignore></div>
+        <svg class="gold-frame" viewBox="0 0 1752 916" aria-hidden="true">
+          <path class="draw-path" d="M 0 0 L 1752 0 L 1752 916 L 0 916 L 0 0" />
+          <path class="draw-path" d="M 84 728 L 712 728" />
+          <path class="draw-path" d="M 1220 124 L 1620 124" />
+        </svg>
+        <img class="floating-icon one" src="capture/assets/site/yuzu-icon.svg" alt="" data-layout-ignore />
+        <img class="floating-icon two" src="capture/assets/svgs/lucide-ruler.svg" alt="" data-layout-ignore />
+        <div class="scene-content">
+          <div class="brand-row beat1-brand">
+            <img class="brand-logo" src="capture/assets/site/yuzu-logo.png" alt="" />
+            <div class="brand-name">
+              <strong>YUZU</strong>
+              <span>Cigar Club</span>
+            </div>
+          </div>
+          <div class="kicker beat1-kicker">Premium cigars, curated for you.</div>
+          <h1 class="beat1-title">
+            <span class="word">Not</span> <span class="word">a</span> <span class="word">transaction.</span>
+            <span class="word">A</span> <span class="word">collection.</span>
+          </h1>
+          <p class="beat1-copy muted">Box-only premium cigars with smart humidor context from the first frame.</p>
+          <div class="stat-row">
+            <div class="stat-chip stat-a">
+              <div class="label"><img src="capture/assets/svgs/lucide-droplets.svg" alt="" />Humidity</div>
+              <div class="value"><span id="humidityA">0</span>%</div>
+              <div class="detail">Stable</div>
+            </div>
+            <div class="stat-chip stat-b">
+              <div class="label"><img src="capture/assets/svgs/lucide-thermometer.svg" alt="" />Temp</div>
+              <div class="value"><span id="tempA">0</span> F</div>
+              <div class="detail">Ideal</div>
+            </div>
+            <div class="stat-chip stat-c">
+              <div class="label"><img src="capture/assets/svgs/lucide-package.svg" alt="" />Boxes</div>
+              <div class="value"><span id="boxesA">0</span></div>
+              <div class="detail">Aging</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="beat2" class="scene">
+        <div class="photo-bg" data-layout-allow-overflow><img class="boxes-bg" src="capture/assets/site/membership-boxes.png" alt="" /></div>
+        <div class="wash"></div>
+        <div class="grain" data-layout-ignore></div>
+        <div class="scene-content">
+          <div class="split-layout">
+            <div>
+              <div class="kicker beat2-kicker">Box commerce, member value</div>
+              <h2 class="beat2-title">By the box. Priced for members.</h2>
+              <p class="muted beat2-copy">A premium catalog moves like a collector's tray, with value and access snapped into every card.</p>
+              <div class="proof-strip">
+                <div class="proof-pill proof-a"><img src="capture/assets/svgs/lucide-shopping-cart.svg" alt="" />Box only</div>
+                <div class="proof-pill proof-b"><img src="capture/assets/svgs/lucide-tag.svg" alt="" />Member pricing</div>
+                <div class="proof-pill proof-c"><img src="capture/assets/svgs/lucide-menu.svg" alt="" />Curated quality</div>
+              </div>
+              <div class="product-stage">
+                <article class="product-card card-a">
+                  <div class="img-wrap" data-layout-allow-overflow><img src="capture/assets/site/product-padron.png" alt="" /></div>
+                  <div class="card-body"><div class="name">Padron 1964 Anniversary</div><div class="meta">Box of 25</div><div class="price">$585</div><div class="note">Best Seller / Aging Well</div></div>
+                </article>
+                <article class="product-card card-b">
+                  <div class="img-wrap" data-layout-allow-overflow><img src="capture/assets/site/product-davidoff.png" alt="" /></div>
+                  <div class="card-body"><div class="name">Davidoff Signature No. 2</div><div class="meta">Box of 25</div><div class="price">$650</div><div class="note">New Arrival / Ready Now</div></div>
+                </article>
+                <article class="product-card card-c">
+                  <div class="img-wrap" data-layout-allow-overflow><img src="capture/assets/site/product-liga.png" alt="" /></div>
+                  <div class="card-body"><div class="name">Liga Privada T52</div><div class="meta">Box of 24</div><div class="price">$695</div><div class="note">Limited / Member Drop</div></div>
+                </article>
+                <article class="product-card card-d">
+                  <div class="img-wrap" data-layout-allow-overflow><img src="capture/assets/site/product-fuente.png" alt="" /></div>
+                  <div class="card-body"><div class="name">Arturo Fuente</div><div class="meta">Box of 25</div><div class="price">$540</div><div class="note">Classic / Giftable</div></div>
+                </article>
+                <article class="product-card card-e">
+                  <div class="img-wrap" data-layout-allow-overflow><img src="capture/assets/site/product-plasencia.png" alt="" /></div>
+                  <div class="card-body"><div class="name">Plasencia Alma Fuerte</div><div class="meta">Box of 20</div><div class="price">$620</div><div class="note">Award Winner / Limited</div></div>
+                </article>
+              </div>
+            </div>
+            <aside class="tier-strip panel">
+              <div class="micro-label">Membership tiers</div>
+              <div class="tier tier-a"><div class="tier-name">Kisha</div><div class="tier-meta">$49 / month / 4 cigars</div></div>
+              <div class="tier tier-b"><div class="tier-name">Sensei</div><div class="tier-meta">$99 / month / 8 cigars / Most popular</div></div>
+              <div class="tier tier-c"><div class="tier-name">Daimyo</div><div class="tier-meta">$199 / month / 12 cigars</div></div>
+            </aside>
+          </div>
+        </div>
+      </section>
+
+      <section id="beat3" class="scene">
+        <div class="line-grid" data-layout-ignore></div>
+        <div class="grain" data-layout-ignore></div>
+        <div class="scene-content">
+          <div class="humidor-layout">
+            <div class="screen-stack">
+              <div class="screen-panel screen-side-a" data-layout-allow-overflow><img src="capture/assets/site/humidor.png" alt="" /></div>
+              <div class="screen-panel screen-main" data-layout-allow-overflow><img src="capture/assets/site/mobile-layout.png" alt="" /></div>
+              <div class="screen-panel screen-side-b" data-layout-allow-overflow><img src="capture/assets/site/journal.png" alt="" /></div>
+            </div>
+            <div class="feature-map">
+              <svg class="data-path" viewBox="0 0 680 420" aria-hidden="true">
+                <path class="draw-path" d="M 28 330 C 150 180, 245 285, 340 160 S 548 80, 642 210" />
+              </svg>
+              <div class="feature-copy">
+                <div class="kicker beat3-kicker">Digital humidor</div>
+                <h2 class="beat3-title">Your collection, perfectly managed.</h2>
+                <p class="muted beat3-copy">Rare releases, aging windows, tasting notes, humidity logs, and reorder reminders in one view.</p>
+              </div>
+              <div class="data-stats">
+                <div class="data-stat"><div class="big"><span id="humidityB">0</span>%</div><div class="small">Humidity</div></div>
+                <div class="data-stat"><div class="big"><span id="cigarsB">0</span></div><div class="small">Cigars tracked</div></div>
+              </div>
+              <div class="feature-grid">
+                <div class="feature-tile feature-a"><img src="capture/assets/svgs/lucide-flame.svg" alt="" />Rare releases</div>
+                <div class="feature-tile feature-b"><img src="capture/assets/svgs/lucide-plus.svg" alt="" />Humidity log</div>
+                <div class="feature-tile feature-c"><img src="capture/assets/svgs/lucide-heart.svg" alt="" />Tasting notes</div>
+                <div class="feature-tile feature-d"><img src="capture/assets/svgs/lucide-gauge.svg" alt="" />Reorder timing</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="beat4" class="scene">
+        <div class="line-grid" data-layout-ignore></div>
+        <div class="grain" data-layout-ignore></div>
+        <div class="scene-content">
+          <div class="proof-layout">
+            <div class="proof-shots">
+              <div class="page-shot membership-shot" data-layout-allow-overflow><img src="capture/assets/site/membership.png" alt="" /></div>
+              <div class="page-shot checkout-shot" data-layout-allow-overflow><img src="capture/assets/site/checkout.png" alt="" /></div>
+            </div>
+            <div>
+              <div class="kicker beat4-kicker">Membership and trust</div>
+              <h2 class="beat4-title">Private access with checkout discipline.</h2>
+              <p class="muted beat4-copy">Drops, events, concierge service, and adult-signature controls sit inside the same member system.</p>
+              <div class="benefit-grid">
+                <div class="benefit-tile benefit-a"><img src="capture/assets/svgs/lucide-lock-keyhole.svg" alt="" />Private drops</div>
+                <div class="benefit-tile benefit-b"><img src="capture/assets/svgs/lucide-calendar-days.svg" alt="" />Events</div>
+                <div class="benefit-tile benefit-c"><img src="capture/assets/svgs/lucide-map-pin.svg" alt="" />Concierge</div>
+                <div class="benefit-tile benefit-d"><img src="capture/assets/svgs/lucide-shield-check.svg" alt="" />Adult signature</div>
+              </div>
+              <div class="compliance-stamp">Compliant checkout</div>
+              <div class="roadmap-row">
+                <div class="road-card"><strong>Age gate</strong> Before browsing and purchase.</div>
+                <div class="road-card"><strong>Shipping</strong> Adult signature required.</div>
+                <div class="road-card"><strong>Audit</strong> Order events for production flow.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="beat5" class="scene">
+        <div class="collage" data-layout-ignore>
+          <img src="capture/assets/site/frontpage.png" alt="" />
+          <img src="capture/assets/site/shop.png" alt="" />
+          <img src="capture/assets/site/journal-aging.png" alt="" />
+        </div>
+        <div class="close-wash"></div>
+        <div class="grain" data-layout-ignore></div>
+        <div class="close-content">
+          <img class="close-logo" src="capture/assets/site/yuzu-logo-192.png" alt="" />
+          <div class="brand-name close-brand"><strong>YUZU</strong><span>Cigar Club</span></div>
+          <div class="close-title">Build your box-worthy cellar.</div>
+          <div class="cta-bar">
+            <div class="cta-chip primary">Shop Boxes</div>
+            <div class="cta-chip">Join Now</div>
+            <div class="cta-chip">Explore Humidor</div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      (function () {
+        window.__timelines = window.__timelines || {};
+        const tl = gsap.timeline({ paused: true });
+
+        const beat = {
+          b1: { start: 0, end: 2.7 },
+          b2: { start: 2.7, end: 7.85 },
+          b3: { start: 7.85, end: 12.9 },
+          b4: { start: 12.9, end: 17.6 },
+          b5: { start: 17.6, end: 20 },
+        };
+
+        function drawPaths(selector, at, duration) {
+          document.querySelectorAll(selector).forEach(function (path) {
+            const length = path.getTotalLength ? path.getTotalLength() : 1200;
+            tl.set(path, { strokeDasharray: length, strokeDashoffset: length }, at);
+            tl.to(path, { strokeDashoffset: 0, duration: duration, ease: "power2.out" }, at);
+          });
+        }
+
+        function countTo(id, value, suffix, at, duration) {
+          const el = document.getElementById(id);
+          const proxy = { v: 0 };
+          tl.to(
+            proxy,
+            {
+              v: value,
+              duration: duration,
+              ease: "power2.out",
+              onUpdate: function () {
+                el.textContent = Math.round(proxy.v).toString() + (suffix || "");
+              },
+            },
+            at,
+          );
+        }
+
+        function setScene(id, at) {
+          tl.set(id, { opacity: 1, filter: "blur(0px)", scale: 1, x: 0, y: 0 }, at);
+        }
+
+        function showHostCue(selector, at) {
+          tl.to(".host-cue", { opacity: 0, duration: 0.16, ease: "sine.out" }, at);
+          tl.to(selector, { opacity: 1, duration: 0.24, ease: "sine.out" }, at + 0.08);
+        }
+
+        tl.set(".scene", { opacity: 0, filter: "blur(0px)", scale: 1, x: 0, y: 0 }, 0);
+        tl.set(".host-cue", { opacity: 0 }, 0);
+        tl.set(".host-cue-1", { opacity: 1 }, 0);
+        tl.fromTo("#host", { y: -20, opacity: 0 }, { y: 0, opacity: 1, duration: 0.52, ease: "power3.out" }, 0.34);
+        tl.to(".host-mouth", { scaleY: 0.32, duration: 0.12, repeat: 156, yoyo: true, ease: "sine.inOut" }, 0.52);
+        tl.to(".meter-a", { scaleY: 1.6, duration: 0.18, repeat: 104, yoyo: true, ease: "sine.inOut" }, 0.55);
+        tl.to(".meter-b", { scaleY: 0.55, duration: 0.2, repeat: 94, yoyo: true, ease: "sine.inOut" }, 0.58);
+        tl.to(".meter-c", { scaleY: 1.9, duration: 0.16, repeat: 117, yoyo: true, ease: "sine.inOut" }, 0.61);
+        tl.to(".meter-d", { scaleY: 0.7, duration: 0.22, repeat: 86, yoyo: true, ease: "sine.inOut" }, 0.64);
+        tl.to(".meter-e", { scaleY: 1.35, duration: 0.19, repeat: 99, yoyo: true, ease: "sine.inOut" }, 0.67);
+
+        setScene("#beat1", 0);
+        tl.fromTo("#beat1 .kenburns", { scale: 1 }, { scale: 1.055, duration: 2.7, ease: "none" }, 0);
+        tl.fromTo(".beat1-brand", { y: 32, opacity: 0 }, { y: 0, opacity: 1, duration: 0.48, ease: "power3.out" }, 0.18);
+        tl.fromTo(".beat1-kicker", { x: -32, opacity: 0 }, { x: 0, opacity: 1, duration: 0.45, ease: "sine.out" }, 0.34);
+        tl.fromTo(".beat1-title .word", { y: 54, opacity: 0 }, { y: 0, opacity: 1, duration: 0.48, stagger: 0.08, ease: "power2.out" }, 0.48);
+        tl.fromTo(".beat1-copy", { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: 0.42, ease: "expo.out" }, 1.08);
+        tl.fromTo(".stat-chip", { y: 28, opacity: 0 }, { y: 0, opacity: 1, duration: 0.4, stagger: 0.08, ease: "back.out(1.3)" }, 1.22);
+        drawPaths("#beat1 .draw-path", 0.28, 0.85);
+        countTo("humidityA", 69, "", 1.44, 0.55);
+        countTo("tempA", 70, "", 1.54, 0.55);
+        countTo("boxesA", 5, "", 1.64, 0.55);
+        tl.fromTo("#beat1 .floating-icon.one", { y: -18, opacity: 0 }, { y: 0, opacity: 1, duration: 0.5, ease: "power2.out" }, 0.62);
+        tl.fromTo("#beat1 .floating-icon.two", { y: 18, opacity: 0 }, { y: 0, opacity: 1, duration: 0.5, ease: "power2.out" }, 0.72);
+        tl.to("#beat1 .floating-icon.one", { y: 6, duration: 1.1, yoyo: true, repeat: 1, ease: "sine.inOut" }, 1.25);
+        tl.to("#beat1 .floating-icon.two", { y: -6, duration: 1.0, yoyo: true, repeat: 1, ease: "sine.inOut" }, 1.35);
+
+        tl.to("#beat1", { opacity: 0, filter: "blur(18px)", scale: 1.025, duration: 0.48, ease: "sine.inOut" }, 2.22);
+
+        showHostCue(".host-cue-2", 2.68);
+        tl.fromTo("#beat2", { opacity: 0, filter: "blur(18px)", y: 36 }, { opacity: 1, filter: "blur(0px)", y: 0, duration: 0.58, ease: "power2.out" }, 2.42);
+        tl.to("#beat2 .boxes-bg", { scale: 1.045, x: -34, duration: 5.43, ease: "none" }, 2.42);
+        tl.fromTo(".beat2-kicker", { x: -34, opacity: 0 }, { x: 0, opacity: 1, duration: 0.4, ease: "power2.out" }, 2.86);
+        tl.fromTo(".beat2-title", { y: 48, opacity: 0 }, { y: 0, opacity: 1, duration: 0.5, ease: "expo.out" }, 3.02);
+        tl.fromTo(".beat2-copy", { y: 26, opacity: 0 }, { y: 0, opacity: 1, duration: 0.42, ease: "sine.out" }, 3.24);
+        tl.fromTo(".proof-pill", { y: 22, opacity: 0 }, { y: 0, opacity: 1, duration: 0.32, stagger: 0.08, ease: "back.out(1.5)" }, 3.48);
+        tl.set(".product-card", { transformPerspective: 1200, rotationY: -9, rotationX: 2 }, 2.42);
+        tl.fromTo(".product-card", { y: 100, opacity: 0 }, { y: 0, opacity: 1, duration: 0.48, stagger: 0.11, ease: "power3.out" }, 3.86);
+        tl.to(".product-card img", { scale: 1.06, duration: 3.6, ease: "none" }, 4.05);
+        tl.fromTo(".tier-strip", { x: 80, opacity: 0 }, { x: 0, opacity: 1, duration: 0.5, ease: "power3.out" }, 4.72);
+        tl.fromTo(".tier", { x: 34, opacity: 0 }, { x: 0, opacity: 1, duration: 0.34, stagger: 0.1, ease: "sine.out" }, 5.02);
+        tl.to("#beat2", { opacity: 0, filter: "blur(14px)", y: -120, duration: 0.38, ease: "power2.in" }, 7.47);
+
+        showHostCue(".host-cue-3", 7.82);
+        tl.fromTo("#beat3", { opacity: 0, filter: "blur(14px)", y: 120 }, { opacity: 1, filter: "blur(0px)", y: 0, duration: 0.62, ease: "power2.out" }, 7.58);
+        tl.set(".screen-panel", { transformPerspective: 1400, rotationY: -7 }, 7.58);
+        tl.fromTo(".screen-main", { y: 76, opacity: 0, scale: 0.94 }, { y: 0, opacity: 1, scale: 1, duration: 0.58, ease: "expo.out" }, 8.02);
+        tl.fromTo(".screen-side-a", { x: -60, opacity: 0, scale: 0.9 }, { x: 0, opacity: 1, scale: 1, duration: 0.5, ease: "power3.out" }, 8.18);
+        tl.fromTo(".screen-side-b", { x: 60, opacity: 0, scale: 0.9 }, { x: 0, opacity: 1, scale: 1, duration: 0.5, ease: "power3.out" }, 8.28);
+        tl.to(".screen-panel img", { scale: 1.035, duration: 4.4, ease: "none" }, 8.1);
+        tl.fromTo(".beat3-kicker", { x: -28, opacity: 0 }, { x: 0, opacity: 1, duration: 0.38, ease: "sine.out" }, 8.34);
+        tl.fromTo(".beat3-title", { y: 48, opacity: 0 }, { y: 0, opacity: 1, duration: 0.48, ease: "expo.out" }, 8.48);
+        tl.fromTo(".beat3-copy", { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: 0.42, ease: "power2.out" }, 8.76);
+        drawPaths("#beat3 .draw-path", 8.92, 0.8);
+        tl.fromTo(".data-stat", { y: 28, opacity: 0 }, { y: 0, opacity: 1, duration: 0.4, stagger: 0.08, ease: "back.out(1.2)" }, 9.26);
+        countTo("humidityB", 69, "", 9.34, 0.62);
+        countTo("cigarsB", 128, "", 9.44, 0.72);
+        tl.fromTo(".feature-tile", { y: 30, opacity: 0 }, { y: 0, opacity: 1, duration: 0.34, stagger: 0.09, ease: "power2.out" }, 9.86);
+        tl.to(".screen-stack", { y: -8, duration: 1.4, yoyo: true, repeat: 2, ease: "sine.inOut" }, 10.12);
+        tl.to("#beat3", { opacity: 0, filter: "blur(18px)", duration: 0.6, ease: "sine.inOut" }, 12.3);
+
+        showHostCue(".host-cue-4", 12.86);
+        tl.fromTo("#beat4", { opacity: 0, filter: "blur(18px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.65, ease: "sine.inOut" }, 12.58);
+        tl.set(".page-shot", { transformPerspective: 1100, rotationY: -6 }, 12.58);
+        tl.fromTo(".membership-shot", { x: -80, opacity: 0 }, { x: 0, opacity: 1, duration: 0.52, ease: "power3.out" }, 13.02);
+        tl.fromTo(".checkout-shot", { x: 72, y: 40, opacity: 0 }, { x: 0, y: 0, opacity: 1, duration: 0.52, ease: "expo.out" }, 13.22);
+        tl.to(".page-shot img", { scale: 1.035, duration: 4.1, ease: "none" }, 13.1);
+        tl.fromTo(".beat4-kicker", { x: -30, opacity: 0 }, { x: 0, opacity: 1, duration: 0.38, ease: "sine.out" }, 13.36);
+        tl.fromTo(".beat4-title", { y: 48, opacity: 0 }, { y: 0, opacity: 1, duration: 0.48, ease: "expo.out" }, 13.52);
+        tl.fromTo(".beat4-copy", { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: 0.4, ease: "power2.out" }, 13.78);
+        tl.fromTo(".benefit-tile", { rotationY: -50, opacity: 0 }, { rotationY: 0, opacity: 1, duration: 0.42, stagger: 0.08, ease: "back.out(1.4)" }, 14.22);
+        tl.fromTo(".compliance-stamp", { scale: 0.88, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.42, ease: "back.out(1.6)" }, 15.2);
+        tl.fromTo(".road-card", { y: 28, opacity: 0 }, { y: 0, opacity: 1, duration: 0.34, stagger: 0.08, ease: "power2.out" }, 15.66);
+        tl.to("#beat4", { opacity: 0, filter: "blur(10px)", scale: 0.985, duration: 0.6, ease: "power1.inOut" }, 17.0);
+
+        showHostCue(".host-cue-5", 17.54);
+        tl.fromTo("#beat5", { opacity: 0, scale: 1.02 }, { opacity: 1, scale: 1, duration: 0.62, ease: "power1.inOut" }, 17.16);
+        tl.to(".collage", { y: -18, duration: 2.6, ease: "none" }, 17.16);
+        tl.fromTo(".close-logo", { scale: 0.72, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.5, ease: "back.out(1.5)" }, 17.52);
+        tl.fromTo(".close-brand", { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: 0.42, ease: "power3.out" }, 17.76);
+        tl.fromTo(".close-title", { y: 42, opacity: 0 }, { y: 0, opacity: 1, duration: 0.46, ease: "expo.out" }, 18.16);
+        tl.fromTo(".cta-chip", { y: 22, opacity: 0 }, { y: 0, opacity: 1, duration: 0.34, stagger: 0.08, ease: "power2.out" }, 18.7);
+        tl.to(".close-logo", { scale: 1.035, duration: 0.72, yoyo: true, repeat: 1, ease: "sine.inOut" }, 18.46);
+        tl.to("#host", { y: -12, opacity: 0, duration: 0.42, ease: "sine.inOut" }, 19.28);
+        tl.to("#beat5", { opacity: 0, duration: 0.45, ease: "sine.inOut" }, 19.55);
+
+        window.__timelines["yuzu-promo"] = tl;
+      })();
+    </script>
+  </body>
+</html>

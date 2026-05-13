@@ -60,9 +60,12 @@ import { withAgingSnapshot, type AgingSnapshot, type CigarReadiness } from "@/li
 import { demoHumidorItems } from "@/lib/humidor-demo";
 import {
   createHumidorItem,
-  fetchHumidorItems,
+  fetchHumidorDashboardBootstrap,
   getLiveApiErrorMessage,
   identifyCigarFromImage,
+  type HumidorAlertPreferences,
+  type HumidorPushSubscription,
+  updateHumidorAlertPreferences,
   type CigarImageIdentifyResponse,
   type CigarImageSuggestion,
   type HumidorCigarImage,
@@ -136,6 +139,13 @@ const blankHumidorForm: HumidorForm = {
   tastingNotes: "",
 };
 
+const defaultHumidorAlerts: HumidorAlertPreferences = {
+  pushEnabled: false,
+  reorderRemindersEnabled: true,
+  climateAlertsEnabled: false,
+  pushSubscription: null,
+};
+
 const initialLiveState: LiveHumidorState = {
   loading: false,
   items: [],
@@ -166,6 +176,10 @@ export function HumidorDashboard() {
   const [bulkImportStatus, setBulkImportStatus] = useState("");
   const [isBulkImporting, setIsBulkImporting] = useState(false);
   const [selectedHumidorItem, setSelectedHumidorItem] = useState<HumidorItem | null>(null);
+  const [humidorAlerts, setHumidorAlerts] = useState<HumidorAlertPreferences>(defaultHumidorAlerts);
+  const [humidorAlertsStatus, setHumidorAlertsStatus] = useState("");
+  const [isHumidorAlertsSaving, setIsHumidorAlertsSaving] = useState(false);
+  const [isRequestingPushPermission, setIsRequestingPushPermission] = useState(false);
   const agingNow = useMemo(() => new Date(), []);
   const liveAuthRequired = process.env.NEXT_PUBLIC_REQUIRE_LIVE_AUTH === "true";
   const { isCognitoConfigured } = auth;
@@ -215,27 +229,42 @@ export function HumidorDashboard() {
       }));
 
       try {
-        const response = await fetchHumidorItems(headers);
+        const bootstrap = await fetchHumidorDashboardBootstrap(headers);
         if (!isMounted) {
           return;
         }
 
         setLiveState({
           loading: false,
-          items: response.items,
-          persistence: response.persistence,
+          items: bootstrap.items.items,
+          persistence: bootstrap.items.persistence,
           error: "",
         });
+
+        if (bootstrap.alerts) {
+          setHumidorAlerts({
+            pushEnabled: !!bootstrap.alerts.preferences.pushEnabled,
+            reorderRemindersEnabled: !!bootstrap.alerts.preferences.reorderRemindersEnabled,
+            climateAlertsEnabled: !!bootstrap.alerts.preferences.climateAlertsEnabled,
+            pushSubscription: bootstrap.alerts.preferences.pushSubscription || null,
+          });
+        } else {
+          setHumidorAlerts(defaultHumidorAlerts);
+        }
+        setHumidorAlertsStatus(bootstrap.alertsError || "");
       } catch (error) {
         if (!isMounted) {
           return;
         }
 
+        const errorMessage = getLiveApiErrorMessage(error);
+        setHumidorAlerts(defaultHumidorAlerts);
+        setHumidorAlertsStatus(errorMessage);
         setLiveState({
           loading: false,
           items: [],
           persistence: "",
-          error: getLiveApiErrorMessage(error),
+          error: errorMessage,
         });
       }
     })();
@@ -517,7 +546,8 @@ export function HumidorDashboard() {
       let persistence = "";
 
       for (const item of parsed.items) {
-        const response = await createHumidorItem(applyHumidorEntryPriceSnapshot(item, auth.isMember), headers);
+        const payload = buildHumidorPayload(buildHumidorFormFromInput(item), null, auth.isMember);
+        const response = await createHumidorItem({ ...payload, source: item.source ?? payload.source }, headers);
         importedItems.push(response.item);
         persistence = response.persistence.status;
       }
@@ -540,6 +570,185 @@ export function HumidorDashboard() {
     }
   }
 
+  function supportsPushNotifications() {
+    return (
+      typeof window !== "undefined" &&
+      "Notification" in window &&
+      "serviceWorker" in navigator &&
+      "PushManager" in window
+    );
+  }
+
+  function isPushSubscriptionSupported() {
+    return supportsPushNotifications();
+  }
+
+  function getVapidApplicationServerKey() {
+    return (process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || "").trim();
+  }
+
+  function sanitizePushSubscription(subscription: PushSubscription | null): HumidorPushSubscription | null {
+    if (!subscription) {
+      return null;
+    }
+
+    const raw = subscription.toJSON();
+    const endpoint = typeof raw.endpoint === "string" ? raw.endpoint : "";
+    const keys = raw.keys && typeof raw.keys === "object" ? raw.keys : {};
+    const p256dh = typeof keys.p256dh === "string" ? keys.p256dh : "";
+    const auth = typeof keys.auth === "string" ? keys.auth : "";
+
+    if (!endpoint || !p256dh || !auth) {
+      return null;
+    }
+
+    return { endpoint, keys: { p256dh, auth } };
+  }
+
+  function parseVapidKey(base64String: string) {
+    const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+    const raw = window.atob(base64);
+    const key = new Uint8Array(raw.length);
+
+    for (let index = 0; index < raw.length; index++) {
+      key[index] = raw.charCodeAt(index);
+    }
+
+    return key;
+  }
+
+  async function getOrCreatePushSubscription() {
+    if (!supportsPushNotifications()) {
+      throw new Error("push_not_supported");
+    }
+
+    const registration = await navigator.serviceWorker.ready;
+    const existing = await registration.pushManager.getSubscription();
+    if (existing) {
+      return existing;
+    }
+
+    const vapidKey = getVapidApplicationServerKey();
+    if (!vapidKey) {
+      throw new Error("missing_push_subscription");
+    }
+
+    return registration.pushManager.subscribe({
+      applicationServerKey: parseVapidKey(vapidKey),
+      userVisibleOnly: true,
+    });
+  }
+
+  async function saveHumidorAlertPreferences(nextPreferences: HumidorAlertPreferences) {
+    setIsHumidorAlertsSaving(true);
+    setHumidorAlertsStatus("");
+
+    try {
+      const headers = await auth.createApiHeaders();
+      const response = await updateHumidorAlertPreferences(
+        {
+          climateAlertsEnabled: nextPreferences.climateAlertsEnabled,
+          pushEnabled: nextPreferences.pushEnabled,
+          reorderRemindersEnabled: nextPreferences.reorderRemindersEnabled,
+          pushSubscription: nextPreferences.pushEnabled ? nextPreferences.pushSubscription : null,
+        },
+        headers,
+      );
+
+      setHumidorAlerts({
+        pushEnabled: response.preferences.pushEnabled,
+        reorderRemindersEnabled: response.preferences.reorderRemindersEnabled,
+        climateAlertsEnabled: response.preferences.climateAlertsEnabled,
+        pushSubscription: response.preferences.pushSubscription || null,
+      });
+
+      setHumidorAlertsStatus(
+        response.persistence === "stored"
+          ? "Humidor alert preferences are saved for your account."
+          : "Your alert preferences were accepted, but persistence is still pending.",
+      );
+    } catch (error) {
+      setHumidorAlertsStatus(getLiveApiErrorMessage(error));
+    } finally {
+      setIsHumidorAlertsSaving(false);
+    }
+  }
+
+  async function handleEnableHumidorPushAlerts() {
+    if (isAnonymousDemo || auth.authSource !== "cognito") {
+      setHumidorAlertsStatus("Sign in before enabling alerts.");
+      return;
+    }
+
+    if (!supportsPushNotifications()) {
+      setHumidorAlertsStatus("Your browser does not support push alerts.");
+      return;
+    }
+
+    setIsRequestingPushPermission(true);
+    setHumidorAlertsStatus("");
+
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") {
+        throw new Error("push_permission_denied");
+      }
+
+      const subscription = await getOrCreatePushSubscription();
+      const sanitizedSubscription = sanitizePushSubscription(subscription);
+      if (!sanitizedSubscription) {
+        throw new Error("missing_push_subscription");
+      }
+
+      await saveHumidorAlertPreferences({
+        ...humidorAlerts,
+        pushEnabled: true,
+        pushSubscription: sanitizedSubscription,
+      });
+    } catch (error) {
+      const code = error instanceof Error ? error.message : "push_update_failed";
+      setHumidorAlertsStatus(getLiveApiErrorMessage({ error: code, message: code }));
+    } finally {
+      setIsRequestingPushPermission(false);
+    }
+  }
+
+  async function handleDisableHumidorPushAlerts() {
+    setIsHumidorAlertsSaving(true);
+    try {
+      if (supportsPushNotifications()) {
+        const registration = await navigator.serviceWorker.ready;
+        const existing = await registration.pushManager.getSubscription();
+        await existing?.unsubscribe();
+      }
+
+      await saveHumidorAlertPreferences({
+        ...humidorAlerts,
+        pushEnabled: false,
+        pushSubscription: null,
+      });
+    } catch (error) {
+      setHumidorAlertsStatus(getLiveApiErrorMessage(error));
+    } finally {
+      setIsHumidorAlertsSaving(false);
+    }
+  }
+
+  function updateHumidorAlertToggle(field: keyof HumidorAlertPreferences, value: boolean) {
+    const next: HumidorAlertPreferences = {
+      ...humidorAlerts,
+      [field]: value,
+    };
+
+    setHumidorAlerts(next);
+    void saveHumidorAlertPreferences({
+      ...next,
+      pushEnabled: field === "pushEnabled" ? value : humidorAlerts.pushEnabled,
+      pushSubscription: next.pushEnabled ? next.pushSubscription : null,
+    });
+  }
+
   function refreshHumidorItems() {
     if (auth.authSource !== "cognito") {
       return;
@@ -549,19 +758,33 @@ export function HumidorDashboard() {
     void (async () => {
       try {
         const headers = await auth.createApiHeaders();
-        const response = await fetchHumidorItems(headers);
+        const bootstrap = await fetchHumidorDashboardBootstrap(headers);
         setLiveState({
           loading: false,
-          items: response.items,
-          persistence: response.persistence,
+          items: bootstrap.items.items,
+          persistence: bootstrap.items.persistence,
           error: "",
         });
+        if (bootstrap.alerts) {
+          setHumidorAlerts({
+            pushEnabled: !!bootstrap.alerts.preferences.pushEnabled,
+            reorderRemindersEnabled: !!bootstrap.alerts.preferences.reorderRemindersEnabled,
+            climateAlertsEnabled: !!bootstrap.alerts.preferences.climateAlertsEnabled,
+            pushSubscription: bootstrap.alerts.preferences.pushSubscription || null,
+          });
+        } else {
+          setHumidorAlerts(defaultHumidorAlerts);
+        }
+        setHumidorAlertsStatus(bootstrap.alertsError || "");
       } catch (error) {
+        const errorMessage = getLiveApiErrorMessage(error);
+        setHumidorAlerts(defaultHumidorAlerts);
+        setHumidorAlertsStatus(errorMessage);
         setLiveState({
           loading: false,
           items: [],
           persistence: "",
-          error: getLiveApiErrorMessage(error),
+          error: errorMessage,
         });
       }
     })();
@@ -1180,6 +1403,8 @@ export function HumidorDashboard() {
 
   function renderAlerts() {
     const reorderItems = items.filter((item) => Boolean(item.reorderReminder));
+    const pushSupported = isPushSubscriptionSupported();
+    const hasNotificationPermission = typeof window !== "undefined" && "Notification" in window ? Notification.permission === "granted" : false;
 
     return (
       <Card className="luxury-card">
@@ -1190,23 +1415,95 @@ export function HumidorDashboard() {
           </CardTitle>
         </CardHeader>
         <CardContent className="grid gap-4">
-          {reorderItems.length ? (
-            reorderItems.map((item) => (
-              <div key={item.id} className="flex flex-col gap-2 border border-yuzu-line bg-yuzu-night/60 p-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <p className="font-heading text-xl text-yuzu-cream">{item.name}</p>
-                  <p className="text-sm text-yuzu-muted">Reorder reminder: {formatDate(item.reorderReminder)}</p>
-                </div>
-                <Badge className="border-yuzu-gold/50 text-yuzu-gold" variant="outline">
-                  {isAnonymousDemo ? "Demo item" : "Live item"}
-                </Badge>
+          <div className="grid gap-3 border border-yuzu-line bg-yuzu-night/60 p-4">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="font-heading text-xl text-yuzu-cream">Mobile push preferences</p>
+                <p className="mt-1 text-sm text-yuzu-muted">
+                  Save your preferences and enable push alerts to receive reorder reminder notifications on your signed-in device.
+                </p>
               </div>
-            ))
-          ) : (
-            <p className="text-sm leading-6 text-yuzu-muted">
-              {isAnonymousDemo ? "No demo reorder reminders are configured." : "No live reorder reminders or climate alerts were returned by the Yuzu API."}
+              <Button
+                className={`h-11 border ${
+                  humidorAlerts.pushEnabled ? "bg-yuzu-gold text-yuzu-ink hover:bg-yuzu-gold-light" : "text-yuzu-cream hover:bg-yuzu-night/75"
+                }`}
+                disabled={
+                  isAnonymousDemo ||
+                  isHumidorAlertsSaving ||
+                  isRequestingPushPermission ||
+                  (!humidorAlerts.pushEnabled && (!pushSupported || getVapidApplicationServerKey() === ""))
+                }
+                variant={humidorAlerts.pushEnabled ? "default" : "outline"}
+                onClick={humidorAlerts.pushEnabled ? handleDisableHumidorPushAlerts : handleEnableHumidorPushAlerts}
+              >
+                {isHumidorAlertsSaving || isRequestingPushPermission ? <LoaderCircle className="animate-spin" data-icon="inline-start" /> : null}
+                {humidorAlerts.pushEnabled ? "Disable Push Alerts" : "Enable Push Alerts"}
+              </Button>
+            </div>
+            <p className="text-sm text-yuzu-muted">
+              {humidorAlerts.pushEnabled
+                ? hasNotificationPermission
+                  ? "Push alerts are enabled for this device. Keep this browser session signed in to continue receiving alerts."
+                  : "Push alerts are not enabled because browser notification permission is blocked."
+                : "Push alerts are currently disabled for this account."}
             </p>
-          )}
+            {!humidorAlerts.pushEnabled && !pushSupported ? (
+              <p className="text-sm text-yuzu-amber">Your browser does not support push notifications in this context.</p>
+            ) : null}
+            {humidorAlerts.pushEnabled && !humidorAlerts.pushSubscription ? (
+              <p className="text-sm text-yuzu-amber">No valid push subscription was saved. Re-enable alerts to refresh the device subscription.</p>
+            ) : null}
+          </div>
+
+          <div className="grid gap-3 border border-yuzu-line bg-yuzu-night/60 p-4">
+            <label className="flex items-center justify-between gap-3">
+              <span className="text-sm text-yuzu-cream">Enable reorder reminder alerts</span>
+              <input
+                checked={humidorAlerts.reorderRemindersEnabled}
+                className="h-5 w-5 accent-yuzu-gold"
+                disabled={isAnonymousDemo || isHumidorAlertsSaving}
+                type="checkbox"
+                onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                  updateHumidorAlertToggle("reorderRemindersEnabled", event.currentTarget.checked)
+                }
+              />
+            </label>
+            <label className="flex items-center justify-between gap-3">
+              <span className="text-sm text-yuzu-cream">Enable climate alerts</span>
+              <input
+                checked={humidorAlerts.climateAlertsEnabled}
+                className="h-5 w-5 accent-yuzu-gold"
+                disabled={isAnonymousDemo || isHumidorAlertsSaving}
+                type="checkbox"
+                onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                  updateHumidorAlertToggle("climateAlertsEnabled", event.currentTarget.checked)
+                }
+              />
+            </label>
+            <p className="text-sm text-yuzu-muted">{humidorAlertsStatus}</p>
+          </div>
+
+          <div className="grid gap-2">
+            {reorderItems.length ? (
+              reorderItems.map((item) => (
+                <div key={item.id} className="flex flex-col gap-2 border border-yuzu-line bg-yuzu-night/60 p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="font-heading text-xl text-yuzu-cream">{item.name}</p>
+                    <p className="text-sm text-yuzu-muted">Reorder reminder: {formatDate(item.reorderReminder)}</p>
+                  </div>
+                  <Badge className="border-yuzu-gold/50 text-yuzu-gold" variant="outline">
+                    {isAnonymousDemo ? "Demo item" : "Live item"}
+                  </Badge>
+                </div>
+              ))
+            ) : (
+              <p className="text-sm leading-6 text-yuzu-muted">
+                {isAnonymousDemo
+                  ? "No demo reorder reminders are configured."
+                  : "No live reorder reminders or climate alerts were returned by the Yuzu API."}
+              </p>
+            )}
+          </div>
         </CardContent>
       </Card>
     );
@@ -1720,6 +2017,29 @@ function buildHumidorFormFromSuggestion(suggestion: CigarImageSuggestion): Humid
   };
 }
 
+function buildHumidorFormFromInput(item: HumidorItemInput): HumidorForm {
+  return {
+    name: item.name || "",
+    brand: item.brand || "",
+    line: item.line || "",
+    vitola: item.vitola || "",
+    wrapper: item.wrapper || "",
+    origin: item.origin || "",
+    strength: item.strength || "",
+    quantity: String(item.quantity ?? 1),
+    purchaseDate: item.purchaseDate || "",
+    agingStartDate: item.agingStartDate || "",
+    reorderReminder: item.reorderReminder || "",
+    humidorLocation: item.humidorLocation || "",
+    tray: item.tray || "",
+    rating: item.rating === null || item.rating === undefined ? "" : String(item.rating),
+    estimatedValue: formatHumidorValueInput(item.estimatedValue),
+    estimatedValueCurrency: item.estimatedValueCurrency || "USD",
+    estimatedValueSource: item.estimatedValueSource || humidorEntryPriceSnapshotSource,
+    tastingNotes: item.tastingNotes || "",
+  };
+}
+
 function getCigarDetailRows(details: CigarImageSuggestion["details"] | undefined) {
   if (!details) {
     return [];
@@ -1788,6 +2108,9 @@ function parseImageDataUrl(dataUrl: string) {
 }
 
 function buildHumidorPayload(form: HumidorForm, cigarImage: HumidorCigarImage | null = null, isMember = false): HumidorItemInput {
+  const estimatedValue = parseHumidorValue(form.estimatedValue);
+  const estimatedValueSource = (form.estimatedValueSource || "").trim();
+  const estimatedValueCurrency = form.estimatedValueCurrency.trim().toUpperCase();
   const payload: HumidorItemInput = {
     name: form.name.trim(),
     brand: form.brand.trim(),
@@ -1803,13 +2126,21 @@ function buildHumidorPayload(form: HumidorForm, cigarImage: HumidorCigarImage | 
     humidorLocation: form.humidorLocation.trim(),
     tray: form.tray.trim(),
     rating: form.rating.trim() ? Math.max(0, Math.min(100, Math.round(Number(form.rating) || 0))) : null,
-    estimatedValue: null,
-    estimatedValueCurrency: "",
-    estimatedValueSource: "",
+    estimatedValue,
+    estimatedValueCurrency: estimatedValue === null ? "" : estimatedValueCurrency || "USD",
+    estimatedValueSource: estimatedValue === null && !estimatedValueSource ? humidorEntryPriceSnapshotSource : estimatedValueSource || "member_estimate",
     cigarImage,
     tastingNotes: form.tastingNotes.trim(),
     source: "member_humidor",
   };
+
+  if (payload.estimatedValue !== null && payload.estimatedValueSource === "ai_identification_msrp") {
+    return payload;
+  }
+
+  if (payload.estimatedValue !== null && payload.estimatedValueSource === "member_estimate") {
+    return payload;
+  }
 
   return applyHumidorEntryPriceSnapshot(payload, isMember);
 }

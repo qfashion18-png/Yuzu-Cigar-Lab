@@ -86,7 +86,7 @@ export const cigarFlowAutomation: CigarFlowAutomation = {
   owner: "Codex recurring workspace agent",
   outputTargets: ["Cigar Flow feed", "Education weekly article", "Newsletter draft"],
   updateScope: [
-    "Research the preceding week's cigar and cigar-adjacent news from verified sources.",
+    "Research the preceding day's cigar and cigar-adjacent news from verified sources.",
     "Refresh the first ten Cigar Flow cards in src/lib/cigar-flow.ts with current source links, images, and compact reader snippets.",
     "Keep member smoke-log cards distinct from RSS and manufacturer cards.",
     "Run project validation before reporting the update.",

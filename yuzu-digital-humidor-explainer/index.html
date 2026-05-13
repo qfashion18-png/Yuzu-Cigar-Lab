@@ -1,0 +1,1227 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: #030504;
+        color: #f8edd7;
+        font-family: Arial, ui-sans-serif, system-ui, sans-serif;
+      }
+
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: #030504;
+      }
+
+      .scene {
+        position: absolute;
+        inset: 0;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background-color: #030504;
+      }
+
+      #scene1 {
+        z-index: 1;
+      }
+
+      #scene2,
+      #scene3,
+      #scene4,
+      #scene5,
+      #scene6,
+      #scene7,
+      #scene8,
+      #scene9,
+      #scene10 {
+        z-index: 2;
+        opacity: 0;
+      }
+
+      .backdrop {
+        position: absolute;
+        inset: 0;
+        background:
+          radial-gradient(circle at 78% 12%, rgba(220, 169, 58, 0.18), rgba(220, 169, 58, 0) 34%),
+          radial-gradient(circle at 10% 72%, rgba(95, 181, 106, 0.11), rgba(95, 181, 106, 0) 32%),
+          #030504;
+      }
+
+      .grain {
+        position: absolute;
+        inset: 0;
+        opacity: 0.08;
+        background-image:
+          repeating-linear-gradient(0deg, rgba(248, 237, 215, 0.08) 0, rgba(248, 237, 215, 0.08) 1px, rgba(3, 5, 4, 0) 1px, rgba(3, 5, 4, 0) 5px),
+          repeating-linear-gradient(90deg, rgba(220, 169, 58, 0.08) 0, rgba(220, 169, 58, 0.08) 1px, rgba(3, 5, 4, 0) 1px, rgba(3, 5, 4, 0) 8px);
+      }
+
+      .ghost {
+        position: absolute;
+        left: 72px;
+        bottom: -30px;
+        color: rgba(248, 237, 215, 0.035);
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 176px;
+        line-height: 0.9;
+        white-space: nowrap;
+      }
+
+      .ghost::before {
+        content: attr(data-word);
+      }
+
+      .scene-content {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        gap: 34px;
+        width: 100%;
+        height: 100%;
+        padding: 72px 88px 64px;
+        box-sizing: border-box;
+      }
+
+      .topline {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-height: 48px;
+      }
+
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 14px;
+        color: #f3c86c;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 26px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      .mark {
+        display: grid;
+        width: 42px;
+        height: 42px;
+        place-items: center;
+        border: 1px solid #dca93a;
+        border-radius: 8px;
+        color: #f8edd7;
+        background: #0a1c14;
+        font-family: Arial, ui-sans-serif, system-ui, sans-serif;
+        font-size: 22px;
+        font-weight: 900;
+      }
+
+      .chapter {
+        border: 1px solid #dca93a57;
+        color: #dca93a;
+        padding: 11px 18px;
+        font-size: 13px;
+        font-weight: 800;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+      }
+
+      .eyebrow {
+        color: #dca93a;
+        font-size: 17px;
+        font-weight: 900;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+      }
+
+      .title {
+        margin: 0;
+        color: #f8edd7;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 86px;
+        font-weight: 400;
+        line-height: 0.96;
+        max-width: 890px;
+      }
+
+      .lede {
+        margin: 0;
+        color: #d9cab0;
+        font-size: 28px;
+        font-weight: 350;
+        line-height: 1.35;
+        max-width: 820px;
+      }
+
+      .rule {
+        width: 100%;
+        height: 1px;
+        background: #dca93a57;
+      }
+
+      .main-grid {
+        display: grid;
+        grid-template-columns: 0.78fr 1.22fr;
+        gap: 42px;
+        min-height: 0;
+        flex: 1;
+      }
+
+      .main-grid.reverse {
+        grid-template-columns: 1.18fr 0.82fr;
+      }
+
+      .text-stack {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 28px;
+        min-width: 0;
+      }
+
+      .panel {
+        border: 1px solid #dca93a57;
+        border-radius: 8px;
+        background: rgba(7, 17, 13, 0.9);
+        box-shadow: 0 24px 80px rgba(0, 0, 0, 0.34);
+      }
+
+      .panel.pad {
+        padding: 28px;
+      }
+
+      .shot-frame {
+        position: relative;
+        min-height: 0;
+        border: 1px solid #dca93a57;
+        border-radius: 8px;
+        overflow: hidden;
+        background: #07110d;
+      }
+
+      .shot-frame img {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .shot-frame.dashboard img {
+        object-position: 49% 45%;
+      }
+
+      .photo-cover {
+        min-height: 0;
+      }
+
+      .photo-cover img {
+        object-fit: cover;
+      }
+
+      .gold-tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        width: fit-content;
+        border: 1px solid #dca93a57;
+        color: #f3c86c;
+        background: rgba(220, 169, 58, 0.1);
+        padding: 11px 14px;
+        font-size: 14px;
+        font-weight: 900;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+
+      .metric-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 18px;
+      }
+
+      .metric {
+        min-height: 164px;
+        padding: 24px;
+        border: 1px solid #dca93a57;
+        border-radius: 8px;
+        background: rgba(16, 24, 18, 0.92);
+      }
+
+      .metric strong {
+        display: block;
+        color: #f8edd7;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 58px;
+        font-weight: 400;
+        line-height: 1;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .metric span {
+        display: block;
+        margin-top: 13px;
+        color: #b8aa8f;
+        font-size: 15px;
+        font-weight: 800;
+        letter-spacing: 0.15em;
+        text-transform: uppercase;
+      }
+
+      .status-dot {
+        display: inline-block;
+        width: 11px;
+        height: 11px;
+        margin-right: 8px;
+        border-radius: 50%;
+        background: #5fb56a;
+      }
+
+      .caption {
+        align-self: center;
+        width: min(1320px, 100%);
+        border: 1px solid #dca93a57;
+        border-radius: 8px;
+        background: rgba(3, 5, 4, 0.8);
+        color: #f8edd7;
+        padding: 19px 26px;
+        font-size: 30px;
+        font-weight: 650;
+        line-height: 1.24;
+        text-align: center;
+      }
+
+      .steps {
+        display: grid;
+        gap: 16px;
+      }
+
+      .step {
+        display: grid;
+        grid-template-columns: 52px 1fr;
+        gap: 18px;
+        align-items: start;
+        padding: 19px;
+        border: 1px solid #dca93a57;
+        border-radius: 8px;
+        background: rgba(3, 5, 4, 0.42);
+      }
+
+      .step-num {
+        display: grid;
+        width: 52px;
+        height: 52px;
+        place-items: center;
+        border: 1px solid #dca93a;
+        color: #f3c86c;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 25px;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .step h3,
+      .mini-card h3,
+      .alert-card h3,
+      .history-card h3,
+      .device-card h3 {
+        margin: 0;
+        color: #f8edd7;
+        font-size: 22px;
+        line-height: 1.16;
+      }
+
+      .step p,
+      .mini-card p,
+      .alert-card p,
+      .history-card p,
+      .device-card p {
+        margin: 8px 0 0;
+        color: #b8aa8f;
+        font-size: 19px;
+        line-height: 1.36;
+      }
+
+      .access-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 22px;
+      }
+
+      .access-card {
+        min-height: 310px;
+        padding: 28px;
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+      }
+
+      .access-icon {
+        width: 64px;
+        height: 64px;
+        display: grid;
+        place-items: center;
+        border: 1px solid #dca93a;
+        color: #f3c86c;
+        font-size: 28px;
+        font-weight: 900;
+      }
+
+      .workflow {
+        display: grid;
+        grid-template-columns: 0.88fr 1.12fr;
+        gap: 24px;
+        align-items: stretch;
+      }
+
+      .upload-box {
+        display: grid;
+        min-height: 434px;
+        place-items: center;
+        text-align: center;
+        padding: 34px;
+        border: 1px dashed #dca93a;
+        border-radius: 8px;
+        background:
+          radial-gradient(circle at center, rgba(220, 169, 58, 0.16), rgba(220, 169, 58, 0) 58%),
+          rgba(3, 5, 4, 0.62);
+      }
+
+      .scan-square {
+        width: 188px;
+        height: 188px;
+        border: 2px solid #f3c86c;
+        display: grid;
+        place-items: center;
+        color: #f3c86c;
+        font-size: 72px;
+        font-weight: 900;
+      }
+
+      .form-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 14px;
+      }
+
+      .field {
+        min-height: 72px;
+        padding: 13px 15px;
+        border: 1px solid #dca93a57;
+        border-radius: 6px;
+        background: rgba(3, 5, 4, 0.54);
+      }
+
+      .field span {
+        display: block;
+        color: #b8aa8f;
+        font-size: 12px;
+        font-weight: 900;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+
+      .field strong {
+        display: block;
+        margin-top: 9px;
+        color: #f8edd7;
+        font-size: 21px;
+        font-weight: 700;
+        line-height: 1.08;
+      }
+
+      .inventory-layout {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 22px;
+      }
+
+      .cigar-card {
+        display: grid;
+        grid-template-columns: 126px 1fr;
+        gap: 18px;
+        padding: 18px;
+        border: 1px solid #dca93a57;
+        border-radius: 8px;
+        background: rgba(7, 17, 13, 0.92);
+      }
+
+      .cigar-card img {
+        width: 126px;
+        height: 126px;
+        object-fit: contain;
+        background: #101812;
+        border: 1px solid #dca93a57;
+      }
+
+      .cigar-card h3 {
+        margin: 0;
+        color: #f8edd7;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 28px;
+        line-height: 1.04;
+      }
+
+      .cigar-meta {
+        margin-top: 10px;
+        color: #b8aa8f;
+        font-size: 15px;
+        font-weight: 800;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      .badges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 14px;
+      }
+
+      .badge {
+        border: 1px solid #dca93a57;
+        color: #f3c86c;
+        padding: 8px 10px;
+        font-size: 13px;
+        font-weight: 900;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+
+      .inventory-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 18px;
+      }
+
+      .inventory-table th,
+      .inventory-table td {
+        padding: 17px 18px;
+        border-bottom: 1px solid #dca93a33;
+        text-align: left;
+      }
+
+      .inventory-table th {
+        color: #dca93a;
+        font-size: 13px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+
+      .inventory-table td {
+        color: #f8edd7;
+      }
+
+      .aging-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 22px;
+      }
+
+      .aging-card {
+        min-height: 430px;
+        padding: 28px;
+      }
+
+      .progress-track {
+        height: 14px;
+        margin-top: 22px;
+        overflow: hidden;
+        border: 1px solid #dca93a57;
+        background: rgba(3, 5, 4, 0.8);
+      }
+
+      .progress-fill {
+        height: 100%;
+        width: var(--value);
+        background: #dca93a;
+      }
+
+      .readiness {
+        margin-top: 24px;
+        color: #f3c86c;
+        font-size: 18px;
+        font-weight: 900;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+
+      .chart {
+        position: relative;
+        min-height: 428px;
+        padding: 34px;
+      }
+
+      .chart-grid {
+        position: absolute;
+        inset: 92px 34px 88px;
+        background-image:
+          linear-gradient(rgba(220, 169, 58, 0.18) 1px, rgba(3, 5, 4, 0) 1px),
+          linear-gradient(90deg, rgba(220, 169, 58, 0.14) 1px, rgba(3, 5, 4, 0) 1px);
+        background-size: 100% 56px, 126px 100%;
+      }
+
+      .chart-line {
+        position: absolute;
+        left: 64px;
+        right: 66px;
+        top: 212px;
+        height: 5px;
+        background: #5fb56a;
+        transform: rotate(-3deg);
+        transform-origin: left;
+        box-shadow: 0 0 26px rgba(95, 181, 106, 0.36);
+      }
+
+      .chart-line.second {
+        top: 276px;
+        background: #f3c86c;
+        transform: rotate(2deg);
+        box-shadow: 0 0 26px rgba(220, 169, 58, 0.32);
+      }
+
+      .climate-split {
+        display: grid;
+        grid-template-columns: 1.1fr 0.9fr;
+        gap: 24px;
+      }
+
+      .device-card,
+      .mini-card,
+      .alert-card,
+      .history-card {
+        padding: 22px;
+        border: 1px solid #dca93a57;
+        border-radius: 8px;
+        background: rgba(3, 5, 4, 0.52);
+      }
+
+      .device-list {
+        display: grid;
+        gap: 16px;
+      }
+
+      .alert-grid {
+        display: grid;
+        grid-template-columns: 0.9fr 1.1fr;
+        gap: 24px;
+      }
+
+      .alert-list {
+        display: grid;
+        gap: 16px;
+      }
+
+      .alert-card {
+        display: grid;
+        grid-template-columns: 58px 1fr;
+        gap: 18px;
+        align-items: start;
+      }
+
+      .alert-icon {
+        display: grid;
+        width: 58px;
+        height: 58px;
+        place-items: center;
+        border: 1px solid #dca93a;
+        color: #f3c86c;
+        font-size: 26px;
+        font-weight: 900;
+      }
+
+      .alert-card.warning .alert-icon {
+        border-color: #e55b48;
+        color: #e55b48;
+      }
+
+      .smoke-layout {
+        display: grid;
+        grid-template-columns: 0.85fr 1.15fr;
+        gap: 24px;
+      }
+
+      .history-stack {
+        display: grid;
+        gap: 16px;
+      }
+
+      .score {
+        display: grid;
+        width: 82px;
+        height: 82px;
+        place-items: center;
+        border: 1px solid #dca93a;
+        border-radius: 50%;
+        color: #f3c86c;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 34px;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .recap-loop {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 16px;
+      }
+
+      .loop-card {
+        min-height: 190px;
+        padding: 24px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        border: 1px solid #dca93a57;
+        border-radius: 8px;
+        background: rgba(7, 17, 13, 0.9);
+      }
+
+      .loop-card strong {
+        color: #f3c86c;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 48px;
+        font-weight: 400;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .loop-card span {
+        color: #f8edd7;
+        font-size: 22px;
+        font-weight: 900;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      .final-title {
+        max-width: 1220px;
+        font-size: 86px;
+      }
+
+      .cta-row {
+        display: flex;
+        gap: 16px;
+        align-items: center;
+      }
+
+      .cta {
+        border: 1px solid #dca93a;
+        background: rgba(220, 169, 58, 0.16);
+        color: #f8edd7;
+        padding: 18px 24px;
+        border-radius: 6px;
+        font-size: 18px;
+        font-weight: 950;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+
+      .secondary {
+        border: 1px solid #dca93a57;
+        color: #f3c86c;
+        padding: 18px 24px;
+        border-radius: 6px;
+        font-size: 18px;
+        font-weight: 950;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+
+      .small-note {
+        color: #b8aa8f;
+        font-size: 18px;
+        line-height: 1.4;
+      }
+
+      #scene10 .scene-content {
+        gap: 22px;
+      }
+
+      #scene10 .loop-card {
+        min-height: 152px;
+      }
+
+      #scene10 .caption {
+        font-size: 26px;
+        padding: 14px 20px;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="111"
+      data-width="1920"
+      data-height="1080"
+    >
+      <audio
+        id="narration"
+        data-start="0"
+        data-duration="109.2"
+        data-track-index="9"
+        src="assets/narration.wav"
+        data-volume="1"
+      ></audio>
+
+      <section id="scene1" class="scene">
+        <div class="backdrop" data-layout-ignore></div>
+        <div class="grain" data-layout-ignore></div>
+        <div class="ghost" data-word="Digital Humidor" data-layout-ignore aria-hidden="true"></div>
+        <div class="scene-content">
+          <div class="topline">
+            <div class="brand"><span class="mark">Y</span> Yuzu Cigar Club</div>
+            <div class="chapter">Member tutorial</div>
+          </div>
+          <div class="main-grid">
+            <div class="text-stack">
+              <div class="eyebrow">Private collection workspace</div>
+              <h1 class="title">Your Digital Humidor, explained.</h1>
+              <div class="rule"></div>
+              <p class="lede">A guided walkthrough for checking conditions, adding cigars, tracking aging, handling alerts, and logging every smoke.</p>
+              <div class="gold-tag">Start with the health check</div>
+            </div>
+            <div class="shot-frame dashboard panel" data-layout-allow-overflow>
+              <img src="assets/humidor-dashboard.png" alt="Yuzu Digital Humidor dashboard" />
+            </div>
+          </div>
+          <div class="caption">The Digital Humidor is your private workspace for managing cigars after they enter your collection.</div>
+        </div>
+      </section>
+
+      <section id="scene2" class="scene">
+        <div class="backdrop" data-layout-ignore></div>
+        <div class="grain" data-layout-ignore></div>
+        <div class="ghost" data-word="Overview" data-layout-ignore aria-hidden="true"></div>
+        <div class="scene-content">
+          <div class="topline">
+            <div class="eyebrow">Step 01</div>
+            <div class="chapter">Open Overview first</div>
+          </div>
+          <div class="text-stack">
+            <h2 class="title">Read the humidor health before you open the box.</h2>
+            <p class="lede">Overview gives you the daily condition check: humidity, temperature, environment score, inventory totals, ready smokes, and active alerts.</p>
+          </div>
+          <div class="metric-grid">
+            <div class="metric panel"><strong>69%</strong><span><i class="status-dot"></i>Humidity optimal</span></div>
+            <div class="metric panel"><strong>70 F</strong><span><i class="status-dot"></i>Temperature target</span></div>
+            <div class="metric panel"><strong>94</strong><span>Environment score</span></div>
+            <div class="metric panel"><strong>128</strong><span>Total cigars tracked</span></div>
+          </div>
+          <div class="main-grid reverse">
+            <div class="shot-frame dashboard panel" data-layout-allow-overflow>
+              <img src="assets/humidor-overview.png" alt="Dashboard overview crop" />
+            </div>
+            <div class="steps">
+              <div class="step panel">
+                <div class="step-num">1</div>
+                <div><h3>Check climate</h3><p>Confirm humidity and temperature are inside your target band.</p></div>
+              </div>
+              <div class="step panel">
+                <div class="step-num">2</div>
+                <div><h3>Scan active alerts</h3><p>Look for climate swings, reorder reminders, and allocation notices.</p></div>
+              </div>
+            </div>
+          </div>
+          <div class="caption">Overview is the health check: conditions, collection totals, ready cigars, and alerts in one place.</div>
+        </div>
+      </section>
+
+      <section id="scene3" class="scene">
+        <div class="backdrop" data-layout-ignore></div>
+        <div class="grain" data-layout-ignore></div>
+        <div class="ghost" data-word="Access" data-layout-ignore aria-hidden="true"></div>
+        <div class="scene-content">
+          <div class="topline">
+            <div class="eyebrow">Step 02</div>
+            <div class="chapter">Member or demo</div>
+          </div>
+          <div class="text-stack">
+            <h2 class="title">Use member access, or explore safely with demo data.</h2>
+            <p class="lede">The feature is members-only, but non-members can preview the workflow through a sample profile with placeholder records.</p>
+          </div>
+          <div class="access-grid">
+            <div class="access-card panel">
+              <div class="access-icon">M</div>
+              <div>
+                <h3 class="title" style="font-size: 48px;">Member profile</h3>
+                <p class="lede" style="font-size: 23px;">Full access to private cigars, photos, climate logs, notes, alerts, and device preferences.</p>
+              </div>
+            </div>
+            <div class="access-card panel">
+              <div class="access-icon">D</div>
+              <div>
+                <h3 class="title" style="font-size: 48px;">Demo profile</h3>
+                <p class="lede" style="font-size: 23px;">Try the full flow using sample cigars and climate records before signing in or joining.</p>
+              </div>
+            </div>
+            <div class="access-card panel">
+              <div class="access-icon">P</div>
+              <div>
+                <h3 class="title" style="font-size: 48px;">Private records</h3>
+                <p class="lede" style="font-size: 23px;">Locations, ratings, tasting notes, and smoke history stay attached to the member account.</p>
+              </div>
+            </div>
+          </div>
+          <div class="caption">Demo mode teaches the workflow without exposing private member records.</div>
+        </div>
+      </section>
+
+      <section id="scene4" class="scene">
+        <div class="backdrop" data-layout-ignore></div>
+        <div class="grain" data-layout-ignore></div>
+        <div class="ghost" data-word="Add Cigars" data-layout-ignore aria-hidden="true"></div>
+        <div class="scene-content">
+          <div class="topline">
+            <div class="eyebrow">Step 03</div>
+            <div class="chapter">My Cigars</div>
+          </div>
+          <div class="main-grid">
+            <div class="text-stack">
+              <h2 class="title">Add each cigar once. Let the humidor remember the details.</h2>
+              <p class="lede">Upload a photo, scan a QR label, or use the manual form. Then confirm the match before saving it to the collection.</p>
+              <div class="steps">
+                <div class="step panel"><div class="step-num">A</div><div><h3>Photo or QR</h3><p>Use a band, box lid, or Yuzu label to prefill a record.</p></div></div>
+                <div class="step panel"><div class="step-num">B</div><div><h3>Confirm metadata</h3><p>Brand, line, wrapper, origin, strength, quantity, dates, location, tray, rating, notes, pairings, and reorder reminder.</p></div></div>
+              </div>
+            </div>
+            <div class="workflow">
+              <div class="upload-box panel">
+                <div>
+                  <div class="scan-square">QR</div>
+                  <p class="lede" style="margin-top: 26px; font-size: 24px;">Upload cigar photo or use sample scan</p>
+                </div>
+              </div>
+              <div class="panel pad">
+                <div class="gold-tag">AI confidence 94%</div>
+                <div class="form-grid" style="margin-top: 22px;">
+                  <div class="field"><span>Brand</span><strong>Padron</strong></div>
+                  <div class="field"><span>Line</span><strong>1964 Anniversary</strong></div>
+                  <div class="field"><span>Vitola</span><strong>Toro</strong></div>
+                  <div class="field"><span>Wrapper</span><strong>Natural</strong></div>
+                  <div class="field"><span>Location</span><strong>Home Cabinet</strong></div>
+                  <div class="field"><span>Tray</span><strong>Box 1 / Drawer 2</strong></div>
+                  <div class="field"><span>Aging Start</span><strong>May 5, 2026</strong></div>
+                  <div class="field"><span>Pairings</span><strong>Bourbon, espresso</strong></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="caption">Add by photo, QR, or manual entry, then review the AI match before saving.</div>
+        </div>
+      </section>
+
+      <section id="scene5" class="scene">
+        <div class="backdrop" data-layout-ignore></div>
+        <div class="grain" data-layout-ignore></div>
+        <div class="ghost" data-word="Inventory" data-layout-ignore aria-hidden="true"></div>
+        <div class="scene-content">
+          <div class="topline">
+            <div class="eyebrow">Step 04</div>
+            <div class="chapter">Searchable collection</div>
+          </div>
+          <div class="text-stack">
+            <h2 class="title">Saved cigars become searchable inventory.</h2>
+            <p class="lede">Each card keeps the practical details close: location, quantity, personal rating, wishlist state, aging date, and reorder reminder.</p>
+          </div>
+          <div class="inventory-layout">
+            <div class="steps">
+              <div class="cigar-card panel">
+                <img src="assets/product-padron.png" alt="Padron product box" />
+                <div><h3>Padron 1964 Anniversary Series</h3><div class="cigar-meta">Home Cabinet / 21 owned</div><div class="badges"><span class="badge">Aging Well</span><span class="badge">94 rating</span><span class="badge">Jun 15 reorder</span></div></div>
+              </div>
+              <div class="cigar-card panel">
+                <img src="assets/product-liga-smoke.png" alt="Liga Privada product box" />
+                <div><h3>Liga Privada T52</h3><div class="cigar-meta">Home Cabinet / 18 owned</div><div class="badges"><span class="badge">Ready Now</span><span class="badge">92 rating</span><span class="badge">Rye pairing</span></div></div>
+              </div>
+              <div class="cigar-card panel">
+                <img src="assets/product-davidoff.png" alt="Davidoff product box" />
+                <div><h3>Davidoff Signature No. 2</h3><div class="cigar-meta">Lounge Locker / 25 owned</div><div class="badges"><span class="badge">Too Young</span><span class="badge">Wishlist</span><span class="badge">Jul 1 reorder</span></div></div>
+              </div>
+            </div>
+            <div class="panel pad">
+              <table class="inventory-table">
+                <thead><tr><th>Cigar</th><th>Qty</th><th>Tray</th><th>Reminder</th></tr></thead>
+                <tbody>
+                  <tr><td>Padron 1964</td><td>21</td><td>Drawer 2</td><td>Jun 15</td></tr>
+                  <tr><td>Liga Privada T52</td><td>18</td><td>Drawer 1</td><td>May 30</td></tr>
+                  <tr><td>Davidoff No. 2</td><td>25</td><td>Locker A</td><td>Jul 1</td></tr>
+                  <tr><td>Plasencia Alma</td><td>12</td><td>Locker B</td><td>Jun 5</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="caption">Inventory answers the practical question: what do I have, where is it, and when should I reorder?</div>
+        </div>
+      </section>
+
+      <section id="scene6" class="scene">
+        <div class="backdrop" data-layout-ignore></div>
+        <div class="grain" data-layout-ignore></div>
+        <div class="ghost" data-word="Aging" data-layout-ignore aria-hidden="true"></div>
+        <div class="scene-content">
+          <div class="topline">
+            <div class="eyebrow">Step 05</div>
+            <div class="chapter">Aging Tracker</div>
+          </div>
+          <div class="text-stack">
+            <h2 class="title">Use readiness to choose what to smoke.</h2>
+            <p class="lede">The tracker compares each aging start date against the readiness window, then groups cigars into simple decisions.</p>
+          </div>
+          <div class="aging-grid">
+            <div class="aging-card panel">
+              <div class="gold-tag">Too Young</div>
+              <h3 class="title" style="font-size: 48px; margin-top: 38px;">Let it rest.</h3>
+              <p class="lede" style="font-size: 23px;">Keep the box stable and avoid judging flavor too early.</p>
+              <div class="progress-track"><div class="progress-fill" style="--value: 12%;"></div></div>
+              <div class="readiness">12% aging window</div>
+            </div>
+            <div class="aging-card panel">
+              <div class="gold-tag">Aging Well</div>
+              <h3 class="title" style="font-size: 48px; margin-top: 38px;">Check again soon.</h3>
+              <p class="lede" style="font-size: 23px;">The cigar is developing. Protect climate stability and rotate only when needed.</p>
+              <div class="progress-track"><div class="progress-fill" style="--value: 58%;"></div></div>
+              <div class="readiness">58% aging window</div>
+            </div>
+            <div class="aging-card panel">
+              <div class="gold-tag">Ready Now</div>
+              <h3 class="title" style="font-size: 48px; margin-top: 38px;">Smoke candidate.</h3>
+              <p class="lede" style="font-size: 23px;">Ready Now is a strong choice for tonight or a member tasting.</p>
+              <div class="progress-track"><div class="progress-fill" style="--value: 100%;"></div></div>
+              <div class="readiness">100% aging window</div>
+            </div>
+          </div>
+          <div class="caption">Aging Tracker turns dates into decisions: rest it, monitor it, or smoke it.</div>
+        </div>
+      </section>
+
+      <section id="scene7" class="scene">
+        <div class="backdrop" data-layout-ignore></div>
+        <div class="grain" data-layout-ignore></div>
+        <div class="ghost" data-word="Climate" data-layout-ignore aria-hidden="true"></div>
+        <div class="scene-content">
+          <div class="topline">
+            <div class="eyebrow">Step 06</div>
+            <div class="chapter">Readings and devices</div>
+          </div>
+          <div class="text-stack">
+            <h2 class="title">Keep conditions steady with manual readings or device sync.</h2>
+            <p class="lede">Enter humidity and temperature by hand, or register a Bluetooth or WiFi hygrometer thermometer.</p>
+          </div>
+          <div class="climate-split">
+            <div class="chart panel">
+              <div class="gold-tag">Humidor climate</div>
+              <div class="chart-grid" data-layout-ignore></div>
+              <div class="chart-line" data-layout-ignore></div>
+              <div class="chart-line second" data-layout-ignore></div>
+              <div class="metric-grid" style="position: absolute; left: 34px; right: 34px; bottom: 28px; grid-template-columns: repeat(3, 1fr);">
+                <div class="metric"><strong>68%</strong><span>Humidity</span></div>
+                <div class="metric"><strong>70 F</strong><span>Temperature</span></div>
+                <div class="metric"><strong>15</strong><span>Minute sync</span></div>
+              </div>
+            </div>
+            <div class="device-list">
+              <div class="device-card panel"><h3>Manual climate reading</h3><p>Use the form when you check a hygrometer by hand.</p></div>
+              <div class="device-card panel"><h3>Bluetooth device</h3><p>Add the device ID, location, latest humidity, temperature, and sync interval.</p></div>
+              <div class="device-card panel"><h3>WiFi hygrometer</h3><p>Save the gateway or IP, then let the latest reading update the dashboard.</p></div>
+              <div class="device-card panel"><h3>Alert thresholds</h3><p>Set low and high bands so the humidor warns you when conditions drift.</p></div>
+            </div>
+          </div>
+          <div class="caption">The latest reading updates the chart, overview status, and warnings.</div>
+        </div>
+      </section>
+
+      <section id="scene8" class="scene">
+        <div class="backdrop" data-layout-ignore></div>
+        <div class="grain" data-layout-ignore></div>
+        <div class="ghost" data-word="Alerts" data-layout-ignore aria-hidden="true"></div>
+        <div class="scene-content">
+          <div class="topline">
+            <div class="eyebrow">Step 07</div>
+            <div class="chapter">Daily command center</div>
+          </div>
+          <div class="alert-grid">
+            <div class="text-stack">
+              <h2 class="title">Treat Alerts as the before-you-smoke checklist.</h2>
+              <p class="lede">The alert center surfaces climate swings, reorder reminders, member allocation opportunities, and maintenance tasks.</p>
+              <div class="gold-tag">Review before selecting a cigar</div>
+            </div>
+            <div class="alert-list">
+              <div class="alert-card warning panel"><div class="alert-icon">!</div><div><h3>Humidity fluctuation</h3><p>Home Cabinet reached 76%. Check the seal and stabilizer pack.</p></div></div>
+              <div class="alert-card panel"><div class="alert-icon">R</div><div><h3>Reorder reminder</h3><p>Padron 1964 is scheduled for Jun 15.</p></div></div>
+              <div class="alert-card panel"><div class="alert-icon">W</div><div><h3>Wishlist allocation</h3><p>A limited drop can be matched to saved member preferences.</p></div></div>
+              <div class="alert-card panel"><div class="alert-icon">C</div><div><h3>Climate stable</h3><p>Lounge Locker is in range and safe to leave closed.</p></div></div>
+            </div>
+          </div>
+          <div class="caption">Alerts help you act before small collection issues turn into expensive ones.</div>
+        </div>
+      </section>
+
+      <section id="scene9" class="scene">
+        <div class="backdrop" data-layout-ignore></div>
+        <div class="grain" data-layout-ignore></div>
+        <div class="ghost" data-word="Smoke Log" data-layout-ignore aria-hidden="true"></div>
+        <div class="scene-content">
+          <div class="topline">
+            <div class="eyebrow">Step 08</div>
+            <div class="chapter">Log A Smoke</div>
+          </div>
+          <div class="smoke-layout">
+            <div class="panel pad">
+              <h2 class="title" style="font-size: 62px;">After a smoke, update the record.</h2>
+              <p class="lede" style="font-size: 24px;">Choose the cigar, add your rating, pairing, and tasting notes, then save the log.</p>
+              <div class="form-grid" style="margin-top: 26px;">
+                <div class="field"><span>Cigar</span><strong>Liga Privada T52</strong></div>
+                <div class="field"><span>Rating</span><strong>92</strong></div>
+                <div class="field"><span>Pairing</span><strong>Rye whiskey</strong></div>
+                <div class="field"><span>Result</span><strong>Quantity -1</strong></div>
+              </div>
+            </div>
+            <div class="history-stack">
+              <div class="history-card panel" style="display: grid; grid-template-columns: 1fr 92px; gap: 20px; align-items: center;"><div><h3>Smoke history</h3><p>Dense pepper, oak, and dark roast coffee. Excellent draw and clean burn.</p></div><div class="score">92</div></div>
+              <div class="history-card panel"><h3>Inventory updated</h3><p>Quantity, smoke count, last-smoked date, rating, and tasting history are all refreshed from the log.</p></div>
+              <div class="cigar-card panel">
+                <img src="assets/product-liga.png" alt="Liga Privada product box" />
+                <div><h3>Liga Privada T52</h3><div class="cigar-meta">Now 17 owned / Last smoked just now</div><div class="badges"><span class="badge">Ready Now</span><span class="badge">History saved</span></div></div>
+              </div>
+            </div>
+          </div>
+          <div class="caption">Log A Smoke keeps your inventory, ratings, pairings, and tasting history current.</div>
+        </div>
+      </section>
+
+      <section id="scene10" class="scene">
+        <div class="backdrop" data-layout-ignore></div>
+        <div class="grain" data-layout-ignore></div>
+        <div class="ghost" data-word="Loop" data-layout-ignore aria-hidden="true"></div>
+        <div class="scene-content">
+          <div class="topline">
+            <div class="brand"><span class="mark">Y</span> Yuzu Cigar Club</div>
+            <div class="chapter">Digital Humidor</div>
+          </div>
+          <div class="text-stack" style="justify-content: flex-start;">
+            <div class="eyebrow">The operating loop</div>
+            <h2 class="title final-title">Check conditions. Add inventory. Track aging. Respond to alerts. Log each smoke.</h2>
+            <p class="lede">Use Settings for privacy, member access, QR labels, climate thresholds, and connected devices.</p>
+          </div>
+          <div class="recap-loop">
+            <div class="loop-card panel"><strong>01</strong><span>Check</span></div>
+            <div class="loop-card panel"><strong>02</strong><span>Add</span></div>
+            <div class="loop-card panel"><strong>03</strong><span>Age</span></div>
+            <div class="loop-card panel"><strong>04</strong><span>Alert</span></div>
+            <div class="loop-card panel"><strong>05</strong><span>Log</span></div>
+          </div>
+          <div class="cta-row">
+            <div class="cta">Open Digital Humidor</div>
+            <div class="secondary">Member data stays private</div>
+          </div>
+          <div class="caption">The Digital Humidor works best as a loop: check, add, age, alert, and log.</div>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+
+      const tl = gsap.timeline({ paused: true });
+
+      function fromIfFound(target, vars, at) {
+        if (document.querySelector(target)) {
+          tl.from(target, vars, at);
+        }
+      }
+
+      function enterScene(selector, at) {
+        fromIfFound(selector + " .eyebrow", { y: -18, opacity: 0, duration: 0.52, ease: "sine.out" }, at + 0.1);
+        fromIfFound(selector + " .chapter", { x: 28, opacity: 0, duration: 0.5, ease: "power3.out" }, at + 0.18);
+        fromIfFound(selector + " .brand", { y: -20, opacity: 0, duration: 0.54, ease: "circ.out" }, at + 0.1);
+        fromIfFound(selector + " .title", { x: -46, opacity: 0, duration: 0.72, ease: "expo.out" }, at + 0.2);
+        fromIfFound(selector + " .lede", { y: 24, opacity: 0, duration: 0.58, ease: "power2.out" }, at + 0.44);
+        fromIfFound(selector + " .rule", { scaleX: 0, transformOrigin: "left center", duration: 0.62, ease: "circ.out" }, at + 0.36);
+        fromIfFound(selector + " .gold-tag", { scale: 0.92, opacity: 0, duration: 0.5, ease: "back.out(1.4)" }, at + 0.68);
+        fromIfFound(selector + " .panel", { y: 32, scale: 0.985, opacity: 0, duration: 0.64, ease: "power4.out", stagger: { each: 0.07, from: "start" } }, at + 0.72);
+        fromIfFound(selector + " .metric", { y: 22, opacity: 0, duration: 0.5, ease: "power3.out", stagger: 0.06 }, at + 0.76);
+        fromIfFound(selector + " .field", { y: 18, opacity: 0, duration: 0.44, ease: "sine.out", stagger: 0.035 }, at + 0.9);
+        fromIfFound(selector + " .badge", { scale: 0.86, opacity: 0, duration: 0.34, ease: "back.out(1.6)", stagger: 0.025 }, at + 1.05);
+        fromIfFound(selector + " .caption", { y: 16, opacity: 0, duration: 0.52, ease: "power2.out" }, at + 1.12);
+      }
+
+      function blurCrossfade(fromSelector, toSelector, at) {
+        tl.set(toSelector, { opacity: 1, filter: "blur(22px)", scale: 1.012 }, at);
+        tl.to(fromSelector, { opacity: 0.32, filter: "blur(24px)", duration: 0.42, ease: "sine.inOut" }, at);
+        tl.to(toSelector, { opacity: 1, filter: "blur(0px)", scale: 1, duration: 0.62, ease: "power1.out" }, at + 0.12);
+        tl.set(fromSelector, { opacity: 0, filter: "blur(0px)" }, at + 0.72);
+      }
+
+      function verticalPush(fromSelector, toSelector, at) {
+        tl.set(toSelector, { opacity: 1, y: 82, filter: "blur(8px)" }, at);
+        tl.to(fromSelector, { y: -70, opacity: 0.35, filter: "blur(12px)", duration: 0.44, ease: "power2.inOut" }, at);
+        tl.to(toSelector, { y: 0, filter: "blur(0px)", duration: 0.58, ease: "power3.out" }, at + 0.08);
+        tl.set(fromSelector, { opacity: 0, y: 0, filter: "blur(0px)" }, at + 0.7);
+      }
+
+      enterScene("#scene1", 0);
+      tl.from("#scene1 .shot-frame img", { scale: 1.08, duration: 1.2, opacity: 0, ease: "power2.out" }, 0.72);
+      tl.to("#scene1 .shot-frame img", { scale: 1.035, x: -16, duration: 3.4, ease: "none" }, 2.0);
+
+      blurCrossfade("#scene1", "#scene2", 5.55);
+      enterScene("#scene2", 6.05);
+      tl.to("#scene2 .metric:nth-child(1)", { scale: 1.035, borderColor: "#f3c86c", duration: 0.86, ease: "sine.inOut", repeat: 3, yoyo: true }, 8.1);
+      tl.to("#scene2 .shot-frame img", { scale: 1.06, x: -30, y: -16, duration: 9.5, ease: "none" }, 6.6);
+
+      blurCrossfade("#scene2", "#scene3", 16.45);
+      enterScene("#scene3", 17.0);
+      tl.to("#scene3 .access-card:nth-child(2)", { borderColor: "#f3c86c", scale: 1.018, duration: 0.8, ease: "sine.inOut", repeat: 4, yoyo: true }, 20.0);
+
+      verticalPush("#scene3", "#scene4", 26.45);
+      enterScene("#scene4", 27.0);
+      tl.to("#scene4 .scan-square", { scale: 1.04, borderColor: "#5fb56a", duration: 0.7, ease: "sine.inOut", repeat: 5, yoyo: true }, 29.6);
+      tl.to("#scene4 .field:nth-child(2)", { borderColor: "#f3c86c", scale: 1.02, duration: 0.7, ease: "sine.inOut", repeat: 3, yoyo: true }, 34.4);
+
+      blurCrossfade("#scene4", "#scene5", 44.45);
+      enterScene("#scene5", 45.0);
+      tl.to("#scene5 .cigar-card:nth-child(2)", { scale: 1.018, borderColor: "#f3c86c", duration: 0.75, ease: "sine.inOut", repeat: 4, yoyo: true }, 48.0);
+
+      blurCrossfade("#scene5", "#scene6", 54.45);
+      enterScene("#scene6", 55.0);
+      tl.from("#scene6 .progress-fill", { scaleX: 0, transformOrigin: "left center", duration: 1.2, ease: "power3.out", stagger: 0.18 }, 56.5);
+      tl.to("#scene6 .aging-card:nth-child(3)", { scale: 1.018, borderColor: "#f3c86c", duration: 0.78, ease: "sine.inOut", repeat: 4, yoyo: true }, 61.0);
+
+      blurCrossfade("#scene6", "#scene7", 66.45);
+      enterScene("#scene7", 67.0);
+      tl.from("#scene7 .chart-line", { scaleX: 0, transformOrigin: "left center", duration: 1.0, ease: "power3.out", stagger: 0.18 }, 68.4);
+      tl.to("#scene7 .device-card:nth-child(3)", { borderColor: "#f3c86c", scale: 1.018, duration: 0.76, ease: "sine.inOut", repeat: 4, yoyo: true }, 72.2);
+
+      blurCrossfade("#scene7", "#scene8", 77.45);
+      enterScene("#scene8", 78.0);
+      tl.to("#scene8 .alert-card.warning", { scale: 1.018, borderColor: "#e55b48", duration: 0.6, ease: "sine.inOut", repeat: 5, yoyo: true }, 80.2);
+
+      blurCrossfade("#scene8", "#scene9", 86.45);
+      enterScene("#scene9", 87.0);
+      tl.to("#scene9 .score", { scale: 1.08, borderColor: "#f3c86c", duration: 0.5, ease: "back.out(1.8)", repeat: 3, yoyo: true }, 92.0);
+      tl.to("#scene9 .cigar-card", { scale: 1.018, borderColor: "#f3c86c", duration: 0.72, ease: "sine.inOut", repeat: 3, yoyo: true }, 94.4);
+
+      blurCrossfade("#scene9", "#scene10", 98.45);
+      enterScene("#scene10", 99.0);
+      tl.from("#scene10 .loop-card", { y: 38, opacity: 0, duration: 0.56, ease: "power4.out", stagger: 0.09 }, 101.0);
+      tl.to("#scene10 .loop-card", { borderColor: "#f3c86c", duration: 0.8, ease: "sine.inOut", stagger: 0.09 }, 104.2);
+      tl.from("#scene10 .cta-row", { y: 28, opacity: 0, duration: 0.58, ease: "back.out(1.4)" }, 105.4);
+      tl.to("#scene10 .scene-content", { opacity: 0, duration: 0.72, ease: "power2.in" }, 110.0);
+      tl.to("#scene10", { backgroundColor: "#000000", duration: 0.8, ease: "sine.inOut" }, 110.0);
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>

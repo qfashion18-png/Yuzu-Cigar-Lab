@@ -39,6 +39,175 @@ export type AccountOrdersResponse = {
   persistence: string;
 };
 
+export type AdminPersistence = string | {
+  status: string;
+  table?: string;
+};
+
+export type AdminDashboardOverview = {
+  counts: {
+    orders: {
+      total: number;
+      paid: number;
+      pending: number;
+      refunded: number;
+    };
+    subscriptions: {
+      total: number;
+      active: number;
+      pastDue: number;
+      canceled: number;
+    };
+    holds: {
+      total: number;
+      open: number;
+      resolved: number;
+    };
+    webhooks: {
+      total: number;
+      processed: number;
+      pending: number;
+      failed: number;
+    };
+    audit: {
+      total: number;
+      last24h: number;
+    };
+  };
+  latest: {
+    orderAt: string | null;
+    subscriptionAt: string | null;
+    holdAt: string | null;
+    webhookAt: string | null;
+    auditAt: string | null;
+  };
+};
+
+export type AdminRecentOrder = {
+  id: string;
+  orderNumber?: string;
+  email?: string;
+  status: string;
+  fulfillmentStatus?: string;
+  complianceStatus?: string;
+  total?: number;
+  currency?: string;
+  placedAt?: string;
+};
+
+export type AdminRecentSubscription = {
+  id: string;
+  email?: string;
+  tierKey?: string;
+  billingPeriod?: string;
+  status: string;
+  currentPeriodEnd?: string | null;
+  createdAt?: string;
+  updatedAt?: string | null;
+};
+
+export type AdminAuditEntry = {
+  id: string;
+  actorEmail?: string | null;
+  action: string;
+  targetType: string;
+  targetId?: string | null;
+  requestId?: string | null;
+  stripeEventId?: string | null;
+  orderId?: string | null;
+  complianceHoldId?: string | null;
+  createdAt: string;
+};
+
+export type AdminComplianceHold = Record<string, unknown> & {
+  caseId?: string;
+  createdAt?: string;
+  id?: string;
+  orderId?: string;
+  orderNumber?: string;
+  reason?: string;
+  status?: string;
+  email?: string;
+  orderStatus?: string;
+  fulfillmentStatus?: string;
+  complianceStatus?: string;
+  total?: number;
+  currency?: string;
+  resolvedAt?: string | null;
+  message?: string;
+  details?: Record<string, unknown>;
+};
+
+export type AdminComplianceHoldsResponse = {
+  holds: AdminComplianceHold[];
+  orders: AdminRecentOrder[];
+  subscriptions: AdminRecentSubscription[];
+  audit: AdminAuditEntry[];
+  overview: AdminDashboardOverview;
+  summary: {
+    total: number;
+    open: number;
+    resolved: number;
+  };
+  persistence: AdminPersistence;
+};
+
+export type AdminWebhookEvent = Record<string, unknown> & {
+  createdAt?: string;
+  id?: string;
+  requestId?: string;
+  status?: string;
+  type?: string;
+  processedAt?: string | null;
+  processingStatus?: string;
+  orderId?: string | null;
+  orderNumber?: string | null;
+  orderStatus?: string | null;
+  fulfillmentStatus?: string | null;
+  complianceStatus?: string | null;
+  actorEmail?: string | null;
+  lastAction?: string | null;
+};
+
+export type AdminWebhookEventsResponse = {
+  events: AdminWebhookEvent[];
+  summary: {
+    total: number;
+    processed: number;
+    pending: number;
+    failed: number;
+  };
+  persistence: AdminPersistence;
+};
+
+export type AdminStripeCatalogPreviewItem = {
+  sku: string;
+  name: string;
+  price: number;
+  publishStatus: string;
+  stripePriceId: string;
+};
+
+export type AdminStripeSyncProductsResponse = {
+  sync: {
+    status: string;
+    seedScope: string;
+    liveApprovalRequired: boolean;
+    catalogReady: boolean;
+    stripeConfigured: boolean;
+    webhookConfigured: boolean;
+    catalogSource: string;
+    configuredProductCount: number;
+    publishedProductCount: number;
+    membershipPriceKeys: string[];
+    taxStatus: string;
+    apiVersion: string | null;
+    sampleSkus: string[];
+    catalogPreview: AdminStripeCatalogPreviewItem[];
+    notes: string[];
+  };
+};
+
 export type ConciergeAgentMode = "concierge" | "cigar_guide" | "support" | "humidor" | "admin" | "weekly_news";
 
 export type ConciergeChatInput = {
@@ -149,6 +318,39 @@ export type HumidorCigarImage = {
 export type HumidorItemsResponse = {
   items: HumidorItem[];
   persistence: string;
+};
+
+export type HumidorPushSubscription = {
+  endpoint: string;
+  keys: {
+    p256dh: string;
+    auth: string;
+  };
+};
+
+export type HumidorAlertPreferences = {
+  pushEnabled: boolean;
+  reorderRemindersEnabled: boolean;
+  climateAlertsEnabled: boolean;
+  pushSubscription: HumidorPushSubscription | null;
+};
+
+export type HumidorAlertsResponse = {
+  preferences: HumidorAlertPreferences;
+  persistence: string;
+};
+
+export type HumidorDashboardBootstrap = {
+  items: HumidorItemsResponse;
+  alerts: HumidorAlertsResponse | null;
+  alertsError: string | null;
+};
+
+export type HumidorAlertSettingsUpdate = {
+  pushEnabled: boolean;
+  reorderRemindersEnabled: boolean;
+  climateAlertsEnabled: boolean;
+  pushSubscription: HumidorPushSubscription | null;
 };
 
 export type HumidorItemInput = Partial<Omit<HumidorItem, "id" | "createdAt">> & {
@@ -289,6 +491,18 @@ export async function fetchAccountOrders(headers: LiveApiHeaders) {
   return getLive<AccountOrdersResponse>("/commerce/orders", headers);
 }
 
+export async function fetchAdminComplianceHolds(headers: LiveApiHeaders) {
+  return getLive<AdminComplianceHoldsResponse>("/admin/commerce/compliance-holds", headers);
+}
+
+export async function fetchAdminWebhookEvents(headers: LiveApiHeaders) {
+  return getLive<AdminWebhookEventsResponse>("/admin/commerce/webhook-events", headers);
+}
+
+export async function syncAdminStripeProducts(headers: LiveApiHeaders) {
+  return postLive<AdminStripeSyncProductsResponse>("/admin/commerce/stripe-sync-products", {}, headers);
+}
+
 export async function sendConciergeChat(input: ConciergeChatInput, headers: LiveApiHeaders) {
   return postLive<ConciergeChatResponse>("/concierge/chat", input, headers);
 }
@@ -299,6 +513,39 @@ export async function sendConciergeVoiceMessage(input: ConciergeVoiceInput, head
 
 export async function fetchHumidorItems(headers: LiveApiHeaders) {
   return getLive<HumidorItemsResponse>("/humidor/items", headers);
+}
+
+export async function fetchHumidorAlertPreferences(headers: LiveApiHeaders) {
+  return getLive<HumidorAlertsResponse>("/humidor/alerts", headers);
+}
+
+export async function fetchHumidorDashboardBootstrap(headers: LiveApiHeaders): Promise<HumidorDashboardBootstrap> {
+  const [itemsResult, alertsResult] = await Promise.allSettled([
+    fetchHumidorItems(headers),
+    fetchHumidorAlertPreferences(headers),
+  ]);
+
+  if (itemsResult.status === "rejected") {
+    throw itemsResult.reason;
+  }
+
+  if (alertsResult.status === "rejected") {
+    return {
+      items: itemsResult.value,
+      alerts: null,
+      alertsError: getLiveApiErrorMessage(alertsResult.reason),
+    };
+  }
+
+  return {
+    items: itemsResult.value,
+    alerts: alertsResult.value,
+    alertsError: null,
+  };
+}
+
+export async function updateHumidorAlertPreferences(input: HumidorAlertSettingsUpdate, headers: LiveApiHeaders) {
+  return postLive<HumidorAlertsResponse>("/humidor/alerts", input, headers);
 }
 
 export async function createHumidorItem(input: HumidorItemInput, headers: LiveApiHeaders) {
@@ -361,9 +608,16 @@ export function getLiveApiErrorMessage(error: unknown) {
     news_agent_not_configured: "The weekly news agent is not configured for this environment yet.",
     news_publish_forbidden: "Only admins and concierge operators can publish news stories.",
     official_source_required: "Add at least one official source before drafting or publishing.",
+    internal_error: "The live Yuzu API is temporarily unavailable.",
+    live_api_error: "The live Yuzu API is temporarily unavailable.",
+    news_story_placeholder_body: "The draft still contains placeholder scaffold copy. Regenerate or replace it with a real story before publishing.",
     operator_approval_required: "Review and approve the story before publishing.",
     missing_news_title: "Add a title before publishing the news story.",
     missing_news_body: "Add story body copy before publishing.",
+    missing_push_subscription: "Save your browser's push subscription to enable mobile alerts.",
+    push_not_supported: "Push alerts are not available on this browser.",
+    push_permission_denied: "Notification permission is required to enable push alerts.",
+    push_update_failed: "We could not save your push alert preference right now.",
     unauthorized: "Your Cognito session expired. Please sign in again.",
   };
 

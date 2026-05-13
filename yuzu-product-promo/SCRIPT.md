@@ -1,0 +1,11 @@
+# Script
+
+Premium cigars shouldn't feel transactional.
+
+Yuzu sells by the box, curates member pricing, and keeps your collection in view.
+
+Shop rare releases. Track humidity, aging windows, tasting notes, and reorders.
+
+Membership unlocks private drops, events, concierge guidance, and compliant adult-signature checkout.
+
+Yuzu Cigar Club. Build your box-worthy cellar.
