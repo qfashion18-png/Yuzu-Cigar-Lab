@@ -12,6 +12,7 @@ export default function CheckoutSuccessPage() {
   const { clearCart } = useCart();
   const [status, setStatus] = useState<CheckoutSessionStatus | null>(null);
   const [error, setError] = useState("");
+  const maxStatusPolls = 8;
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -23,27 +24,54 @@ export default function CheckoutSuccessPage() {
     }
 
     let cancelled = false;
+    let pollCount = 0;
+    let pollTimer: ReturnType<typeof window.setTimeout> | number | null = null;
 
-    getCheckoutSessionStatus(sessionId)
-      .then((sessionStatus) => {
+    const poll = async () => {
+      if (cancelled) {
+        return;
+      }
+
+      pollCount += 1;
+      try {
+        const sessionStatus = await getCheckoutSessionStatus(sessionId);
         if (cancelled) {
           return;
         }
 
         setStatus(sessionStatus);
+        setError("");
 
         if (sessionStatus.orderRecorded) {
           clearCart();
+          return;
         }
-      })
-      .catch((checkoutError) => {
-        if (!cancelled) {
+
+        if (pollCount < maxStatusPolls) {
+          pollTimer = window.setTimeout(poll, 1800);
+        } else {
+          setError("Stripe is confirmed, but your order record is still syncing. Refresh in a moment to confirm fulfillment details.");
+        }
+      } catch (checkoutError) {
+        if (cancelled) {
+          return;
+        }
+
+        if (pollCount < maxStatusPolls) {
+          pollTimer = window.setTimeout(poll, 1800);
+        } else {
           setError(getCheckoutErrorMessage(checkoutError));
         }
-      });
+      }
+    };
+
+    poll();
 
     return () => {
       cancelled = true;
+      if (pollTimer !== null) {
+        window.clearTimeout(pollTimer);
+      }
     };
   }, [clearCart]);
 

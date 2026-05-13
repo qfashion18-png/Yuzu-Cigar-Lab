@@ -13,10 +13,16 @@ import {
   ageConfirmationStorageVersion,
   ageGateBootstrapScript,
 } from "@/lib/age-gate-bootstrap";
+import {
+  clearCheckoutAgeVerificationToken,
+  createCheckoutAgeVerificationToken,
+  writeCheckoutAgeVerificationToken,
+} from "@/lib/age-verification";
 
-const minimumAge = 21;
+  const minimumAge = 21;
 const earliestBirthYear = 1900;
 const latestBirthYear = new Date().getFullYear();
+const ageConfirmationCookieMaxAgeSeconds = ageConfirmationMaxAgeDays * 24 * 60 * 60;
 
 export { ageConfirmationMaxAgeMs, ageGateBootstrapScript };
 
@@ -133,6 +139,80 @@ export function isAgeConfirmationCurrent(value: string | null, now = Date.now())
   }
 }
 
+function readAgeConfirmationCookie() {
+  const prefix = `${AGE_CONFIRMATION_STORAGE_KEY}=`;
+  const cookies = typeof document === "undefined" ? [] : (document.cookie || "").split(";");
+
+  for (const cookie of cookies) {
+    const trimmed = cookie.trim();
+    if (!trimmed.startsWith(prefix)) {
+      continue;
+    }
+
+    try {
+      return decodeURIComponent(trimmed.slice(prefix.length));
+    } catch {
+      return trimmed.slice(prefix.length);
+    }
+  }
+
+  return null;
+}
+
+function readAgeConfirmationValue() {
+  const nowMs = Date.now();
+  let localValue = null as string | null;
+
+  try {
+    localValue = window.localStorage.getItem(AGE_CONFIRMATION_STORAGE_KEY);
+  } catch {
+    // Continue to cookie lookup when localStorage is unavailable.
+  }
+
+  const cookieValue = readAgeConfirmationCookie();
+
+  if (isAgeConfirmationCurrent(localValue, nowMs)) {
+    return localValue;
+  }
+
+  if (isAgeConfirmationCurrent(cookieValue, nowMs)) {
+    return cookieValue;
+  }
+
+  return localValue || cookieValue;
+}
+
+function writeAgeConfirmationCookie(value: string) {
+  const expiresAt = new Date(Date.now() + ageConfirmationMaxAgeMs).toUTCString();
+  const encodedValue = encodeURIComponent(value);
+  try {
+    document.cookie = `${AGE_CONFIRMATION_STORAGE_KEY}=${encodedValue}; Path=/; Max-Age=${ageConfirmationCookieMaxAgeSeconds}; Expires=${expiresAt}; SameSite=Lax`;
+  } catch {
+    // ignore
+  }
+}
+
+function clearAgeConfirmationStorage() {
+  try {
+    window.localStorage.removeItem(AGE_CONFIRMATION_STORAGE_KEY);
+  } catch {
+    // ignore
+  }
+
+  const expired = new Date(0).toUTCString();
+  document.cookie = `${AGE_CONFIRMATION_STORAGE_KEY}=; Path=/; Max-Age=0; Expires=${expired}; SameSite=Lax`;
+}
+
+function persistAgeConfirmation(value: string) {
+  writeAgeConfirmationCookie(value);
+
+  try {
+    window.localStorage.setItem(AGE_CONFIRMATION_STORAGE_KEY, value);
+  } catch {
+    // localStorage is optional for this flow.
+  }
+}
+
 function getSelectedBirthday({ month, day, year }: BirthdaySelection) {
   const numericMonth = Number(month);
   const numericDay = Number(day);
@@ -163,18 +243,27 @@ export function AgeGate() {
 
   useBrowserLayoutEffect(() => {
     try {
-      const value = window.localStorage.getItem(AGE_CONFIRMATION_STORAGE_KEY);
+      const value = readAgeConfirmationValue();
       const hasCurrentConfirmation = isAgeConfirmationCurrent(value);
 
       setConfirmed(hasCurrentConfirmation);
       setDocumentAgeConfirmed(hasCurrentConfirmation);
 
-      if (value && !hasCurrentConfirmation) {
-        window.localStorage.removeItem(AGE_CONFIRMATION_STORAGE_KEY);
+      if (hasCurrentConfirmation && value !== null) {
+        writeCheckoutAgeVerificationToken(
+          window.sessionStorage,
+          createCheckoutAgeVerificationToken(value),
+        );
+      }
+
+      if (!hasCurrentConfirmation) {
+        clearAgeConfirmationStorage();
+        clearCheckoutAgeVerificationToken(window.sessionStorage);
       }
     } catch {
       setConfirmed(false);
       setDocumentAgeConfirmed(false);
+      clearCheckoutAgeVerificationToken(window.sessionStorage);
     } finally {
       setReady(true);
     }
@@ -329,11 +418,13 @@ export function AgeGate() {
       return;
     }
 
-    try {
-      window.localStorage.setItem(AGE_CONFIRMATION_STORAGE_KEY, createAgeConfirmationValue());
-    } catch {
-      // The current session can still enter even if browser storage is unavailable.
-    }
+    const ageConfirmationValue = createAgeConfirmationValue();
+
+    persistAgeConfirmation(ageConfirmationValue);
+    writeCheckoutAgeVerificationToken(
+      window.sessionStorage,
+      createCheckoutAgeVerificationToken(ageConfirmationValue),
+    );
 
     setDocumentAgeConfirmed(true);
     setConfirmed(true);
@@ -429,7 +520,8 @@ export function AgeGate() {
               role="status"
               aria-live="polite"
             >
-              {statusMessage || `We store only this browser confirmation for ${ageConfirmationMaxAgeDays} days, not your date of birth.`}
+              {statusMessage ||
+                `We store only this confirmation for ${ageConfirmationMaxAgeDays} days, not your date of birth.`}
             </p>
             <div className="grid gap-3 sm:grid-cols-2">
               <Button

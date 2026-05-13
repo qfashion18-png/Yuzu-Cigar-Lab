@@ -8,9 +8,15 @@ import { useMemo, useState } from "react";
 import { ReferenceImage } from "@/components/reference-image";
 import { useCart } from "@/components/cart-provider";
 import { MemberViewBanner } from "@/components/member-view-banner";
+import { useBackupAuth } from "@/components/backup-auth-provider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { defaultDeliveryMethods, formatCurrency, type ShoppingCartItem } from "@/lib/shopping-cart";
+import {
+  defaultDeliveryMethods,
+  formatCurrency,
+  isMemberOnlyCart,
+  type ShoppingCartItem,
+} from "@/lib/shopping-cart";
 
 export function CartPageClient() {
   const {
@@ -23,7 +29,10 @@ export function CartPageClient() {
     applyPromotion,
     clearPromotion,
   } = useCart();
+  const auth = useBackupAuth();
   const [promoCode, setPromoCode] = useState("");
+  const hasMemberOnlyItems = isMemberOnlyCart(cart);
+  const isMembershipLocked = hasMemberOnlyItems && !auth.isMember;
   const estimatedDelivery = defaultDeliveryMethods[0];
   const estimatedTotal = useMemo(
     () => totals.subtotal - totals.discount,
@@ -182,11 +191,25 @@ export function CartPageClient() {
               {estimatedDelivery.title} is available in checkout. Adult signature and age verification remain required before fulfillment.
             </p>
           </div>
+          {isMembershipLocked ? (
+            <p className="mt-4 text-sm text-destructive" aria-live="polite">
+              Your cart includes member-only products. Sign in with a member account to continue.
+            </p>
+          ) : null}
 
-          <Button className="mt-5 h-14 w-full bg-yuzu-gold text-yuzu-ink hover:bg-yuzu-gold-light" render={<Link href="/checkout" />}>
+          <Button
+            className="mt-5 h-14 w-full bg-yuzu-gold text-yuzu-ink hover:bg-yuzu-gold-light"
+            disabled={isMembershipLocked}
+            render={isMembershipLocked ? undefined : <Link href="/checkout" />}
+          >
             <Lock data-icon="inline-start" />
             Proceed to Checkout
           </Button>
+          {isMembershipLocked ? (
+            <Button className="mt-3 h-12 border-yuzu-gold text-yuzu-gold hover:bg-yuzu-gold hover:text-yuzu-ink" render={<Link href="/membership" />} variant="outline">
+              Join Membership to Continue
+            </Button>
+          ) : null}
         </div>
 
         <div className="fixed inset-x-0 bottom-0 z-30 border-t border-yuzu-line bg-yuzu-night/95 p-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] backdrop-blur lg:hidden">
@@ -195,10 +218,19 @@ export function CartPageClient() {
               <p className="text-xs uppercase tracking-[0.18em] text-yuzu-muted">Cart total</p>
               <p className="font-heading text-2xl text-yuzu-gold">{formatCurrency(estimatedTotal)}</p>
             </div>
-            <Button className="h-12 bg-yuzu-gold px-6 text-yuzu-ink hover:bg-yuzu-gold-light" render={<Link href="/checkout" />}>
+            <Button
+              className="h-12 bg-yuzu-gold px-6 text-yuzu-ink hover:bg-yuzu-gold-light"
+              disabled={isMembershipLocked}
+              render={isMembershipLocked ? undefined : <Link href="/checkout" />}
+            >
               Checkout
             </Button>
           </div>
+          {isMembershipLocked ? (
+            <Button className="mt-3 h-10 w-full bg-yuzu-gold text-yuzu-ink hover:bg-yuzu-gold-light" render={<Link href="/membership" />} variant="outline">
+              Join Membership
+            </Button>
+          ) : null}
         </div>
       </aside>
     </div>
