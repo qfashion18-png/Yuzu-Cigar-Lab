@@ -1,6 +1,5 @@
-const CACHE_NAME = "yuzu-cigar-club-v3";
+const CACHE_NAME = "yuzu-cigar-club-v4";
 const APP_SHELL = [
-  "/",
   "/manifest.webmanifest",
   "/yuzu-icon.svg",
   "/assets/yuzu-logo-180.png",
