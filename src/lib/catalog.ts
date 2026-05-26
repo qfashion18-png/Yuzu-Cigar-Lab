@@ -359,23 +359,12 @@ export type CatalogExpertReview = {
 };
 
 export type CatalogReviewProfile = {
-  searchQuery: string;
   summary: string;
   sources: Array<{
     sourceName: string;
     sourceUrl: string;
     rating: string;
     keyDetails: string[];
-  }>;
-};
-
-export type CatalogReviewAudit = {
-  searchPrompt: string;
-  summary: string;
-  sourceUrl: string;
-  details: Array<{
-    label: string;
-    value: string;
   }>;
 };
 
@@ -439,6 +428,42 @@ const researchedCatalogEnrichment: Record<string, Partial<CatalogProductEnrichme
     strength: "Medium",
     filler: "Nicaragua",
     binder: "Indonesia",
+    reviewProfile: {
+      summary:
+        "ACID 20 Maduro Toro has sourced line-level community signals and an exact Toro publication review, led by Cigar Coop's 87-point assessment of the 6 x 50 Toro.",
+      sources: [
+        {
+          sourceName: "Cigar Coop",
+          sourceUrl: "https://cigar-coop.com/2021/05/agile-cigar-review-acid-20-toro-by-drew-estate.html",
+          rating: "87",
+          keyDetails: [
+            "Reviewed the ACID 20 Toro by Drew Estate as a 6 x 50 Toro with Mexican San Andres wrapper, Indonesian binder, and Nicaraguan filler.",
+            "Key flavors include mocha, licorice, earth, white pepper, and sweetened-tip sweetness.",
+            "Rated the Toro 87 with a Buy One value call and medium body.",
+          ],
+        },
+        {
+          sourceName: "Cigar World",
+          sourceUrl: "https://www.cigarworld.com/cigars/acid/acid-20/",
+          rating: "4.63 community rating",
+          keyDetails: [
+            "Lists ACID 20 with Mexican San Andres wrapper, Indonesian binder, Nicaraguan filler, and Toro among the available sizes.",
+            "Community profile tags call out earthy, spice, and herbal tasting notes.",
+            "Visible community reviews include 5-star, 4-star, and 5-star ratings from 2022 through 2025.",
+          ],
+        },
+        {
+          sourceName: "Holt's Cigar Co.",
+          sourceUrl: "https://www.holts.com/cigars/all-cigar-brands/acid-20.html",
+          rating: "5/5 from 5 customer reviews",
+          keyDetails: [
+            "Retailer page lists Acid 20 by Drew Estate with a Toro 6 x 50 option and box-of-24 purchase format.",
+            "Shows five customer reviews for the Acid 20 line, all in the five-star distribution.",
+            "Product notes identify San Andres wrapper, Nicaraguan country, and Robusto/Toro shapes.",
+          ],
+        },
+      ],
+    },
   },
   "acid-20-twenty-year-24-bx": {
     origin: "Nicaragua",
@@ -450,7 +475,6 @@ const researchedCatalogEnrichment: Record<string, Partial<CatalogProductEnrichme
     filler: "Nicaragua",
     binder: "Indonesia",
     reviewProfile: {
-      searchQuery: "Ratings & Reviews: ACID 20 TWENTY YEAR 24/BX:",
       summary:
         "ACID 20 community and retailer ratings skew positive, while scored review coverage frames it as a strong infused-cigar pick with sweetness, mocha, licorice, earth, and white pepper rather than a high-complexity traditional profile.",
       sources: [
@@ -1098,52 +1122,10 @@ function getReviewSearchUrl(productName: string) {
   return `${cigarAficionadoSearchBaseUrl}?${search.toString()}`;
 }
 
-export function getCatalogReviewSearchPrompt(product: Pick<CatalogProduct, "name">) {
-  return `Ratings & Reviews: ${product.name}:`;
-}
-
 export function isCigarCatalogProduct(product: Pick<CatalogProduct, "category" | "name">) {
   const nonCigarPattern = /lighter|torch|fluid|butane|humidor|membership|accessor|ashtray|cutter|punch|display|book matches/i;
 
   return !nonCigarPattern.test(product.category) && !nonCigarPattern.test(product.name);
-}
-
-export function getCatalogReviewAudit(product: CatalogProduct): CatalogReviewAudit | null {
-  if (!isCigarCatalogProduct(product)) {
-    return null;
-  }
-
-  const details = [
-    { label: "Review status", value: "No sourced rating attached yet" },
-    {
-      label: "Search focus",
-      value: "Find publication, community, or customer review signals for this exact catalog item before adding a score.",
-    },
-    {
-      label: "Source priority",
-      value: "Check Cigar Aficionado first, then reputable cigar publications, retailer review pages, and active cigar communities.",
-    },
-    {
-      label: "Match rule",
-      value: "Only attach a rating when the reviewed blend and vitola clearly match this item; otherwise keep it as a related signal.",
-    },
-    {
-      label: "Capture fields",
-      value: "Record the score or rating, source name, issue/date, reviewed vitola, tasting notes, and source URL.",
-    },
-    {
-      label: "Quality gate",
-      value: "Do not add aggregate rating schema or score badges until a source URL supports the rating.",
-    },
-  ];
-
-  return {
-    searchPrompt: getCatalogReviewSearchPrompt(product),
-    summary:
-      "This cigar is queued for sourced ratings review. Use the research prompt to find review-specific evidence before attaching customer, community, or publication scores.",
-    sourceUrl: product.reviewSearchUrl,
-    details,
-  };
 }
 
 function extractLabeledValue(text: string, label: string) {
@@ -4462,9 +4444,7 @@ export function getCatalogProductDetails(product: CatalogProduct): CatalogProduc
     ? [`${product.expertReview.score}-point ${product.expertReview.sourceName} review`]
     : product.reviewProfile
       ? ["Review details researched"]
-      : isCigarCatalogProduct(product)
-        ? ["Review audit queued"]
-        : [];
+      : [];
 
   return {
     summary: getCatalogProductDescription(product),

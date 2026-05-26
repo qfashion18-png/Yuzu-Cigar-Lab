@@ -13,6 +13,7 @@ import {
   sendConciergeChat,
   sendConciergeVoiceMessage,
   draftNewsStory,
+  updateHumidorItem,
   type CigarImageIdentifyResponse,
   type ConciergeChatResponse,
   type ConciergeVoiceResponse,
@@ -271,6 +272,36 @@ test("live API client retries transient browser fetch failures once", async () =
     const response = await sendConciergeChat({ message: "Check admin backend", agent: "admin" }, { Authorization: "Bearer admin-token" });
 
     assert.equal(response.reply, "Admin backend is reachable.");
+    assert.equal(callCount, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousApiBase === undefined) {
+      delete process.env.NEXT_PUBLIC_YCC_API_BASE_URL;
+    } else {
+      process.env.NEXT_PUBLIC_YCC_API_BASE_URL = previousApiBase;
+    }
+  }
+});
+
+test("live API client explains persistent browser network failures", async () => {
+  const originalFetch = globalThis.fetch;
+  const previousApiBase = process.env.NEXT_PUBLIC_YCC_API_BASE_URL;
+  let callCount = 0;
+
+  process.env.NEXT_PUBLIC_YCC_API_BASE_URL = "https://api.yuzucigarclub.test/";
+  globalThis.fetch = async () => {
+    callCount += 1;
+    throw new TypeError("Failed to fetch");
+  };
+
+  try {
+    await assert.rejects(
+      () => sendConciergeChat({ message: "Check humidor agent reachability", agent: "humidor" }, { Authorization: "Bearer member-token" }),
+      (error) => {
+        assert.equal(getLiveApiErrorMessage(error), "The live Yuzu API could not be reached from this site. Try again once the API route and CORS access are available.");
+        return true;
+      }
+    );
     assert.equal(callCount, 2);
   } finally {
     globalThis.fetch = originalFetch;
@@ -581,6 +612,70 @@ test("live API client maps empty API Gateway 401 responses to Cognito session re
         return true;
       },
     );
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousApiBase === undefined) {
+      delete process.env.NEXT_PUBLIC_YCC_API_BASE_URL;
+    } else {
+      process.env.NEXT_PUBLIC_YCC_API_BASE_URL = previousApiBase;
+    }
+  }
+});
+
+test("live API client patches a saved humidor item location", async () => {
+  const originalFetch = globalThis.fetch;
+  const previousApiBase = process.env.NEXT_PUBLIC_YCC_API_BASE_URL;
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const itemId = "abababab-abab-4bab-8bab-abababababab";
+
+  process.env.NEXT_PUBLIC_YCC_API_BASE_URL = "https://api.yuzucigarclub.test/";
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+
+    return new Response(
+      JSON.stringify({
+        item: {
+          id: itemId,
+          name: "Padron 1964 Anniversary Toro",
+          brand: "Padron",
+          line: "1964 Anniversary",
+          vitola: "Toro",
+          wrapper: "Nicaraguan",
+          origin: "Nicaragua",
+          strength: "Full",
+          quantity: 2,
+          rating: null,
+          purchaseDate: "2026-03-12",
+          agingStartDate: "2026-03-12",
+          productionDate: null,
+          reorderReminder: null,
+          humidorLocation: "Locker B / Top Shelf",
+          tray: "",
+          tastingNotes: "",
+          source: "member_humidor",
+          estimatedValue: null,
+          estimatedValueCurrency: "",
+          estimatedValueSource: "",
+          cigarImage: null,
+          createdAt: "2026-05-08T10:00:00.000Z",
+        },
+        persistence: { status: "stored", table: "humidor_items" },
+      }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      },
+    );
+  };
+
+  try {
+    const response = await updateHumidorItem(itemId, { humidorLocation: "Locker B / Top Shelf" }, { Authorization: "Bearer member-token" });
+
+    assert.equal(response.item.humidorLocation, "Locker B / Top Shelf");
+    assert.equal(calls[0].url, `https://api.yuzucigarclub.test/humidor/items/${itemId}`);
+    assert.equal(calls[0].init?.method, "PATCH");
+    assert.deepEqual(JSON.parse(String(calls[0].init?.body)), { humidorLocation: "Locker B / Top Shelf" });
+    assert.equal((calls[0].init?.headers as Record<string, string>).Authorization, "Bearer member-token");
   } finally {
     globalThis.fetch = originalFetch;
     if (previousApiBase === undefined) {

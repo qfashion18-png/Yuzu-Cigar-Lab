@@ -13,6 +13,17 @@ export type HumidorDeviceInput = {
   syncInterval: string;
 };
 
+export type HumidorDeviceDiscovery = {
+  name: string;
+  identifier: string;
+  deviceType?: HumidorDeviceType;
+  connection: HumidorDeviceConnection;
+  humidity: number | string;
+  temperature: number | string;
+};
+
+export type HumidorDeviceDiscoveryProvider = (input: HumidorDeviceInput) => Promise<HumidorDeviceDiscovery | null>;
+
 export type HumidorSensorDevice = {
   id: string;
   name: string;
@@ -57,7 +68,7 @@ export const defaultHumidorDeviceForm: HumidorDeviceInput = {
   name: "",
   location: "",
   deviceType: "HUMIDIFIER",
-  connection: "Bluetooth",
+  connection: "WiFi",
   identifier: "",
   humidity: "",
   temperature: "",
@@ -68,6 +79,64 @@ export const humidorDeviceTypeLabels: Record<HumidorDeviceType, string> = {
   HYGROMETER_THERMOMETER: "Hygrometer thermometer",
   HUMIDIFIER: "HUMIDIFIER",
 };
+
+const discoverableHumidorDevices: HumidorDeviceDiscovery[] = [
+  {
+    name: "Govee Smart Hygrometer",
+    identifier: "BLE-GV-5075",
+    deviceType: "HYGROMETER_THERMOMETER",
+    connection: "Bluetooth",
+    humidity: 67.7,
+    temperature: 70.2,
+  },
+  {
+    name: "SensorPush Gateway",
+    identifier: "192.168.1.44",
+    deviceType: "HYGROMETER_THERMOMETER",
+    connection: "WiFi",
+    humidity: 68.4,
+    temperature: 70.1,
+  },
+  {
+    name: "Smart Cabinet Humidifier",
+    identifier: "HUM-192-168-1-88",
+    deviceType: "HUMIDIFIER",
+    connection: "WiFi",
+    humidity: 69,
+    temperature: 70,
+  },
+];
+
+export async function discoverAvailableHumidorDevice(input: HumidorDeviceInput, provider?: HumidorDeviceDiscoveryProvider): Promise<HumidorDeviceDiscovery> {
+  const connection = normalizeConnection(input.connection) || "Bluetooth";
+  const deviceType = normalizeDeviceType(input.deviceType) || "HYGROMETER_THERMOMETER";
+
+  if (deviceType === "HUMIDIFIER" && connection !== "WiFi") {
+    throw new Error(`Search WiFi for ${humidorDeviceTypeLabels[deviceType]} devices.`);
+  }
+
+  const discovery =
+    (provider ? await provider({ ...input, connection, deviceType }) : null) ??
+    discoverableHumidorDevices.find((device) => device.connection === connection && device.deviceType === deviceType);
+
+  if (!discovery) {
+    throw new Error(`Search ${deviceType === "HUMIDIFIER" ? "WiFi" : "Bluetooth or WiFi"} for ${humidorDeviceTypeLabels[deviceType]} devices.`);
+  }
+
+  return { ...discovery };
+}
+
+export function applyHumidorDeviceDiscovery(form: HumidorDeviceInput, discovery: HumidorDeviceDiscovery): HumidorDeviceInput {
+  return {
+    ...form,
+    name: normalizeText(discovery.name),
+    deviceType: normalizeDeviceType(discovery.deviceType) || form.deviceType || "HYGROMETER_THERMOMETER",
+    connection: discovery.connection,
+    identifier: normalizeText(discovery.identifier),
+    humidity: formatClimateInput(discovery.humidity),
+    temperature: formatClimateInput(discovery.temperature),
+  };
+}
 
 export const humidorClimateAlertTarget = {
   maxHumidity: 72,
@@ -211,6 +280,10 @@ export function getHumidorDeviceClimateAlerts(devices: HumidorSensorDevice[]): H
   });
 }
 
+export function getConnectedHumidorDeviceReading(devices: HumidorSensorDevice[]): HumidorSensorDevice | null {
+  return devices.find((device) => device.status === "Connected") ?? null;
+}
+
 export function getHumidorDeviceClimateAlert(device: HumidorSensorDevice): HumidorDeviceClimateAlert | null {
   const humidityOutOfRange = device.humidity < humidorClimateAlertTarget.minHumidity || device.humidity > humidorClimateAlertTarget.maxHumidity;
   const temperatureOutOfRange =
@@ -266,6 +339,17 @@ function normalizeText(value: unknown) {
 
 function normalizeNumber(value: unknown) {
   return typeof value === "number" ? value : Number(value);
+}
+
+function formatClimateInput(value: number | string) {
+  const numericValue = normalizeNumber(value);
+
+  if (!Number.isFinite(numericValue)) {
+    return "";
+  }
+
+  const rounded = Math.round(numericValue * 10) / 10;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
 }
 
 function isValidClimate(humidity: number, temperature: number) {

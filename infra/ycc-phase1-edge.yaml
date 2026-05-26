@@ -631,6 +631,15 @@ Resources:
       AuthorizerId: !Ref JwtAuthorizer
       Target: !Sub integrations/${LambdaIntegration}
 
+  HumidorItemUpdateRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: "PATCH /humidor/items/{id}"
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${LambdaIntegration}
+
   HumidorItemEnrichmentRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:

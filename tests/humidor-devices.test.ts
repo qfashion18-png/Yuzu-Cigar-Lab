@@ -3,7 +3,11 @@ import test from "node:test";
 
 import {
   addHumidorDevice,
+  applyHumidorDeviceDiscovery,
   createHumidorDevice,
+  defaultHumidorDeviceForm,
+  discoverAvailableHumidorDevice,
+  getConnectedHumidorDeviceReading,
   getHumidorDeviceClimateAlerts,
   normalizeHumidorDevices,
   type HumidorDeviceInput,
@@ -85,6 +89,53 @@ test("creates a WiFi HUMIDIFIER device with a device climate reading", () => {
   assert.match(result.reading?.note ?? "", /WiFi humidifier/i);
 });
 
+test("applies an available device reading to the pairing form without replacing member location settings", () => {
+  const form = applyHumidorDeviceDiscovery(
+    {
+      ...defaultHumidorDeviceForm,
+      location: "Locker A / Drawer 2",
+      syncInterval: "20",
+    },
+    {
+      name: "Govee Smart Hygrometer",
+      identifier: "BLE-GV-5075",
+      connection: "Bluetooth",
+      deviceType: "HYGROMETER_THERMOMETER",
+      humidity: 67.7,
+      temperature: 70.2,
+    },
+  );
+
+  assert.equal(form.name, "Govee Smart Hygrometer");
+  assert.equal(form.identifier, "BLE-GV-5075");
+  assert.equal(form.connection, "Bluetooth");
+  assert.equal(form.deviceType, "HYGROMETER_THERMOMETER");
+  assert.equal(form.humidity, "67.7");
+  assert.equal(form.temperature, "70.2");
+  assert.equal(form.location, "Locker A / Drawer 2");
+  assert.equal(form.syncInterval, "20");
+});
+
+test("discovers an available humidor device reading for the selected connection", async () => {
+  await assert.rejects(
+    () => discoverAvailableHumidorDevice({ ...defaultHumidorDeviceForm, connection: "Bluetooth", deviceType: "HUMIDIFIER" }),
+    /Search WiFi for HUMIDIFIER devices/i,
+  );
+
+  const discovery = await discoverAvailableHumidorDevice({
+    ...defaultHumidorDeviceForm,
+    connection: "WiFi",
+    deviceType: "HUMIDIFIER",
+  });
+
+  assert.equal(discovery.connection, "WiFi");
+  assert.equal(discovery.deviceType, "HUMIDIFIER");
+  assert.ok(discovery.name);
+  assert.ok(discovery.identifier);
+  assert.ok(Number(discovery.humidity) >= 1);
+  assert.ok(Number(discovery.temperature) >= 40);
+});
+
 test("detects paired device readings that should trigger climate phone alerts", () => {
   const devices = normalizeHumidorDevices([
     {
@@ -121,6 +172,43 @@ test("detects paired device readings that should trigger climate phone alerts", 
   assert.match(alerts[0].message, /humidity is 61% RH/i);
   assert.equal(alerts[0].humidityOutOfRange, true);
   assert.equal(alerts[0].temperatureOutOfRange, false);
+});
+
+test("selects the connected paired device reading for the overview dashboard", () => {
+  const devices = normalizeHumidorDevices([
+    {
+      id: "ready-device",
+      name: "Ready Sensor",
+      location: "Locker B",
+      deviceType: "HYGROMETER_THERMOMETER",
+      connection: "Bluetooth",
+      identifier: "BLE-READY",
+      humidity: 66,
+      temperature: 69,
+      syncIntervalMinutes: 15,
+      status: "Ready to sync",
+      lastSyncedAt: "May 26, 8:00 AM",
+    },
+    {
+      id: "connected-device",
+      name: "Smart Cabinet Humidifier",
+      location: "Main Cabinet",
+      deviceType: "HUMIDIFIER",
+      connection: "WiFi",
+      identifier: "HUM-192-168-1-88",
+      humidity: 68.4,
+      temperature: 70.2,
+      syncIntervalMinutes: 15,
+      status: "Connected",
+      lastSyncedAt: "May 26, 9:15 AM",
+    },
+  ]);
+
+  const reading = getConnectedHumidorDeviceReading(devices);
+
+  assert.equal(reading?.id, "connected-device");
+  assert.equal(reading?.humidity, 68.4);
+  assert.equal(reading?.temperature, 70.2);
 });
 
 test("rejects incomplete device names and unsafe climate readings", () => {

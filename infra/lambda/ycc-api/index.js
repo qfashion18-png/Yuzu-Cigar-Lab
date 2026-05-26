@@ -62,6 +62,7 @@ const HUMIDOR_ROUTES = new Set([
   "POST /humidor/identify-cigar",
   "POST /humidor/alerts",
   "POST /humidor/items",
+  "PATCH /humidor/items/{id}",
   "PATCH /humidor/items/{id}/enrich",
 ]);
 const HUMIDOR_ALERT_DISPATCH_ROUTE = "POST /humidor/alerts/dispatch";
@@ -363,6 +364,8 @@ exports.handler = async function handler(event = {}, context = {}) {
         response = await handleHumidorCigarIdentification(event, actor, requestId);
       } else if (routeKey === "POST /humidor/alerts") {
         response = await handleHumidorAlertPreferencesUpdate(event, actor, requestId);
+      } else if (routeKey === "PATCH /humidor/items/{id}") {
+        response = await handleHumidorItemUpdate(event, actor, requestId);
       } else if (routeKey === "PATCH /humidor/items/{id}/enrich") {
         response = await handleHumidorItemEnrichment(event, actor, requestId);
       } else if (routeKey === "POST /humidor/items") {
@@ -3511,6 +3514,83 @@ async function handleHumidorItem(event, actor, requestId) {
   });
 }
 
+async function handleHumidorItemUpdate(event, actor, requestId) {
+  const itemId = getPathId(event, "id");
+  if (!itemId || !isUuid(itemId)) {
+    return json(400, requestId, {
+      error: "missing_humidor_item_id",
+      message: "A valid humidor item id is required before updating a saved cigar.",
+    });
+  }
+
+  const body = parseJsonBody(event);
+  if (body.error) {
+    return body.error;
+  }
+
+  const humidorLocation = sanitizeText(body.value.humidorLocation || body.value.location, MAX_FIELD_LENGTH);
+  if (!humidorLocation) {
+    return json(400, requestId, {
+      error: "missing_humidor_location",
+      message: "Send a humidor location before updating this saved cigar.",
+    });
+  }
+
+  if (!shouldPersistDatabaseWrites()) {
+    return json(409, requestId, {
+      error: "database_writes_not_ready",
+      message: "Humidor item updates require the member humidor database.",
+      persistence: getDatabasePersistenceStatus(),
+    });
+  }
+
+  return withDatabaseTransaction("ycc-api-humidor-item-update", async (client) => {
+    const member = await upsertMember(client, actor, requestId);
+    const currentRow = await loadHumidorItemRowForMember(client, itemId, member.id);
+
+    if (!currentRow) {
+      return json(404, requestId, {
+        error: "humidor_item_not_found",
+        message: "The requested humidor item was not found or is not visible to this member.",
+      });
+    }
+
+    const currentItem = mapHumidorItemRow(currentRow);
+    const updatedRow = await updateHumidorItemLocation(client, {
+      actor,
+      humidorLocation,
+      itemId,
+      memberId: member.id,
+      requestId,
+    });
+    const updatedItem = mapHumidorItemRow(updatedRow);
+
+    await insertAuditLog(client, event, {
+      action: "humidor_item.location_updated",
+      actor,
+      afterData: {
+        humidorLocation: updatedItem.humidorLocation,
+        itemId,
+      },
+      beforeData: {
+        humidorLocation: currentItem.humidorLocation,
+      },
+      memberId: member.id,
+      requestId,
+      resourceId: itemId,
+      resourceType: "humidor_item",
+    });
+
+    return json(200, requestId, {
+      item: updatedItem,
+      persistence: {
+        status: "stored",
+        table: "humidor_items",
+      },
+    });
+  });
+}
+
 async function handleHumidorItemEnrichment(event, actor, requestId) {
   const itemId = getPathId(event, "id");
   if (!itemId || !isUuid(itemId)) {
@@ -3532,6 +3612,7 @@ async function handleHumidorItemEnrichment(event, actor, requestId) {
       message: requestedFields.error,
     });
   }
+  const approved = body.value.approved === true;
 
   if (!shouldPersistDatabaseWrites()) {
     return json(409, requestId, {
@@ -3583,6 +3664,29 @@ async function handleHumidorItemEnrichment(event, actor, requestId) {
     const merge = mergeHumidorEnrichment(currentItem, ai.suggestion, fieldsToEnrich);
 
     if (!merge.updatedFields.length) {
+      if (!approved) {
+        return json(200, requestId, {
+          item: currentItem,
+          previewItem: currentItem,
+          enrichment: {
+            status: "needs_review",
+            requestedFields: fieldsToEnrich,
+            missingFields,
+            updatedFields: [],
+            evidence: ai.suggestion.evidence,
+            needsReview: ai.suggestion.needsReview.length
+              ? ai.suggestion.needsReview
+              : ["The humidor agent did not find enough verified detail to update this cigar automatically."],
+            confidence: ai.suggestion.confidence,
+          },
+          ai: buildHumidorEnrichmentAiSummary(ai),
+          persistence: {
+            status: "pending_member_review",
+            table: "humidor_items",
+          },
+        });
+      }
+
       return json(200, requestId, {
         item: currentItem,
         enrichment: {
@@ -3599,6 +3703,27 @@ async function handleHumidorItemEnrichment(event, actor, requestId) {
         ai: buildHumidorEnrichmentAiSummary(ai),
         persistence: {
           status: "stored",
+          table: "humidor_items",
+        },
+      });
+    }
+
+    if (!approved) {
+      return json(200, requestId, {
+        item: currentItem,
+        previewItem: merge.item,
+        enrichment: {
+          status: "pending_approval",
+          requestedFields: fieldsToEnrich,
+          missingFields,
+          updatedFields: merge.updatedFields,
+          evidence: ai.suggestion.evidence,
+          needsReview: ai.suggestion.needsReview,
+          confidence: ai.suggestion.confidence,
+        },
+        ai: buildHumidorEnrichmentAiSummary(ai),
+        persistence: {
+          status: "pending_member_approval",
           table: "humidor_items",
         },
       });
@@ -5737,6 +5862,54 @@ async function updateHumidorItemEnrichment(client, details) {
   const row = result.rows[0];
   if (!row) {
     throw new Error(`Humidor enrichment update did not return item ${details.itemId}.`);
+  }
+
+  return row;
+}
+
+async function updateHumidorItemLocation(client, details) {
+  const result = await client.query(
+    `
+      /* humidor_item_location_update */
+      update public.humidor_items
+      set humidor_location = $3,
+          actor_id = $4,
+          request_id = $5,
+          updated_at = now()
+      where id = $1 and member_id = $2 and archived_at is null
+      returning
+        id,
+        name,
+        brand,
+        line,
+        vitola,
+        wrapper,
+        origin,
+        strength,
+        quantity,
+        rating,
+        purchase_date,
+        aging_start_date,
+        reorder_reminder,
+        humidor_location,
+        tray,
+        tasting_notes,
+        source,
+        metadata,
+        created_at
+    `,
+    [
+      details.itemId,
+      details.memberId,
+      nullable(details.humidorLocation),
+      details.actor.sub,
+      details.requestId,
+    ]
+  );
+
+  const row = result.rows[0];
+  if (!row) {
+    throw new Error(`Humidor item location update did not return item ${details.itemId}.`);
   }
 
   return row;

@@ -718,6 +718,21 @@ function installPersistenceMocks(
         };
       }
 
+      if (normalized.includes("humidor_item_location_update")) {
+        const existing = options.humidorItemRows?.[0] || {};
+        return {
+          rows: [
+            {
+              ...existing,
+              id: params[0],
+              humidor_location: params[2],
+              created_at: existing.created_at || "2026-05-06T09:00:00.000Z",
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+
       if (
         normalized.includes("from public.members m") &&
         normalized.includes("join public.member_profiles mp") &&
@@ -4699,6 +4714,61 @@ test("humidor item route stores collection value and uploaded cigar image metada
   }
 });
 
+test("humidor item update route stores a later humidor location", async () => {
+  const itemId = "abababab-abab-4bab-8bab-abababababab";
+  const mock = installPersistenceMocks({
+    humidorItemRows: [
+      {
+        id: itemId,
+        name: "Ecuador Hand Made",
+        brand: "El Z",
+        line: "Ecuador Hand Made",
+        vitola: "Corona",
+        wrapper: "",
+        origin: "",
+        strength: "",
+        quantity: 3,
+        rating: null,
+        purchase_date: null,
+        aging_start_date: null,
+        reorder_reminder: null,
+        humidor_location: "",
+        tray: "",
+        tasting_notes: "",
+        source: "member_humidor",
+        metadata: {},
+        created_at: "2026-05-13T10:00:00.000Z",
+      },
+    ],
+  });
+
+  try {
+    const response = await handler({
+      ...createAuthenticatedEvent("PATCH /humidor/items/{id}", {
+        humidorLocation: "Member humidor / Drawer 3",
+      }),
+      rawPath: `/humidor/items/${itemId}`,
+      pathParameters: { id: itemId },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.item.id, itemId);
+    assert.equal(body.item.name, "Ecuador Hand Made");
+    assert.equal(body.item.humidorLocation, "Member humidor / Drawer 3");
+    assert.equal(body.persistence.status, "stored");
+
+    const queries = mock.clients.flatMap((client) => client.queries);
+    assert.ok(
+      queries.some((query) => query.sql.includes("humidor_item_location_update") && query.sql.includes("update public.humidor_items")),
+      "location update should update the stored humidor row",
+    );
+    assert.ok(queries.some((query) => query.sql.includes("insert into public.audit_log")), "location update should be audited");
+  } finally {
+    mock.restore();
+  }
+});
+
 test("humidor item enrichment route fills missing info image and MSRP without overwriting member data", async () => {
   const itemId = "abababab-abab-4bab-8bab-abababababab";
   const mock = installPersistenceMocks({
@@ -4751,6 +4821,7 @@ test("humidor item enrichment route fills missing info image and MSRP without ov
     const response = await handler({
       ...createAuthenticatedEvent("PATCH /humidor/items/{id}/enrich", {
         fields: ["info", "image", "msrp"],
+        approved: true,
       }),
       rawPath: `/humidor/items/${itemId}/enrich`,
       pathParameters: { id: itemId },
@@ -4784,6 +4855,154 @@ test("humidor item enrichment route fills missing info image and MSRP without ov
       "enrichment should update the stored humidor row"
     );
     assert.ok(queries.some((query) => query.sql.includes("insert into public.audit_log")), "enrichment should be audited");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("humidor item enrichment route previews updates until member approval", async () => {
+  const itemId = "cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd";
+  const mock = installPersistenceMocks({
+    humidorItemRows: [
+      {
+        id: itemId,
+        name: "Padron Anniversary Toro",
+        brand: "Padron",
+        line: "",
+        vitola: "",
+        wrapper: "",
+        origin: "",
+        strength: "",
+        quantity: 2,
+        rating: null,
+        purchase_date: "2026-03-12",
+        aging_start_date: "2026-03-12",
+        reorder_reminder: null,
+        humidor_location: "Locker A",
+        tray: "Drawer 2",
+        tasting_notes: "Member note stays.",
+        source: "member_humidor",
+        metadata: {},
+        created_at: "2026-05-08T10:00:00.000Z",
+      },
+    ],
+    bedrockReply: JSON.stringify({
+      brand: "Padron",
+      line: "1964 Anniversary",
+      vitola: "Toro",
+      wrapper: "Nicaraguan",
+      origin: "Nicaragua",
+      strength: "Full",
+      estimatedValue: "$18.50",
+      estimatedValueCurrency: "USD",
+      estimatedValueSource: "ai_humidor_enrichment_msrp",
+      cigarImage: {
+        imageUrl: "https://example.com/padron-1964-toro.jpg",
+        mimeType: "image/jpeg",
+        fileName: "padron-1964-toro.jpg",
+        source: "agent_reference",
+      },
+      confidence: "medium",
+      evidence: ["Matched Padron Anniversary Toro against reference details."],
+      needsReview: ["Confirm exact 1964 vitola before relying on MSRP."],
+    }),
+  });
+
+  try {
+    const response = await handler({
+      ...createAuthenticatedEvent("PATCH /humidor/items/{id}/enrich", {
+        fields: ["info", "image", "msrp"],
+        approved: false,
+      }),
+      rawPath: `/humidor/items/${itemId}/enrich`,
+      pathParameters: { id: itemId },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.item.id, itemId);
+    assert.equal(body.item.line, "", "preview should keep the stored item unchanged");
+    assert.equal(body.previewItem.line, "1964 Anniversary");
+    assert.equal(body.previewItem.estimatedValue, 18.5);
+    assert.equal(body.previewItem.cigarImage.imageUrl, "https://example.com/padron-1964-toro.jpg");
+    assert.equal(body.enrichment.status, "pending_approval");
+    assert.deepEqual(body.enrichment.requestedFields, ["info", "image", "msrp"]);
+    assert.ok(body.enrichment.updatedFields.includes("line"));
+    assert.equal(body.persistence.status, "pending_member_approval");
+    assert.equal(mock.bedrockInvocations.length, 1);
+
+    const queries = mock.clients.flatMap((client) => client.queries);
+    assert.equal(
+      queries.some((query) => query.sql.includes("humidor_item_enrichment_update") && query.sql.includes("update public.humidor_items")),
+      false,
+      "preview should not update the stored humidor row"
+    );
+    assert.equal(queries.some((query) => query.sql.includes("insert into public.audit_log")), false, "preview should not write an enrichment audit log");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("humidor item enrichment route previews member review when no saveable updates are found", async () => {
+  const itemId = "efefefef-efef-4fef-8fef-efefefefefef";
+  const mock = installPersistenceMocks({
+    humidorItemRows: [
+      {
+        id: itemId,
+        name: "Magic Toast",
+        brand: "Bradi",
+        line: "Magic Toast",
+        vitola: "Corona Gorda",
+        wrapper: "",
+        origin: "",
+        strength: "",
+        quantity: 5,
+        rating: null,
+        purchase_date: null,
+        aging_start_date: null,
+        reorder_reminder: null,
+        humidor_location: "",
+        tray: "",
+        tasting_notes: "",
+        source: "member_humidor",
+        metadata: {},
+        created_at: "2026-05-13T10:00:00.000Z",
+      },
+    ],
+    bedrockReply: JSON.stringify({
+      confidence: "low",
+      evidence: ["YCCHumidorAgent reviewed Magic Toast but could not verify a stable reference match."],
+      needsReview: ["Confirm the exact brand and blend before saving Info, Image, or MSRP."],
+    }),
+  });
+
+  try {
+    const response = await handler({
+      ...createAuthenticatedEvent("PATCH /humidor/items/{id}/enrich", {
+        fields: ["info", "image", "msrp"],
+        approved: false,
+      }),
+      rawPath: `/humidor/items/${itemId}/enrich`,
+      pathParameters: { id: itemId },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.item.id, itemId);
+    assert.equal(body.previewItem.id, itemId, "needs-review previews should still give the member a review target");
+    assert.equal(body.previewItem.line, "Magic Toast");
+    assert.equal(body.enrichment.status, "needs_review");
+    assert.deepEqual(body.enrichment.updatedFields, []);
+    assert.equal(body.persistence.status, "pending_member_review");
+    assert.equal(mock.bedrockInvocations.length, 1);
+
+    const queries = mock.clients.flatMap((client) => client.queries);
+    assert.equal(
+      queries.some((query) => query.sql.includes("humidor_item_enrichment_update") && query.sql.includes("update public.humidor_items")),
+      false,
+      "needs-review preview should not update the stored humidor row"
+    );
+    assert.equal(queries.some((query) => query.sql.includes("insert into public.audit_log")), false, "needs-review preview should not write an enrichment audit log");
   } finally {
     mock.restore();
   }

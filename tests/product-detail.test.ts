@@ -7,8 +7,6 @@ import {
   featuredLuxuryProducts,
   getCatalogImageUrl,
   getCatalogProductDetails,
-  getCatalogReviewAudit,
-  getCatalogReviewSearchPrompt,
   getStorefrontProductBySlug,
   luxuryCatalogProducts,
   publishedImportedInventory,
@@ -494,11 +492,11 @@ test("catalog products expose researched Cigar Aficionado review metadata", () =
   assert.match(getCatalogProductDetails(bankerToro).signals.join(" "), /90-point Cigar Aficionado review/);
 });
 
-test("catalog products expose ACID 20 ratings and review key details", () => {
+test("catalog products expose sourced ACID 20 ratings and review key details", () => {
   const acidTwenty = catalogProducts.find((product) => product.slug === "acid-20-twenty-year-24-bx");
+  const acidToro = catalogProducts.find((product) => product.slug === "acid-20-toro-maduro-24-bx");
 
   assert.ok(acidTwenty);
-  assert.equal(acidTwenty.reviewProfile?.searchQuery, "Ratings & Reviews: ACID 20 TWENTY YEAR 24/BX:");
   assert.match(acidTwenty.reviewProfile?.summary ?? "", /community and retailer ratings skew positive/i);
   assert.deepEqual(
     acidTwenty.reviewProfile?.sources.map((source) => [source.sourceName, source.rating]),
@@ -509,62 +507,44 @@ test("catalog products expose ACID 20 ratings and review key details", () => {
     ]
   );
   assert.match(getCatalogProductDetails(acidTwenty).signals.join(" "), /review details researched/i);
+
+  assert.ok(acidToro);
+  assert.match(acidToro.reviewProfile?.summary ?? "", /ACID 20 Maduro Toro/i);
+  assert.deepEqual(
+    acidToro.reviewProfile?.sources.map((source) => [source.sourceName, source.rating]),
+    [
+      ["Cigar Coop", "87"],
+      ["Cigar World", "4.63 community rating"],
+      ["Holt's Cigar Co.", "5/5 from 5 customer reviews"],
+    ]
+  );
+  assert.match(getCatalogProductDetails(acidToro).signals.join(" "), /review details researched/i);
 });
 
-test("every cigar product exposes a ratings and reviews audit prompt", () => {
+test("unsourced cigar products do not expose review audit prompts as catalog signals", () => {
   const nonCigarPattern = /lighter|torch|fluid|butane|humidor|membership|accessor|ashtray|cutter|punch|display|book matches/i;
-  const duplicateProductDetailLabels = new Set([
-    "Product",
-    "Size",
-    "Strength",
-    "Country",
-    "Wrapper",
-    "Binder",
-    "Filler",
-    "Package",
-    "Source status",
-  ]);
   const cigarProducts = catalogProducts.filter((product) => !nonCigarPattern.test(product.category) && !nonCigarPattern.test(product.name));
-  const missingAudit = cigarProducts.filter((product) => !getCatalogReviewAudit(product));
+  const unsourcedCigarProducts = cigarProducts.filter((product) => !product.expertReview && !product.reviewProfile);
 
   assert.equal(cigarProducts.length, 834);
-  assert.deepEqual(
-    missingAudit.map((product) => product.slug),
-    []
-  );
+  assert.ok(unsourcedCigarProducts.length > 800);
 
-  for (const product of cigarProducts) {
-    const audit = getCatalogReviewAudit(product);
-
-    assert.ok(audit, `${product.slug} should expose a review audit`);
-    assert.equal(getCatalogReviewSearchPrompt(product), `Ratings & Reviews: ${product.name}:`);
-    assert.ok(audit.details.length >= 6, `${product.slug} should expose enough review audit details`);
-    assert.deepEqual(
-      audit.details.filter((detail) => duplicateProductDetailLabels.has(detail.label)).map((detail) => detail.label),
-      [],
-      `${product.slug} should not repeat product spec rows in the review audit`
+  for (const product of unsourcedCigarProducts) {
+    assert.doesNotMatch(
+      getCatalogProductDetails(product).signals.join(" "),
+      /Review audit|research query|sourced ratings review/i,
+      `${product.slug} should not expose internal review-audit copy`
     );
   }
 });
 
-test("cigar products without sourced reviews render queued review research details", () => {
+test("cigar products without sourced reviews remain neutral without internal audit copy", () => {
   const acidKubaKuba = catalogProducts.find((product) => product.slug === "acid-kuba-kuba-24-bx");
-  const vectorLighter = catalogProducts.find((product) => product.sku === "31683");
 
   assert.ok(acidKubaKuba);
   assert.equal(acidKubaKuba.expertReview, undefined);
   assert.equal(acidKubaKuba.reviewProfile, undefined);
-  assert.equal(getCatalogReviewAudit(acidKubaKuba)?.searchPrompt, "Ratings & Reviews: ACID KUBA KUBA 24/BX:");
-  assert.match(getCatalogReviewAudit(acidKubaKuba)?.summary ?? "", /queued for sourced ratings/i);
-  assert.ok(getCatalogReviewAudit(acidKubaKuba)?.details.some((detail) => detail.label === "Review status" && /no sourced rating/i.test(detail.value)));
-  assert.ok(getCatalogReviewAudit(acidKubaKuba)?.details.some((detail) => detail.label === "Source priority" && /Cigar Aficionado/i.test(detail.value)));
-  assert.ok(getCatalogReviewAudit(acidKubaKuba)?.details.some((detail) => detail.label === "Match rule" && /blend and vitola/i.test(detail.value)));
-  assert.ok(getCatalogReviewAudit(acidKubaKuba)?.details.some((detail) => detail.label === "Capture fields" && /source URL/i.test(detail.value)));
-  assert.equal(getCatalogReviewAudit(acidKubaKuba)?.details.some((detail) => detail.label === "Wrapper" || detail.value === "Sumatra"), false);
-  assert.match(getCatalogProductDetails(acidKubaKuba).signals.join(" "), /Review audit queued/i);
-
-  assert.ok(vectorLighter);
-  assert.equal(getCatalogReviewAudit(vectorLighter), null);
+  assert.doesNotMatch(getCatalogProductDetails(acidKubaKuba).signals.join(" "), /Review audit|research|queued|sourced rating/i);
 });
 
 test("product detail hero image is formatted as a full product shot", () => {
@@ -583,7 +563,7 @@ test("product detail metadata rows can wrap long values on mobile", () => {
   assert.ok(source.includes("min-w-0"), "product detail panels should allow mobile grid items to shrink");
 });
 
-test("product cards and detail pages render icon-led cigar specs and review panels", () => {
+test("product cards and detail pages render icon-led cigar specs and real review panels", () => {
   const productCardSource = readFileSync(new URL("../src/components/product-card.tsx", import.meta.url), "utf8");
   const productPageSource = readFileSync(new URL("../src/app/shop/[slug]/page.tsx", import.meta.url), "utf8");
 
@@ -600,10 +580,21 @@ test("product cards and detail pages render icon-led cigar specs and review pane
   assert.ok(productPageSource.includes("Ratings & Reviews"), "product detail page should include review research");
   assert.ok(productPageSource.includes("expertReview"), "product detail page should use researched review metadata");
   assert.ok(productPageSource.includes("reviewProfile"), "product detail page should render broader review snapshots");
-  assert.ok(productPageSource.includes("ReviewQueryRow"), "review search prompts should use a readable wrapping row");
   assert.ok(productPageSource.includes("break-words"), "review search prompts should wrap at word boundaries");
-  assert.ok(productPageSource.includes("ReviewAuditPanel"), "cigar detail page should render queued audit details for missing reviews");
-  assert.ok(productPageSource.includes("getCatalogReviewAudit"), "product detail page should source fallback audit details from catalog data");
+  assert.ok(productPageSource.includes("NoSourcedReviewsPanel"), "cigar detail page should render a neutral empty review state");
+  assert.equal(productPageSource.includes("ReviewAuditPanel"), false, "product detail page should not render internal review-audit copy");
+  assert.equal(productPageSource.includes("ReviewQueryRow"), false, "product detail page should not render research prompts");
+  assert.equal(productPageSource.includes("getCatalogReviewAudit"), false, "product detail page should not source internal review audits");
+  assert.equal(productPageSource.includes("Research query"), false, "product detail page should not label internal research prompts");
+  assert.equal(productPageSource.includes("queued for sourced ratings"), false, "product detail page should not show workflow copy");
+});
+
+test("product detail structured data omits aggregate ratings unless a real review aggregate is modeled", () => {
+  const productPageSource = readFileSync(new URL("../src/app/shop/[slug]/page.tsx", import.meta.url), "utf8");
+
+  assert.equal(productPageSource.includes("aggregateRating"), false);
+  assert.equal(productPageSource.includes("ratingValue"), false);
+  assert.equal(productPageSource.includes("reviewCount"), false);
 });
 
 test("Medusa product projection keeps prices in display units", () => {

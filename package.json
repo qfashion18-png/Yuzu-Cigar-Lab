@@ -10,6 +10,7 @@
     "build": "next build",
     "start": "node scripts/static-preview.mjs out",
     "preview": "npm run build && npm run start",
+    "e2e:runtime-audit": "npm run build && tsx scripts/e2e-runtime-audit.ts",
     "lint": "eslint",
     "test": "node --import tsx --test tests/*.test.ts",
     "launch:check": "npm run lint && npx tsc --noEmit && npm test && npm run build && npm audit --omit=dev",

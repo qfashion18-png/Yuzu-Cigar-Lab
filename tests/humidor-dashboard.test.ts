@@ -139,6 +139,20 @@ test("humidor dashboard shows collection value and saves uploaded cigar photos w
   assert.ok(toolsSection.includes("Saved photo"), "review flow should show the photo that will be saved");
 });
 
+test("overview stat cards show humidity and temperature from the connected device reading", () => {
+  const source = readFileSync(new URL("../src/components/humidor-dashboard.tsx", import.meta.url), "utf8");
+  const dashboardShell = source.slice(source.indexOf("function renderContent()"), source.indexOf("function renderActiveSection()"));
+
+  assert.ok(source.includes("getConnectedHumidorDeviceReading"), "dashboard should select a connected paired device reading");
+  assert.ok(source.includes("const connectedHumidorDevice = useMemo"), "dashboard should memoize the connected device reading");
+  assert.ok(source.includes("formatDeviceClimateValue"), "dashboard should format device climate readings consistently");
+  assert.ok(dashboardShell.includes('label="Humidity"'), "overview stat row should show connected device humidity");
+  assert.ok(dashboardShell.includes('label="Temperature"'), "overview stat row should show connected device temperature");
+  assert.ok(dashboardShell.includes("connectedHumidorDevice.humidity"), "humidity value should come from the connected device reading");
+  assert.ok(dashboardShell.includes("connectedHumidorDevice.temperature"), "temperature value should come from the connected device reading");
+  assert.ok(dashboardShell.includes("Pair a device in Settings"), "overview should guide members when no connected device reading exists");
+});
+
 test("aging records separate user humidor aging from optional production age", () => {
   const source = readFileSync(new URL("../src/components/humidor-dashboard.tsx", import.meta.url), "utf8");
   const agingSection = getFunctionBlock(source, "renderAging", "renderAlerts");
@@ -152,6 +166,21 @@ test("aging records separate user humidor aging from optional production age", (
   assert.ok(agingSection.includes("months in your humidor"), "aging list should label member-controlled humidor time");
   assert.ok(detailCard.includes("total age"), "detail card should show total cigar age when production date exists");
   assert.ok(detailCard.includes("Box / Production Date"), "detail card should expose production provenance");
+});
+
+test("add cigar forms offer exact and approximate aging start options", () => {
+  const source = readFileSync(new URL("../src/components/humidor-dashboard.tsx", import.meta.url), "utf8");
+  const toolsSection = getFunctionBlock(source, "renderTools", "renderCigars");
+
+  assert.ok(source.includes("agingStartPresetOptions"), "dashboard should use the shared aging start preset labels");
+  assert.ok(source.includes("resolveAgingStartPresetDate"), "dashboard should convert aging start presets into stored dates");
+  assert.ok(source.includes('const [itemAgingStartPreset, setItemAgingStartPreset]'), "manual add form should track the selected aging start option");
+  assert.ok(source.includes('const [aiAgingStartPreset, setAiAgingStartPreset]'), "AI confirmation form should track the selected aging start option");
+  assert.ok(source.includes("function updateItemAgingStartPreset"), "manual add form should update aging start from preset choices");
+  assert.ok(source.includes("function updateAiAgingStartPreset"), "AI confirmation form should update aging start from preset choices");
+  assert.ok(toolsSection.includes('aria-label="Manual aging start option"'), "manual add form should expose the aging start option menu");
+  assert.ok(toolsSection.includes('aria-label="AI aging start option"'), "AI review form should expose the aging start option menu");
+  assert.ok(toolsSection.includes("agingStartPresetOptions.map"), "aging start menus should render every shared preset option");
 });
 
 test("my cigars rows open a detailed cigar info card", () => {
@@ -181,10 +210,73 @@ test("my cigars offers humidor agent enrichment for missing info image and MSRP"
   assert.ok(source.includes("enrichHumidorItem"), "dashboard should call the live humidor enrichment API");
   assert.ok(source.includes("getHumidorEnrichmentGaps"), "dashboard should detect missing cigar fields before enrichment");
   assert.ok(source.includes("handleEnrichHumidorItem"), "dashboard should own the My Cigars enrichment mutation");
-  assert.ok(cigarSection.includes("handleEnrichHumidorItem"), "My Cigars should pass the enrichment action to the detail card");
+  assert.ok(cigarSection.includes("handleRequestHumidorEnrichment"), "My Cigars should pass the enrichment preview action to the detail card");
   assert.ok(table.includes("Missing:"), "My Cigars rows should flag missing info, image, or MSRP");
   assert.ok(detailCard.includes("Ask Humidor Agent"), "detail cards should expose a humidor agent update action");
   assert.ok(detailCard.includes("aria-live=\"polite\""), "agent update status should be announced accessibly");
+});
+
+test("my cigars requires member approval before saving humidor agent enrichment", () => {
+  const source = readFileSync(new URL("../src/components/humidor-dashboard.tsx", import.meta.url), "utf8");
+  const cigarSection = getFunctionBlock(source, "renderCigars", "renderAging");
+  const requestHandler = source.slice(source.indexOf("async function handleRequestHumidorEnrichment"), source.indexOf("async function handleApproveHumidorEnrichment"));
+  const approveHandler = source.slice(source.indexOf("async function handleApproveHumidorEnrichment"), source.indexOf("function handleCancelHumidorEnrichmentApproval"));
+  const cancelHandler = source.slice(source.indexOf("function handleCancelHumidorEnrichmentApproval"), source.indexOf("function renderContent"));
+  const dialog = source.slice(source.indexOf("function HumidorEnrichmentApprovalDialog"), source.indexOf("function HumidorTable"));
+
+  assert.ok(source.includes("pendingHumidorEnrichmentApproval"), "dashboard should track pending humidor agent updates awaiting approval");
+  assert.ok(cigarSection.includes("handleRequestHumidorEnrichment"), "Ask Humidor Agent should request a preview instead of saving immediately");
+  assert.ok(requestHandler.includes("approved: false"), "agent request should preview updates before persistence");
+  assert.ok(requestHandler.includes("setPendingHumidorEnrichmentApproval"), "agent preview should open the approval popup");
+  assert.ok(approveHandler.includes("approved: true"), "approval action should explicitly approve persistence");
+  assert.ok(approveHandler.includes("setLiveState"), "approval action should update the local humidor only after saving");
+  assert.ok(cancelHandler.includes("setPendingHumidorEnrichmentApproval(null)"), "canceling should discard pending agent updates");
+  assert.ok(dialog.includes('role="dialog"'), "approval popup should render as a modal dialog");
+  assert.ok(dialog.includes('aria-modal="true"'), "approval popup should mark the page background as modal");
+  assert.ok(dialog.includes("Approve Updates"), "approval popup should expose an explicit approve button");
+  assert.ok(dialog.includes("Cancel"), "approval popup should expose a cancel action");
+});
+
+test("my cigars opens member review popup when humidor agent has no saveable changes", () => {
+  const source = readFileSync(new URL("../src/components/humidor-dashboard.tsx", import.meta.url), "utf8");
+  const requestHandler = source.slice(source.indexOf("async function handleRequestHumidorEnrichment"), source.indexOf("async function handleApproveHumidorEnrichment"));
+  const dialog = source.slice(source.indexOf("function HumidorEnrichmentApprovalDialog"), source.indexOf("function HumidorTable"));
+
+  assert.ok(source.includes("function shouldOpenHumidorEnrichmentApproval"), "dashboard should centralize preview/review popup routing");
+  assert.ok(requestHandler.includes('response.enrichment.status === "needs_review"'), "needs-review agent responses should still open member review");
+  assert.ok(requestHandler.includes("response.previewItem ?? response.item"), "legacy needs-review responses without previewItem should still have a review target");
+  assert.ok(dialog.includes("No Updates To Approve"), "review popup should make no-change agent results clear");
+  assert.ok(dialog.includes("changes.length > 0"), "approval should only be available when the agent found saveable changes");
+});
+
+test("my cigars detail card can update a missing humidor location later", () => {
+  const source = readFileSync(new URL("../src/components/humidor-dashboard.tsx", import.meta.url), "utf8");
+  const cigarSection = getFunctionBlock(source, "renderCigars", "renderAging");
+  const detailCard = source.slice(source.indexOf("function HumidorDetailCard"), source.indexOf("function EmptyLiveState"));
+
+  assert.ok(source.includes("updateHumidorItem"), "dashboard should call the live humidor item update API");
+  assert.ok(source.includes('const [updatingHumidorItemId, setUpdatingHumidorItemId]'), "dashboard should track the saved cigar being updated");
+  assert.ok(source.includes('const [humidorItemUpdateStatus, setHumidorItemUpdateStatus]'), "dashboard should keep item update status separate from enrichment status");
+  assert.ok(source.includes("async function handleUpdateHumidorItem"), "dashboard should own the My Cigars item update mutation");
+  assert.ok(cigarSection.includes("handleUpdateHumidorItem"), "My Cigars should pass the update action to the detail card");
+  assert.ok(detailCard.includes("Update Location"), "detail cards should expose a location update action");
+  assert.ok(detailCard.includes('aria-live="polite"'), "location update status should be announced accessibly");
+  assert.ok(detailCard.includes("humidorLocationDraft"), "detail card should let the member enter a later humidor location");
+});
+
+test("my cigars detail card chooses storage location from entered locations", () => {
+  const source = readFileSync(new URL("../src/components/humidor-dashboard.tsx", import.meta.url), "utf8");
+  const cigarSection = getFunctionBlock(source, "renderCigars", "renderAging");
+  const detailCard = source.slice(source.indexOf("function HumidorDetailCard"), source.indexOf("function EmptyLiveState"));
+
+  assert.ok(source.includes("getHumidorStorageLocationOptions"), "dashboard should derive dropdown choices from entered humidor locations");
+  assert.ok(source.includes("const storageLocationOptions = useMemo"), "dashboard should memoize available humidor locations for detail cards");
+  assert.ok(cigarSection.includes("storageLocationOptions={storageLocationOptions}"), "detail cards should receive the available storage locations");
+  assert.ok(detailCard.includes("storageLocationOptions"), "detail card should accept storage location options");
+  assert.ok(detailCard.includes('aria-label="Humidor location update"'), "location dropdown should keep the existing accessible label");
+  assert.ok(detailCard.includes("<select"), "storage location update should be a dropdown");
+  assert.ok(detailCard.includes("storageLocationOptions.map"), "storage location dropdown should render entered location choices");
+  assert.equal(detailCard.includes('onChange={(event: ChangeEvent<HTMLInputElement>) => setHumidorLocationDraft'), false, "storage location update should not be a free-typed input");
 });
 
 test("settings tab saves a humidor location profile that feeds add and device flows", () => {
@@ -306,4 +398,25 @@ test("settings tab exposes the member device manager for HUMIDIFIER devices", ()
   assert.ok(settingsSection.includes("HUMIDIFIER"), "settings device type selector should include HUMIDIFIER");
   assert.ok(settingsSection.includes("Paired Devices"), "settings should list paired devices after add");
   assert.equal(source.includes("applySmokeLogToCigars"), false);
+});
+
+test("settings tab searches available devices and pulls device details from the reading", () => {
+  const source = readFileSync(new URL("../src/components/humidor-dashboard.tsx", import.meta.url), "utf8");
+  const settingsStart = source.indexOf("function renderSettings()");
+  const settingsSection = source.slice(settingsStart, source.indexOf("\n  return (\n    <main", settingsStart));
+
+  assert.ok(source.includes("applyHumidorDeviceDiscovery"), "dashboard should use the shared discovery-to-form helper");
+  assert.ok(source.includes("handleSearchHumidorDevice"), "settings should search available devices before pairing");
+  assert.ok(source.includes('const [isSearchingHumidorDevices, setIsSearchingHumidorDevices]'), "settings should track device search state");
+  assert.ok(settingsSection.includes("Search Available Devices"), "settings should expose a device search button");
+  assert.ok(settingsSection.includes('aria-label="Search available humidor devices"'), "device search button should be accessible");
+  assert.ok(settingsSection.includes('aria-label="Discovered device name"'), "device name should render as pulled device data");
+  assert.ok(settingsSection.includes('aria-label="Discovered device ID"'), "device ID should render as pulled device data");
+  assert.ok(settingsSection.includes('aria-label="Discovered humidity percent"'), "humidity should render as pulled device data");
+  assert.ok(settingsSection.includes('aria-label="Discovered temperature"'), "temperature should render as pulled device data");
+  assert.ok(settingsSection.includes("readOnly"), "pulled device data fields should not be member-entered");
+  assert.equal(settingsSection.includes('updateDeviceForm("name"'), false, "device name should not be manually typed in settings");
+  assert.equal(settingsSection.includes('updateDeviceForm("identifier"'), false, "device ID should not be manually typed in settings");
+  assert.equal(settingsSection.includes('updateDeviceForm("humidity"'), false, "humidity should not be manually typed in settings");
+  assert.equal(settingsSection.includes('updateDeviceForm("temperature"'), false, "temperature should not be manually typed in settings");
 });

@@ -14,6 +14,7 @@ import {
   Clock,
   Crown,
   DollarSign,
+  Droplets,
   FileSpreadsheet,
   Image as ImageIcon,
   LoaderCircle,
@@ -23,9 +24,10 @@ import {
   Package,
   Plus,
   RefreshCw,
+  Search,
   Settings,
   ShieldCheck,
-  Star,
+  Thermometer,
   Upload,
   X,
 } from "lucide-react";
@@ -53,7 +55,10 @@ import {
 } from "@/lib/humidor-bulk-import";
 import {
   addHumidorDevice,
+  applyHumidorDeviceDiscovery,
   defaultHumidorDeviceForm,
+  discoverAvailableHumidorDevice,
+  getConnectedHumidorDeviceReading,
   getHumidorDeviceClimateAlerts,
   humidorDeviceTypeLabels,
   normalizeHumidorDevices,
@@ -66,10 +71,19 @@ import {
   resolveHumidorEntryPriceSnapshot,
   type HumidorEntryPriceSnapshot,
 } from "@/lib/humidor-entry-price";
-import { getTotalAgeSnapshot, withAgingSnapshot, type AgingSnapshot, type CigarReadiness } from "@/lib/humidor-aging";
+import {
+  agingStartPresetOptions,
+  getTotalAgeSnapshot,
+  resolveAgingStartPresetDate,
+  withAgingSnapshot,
+  type AgingSnapshot,
+  type AgingStartPreset,
+  type CigarReadiness,
+} from "@/lib/humidor-aging";
 import { demoHumidorItems } from "@/lib/humidor-demo";
 import {
   createHumidorItem,
+  updateHumidorItem,
   fetchHumidorDashboardBootstrap,
   getLiveApiErrorMessage,
   identifyCigarFromImage,
@@ -81,9 +95,11 @@ import {
   enrichHumidorItem,
   type HumidorCigarImage,
   type HumidorEnrichmentField,
+  type HumidorItemEnrichmentResponse,
   type HumidorLocationProfile,
   type HumidorItem,
   type HumidorItemInput,
+  type HumidorItemUpdateInput,
 } from "@/lib/live-api";
 import { cn } from "@/lib/utils";
 
@@ -122,6 +138,12 @@ type LiveHumidorState = {
 type AgingItem = {
   item: HumidorItem;
   snapshot: AgingSnapshot;
+};
+
+type PendingHumidorEnrichmentApproval = {
+  enrichment: HumidorItemEnrichmentResponse["enrichment"];
+  item: HumidorItem;
+  previewItem: HumidorItem;
 };
 
 const navItems: Array<{ id: SectionId; label: string; icon: IconComponent }> = [
@@ -205,6 +227,25 @@ function applyDefaultHumidorLocationToDeviceForm(form: HumidorDeviceInput, profi
   };
 }
 
+function getHumidorStorageLocationOptions(profile: HumidorLocationProfile, items: HumidorItem[]) {
+  const options: string[] = [];
+  const seen = new Set<string>();
+
+  for (const rawLocation of [profile.defaultLocation, ...items.map((item) => item.humidorLocation)]) {
+    const location = rawLocation.trim();
+    const key = location.toLowerCase();
+
+    if (!location || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    options.push(location);
+  }
+
+  return options;
+}
+
 const initialLiveState: LiveHumidorState = {
   loading: false,
   items: [],
@@ -221,6 +262,7 @@ export function HumidorDashboard() {
   const [activeSection, setActiveSection] = useState<SectionId>("overview");
   const [liveState, setLiveState] = useState(initialLiveState);
   const [itemForm, setItemForm] = useState(blankHumidorForm);
+  const [itemAgingStartPreset, setItemAgingStartPreset] = useState<AgingStartPreset>("exact");
   const [formStatus, setFormStatus] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [aiAdderInput, setAiAdderInput] = useState("");
@@ -228,6 +270,7 @@ export function HumidorDashboard() {
   const [aiImagePreview, setAiImagePreview] = useState("");
   const [aiIdentification, setAiIdentification] = useState<CigarImageIdentifyResponse | null>(null);
   const [aiIdentifiedForm, setAiIdentifiedForm] = useState<HumidorForm | null>(null);
+  const [aiAgingStartPreset, setAiAgingStartPreset] = useState<AgingStartPreset>("exact");
   const [aiAdderStatus, setAiAdderStatus] = useState("");
   const [isAiAdderSending, setIsAiAdderSending] = useState(false);
   const [isAiConfirmSaving, setIsAiConfirmSaving] = useState(false);
@@ -235,11 +278,15 @@ export function HumidorDashboard() {
   const [bulkImportStatus, setBulkImportStatus] = useState("");
   const [isBulkImporting, setIsBulkImporting] = useState(false);
   const [selectedHumidorItem, setSelectedHumidorItem] = useState<HumidorItem | null>(null);
+  const [updatingHumidorItemId, setUpdatingHumidorItemId] = useState("");
+  const [humidorItemUpdateStatus, setHumidorItemUpdateStatus] = useState("");
   const [enrichingHumidorItemId, setEnrichingHumidorItemId] = useState("");
   const [humidorEnrichmentStatus, setHumidorEnrichmentStatus] = useState("");
+  const [pendingHumidorEnrichmentApproval, setPendingHumidorEnrichmentApproval] = useState<PendingHumidorEnrichmentApproval | null>(null);
   const [humidorDevices, setHumidorDevices] = useState<HumidorSensorDevice[]>([]);
   const [humidorDeviceForm, setHumidorDeviceForm] = useState<HumidorDeviceInput>({ ...defaultHumidorDeviceForm });
   const [humidorDeviceStatus, setHumidorDeviceStatus] = useState("");
+  const [isSearchingHumidorDevices, setIsSearchingHumidorDevices] = useState(false);
   const [humidorLocationProfile, setHumidorLocationProfile] = useState<HumidorLocationProfile>(defaultHumidorLocationProfile);
   const [humidorLocationProfileStatus, setHumidorLocationProfileStatus] = useState("");
   const [humidorAlerts, setHumidorAlerts] = useState<HumidorAlertPreferences>(defaultHumidorAlerts);
@@ -365,6 +412,11 @@ export function HumidorDashboard() {
   }, [applyHumidorAlertPreferences, auth]);
 
   const items = isAnonymousDemo ? demoHumidorItems : liveState.items;
+  const storageLocationOptions = useMemo(
+    () => getHumidorStorageLocationOptions(humidorLocationProfile, items),
+    [humidorLocationProfile, items],
+  );
+  const connectedHumidorDevice = useMemo(() => getConnectedHumidorDeviceReading(humidorDevices), [humidorDevices]);
   const agingItems = useMemo(() => {
     const entries: AgingItem[] = [];
 
@@ -388,10 +440,6 @@ export function HumidorDashboard() {
   );
   const readyCount = agingItems.filter(({ snapshot }) => snapshot.readiness === "Ready Now").length;
   const reorderCount = items.filter((item) => Boolean(item.reorderReminder)).length;
-  const ratedItems = items.filter((item) => typeof item.rating === "number");
-  const averageRating = ratedItems.length
-    ? Math.round(ratedItems.reduce((total, item) => total + Number(item.rating), 0) / ratedItems.length)
-    : null;
   const liveApiConfigured = Boolean(process.env.NEXT_PUBLIC_YCC_API_BASE_URL);
 
   function updateForm(field: keyof HumidorForm, value: string) {
@@ -400,6 +448,26 @@ export function HumidorDashboard() {
       [field]: value,
     }));
     setFormStatus("");
+  }
+
+  function updateItemAgingStartPreset(value: string) {
+    const preset = normalizeAgingStartPreset(value);
+    setItemAgingStartPreset(preset);
+    setFormStatus("");
+
+    if (preset === "exact") {
+      return;
+    }
+
+    setItemForm((current) => ({
+      ...current,
+      agingStartDate: resolveAgingStartPresetDate(preset),
+    }));
+  }
+
+  function updateItemAgingStartDate(value: string) {
+    setItemAgingStartPreset("exact");
+    updateForm("agingStartDate", value);
   }
 
   function updateHumidorLocationProfile(field: keyof HumidorLocationProfile, value: string) {
@@ -413,9 +481,15 @@ export function HumidorDashboard() {
   function updateDeviceForm(field: keyof HumidorDeviceInput, value: string) {
     setHumidorDeviceForm((current) => {
       if (field === "deviceType") {
+        const deviceType = value === "HYGROMETER_THERMOMETER" ? "HYGROMETER_THERMOMETER" : "HUMIDIFIER";
         return {
           ...current,
-          deviceType: value === "HYGROMETER_THERMOMETER" ? "HYGROMETER_THERMOMETER" : "HUMIDIFIER",
+          deviceType,
+          connection: deviceType === "HUMIDIFIER" ? "WiFi" : "Bluetooth",
+          name: "",
+          identifier: "",
+          humidity: "",
+          temperature: "",
         };
       }
 
@@ -423,6 +497,10 @@ export function HumidorDashboard() {
         return {
           ...current,
           connection: value === "WiFi" ? "WiFi" : "Bluetooth",
+          name: "",
+          identifier: "",
+          humidity: "",
+          temperature: "",
         };
       }
 
@@ -432,6 +510,23 @@ export function HumidorDashboard() {
       };
     });
     setHumidorDeviceStatus("");
+  }
+
+  async function handleSearchHumidorDevice() {
+    setIsSearchingHumidorDevices(true);
+    setHumidorDeviceStatus("");
+
+    try {
+      const discovery = await discoverAvailableHumidorDevice(humidorDeviceForm);
+      setHumidorDeviceForm((current) =>
+        getDeviceFormWithDefaultHumidorLocation(applyHumidorDeviceDiscovery(current, discovery)),
+      );
+      setHumidorDeviceStatus(`${discovery.name} found. Device name, ID, humidity, and temperature were pulled from the device.`);
+    } catch (error) {
+      setHumidorDeviceStatus(error instanceof Error ? error.message : "No available humidor device was selected.");
+    } finally {
+      setIsSearchingHumidorDevices(false);
+    }
   }
 
   function getFormWithDefaultHumidorLocation(form: HumidorForm, profile = humidorLocationProfile, previousDefaultLocation = ""): HumidorForm {
@@ -458,6 +553,30 @@ export function HumidorDashboard() {
     setAiAdderStatus("");
   }
 
+  function updateAiAgingStartPreset(value: string) {
+    const preset = normalizeAgingStartPreset(value);
+    setAiAgingStartPreset(preset);
+    setAiAdderStatus("");
+
+    if (preset === "exact") {
+      return;
+    }
+
+    setAiIdentifiedForm((current) =>
+      current
+        ? {
+            ...current,
+            agingStartDate: resolveAgingStartPresetDate(preset),
+          }
+        : current,
+    );
+  }
+
+  function updateAiAgingStartDate(value: string) {
+    setAiAgingStartPreset("exact");
+    updateAiForm("agingStartDate", value);
+  }
+
   async function handlePairDevice(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -466,21 +585,26 @@ export function HumidorDashboard() {
       return;
     }
 
+    if (!humidorDeviceForm.name.trim() || !humidorDeviceForm.identifier.trim() || !humidorDeviceForm.humidity.trim() || !humidorDeviceForm.temperature.trim()) {
+      setHumidorDeviceStatus("Search available devices before pairing so the device name, ID, humidity, and temperature are pulled from the device.");
+      return;
+    }
+
     const normalizedDeviceForm = getDeviceFormWithDefaultHumidorLocation(humidorDeviceForm);
     const result = addHumidorDevice(humidorDevices, normalizedDeviceForm, formatDeviceSyncTime(new Date()));
 
     if (result.status === "missing_name") {
-      setHumidorDeviceStatus("Enter a device name and humidor location before pairing.");
+      setHumidorDeviceStatus("Search available devices and enter a humidor location before pairing.");
       return;
     }
 
     if (result.status === "missing_identifier") {
-      setHumidorDeviceStatus("Enter a Bluetooth ID, WiFi address, or serial number for this device.");
+      setHumidorDeviceStatus("Search available devices to pull the device ID before pairing.");
       return;
     }
 
     if (result.status === "invalid_climate") {
-      setHumidorDeviceStatus("Enter a humidity from 1 to 100 percent and a temperature from 40 to 95 degrees.");
+      setHumidorDeviceStatus("Search available devices again to pull a valid humidity and temperature reading.");
       return;
     }
 
@@ -545,6 +669,7 @@ export function HumidorDashboard() {
     const file = event.currentTarget.files?.[0];
     setAiIdentification(null);
     setAiIdentifiedForm(null);
+    setAiAgingStartPreset("exact");
     setAiAdderStatus("");
 
     if (!file) {
@@ -625,6 +750,7 @@ export function HumidorDashboard() {
 
       setAiIdentification(response);
       setAiIdentifiedForm(getFormWithDefaultHumidorLocation(buildHumidorFormFromSuggestion(response.suggestion)));
+      setAiAgingStartPreset("exact");
       setAiAdderStatus("Cigar information loaded. Review it, then confirm to add it to your humidor.");
     } catch (error) {
       setAiAdderStatus(getLiveApiErrorMessage(error));
@@ -672,6 +798,7 @@ export function HumidorDashboard() {
       }));
       setAiIdentification(null);
       setAiIdentifiedForm(null);
+      setAiAgingStartPreset("exact");
       setAiImagePayload(null);
       setAiImagePreview("");
       setAiAdderInput("");
@@ -715,6 +842,7 @@ export function HumidorDashboard() {
         error: "",
       }));
       setItemForm(getFormWithDefaultHumidorLocation(blankHumidorForm));
+      setItemAgingStartPreset("exact");
       setFormStatus(
         response.persistence.status === "stored"
           ? "Saved to the live humidor."
@@ -728,17 +856,17 @@ export function HumidorDashboard() {
     }
   }
 
-  async function handleEnrichHumidorItem(item: HumidorItem) {
+  async function handleEnrichHumidorItem(item: HumidorItem, approved: boolean) {
     const gaps = getHumidorEnrichmentGaps(item);
 
     if (!gaps.length) {
       setHumidorEnrichmentStatus("This cigar already has the core info, image, and MSRP fields.");
-      return;
+      return null;
     }
 
     if (isAnonymousDemo || auth.authSource !== "cognito") {
       setHumidorEnrichmentStatus("Sign in with Cognito before asking the humidor agent to update saved cigars.");
-      return;
+      return null;
     }
 
     setEnrichingHumidorItemId(item.id);
@@ -749,10 +877,133 @@ export function HumidorDashboard() {
       const response = await enrichHumidorItem(
         item.id,
         {
+          approved,
           fields: gaps.map((gap) => gap.key),
         },
         headers,
       );
+
+      return { gaps, response };
+    } catch (error) {
+      setHumidorEnrichmentStatus(getLiveApiErrorMessage(error));
+      return null;
+    } finally {
+      setEnrichingHumidorItemId("");
+    }
+  }
+
+  async function handleRequestHumidorEnrichment(item: HumidorItem) {
+    const previewRequest = { approved: false };
+    const result = await handleEnrichHumidorItem(item, previewRequest.approved);
+
+    if (!result) {
+      return;
+    }
+
+    const { gaps, response } = result;
+
+    if (shouldOpenHumidorEnrichmentApproval(response)) {
+      setPendingHumidorEnrichmentApproval({
+        enrichment: response.enrichment,
+        item,
+        previewItem: response.previewItem ?? response.item,
+      });
+      setHumidorEnrichmentStatus(
+        response.enrichment.status === "needs_review"
+          ? "Review the humidor agent notes before anything is saved."
+          : "Review the humidor agent updates before they are saved.",
+      );
+      return;
+    }
+
+    setHumidorEnrichmentStatus(
+      response.enrichment.status === "complete"
+        ? "This cigar already has the core info, image, and MSRP fields."
+        : "Humidor agent reviewed this cigar, but the missing fields still need member review.",
+    );
+
+    if (response.enrichment.status === "updated") {
+      setLiveState((current) => ({
+        loading: false,
+        items: current.items.map((currentItem) => (currentItem.id === response.item.id ? response.item : currentItem)),
+        persistence: response.persistence.status,
+        error: "",
+      }));
+      setSelectedHumidorItem(response.item);
+      setHumidorEnrichmentStatus(`Humidor agent updated ${formatHumidorEnrichmentGapLabels(gaps)}.`);
+    }
+  }
+
+  async function handleApproveHumidorEnrichment() {
+    if (!pendingHumidorEnrichmentApproval) {
+      return;
+    }
+
+    const previewChanges = getHumidorEnrichmentPreviewChanges(
+      pendingHumidorEnrichmentApproval.item,
+      pendingHumidorEnrichmentApproval.previewItem,
+      pendingHumidorEnrichmentApproval.enrichment.updatedFields,
+    );
+    if (!previewChanges.length) {
+      setPendingHumidorEnrichmentApproval(null);
+      setHumidorEnrichmentStatus("Humidor agent did not find any saveable field changes.");
+      return;
+    }
+
+    const approvalRequest = { approved: true };
+    const result = await handleEnrichHumidorItem(pendingHumidorEnrichmentApproval.item, approvalRequest.approved);
+
+    if (!result) {
+      return;
+    }
+
+    const { gaps, response } = result;
+
+    if (response.enrichment.status === "updated") {
+      setLiveState((current) => ({
+        loading: false,
+        items: current.items.map((currentItem) => (currentItem.id === response.item.id ? response.item : currentItem)),
+        persistence: response.persistence.status,
+        error: "",
+      }));
+      setSelectedHumidorItem(response.item);
+      setPendingHumidorEnrichmentApproval(null);
+      setHumidorEnrichmentStatus(`Humidor agent updated ${formatHumidorEnrichmentGapLabels(gaps)}.`);
+      return;
+    }
+
+    setPendingHumidorEnrichmentApproval(null);
+    setHumidorEnrichmentStatus(
+      response.enrichment.status === "complete"
+        ? "This cigar already has the core info, image, and MSRP fields."
+        : "Humidor agent reviewed this cigar, but the missing fields still need member review.",
+    );
+  }
+
+  function handleCancelHumidorEnrichmentApproval() {
+    setPendingHumidorEnrichmentApproval(null);
+    setHumidorEnrichmentStatus("Humidor agent updates were not saved.");
+  }
+
+  async function handleUpdateHumidorItem(item: HumidorItem, input: HumidorItemUpdateInput) {
+    const humidorLocation = input.humidorLocation.trim();
+
+    if (!humidorLocation) {
+      setHumidorItemUpdateStatus("Enter a humidor location before updating this cigar.");
+      return;
+    }
+
+    if (isAnonymousDemo || auth.authSource !== "cognito") {
+      setHumidorItemUpdateStatus("Sign in with Cognito before updating saved cigars.");
+      return;
+    }
+
+    setUpdatingHumidorItemId(item.id);
+    setHumidorItemUpdateStatus("");
+
+    try {
+      const headers = await auth.createApiHeaders();
+      const response = await updateHumidorItem(item.id, { humidorLocation }, headers);
 
       setLiveState((current) => ({
         loading: false,
@@ -761,15 +1012,15 @@ export function HumidorDashboard() {
         error: "",
       }));
       setSelectedHumidorItem(response.item);
-      setHumidorEnrichmentStatus(
-        response.enrichment.status === "updated"
-          ? `Humidor agent updated ${formatHumidorEnrichmentGapLabels(gaps)}.`
-          : "Humidor agent reviewed this cigar, but the missing fields still need member review.",
+      setHumidorItemUpdateStatus(
+        response.persistence.status === "stored"
+          ? "Humidor location updated."
+          : "The live API accepted this update, but database persistence is not enabled.",
       );
     } catch (error) {
-      setHumidorEnrichmentStatus(getLiveApiErrorMessage(error));
+      setHumidorItemUpdateStatus(getLiveApiErrorMessage(error));
     } finally {
-      setEnrichingHumidorItemId("");
+      setUpdatingHumidorItemId("");
     }
   }
 
@@ -1129,7 +1380,7 @@ export function HumidorDashboard() {
 
     return (
       <div className="grid gap-6">
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
           <StatCard
             label={isAnonymousDemo ? "Demo Cigars" : "Live Cigars"}
             value={items.length}
@@ -1143,6 +1394,18 @@ export function HumidorDashboard() {
             icon={DollarSign}
           />
           <StatCard
+            label="Humidity"
+            value={connectedHumidorDevice ? `${formatDeviceClimateValue(connectedHumidorDevice.humidity)}% RH` : "No device"}
+            note={connectedHumidorDevice ? `${connectedHumidorDevice.name} at ${connectedHumidorDevice.location}` : "Pair a device in Settings"}
+            icon={Droplets}
+          />
+          <StatCard
+            label="Temperature"
+            value={connectedHumidorDevice ? `${formatDeviceClimateValue(connectedHumidorDevice.temperature)} F` : "No device"}
+            note={connectedHumidorDevice ? `Last synced ${connectedHumidorDevice.lastSyncedAt}` : "Pair a device in Settings"}
+            icon={Thermometer}
+          />
+          <StatCard
             label="Aging Records"
             value={agingItems.length}
             note={isAnonymousDemo ? `${readyCount} demo cigars marked ready` : `${readyCount} marked ready now`}
@@ -1153,12 +1416,6 @@ export function HumidorDashboard() {
             value={reorderCount}
             note={isAnonymousDemo ? "Sample reminders for preview" : "Pulled from live humidor items"}
             icon={Bell}
-          />
-          <StatCard
-            label="Avg Rating"
-            value={averageRating ?? "Not set"}
-            note={isAnonymousDemo ? "Calculated from demo ratings" : "Calculated from member ratings"}
-            icon={Star}
           />
         </div>
 
@@ -1355,7 +1612,15 @@ export function HumidorDashboard() {
                     </div>
                     <p className="font-heading text-2xl text-yuzu-cream">Review identified cigar</p>
                   </div>
-                  <Button className="h-10 border-yuzu-line text-yuzu-cream" type="button" variant="outline" onClick={() => setItemForm(getFormWithDefaultHumidorLocation(aiIdentifiedForm))}>
+                  <Button
+                    className="h-10 border-yuzu-line text-yuzu-cream"
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      setItemForm(getFormWithDefaultHumidorLocation(aiIdentifiedForm));
+                      setItemAgingStartPreset("exact");
+                    }}
+                  >
                     <Plus data-icon="inline-start" />
                     Copy To Manual Form
                   </Button>
@@ -1414,7 +1679,27 @@ export function HumidorDashboard() {
                     <Input type="date" value={aiIdentifiedForm.purchaseDate} onChange={(event: ChangeEvent<HTMLInputElement>) => updateAiForm("purchaseDate", event.target.value)} />
                   </Field>
                   <Field label="Aging start">
-                    <Input type="date" value={aiIdentifiedForm.agingStartDate} onChange={(event: ChangeEvent<HTMLInputElement>) => updateAiForm("agingStartDate", event.target.value)} />
+                    <div className="grid gap-2 sm:grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)]">
+                      <select
+                        aria-label="AI aging start option"
+                        className="h-11 w-full rounded-sm border border-yuzu-line bg-yuzu-night px-3 text-sm text-yuzu-cream outline-none focus:border-yuzu-gold"
+                        value={aiAgingStartPreset}
+                        onChange={(event: ChangeEvent<HTMLSelectElement>) => updateAiAgingStartPreset(event.currentTarget.value)}
+                      >
+                        {agingStartPresetOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                      <Input
+                        aria-label="AI aging start exact date"
+                        disabled={aiAgingStartPreset !== "exact"}
+                        type="date"
+                        value={aiIdentifiedForm.agingStartDate}
+                        onChange={(event: ChangeEvent<HTMLInputElement>) => updateAiAgingStartDate(event.target.value)}
+                      />
+                    </div>
                   </Field>
                   <Field label="Box / production date">
                     <Input type="date" value={aiIdentifiedForm.productionDate} onChange={(event: ChangeEvent<HTMLInputElement>) => updateAiForm("productionDate", event.target.value)} />
@@ -1524,7 +1809,27 @@ export function HumidorDashboard() {
                   <Input type="date" value={itemForm.purchaseDate} onChange={(event: ChangeEvent<HTMLInputElement>) => updateForm("purchaseDate", event.target.value)} />
                 </Field>
                 <Field label="Aging start">
-                  <Input type="date" value={itemForm.agingStartDate} onChange={(event: ChangeEvent<HTMLInputElement>) => updateForm("agingStartDate", event.target.value)} />
+                  <div className="grid gap-2 sm:grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)]">
+                    <select
+                      aria-label="Manual aging start option"
+                      className="h-11 w-full rounded-sm border border-yuzu-line bg-yuzu-night px-3 text-sm text-yuzu-cream outline-none focus:border-yuzu-gold"
+                      value={itemAgingStartPreset}
+                      onChange={(event: ChangeEvent<HTMLSelectElement>) => updateItemAgingStartPreset(event.currentTarget.value)}
+                    >
+                      {agingStartPresetOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                    <Input
+                      aria-label="Manual aging start exact date"
+                      disabled={itemAgingStartPreset !== "exact"}
+                      type="date"
+                      value={itemForm.agingStartDate}
+                      onChange={(event: ChangeEvent<HTMLInputElement>) => updateItemAgingStartDate(event.target.value)}
+                    />
+                  </div>
                 </Field>
                 <Field label="Box / production date">
                   <Input type="date" value={itemForm.productionDate} onChange={(event: ChangeEvent<HTMLInputElement>) => updateForm("productionDate", event.target.value)} />
@@ -1689,13 +1994,18 @@ export function HumidorDashboard() {
 
         {selectedHumidorItem ? (
           <HumidorDetailCard
+            key={selectedHumidorItem.id}
             item={selectedHumidorItem}
             agingNow={agingNow}
             enrichmentStatus={humidorEnrichmentStatus}
+            itemUpdateStatus={humidorItemUpdateStatus}
             isDemo={isAnonymousDemo}
             isEnriching={enrichingHumidorItemId === selectedHumidorItem.id}
+            isUpdating={updatingHumidorItemId === selectedHumidorItem.id}
+            storageLocationOptions={storageLocationOptions}
             onClose={() => setSelectedHumidorItem(null)}
-            onEnrich={isAnonymousDemo ? undefined : handleEnrichHumidorItem}
+            onEnrich={isAnonymousDemo ? undefined : handleRequestHumidorEnrichment}
+            onUpdate={isAnonymousDemo ? undefined : handleUpdateHumidorItem}
           />
         ) : null}
       </div>
@@ -1902,6 +2212,13 @@ export function HumidorDashboard() {
       );
     }
 
+    const hasPulledDeviceReading = Boolean(
+      humidorDeviceForm.name.trim() &&
+        humidorDeviceForm.identifier.trim() &&
+        humidorDeviceForm.humidity.trim() &&
+        humidorDeviceForm.temperature.trim(),
+    );
+
     return (
       <Card className="luxury-card">
         <CardHeader>
@@ -1925,7 +2242,7 @@ export function HumidorDashboard() {
               <div className="grid gap-1">
                 <p className="text-xs uppercase tracking-[0.16em] text-yuzu-gold">Device Settings</p>
                 <p className="text-sm leading-6 text-yuzu-muted">
-                  Pair a HUMIDIFIER or sensor with this humidor session for climate alert context.
+                  Pair a HUMIDIFIER or sensor after pulling its current climate reading from an available device.
                 </p>
               </div>
               <Badge className="w-fit border-yuzu-line text-yuzu-muted" variant="outline">
@@ -1957,17 +2274,42 @@ export function HumidorDashboard() {
                     <option value="WiFi">WiFi</option>
                   </select>
                 </Field>
+                <div className="grid gap-3 border border-yuzu-line/70 bg-yuzu-ink/35 p-3 md:col-span-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+                  <div className="grid gap-1">
+                    <p className="text-sm font-semibold text-yuzu-cream">Available device search</p>
+                    <p className="text-sm leading-6 text-yuzu-muted">
+                      Device name, ID, humidity, and temperature are filled from the selected device.
+                    </p>
+                  </div>
+                  <Button
+                    aria-label="Search available humidor devices"
+                    className="h-11 border-yuzu-line text-yuzu-cream"
+                    disabled={isSearchingHumidorDevices}
+                    type="button"
+                    variant="outline"
+                    onClick={handleSearchHumidorDevice}
+                  >
+                    {isSearchingHumidorDevices ? <LoaderCircle className="animate-spin" data-icon="inline-start" /> : <Search data-icon="inline-start" />}
+                    {isSearchingHumidorDevices ? "Searching Devices" : "Search Available Devices"}
+                  </Button>
+                </div>
                 <Field label="Device name">
-                  <Input value={humidorDeviceForm.name} onChange={(event: ChangeEvent<HTMLInputElement>) => updateDeviceForm("name", event.currentTarget.value)} />
+                  <Input
+                    aria-label="Discovered device name"
+                    placeholder="Search available devices"
+                    readOnly
+                    value={humidorDeviceForm.name}
+                  />
                 </Field>
                 <Field label="Humidor location">
                   <Input value={humidorDeviceForm.location} onChange={(event: ChangeEvent<HTMLInputElement>) => updateDeviceForm("location", event.currentTarget.value)} />
                 </Field>
                 <Field label="Device ID">
                   <Input
-                    placeholder="Bluetooth ID, WiFi address, or serial number"
+                    aria-label="Discovered device ID"
+                    placeholder="Pulled from selected device"
+                    readOnly
                     value={humidorDeviceForm.identifier}
-                    onChange={(event: ChangeEvent<HTMLInputElement>) => updateDeviceForm("identifier", event.currentTarget.value)}
                   />
                 </Field>
                 <Field label="Sync interval minutes">
@@ -1981,30 +2323,34 @@ export function HumidorDashboard() {
                 </Field>
                 <Field label="Current humidity percent">
                   <Input
+                    aria-label="Discovered humidity percent"
                     min={1}
                     max={100}
+                    placeholder="Pulled from device"
+                    readOnly
                     type="number"
                     value={humidorDeviceForm.humidity}
-                    onChange={(event: ChangeEvent<HTMLInputElement>) => updateDeviceForm("humidity", event.currentTarget.value)}
                   />
                 </Field>
                 <Field label="Current temperature">
                   <Input
+                    aria-label="Discovered temperature"
                     min={40}
                     max={95}
+                    placeholder="Pulled from device"
+                    readOnly
                     type="number"
                     value={humidorDeviceForm.temperature}
-                    onChange={(event: ChangeEvent<HTMLInputElement>) => updateDeviceForm("temperature", event.currentTarget.value)}
                   />
                 </Field>
               </div>
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                <Button className="h-11 bg-yuzu-gold text-yuzu-ink hover:bg-yuzu-gold-light" disabled={isHumidorAlertsSaving || isRequestingPushPermission} type="submit">
+                <Button className="h-11 bg-yuzu-gold text-yuzu-ink hover:bg-yuzu-gold-light" disabled={isHumidorAlertsSaving || isRequestingPushPermission || isSearchingHumidorDevices || !hasPulledDeviceReading} type="submit">
                   {isHumidorAlertsSaving || isRequestingPushPermission ? <LoaderCircle className="animate-spin" data-icon="inline-start" /> : <Plus data-icon="inline-start" />}
                   {humidorDeviceForm.deviceType === "HYGROMETER_THERMOMETER" ? "Pair Sensor" : "Pair HUMIDIFIER"}
                 </Button>
                 <p className="min-h-5 text-sm text-yuzu-gold" aria-live="polite">
-                  {humidorDeviceStatus}
+                  {humidorDeviceStatus || (!hasPulledDeviceReading ? "Search available devices before pairing." : "")}
                 </p>
               </div>
             </form>
@@ -2125,6 +2471,14 @@ export function HumidorDashboard() {
         </div>
 
         {renderContent()}
+        {pendingHumidorEnrichmentApproval ? (
+          <HumidorEnrichmentApprovalDialog
+            approval={pendingHumidorEnrichmentApproval}
+            isApproving={enrichingHumidorItemId === pendingHumidorEnrichmentApproval.item.id}
+            onApprove={handleApproveHumidorEnrichment}
+            onCancel={handleCancelHumidorEnrichmentApproval}
+          />
+        ) : null}
       </div>
     </main>
   );
@@ -2282,6 +2636,200 @@ function LiveStatusBar({
   );
 }
 
+function HumidorEnrichmentApprovalDialog({
+  approval,
+  isApproving,
+  onApprove,
+  onCancel,
+}: {
+  approval: PendingHumidorEnrichmentApproval;
+  isApproving: boolean;
+  onApprove: () => void;
+  onCancel: () => void;
+}) {
+  const changes = getHumidorEnrichmentPreviewChanges(approval.item, approval.previewItem, approval.enrichment.updatedFields);
+  const hasChanges = changes.length > 0;
+  const previewImageSrc = approval.enrichment.updatedFields.includes("cigarImage")
+    ? getHumidorCigarImageSrc(approval.previewItem)
+    : "";
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-yuzu-ink/80 px-4 py-6 backdrop-blur-sm">
+      <div
+        aria-labelledby="humidor-enrichment-approval-title"
+        aria-modal="true"
+        className="grid max-h-[90vh] w-full max-w-2xl gap-5 overflow-y-auto border border-yuzu-gold/50 bg-yuzu-night p-5 shadow-2xl"
+        role="dialog"
+      >
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="grid gap-2">
+            <p className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-yuzu-gold">
+              <Bot />
+              Humidor Agent Review
+            </p>
+            <p id="humidor-enrichment-approval-title" className="font-heading text-2xl text-yuzu-cream">
+              {approval.item.name}
+            </p>
+          </div>
+          <Badge className="w-fit border-yuzu-line text-yuzu-muted" variant="outline">
+            {changes.length} update{changes.length === 1 ? "" : "s"}
+          </Badge>
+        </div>
+
+        <div className="grid gap-3 border border-yuzu-line bg-yuzu-ink/45 p-4 text-sm text-yuzu-muted">
+          <p className="text-xs uppercase tracking-[0.16em] text-yuzu-gold">Pending Updates</p>
+          {previewImageSrc ? (
+            <div className="grid gap-3 border border-yuzu-line/65 bg-yuzu-night/60 p-3 sm:grid-cols-[120px_1fr] sm:items-center">
+              <NextImage
+                alt={`${approval.item.name} proposed cigar photo`}
+                className="aspect-[4/3] w-full object-cover"
+                height={120}
+                src={previewImageSrc}
+                unoptimized
+                width={160}
+              />
+              <div className="grid gap-1">
+                <p className="text-[0.68rem] uppercase tracking-[0.14em] text-yuzu-muted">Image</p>
+                <p className="text-yuzu-cream">{getHumidorEnrichmentPreviewValue(approval.previewItem, "cigarImage")}</p>
+              </div>
+            </div>
+          ) : null}
+          {changes.length ? (
+            <div className="grid gap-2 sm:grid-cols-2">
+              {changes.map((change) => (
+                <DetailCompare key={change.field} label={change.label} before={change.before} after={change.after} />
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm leading-6 text-yuzu-muted">The humidor agent did not find any saveable field changes.</p>
+          )}
+        </div>
+
+        {approval.enrichment.evidence.length ? (
+          <div className="grid gap-2 text-sm text-yuzu-muted">
+            <p className="text-xs uppercase tracking-[0.16em] text-yuzu-gold">Evidence</p>
+            <ul className="grid gap-1">
+              {approval.enrichment.evidence.map((evidence) => (
+                <li key={evidence}>{evidence}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
+        {approval.enrichment.needsReview.length ? (
+          <div className="grid gap-2 text-sm text-yuzu-muted">
+            <p className="text-xs uppercase tracking-[0.16em] text-yuzu-gold">Review Notes</p>
+            <ul className="grid gap-1">
+              {approval.enrichment.needsReview.map((note) => (
+                <li key={note}>{note}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
+        <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
+          <Button className="h-11 border-yuzu-line text-yuzu-cream" disabled={isApproving} type="button" variant="outline" onClick={onCancel}>
+            <X data-icon="inline-start" />
+            Cancel
+          </Button>
+          <Button className="h-11 bg-yuzu-gold text-yuzu-ink hover:bg-yuzu-gold-light" disabled={isApproving || !hasChanges} type="button" onClick={onApprove}>
+            {isApproving ? <LoaderCircle className="animate-spin" data-icon="inline-start" /> : <CheckCircle2 data-icon="inline-start" />}
+            {isApproving ? "Approving Updates" : hasChanges ? "Approve Updates" : "No Updates To Approve"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function shouldOpenHumidorEnrichmentApproval(response: HumidorItemEnrichmentResponse) {
+  return response.enrichment.status === "pending_approval" || response.enrichment.status === "needs_review";
+}
+
+function DetailCompare({ label, before, after }: { label: string; before: ReactNode; after: ReactNode }) {
+  return (
+    <div className="grid gap-1 border border-yuzu-line/65 bg-yuzu-night/60 p-3">
+      <p className="text-[0.68rem] uppercase tracking-[0.14em] text-yuzu-muted">{label}</p>
+      <p className="break-words text-yuzu-muted">Before: {before || "Not set"}</p>
+      <p className="break-words text-yuzu-cream">After: {after || "Not set"}</p>
+    </div>
+  );
+}
+
+const humidorEnrichmentPreviewLabels: Record<string, string> = {
+  brand: "Brand",
+  cigarImage: "Image",
+  estimatedValue: "MSRP",
+  line: "Line",
+  origin: "Origin",
+  strength: "Strength",
+  tastingNotes: "Tasting notes",
+  vitola: "Vitola",
+  wrapper: "Wrapper",
+};
+
+function getHumidorEnrichmentPreviewChanges(original: HumidorItem, preview: HumidorItem, updatedFields: string[]) {
+  return updatedFields
+    .map((field) => ({
+      field,
+      label: humidorEnrichmentPreviewLabels[field] ?? formatHumidorEnrichmentPreviewLabel(field),
+      before: getHumidorEnrichmentPreviewValue(original, field),
+      after: getHumidorEnrichmentPreviewValue(preview, field),
+    }))
+    .filter((change) => change.before !== change.after || change.after !== "Not set");
+}
+
+function getHumidorEnrichmentPreviewValue(item: HumidorItem, field: string): string {
+  if (field === "estimatedValue") {
+    return item.estimatedValue === null ? "Not set" : formatHumidorValue(item.estimatedValue, item.estimatedValueCurrency);
+  }
+
+  if (field === "cigarImage") {
+    if (!getHumidorCigarImageSrc(item)) {
+      return "Not set";
+    }
+
+    return item.cigarImage?.fileName || item.cigarImage?.source || "Reference image ready";
+  }
+
+  if (field === "brand") {
+    return item.brand || "Not set";
+  }
+
+  if (field === "line") {
+    return item.line || "Not set";
+  }
+
+  if (field === "vitola") {
+    return item.vitola || "Not set";
+  }
+
+  if (field === "wrapper") {
+    return item.wrapper || "Not set";
+  }
+
+  if (field === "origin") {
+    return item.origin || "Not set";
+  }
+
+  if (field === "strength") {
+    return item.strength || "Not set";
+  }
+
+  if (field === "tastingNotes") {
+    return item.tastingNotes || "Not set";
+  }
+
+  return "Not set";
+}
+
+function formatHumidorEnrichmentPreviewLabel(field: string) {
+  return field
+    .replace(/([A-Z])/g, " $1")
+    .replace(/^./, (letter) => letter.toUpperCase())
+    .trim();
+}
+
 function HumidorTable({
   items,
   agingNow,
@@ -2380,18 +2928,26 @@ function HumidorDetailCard({
   item,
   agingNow,
   enrichmentStatus,
+  itemUpdateStatus,
   isDemo,
   isEnriching,
+  isUpdating,
+  storageLocationOptions,
   onClose,
   onEnrich,
+  onUpdate,
 }: {
   item: HumidorItem;
   agingNow: Date;
   enrichmentStatus: string;
+  itemUpdateStatus: string;
   isDemo: boolean;
   isEnriching: boolean;
+  isUpdating: boolean;
+  storageLocationOptions: string[];
   onClose: () => void;
   onEnrich?: (item: HumidorItem) => void;
+  onUpdate?: (item: HumidorItem, input: HumidorItemUpdateInput) => void;
 }) {
   const snapshot = getAgingSnapshotForItem(item, agingNow);
   const totalAgeSnapshot = getTotalAgeSnapshot(item.productionDate, agingNow);
@@ -2399,6 +2955,8 @@ function HumidorDetailCard({
   const itemValue = getHumidorItemValue(item);
   const cigarImageSrc = getHumidorCigarImageSrc(item);
   const enrichmentGaps = getHumidorEnrichmentGaps(item);
+  const [humidorLocationDraft, setHumidorLocationDraft] = useState(item.humidorLocation || storageLocationOptions[0] || "");
+  const selectedHumidorLocation = humidorLocationDraft || storageLocationOptions[0] || "";
   const cigarDetails = [
     { label: "Brand", value: item.brand },
     { label: "Line", value: item.line },
@@ -2507,6 +3065,49 @@ function HumidorDetailCard({
           </div>
         ) : null}
 
+        <form
+          className="grid gap-3 border border-yuzu-line bg-yuzu-night/60 p-4"
+          onSubmit={(event: FormEvent<HTMLFormElement>) => {
+            event.preventDefault();
+            onUpdate?.(item, { humidorLocation: selectedHumidorLocation });
+          }}
+        >
+          <p className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-yuzu-gold">
+            <MapPin />
+            Storage Location
+          </p>
+          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
+            <select
+              aria-label="Humidor location update"
+              className="h-11 w-full rounded-sm border border-yuzu-line bg-yuzu-night px-3 text-sm text-yuzu-cream outline-none focus:border-yuzu-gold disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={!onUpdate || isUpdating}
+              value={selectedHumidorLocation}
+              onChange={(event: ChangeEvent<HTMLSelectElement>) => setHumidorLocationDraft(event.currentTarget.value)}
+            >
+              {storageLocationOptions.length ? (
+                storageLocationOptions.map((location) => (
+                  <option key={location} value={location}>
+                    {location}
+                  </option>
+                ))
+              ) : (
+                <option value="">Save a location first</option>
+              )}
+            </select>
+            <Button
+              className="h-11 bg-yuzu-gold text-yuzu-ink hover:bg-yuzu-gold-light"
+              disabled={!onUpdate || isUpdating || !selectedHumidorLocation.trim() || !storageLocationOptions.length}
+              type="submit"
+            >
+              {isUpdating ? <LoaderCircle className="animate-spin" data-icon="inline-start" /> : <MapPin data-icon="inline-start" />}
+              {isUpdating ? "Updating Location" : "Update Location"}
+            </Button>
+          </div>
+          <p className="min-h-5 text-sm text-yuzu-gold" aria-live="polite">
+            {itemUpdateStatus}
+          </p>
+        </form>
+
         {cigarDetails.length ? (
           <div className="grid gap-3 border border-yuzu-line bg-yuzu-night/60 p-4">
             <p className="text-xs uppercase tracking-[0.16em] text-yuzu-gold">Blend & Storage Details</p>
@@ -2613,6 +3214,10 @@ function ReadinessBadge({ readiness }: { readiness: CigarReadiness }) {
       {readiness}
     </Badge>
   );
+}
+
+function normalizeAgingStartPreset(value: string): AgingStartPreset {
+  return agingStartPresetOptions.some((option) => option.value === value) ? (value as AgingStartPreset) : "exact";
 }
 
 function buildHumidorFormFromSuggestion(suggestion: CigarImageSuggestion): HumidorForm {
@@ -2918,6 +3523,11 @@ function formatDate(value: string | null | undefined) {
     day: "numeric",
     year: "numeric",
   }).format(date);
+}
+
+function formatDeviceClimateValue(value: number) {
+  const rounded = Math.round(value * 10) / 10;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
 }
 
 function formatDeviceSyncTime(value: Date) {

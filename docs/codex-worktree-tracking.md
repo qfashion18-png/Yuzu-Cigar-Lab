@@ -6,6 +6,374 @@ Purpose: track the dirty worktree I encounter while expanding and verifying the 
 
 Project memory: `AGENTS.md` now requires Codex to use this file as the persistent worktree ledger. Every meaningful update, fix, audit, verification pass, or newly discovered dirty/untracked area should be recorded here in the same turn.
 
+## 2026-05-26 Cleanup And Commit Prep
+
+- Goal: clean generated deploy/build artifacts after the live deploy and prepare the current update set for commit.
+- Cleanup:
+  - Removed 14 ignored root preview/log files.
+  - Removed 5 ignored root Amplify deploy zip files, including the job `122` deploy artifact after its details were recorded above.
+  - Removed ignored generated directories `output/`, `out/`, and `.next/`.
+  - The cleanup command resolved every target under `C:\Users\qfash\Documents\New project` before deleting and reported zero failures.
+- Verification available before commit:
+  - Current-worktree `npm run lint` passed.
+  - Current-worktree `npx tsc --noEmit --pretty false` passed.
+  - Current-worktree `npm test` passed with 394/394 tests.
+
+## 2026-05-26 E2E Runtime Audit Runner
+
+- Goal: write and implement a repeatable E2E runtime audit for the built static export before Amplify/static deploy packaging.
+- Local Next.js 16.2.6 docs checked before editing:
+  - `node_modules/next/dist/docs/01-app/02-guides/static-exports.md`
+  - `node_modules/next/dist/docs/01-app/03-api-reference/05-config/01-next-config-js/output.md`
+  - `node_modules/next/dist/docs/01-app/01-getting-started/04-linking-and-navigating.md`
+  - `node_modules/next/dist/docs/01-app/02-guides/upgrading/version-16.md`
+- Patched:
+  - `docs/superpowers/plans/2026-05-26-e2e-runtime-audit.md`
+  - `scripts/e2e-runtime-audit.ts`
+  - `tests/e2e-runtime-audit.test.ts`
+  - `package.json`
+  - `docs/codex-worktree-tracking.md`
+- Behavior:
+  - Added `npm run e2e:runtime-audit`, which runs `npm run build`, serves the generated `out/` folder through `scripts/static-preview.mjs`, checks launch-critical routes, follows internal links found in audited HTML, validates local runtime asset references, scans CSS `url(...)` dependencies, and verifies a missing-route probe returns 404.
+  - Added `--full` mode to audit every exported HTML route from `out/` in addition to the default critical route set.
+  - Kept the workflow dependency-free by using Node 20+ `fetch`, `tsx`, and the existing static preview server rather than adding a browser package.
+- Red test before implementation:
+  - `node --import tsx --test tests\e2e-runtime-audit.test.ts` failed on missing `../scripts/e2e-runtime-audit`.
+- Green verification:
+  - `node --import tsx --test tests\e2e-runtime-audit.test.ts` - 5 tests passing.
+  - `npx tsc --noEmit --pretty false`
+  - `npm run lint`
+  - `npm test` - 394 tests passing.
+  - `npm run e2e:runtime-audit` - build passed, generated 953 static pages, audited 49 routes, followed 23 internal links, checked 78 runtime assets, not-found probe returned 404, warnings 0.
+  - `npx tsx scripts\e2e-runtime-audit.ts --full` - audited 959 routes, followed 6 additional internal links, checked 117 runtime assets, not-found probe returned 404, warnings 0.
+
+## 2026-05-26 Deploy All Current Updates
+
+- Goal: deploy all current dirty storefront and backend updates to the live YCC AWS stack.
+- Skills used:
+  - `using-superpowers`
+  - `aws`
+  - `deploy-yuzu-amplify`
+- Pre-deploy verification:
+  - `npm run lint` - passed.
+  - `npx tsc --noEmit --pretty false` - passed.
+  - `npm test` - passed with 389/389 tests.
+  - `npm run build` - passed with Next.js 16.2.6 and generated 953 static pages.
+- Backend deploy:
+  - Confirmed AWS account `374587466106` with profile `ycc-mcp` and Lambda `ycyyy` in `us-east-1`.
+  - Confirmed live API `ycc-api` (`13710cp67l`) already has JWT routes `PATCH /humidor/items/{id}` route id `pstk98e` and `PATCH /humidor/items/{id}/enrich` route id `kkxnam8`, both targeting `integrations/aercs6j`.
+  - Packaged Lambda artifact `output/ycc-api-deploy-all-updates-20260526-163906.zip`.
+  - Deployed Lambda `ycyyy`; AWS reported `LastModified=2026-05-26T23:40:43.000+0000`, `LastUpdateStatus=Successful`, runtime `nodejs22.x`, and code hash `dTOQaXVaoTPcL1UQKKgY0N+6PqKaIoB9kuIDeTAHuGU=`.
+- Static deploy:
+  - Used the deploy helper with `--skip-build` against the fresh `out/` export because the build had already passed in PowerShell.
+  - Created POSIX-rooted deploy zip `yuzu-cigar-club-amplify-deploy-all-updates-2026-05-26-163906-2026-05-26-164113.zip` with 8,787 entries and size 147,816,815 bytes.
+  - Verified deploy zip contains `index.html` and `_next/static/...` at archive root, with zero backslash paths and zero forbidden parent folders (`out/`, `.next/`, `node_modules/`, `output/`, `.git/`).
+  - Amplify app/branch/job: `d2yxcklt245wh0` / `staging` / `122`; job status `SUCCEED` with start `2026-05-26T16:43:52.507000-07:00` and end `2026-05-26T16:44:08.168000-07:00`.
+  - Upload/smoke checks used the deploy helper's curl fallback where local Python TLS strictness rejected the signed upload/live HTTPS checks.
+- Live smoke:
+  - Deploy helper smoke: staging home returned HTTP `200`; referenced asset `/_next/static/chunks/0dwmec917xrj8.css` returned HTTP `200`.
+  - Focused staging humidor smoke: `https://staging.d2yxcklt245wh0.amplifyapp.com/humidor/?deploy=122` returned HTTP `200`; referenced asset `/_next/static/chunks/0dwmec917xrj8.css` returned HTTP `200`.
+  - Production-domain humidor smoke: `https://www.yuzucigarclub.com/humidor/?deploy=122` returned HTTP `200`; referenced asset `/_next/static/chunks/0dwmec917xrj8.css` returned HTTP `200`.
+  - API health smoke: `https://13710cp67l.execute-api.us-east-1.amazonaws.com/health?deep=1` returned HTTP `200`, `status=ok`, and `db.proxyReachable=true`.
+  - Invalid-token `PATCH https://13710cp67l.execute-api.us-east-1.amazonaws.com/humidor/items/test-item` returned `401 Unauthorized` with `access-control-allow-origin` for both `https://staging.d2yxcklt245wh0.amplifyapp.com` and `https://www.yuzucigarclub.com`.
+- Post-deploy dirty-area note:
+  - During the deploy window, new audit/tooling work appeared after the initial deploy build started: `package.json` added `e2e:runtime-audit`, and untracked files appeared at `docs/superpowers/plans/2026-05-26-e2e-runtime-audit.md`, `scripts/e2e-runtime-audit.ts`, and `tests/e2e-runtime-audit.test.ts`.
+  - These files do not change the static storefront export or the packaged Lambda runtime that was deployed above.
+  - Fresh current-worktree gates after this discovery: `npm run lint` passed, `npx tsc --noEmit --pretty false` passed, and `npm test` passed with 394/394 tests.
+
+## 2026-05-26 Humidor Overview Connected Device Reading
+
+- Goal: show the connected humidor device reading in the Digital Humidor overview dashboard, specifically humidity and temperature.
+- Local Next.js 16.2.6 docs checked before editing:
+  - `node_modules/next/dist/docs/01-app/01-getting-started/05-server-and-client-components.md`
+  - `node_modules/next/dist/docs/01-app/02-guides/forms.md`
+- Patched:
+  - `src/lib/humidor-devices.ts`
+  - `src/components/humidor-dashboard.tsx`
+  - `tests/humidor-devices.test.ts`
+  - `tests/humidor-dashboard.test.ts`
+  - `docs/codex-worktree-tracking.md`
+- Behavior:
+  - Added `getConnectedHumidorDeviceReading` to choose the first paired device whose status is `Connected`.
+  - Replaced the overview `Avg Rating` stat with connected-device `Humidity` and `Temperature` stat cards.
+  - Humidity renders as `% RH`; temperature renders as `F`; both cite the connected device or guide the member to pair a device in Settings when no connected reading exists.
+- Red tests before implementation:
+  - `node --import tsx --test --test-name-pattern "connected paired device|overview stat cards" tests\humidor-devices.test.ts tests\humidor-dashboard.test.ts` failed on missing `getConnectedHumidorDeviceReading` and missing overview climate cards.
+- Green verification:
+  - `node --import tsx --test --test-name-pattern "connected paired device|overview stat cards" tests\humidor-devices.test.ts tests\humidor-dashboard.test.ts`
+  - `node --import tsx --test tests\humidor-dashboard.test.ts tests\humidor-devices.test.ts` - 33 tests passing.
+  - `npx eslint src\components\humidor-dashboard.tsx src\lib\humidor-devices.ts tests\humidor-dashboard.test.ts tests\humidor-devices.test.ts`
+  - `npx tsc --noEmit --pretty false`
+  - `npm run build` - passed and regenerated 953 static pages.
+- Browser QA:
+  - Static preview served at `http://127.0.0.1:3053/humidor/`.
+  - In-app Browser opened the humidor page; page title was `Digital Humidor | Yuzu Cigar Club`, the DOM contained the new `Humidity` and `Temperature` cards, and the anonymous preview showed `No device` plus `Pair a device in Settings`.
+  - Interaction proof: clicking `Settings` opened the `Preview Settings` panel and showed the demo persistence note.
+  - Browser console warnings/errors were empty.
+  - Browser screenshot capture timed out twice on `Page.captureScreenshot`, so QA evidence for this pass is DOM/log based.
+
+## 2026-05-26 Humidor Agent Needs-Review Popup Fix
+
+- Goal: fix the `Magic Toast` path where `Ask Humidor Agent` reported member review was needed but opened no approval/review popup and saved no visible updates.
+- Local Next.js 16.2.6 docs checked before editing:
+  - `node_modules/next/dist/docs/01-app/01-getting-started/05-server-and-client-components.md`
+  - `node_modules/next/dist/docs/01-app/01-getting-started/07-mutating-data.md`
+- Root cause:
+  - The dashboard only opened the modal for `enrichment.status = "pending_approval"` with a `previewItem`.
+  - When the agent found no saveable fields, the Lambda returned `needs_review` without a `previewItem`, so the UI only showed the inline status text.
+- Patched:
+  - `infra/lambda/ycc-api/index.js`
+  - `src/components/humidor-dashboard.tsx`
+  - `tests/humidor-dashboard.test.ts`
+  - `tests/lambda-ycc-api.test.ts`
+  - `docs/codex-worktree-tracking.md`
+- Behavior:
+  - Preview-mode no-update enrichment responses now return `previewItem: currentItem`, `enrichment.status = "needs_review"`, and `persistence.status = "pending_member_review"` without mutating `humidor_items` or writing an audit log.
+  - The dashboard opens the member review popup for both `pending_approval` and `needs_review`, falling back to `response.item` when `previewItem` is absent.
+  - If there are no pending field changes, the dialog explains that the agent found no saveable updates and disables the action as `No Updates To Approve`.
+- Red tests before implementation:
+  - `node --import tsx --test --test-name-pattern "no saveable changes|member review popup|saveable updates" tests\humidor-dashboard.test.ts tests\lambda-ycc-api.test.ts` failed because the dashboard had no `needs_review` modal routing and the Lambda response had no preview item.
+- Green verification:
+  - `node --import tsx --test --test-name-pattern "no saveable changes|member review popup|saveable updates" tests\humidor-dashboard.test.ts tests\lambda-ycc-api.test.ts`
+  - `node --import tsx --test tests\humidor-dashboard.test.ts tests\humidor-devices.test.ts tests\lambda-ycc-api.test.ts` - 120 tests passing.
+  - `npx tsc --noEmit --pretty false`
+  - `npx eslint src\components\humidor-dashboard.tsx infra\lambda\ycc-api\index.js tests\humidor-dashboard.test.ts tests\lambda-ycc-api.test.ts`
+  - `npm run build` - passed and regenerated 953 static pages.
+- Browser QA:
+  - Used a local static preview with a mock humidor API returning a `Magic Toast` item and a no-saveable-updates `needs_review` enrichment response.
+  - Verified the rendered popup titled `Magic Toast` opened after `Ask Humidor Agent`, showed `0 updates`, evidence, review notes, and a disabled `No Updates To Approve` button; browser console warnings/errors were empty.
+  - Temporary mock/preview processes were stopped, temporary `out/qa-auth.html` was removed, and a normal production `npm run build` restored `out/`. A final search found no `127.0.0.1:3051` or `qa-auth` artifacts in `out/`.
+- Fresh verification on user request:
+  - `npm run lint` - passed.
+  - `npx tsc --noEmit --pretty false` - passed.
+  - `npm test` - passed with 387/387 tests.
+  - `npm run build` - passed and regenerated 953 static pages.
+  - Browser QA re-ran the `Magic Toast` member path through static preview `http://127.0.0.1:3062/humidor/` and mock API `http://127.0.0.1:3061`; the popup opened with `0 updates`, evidence, review notes, and disabled `No Updates To Approve`, with no browser console warnings/errors.
+  - Temporary process ids `26744` and `2572` were stopped, temporary `out/qa-auth.html` was removed, `npm run build` restored `out/`, and final cleanup checks found no `127.0.0.1:3061` or `qa-auth` artifacts in `out/`.
+
+## 2026-05-26 Humidor Storage Location Dropdown
+
+- Goal: change the detailed cigar card's `Storage Location` update control from a free-text input into a dropdown based on previously entered humidor locations.
+- Local Next.js 16.2.6 docs checked before editing:
+  - `node_modules/next/dist/docs/01-app/01-getting-started/05-server-and-client-components.md`
+  - `node_modules/next/dist/docs/01-app/02-guides/forms.md`
+- Patched:
+  - `src/components/humidor-dashboard.tsx`
+  - `tests/humidor-dashboard.test.ts`
+  - `docs/codex-worktree-tracking.md`
+- Behavior:
+  - The dashboard now derives unique storage-location choices from the saved humidor location profile plus existing cigar item locations.
+  - The detail card receives those options and renders `Humidor location update` as a native `<select>` instead of a free-typed input.
+  - When a cigar has no saved location, the dropdown defaults to the first available entered location before submitting `Update Location`.
+- Red test before implementation:
+  - `node --import tsx --test --test-name-pattern "storage location from entered locations" tests/humidor-dashboard.test.ts` failed on missing `getHumidorStorageLocationOptions`.
+- Green verification:
+  - `node --import tsx --test --test-name-pattern "storage location from entered locations" tests/humidor-dashboard.test.ts`
+  - `node --import tsx --test tests/humidor-dashboard.test.ts` - 22 tests passing.
+  - `npx tsc --noEmit --pretty false`
+  - `npx eslint src/components/humidor-dashboard.tsx tests/humidor-dashboard.test.ts`
+  - `npm run build` - passed and regenerated 953 static pages.
+- Browser QA:
+  - Static preview at `http://127.0.0.1:3043/humidor/` returned HTTP `200`.
+  - In-app Browser opened the anonymous demo humidor, selected the `1964 Anniversary Series` row, and verified the detailed card's storage control is a `SELECT` with `Locker A`, `Home Humidor`, `Locker B`, and `Travel Case`; no `input[aria-label="Humidor location update"]` remains.
+  - Browser console warnings/errors were empty. The temporary static preview process was stopped.
+
+## 2026-05-26 Humidor Location/Aging Deployment
+
+- Goal: deploy the completed humidor location-update and aging-start preset work to the live YCC AWS stack.
+- Backend deploy:
+  - Packaged Lambda artifact `output/ycc-api-humidor-location-aging-20260526.zip`.
+  - Deployed to Lambda `ycyyy`; AWS reported `LastModified=2026-05-26T21:41:46.000+0000`, `LastUpdateStatus=Successful`, and code hash `6DTl4RpUhuRE/PFCaykkH98a+3FNLPnRQ9jtGEwZKMY=`.
+  - Added live API Gateway route `PATCH /humidor/items/{id}` as route id `pstk98e`, using JWT authorizer `n93hk9` and integration `integrations/aercs6j`.
+- Static deploy:
+  - `npm run build` passed with Next.js 16.2.6 and generated 953 static pages.
+  - Amplify deploy zip: `yuzu-cigar-club-amplify-deploy-humidor-location-aging-2026-05-26-144405.zip`.
+  - Amplify app/branch/job: `d2yxcklt245wh0` / `staging` / `121`; job status `SUCCEED` with start `2026-05-26T14:44:58.653000-07:00` and end `2026-05-26T14:45:16.138000-07:00`.
+  - The deploy helper initially could not spawn `npm` from Python on Windows, so the build was run directly and the helper was re-run with `--skip-build` for package/upload/poll/smoke.
+- Live smoke:
+  - Deploy helper smoke: staging home returned HTTP `200`; referenced asset `/_next/static/chunks/0tptpu9plx21o.css` returned HTTP `200`.
+  - Focused humidor smoke: `https://staging.d2yxcklt245wh0.amplifyapp.com/humidor/?deploy=121` returned HTTP `200`; referenced asset `/_next/static/chunks/0gqw41l7555b0.css` returned HTTP `200`.
+  - Production-domain humidor smoke: `https://www.yuzucigarclub.com/humidor/?deploy=121` returned HTTP `200`; referenced asset `/_next/static/chunks/0gqw41l7555b0.css` returned HTTP `200`.
+  - Invalid-token `PATCH https://13710cp67l.execute-api.us-east-1.amazonaws.com/humidor/items/test-item` returned `401 Unauthorized` with `access-control-allow-origin` for both `https://staging.d2yxcklt245wh0.amplifyapp.com` and `https://www.yuzucigarclub.com`, confirming the new route is live and CORS-visible.
+
+## 2026-05-26 Humidor Agent Approval Popup
+
+- Goal: ensure `Ask Humidor Agent` shows a member approval popup before AI-proposed Info, Image, or MSRP updates are persisted.
+- Local Next.js 16.2.6 docs checked before editing:
+  - `node_modules/next/dist/docs/01-app/01-getting-started/05-server-and-client-components.md`
+  - `node_modules/next/dist/docs/01-app/01-getting-started/07-mutating-data.md`
+- Patched:
+  - `src/lib/live-api.ts`
+  - `src/components/humidor-dashboard.tsx`
+  - `infra/lambda/ycc-api/index.js`
+  - `tests/humidor-dashboard.test.ts`
+  - `tests/lambda-ycc-api.test.ts`
+  - `docs/codex-worktree-tracking.md`
+- Behavior:
+  - `PATCH /humidor/items/{id}/enrich` now treats missing/false `approved` as preview mode, returning the original item plus `previewItem`, `enrichment.status = "pending_approval"`, and `persistence.status = "pending_member_approval"` without updating `humidor_items` or writing an enrichment audit log.
+  - The dashboard now opens a modal approval dialog with pending field changes, preview image, evidence, and review notes. `Approve Updates` sends `approved: true` before saving; `Cancel` discards the pending preview.
+  - During broad verification, the dashboard also now imports the shared humidor device discovery helper instead of keeping a stale local duplicate, which keeps the already-dirty device-discovery work typecheckable.
+- Red tests before implementation:
+  - `node --import tsx --test --test-name-pattern "member approval|previews updates" tests/humidor-dashboard.test.ts tests/lambda-ycc-api.test.ts` failed because the dashboard had no pending approval state and the Lambda persisted preview requests.
+- Green verification:
+  - `node --import tsx --test --test-name-pattern "member approval|previews updates|fills missing info" tests/humidor-dashboard.test.ts tests/lambda-ycc-api.test.ts`
+  - `node --import tsx --test tests/humidor-dashboard.test.ts tests/humidor-devices.test.ts tests/lambda-ycc-api.test.ts` - 117 tests passing.
+  - `npx tsc --noEmit --pretty false`
+  - `npx eslint src/components/humidor-dashboard.tsx src/lib/humidor-devices.ts src/lib/live-api.ts infra/lambda/ycc-api/index.js tests/humidor-dashboard.test.ts tests/humidor-devices.test.ts tests/lambda-ycc-api.test.ts`
+  - `npm run build` - passed and regenerated 953 static pages.
+- Browser QA:
+  - Used a local static preview with a mock humidor API to sign in as a Cognito member, open `Padron Anniversary Toro`, click `Ask Humidor Agent`, verify the `Padron Anniversary Toro` modal with `Pending Updates`, `Approve Updates`, evidence, and review notes, then approve the updates.
+  - After approval, the rendered table/detail card showed `Padron / 1964 Anniversary / Toro`, the cigar image, and `$18.50` MSRP-derived collection value; the approval dialog was closed.
+  - Browser console warnings/errors were empty. In-app screenshot capture timed out on `Page.captureScreenshot`, so the browser QA evidence is DOM/log based.
+  - Temporary mock/preview processes were stopped, temporary `out/qa-auth.html` was removed, and a normal production `npm run build` restored `out/` to the real `.env.local` API configuration.
+
+## 2026-05-26 Humidor Device Discovery Pairing
+
+- Goal: remove member-entered device identity/climate fields from the humidor device pairing form so Device name, Device ID, current humidity percent, and current temperature come from an available-device search.
+- Local Next.js 16.2.6 docs checked before editing:
+  - `node_modules/next/dist/docs/01-app/01-getting-started/05-server-and-client-components.md`
+  - `node_modules/next/dist/docs/01-app/02-guides/forms.md`
+- Patched:
+  - `src/lib/humidor-devices.ts`
+  - `src/components/humidor-dashboard.tsx`
+  - `tests/humidor-devices.test.ts`
+  - `tests/humidor-dashboard.test.ts`
+  - `docs/codex-worktree-tracking.md`
+- Behavior:
+  - Added `discoverAvailableHumidorDevice` and `applyHumidorDeviceDiscovery` so the pairing form is filled from a discovered device reading while preserving the member's humidor location/default sync interval.
+  - Device Settings now exposes `Search Available Devices`; Device name, Device ID, current humidity percent, and current temperature render as read-only pulled fields.
+  - Pairing is blocked until search has populated device name, identifier, humidity, and temperature.
+  - Selecting HUMIDIFIER defaults the search connection to WiFi; selecting hygrometer thermometer defaults it to Bluetooth, and connection/type changes clear stale pulled readings.
+  - This also resolves the earlier `applyHumidorDeviceDiscovery` export blocker noted in the `Humidor Later Location Update And Aging Presets` verification section.
+- Verification:
+  - Red focused checks first failed on missing `applyHumidorDeviceDiscovery`/device-search UI.
+  - `node --import tsx --test --test-name-pattern "available device|searches available devices|discovers an available" tests\humidor-devices.test.ts tests\humidor-dashboard.test.ts`
+  - `node --import tsx --test tests\humidor-devices.test.ts tests\humidor-dashboard.test.ts` - 29 tests passing.
+  - `npx tsc --noEmit`
+  - `npx eslint src\components\humidor-dashboard.tsx src\lib\humidor-devices.ts tests\humidor-dashboard.test.ts tests\humidor-devices.test.ts`
+  - `npm run build` initially hit Next's concurrent-build guard while another `next build` process was active; after waiting for that build to exit, a clean retry passed and generated 953 static pages.
+  - Browser plugin static-preview QA at `http://localhost:3042/humidor/`: page title matched `Digital Humidor | Yuzu Cigar Club`, page was nonblank, Settings navigation opened the anonymous `Preview Settings` sign-in gate, no framework overlay appeared, and console warnings/errors were empty. The live device manager remains behind Cognito auth in rendered QA; its new controls are covered by the source and unit tests above.
+- Local preview:
+  - Static preview is running at `http://localhost:3042/humidor/`.
+
+## 2026-05-26 Humidor Later Location Update And Aging Presets
+
+- Goal: let members save cigars without an initial location, update a saved cigar's humidor location later from the detailed cigar card, and choose an Aging start as either an exact date or a preset age (`1 month+`, `3 months+`, `6 months+`, `1 year+`) while entering cigars.
+- Local Next.js 16.2.6 docs checked before editing:
+  - `node_modules/next/dist/docs/01-app/01-getting-started/05-server-and-client-components.md`
+  - `node_modules/next/dist/docs/01-app/02-guides/forms.md`
+  - `node_modules/next/dist/docs/01-app/02-guides/static-exports.md`
+- Patched:
+  - `src/lib/humidor-aging.ts`
+  - `src/lib/humidor-devices.ts`
+  - `src/lib/live-api.ts`
+  - `src/components/humidor-dashboard.tsx`
+  - `infra/lambda/ycc-api/index.js`
+  - `infra/ycc-phase1-edge.yaml`
+  - `tests/humidor-aging.test.ts`
+  - `tests/humidor-devices.test.ts`
+  - `tests/humidor-dashboard.test.ts`
+  - `tests/live-page-editor.test.ts`
+  - `tests/lambda-ycc-api.test.ts`
+  - `tests/api-gateway-contract.test.ts`
+  - `docs/codex-worktree-tracking.md`
+- Fix:
+  - Added shared aging-start preset options and date resolution helpers.
+  - Manual Add Live Humidor Item and AI Review identified cigar forms now expose an Aging start option menu plus exact-date input.
+  - Added live client and Lambda support for `PATCH /humidor/items/{id}` to persist a saved cigar's `humidorLocation`.
+  - Added the API Gateway route for `PATCH /humidor/items/{id}` with JWT authorization.
+  - Detailed Cigar Card now includes a Storage Location form so missing or changed locations can be saved later.
+  - Finished wiring the existing humidor-agent enrichment approval flow in the detail card so `Ask Humidor Agent` previews updates before `Approve Updates` persists them.
+  - While verifying the dashboard, moved the existing device-search flow onto the shared `discoverAvailableHumidorDevice` helper so the already-dirty device discovery work remains typecheckable.
+- Red tests before implementation:
+  - `node --import tsx --test tests\humidor-aging.test.ts tests\humidor-dashboard.test.ts` failed on missing aging preset helpers/dashboard controls and missing item-update UI.
+  - `node --import tsx --test tests\live-page-editor.test.ts tests\api-gateway-contract.test.ts` failed on missing `updateHumidorItem`; the API Gateway contract was tightened because the shorter route falsely matched the `/enrich` route prefix.
+  - `node --import tsx --test --test-name-pattern "humidor item update route" tests\lambda-ycc-api.test.ts` failed with `404 !== 200`.
+- Green verification:
+  - `node --import tsx --test tests\humidor-dashboard.test.ts` - 20 tests passing.
+  - `node --import tsx --test tests\humidor-aging.test.ts tests\humidor-devices.test.ts tests\humidor-dashboard.test.ts tests\live-page-editor.test.ts tests\api-gateway-contract.test.ts` - 54 tests passing.
+  - `node --import tsx --test --test-name-pattern "humidor item route|humidor item update route|humidor item enrichment route|humidor item enrichment route previews" tests\lambda-ycc-api.test.ts` - 6 tests passing.
+  - `npx eslint src\components\humidor-dashboard.tsx src\lib\humidor-aging.ts src\lib\humidor-devices.ts src\lib\live-api.ts tests\humidor-dashboard.test.ts tests\humidor-aging.test.ts tests\humidor-devices.test.ts tests\live-page-editor.test.ts tests\lambda-ycc-api.test.ts tests\api-gateway-contract.test.ts infra\lambda\ycc-api\index.js`
+  - `npx tsc --noEmit --pretty false`
+  - `npm run build` - passed and generated 953 static pages.
+- Browser QA:
+  - Static preview at `http://127.0.0.1:3042/humidor/` rendered the built page.
+  - Headless Chromium verified the Add Cigars form shows `Exact date`, `1 month+`, `3 months+`, `6 months+`, and `1 year+`, then opened a saved cigar detail card and verified `Update Location` plus the `Humidor location update` form.
+  - Browser console/page errors were empty. Screenshot evidence: `output/playwright/humidor-aging-location.png`.
+
+## 2026-05-26 Humidor Agent Enrichment Live Route Repair
+
+- Goal: resolve the `Humidor Agent Update` panel showing browser-level `Failed to fetch` when asking the humidor agent to fill missing Info, Image, and MSRP.
+- Root cause:
+  - The checked-in API Gateway template already included `PATCH /humidor/items/{id}/enrich`, but the deployed production HTTP API `13710cp67l` did not have that live route.
+  - Production/staging CORS preflight for the enrichment path returned `204` and allowed `PATCH`, but the actual `PATCH` request returned API Gateway `404 Not Found` without CORS headers, which the browser surfaced as `Failed to fetch`.
+- Live AWS repair:
+  - Confirmed caller: `arn:aws:sts::374587466106:assumed-role/CodexMcpYccOperatorRole/...` via profile `ycc-mcp`.
+  - Confirmed the API's existing Lambda integration `aercs6j` targets `arn:aws:lambda:us-east-1:374587466106:function:ycyyy`.
+  - Confirmed the existing JWT authorizer `n93hk9` is `ycc-cognito-jwt`.
+  - Added the missing live route with `aws apigatewayv2 create-route --api-id 13710cp67l --route-key "PATCH /humidor/items/{id}/enrich" --authorization-type JWT --authorizer-id n93hk9 --target integrations/aercs6j`.
+  - Created route id `kkxnam8`; `$default` stage has `AutoDeploy=true`.
+- Verification:
+  - `aws apigatewayv2 get-routes --api-id 13710cp67l` now lists `PATCH /humidor/items/{id}/enrich` with JWT auth and target `integrations/aercs6j`.
+  - `OPTIONS https://api.yuzucigarclub.com/humidor/items/test-item/enrich` from `https://www.yuzucigarclub.com` returns `204` with `access-control-allow-methods: GET,OPTIONS,PATCH,POST`.
+  - Invalid-token `PATCH https://api.yuzucigarclub.com/humidor/items/test-item/enrich` now returns `401 Unauthorized` with `access-control-allow-origin: https://www.yuzucigarclub.com`, proving the request reaches the JWT route instead of API Gateway's missing-route 404.
+  - Invalid-token `PATCH` through the execute-api hostname from the staging origin also returns `401` with the staging CORS origin.
+- UI hardening:
+  - Patched `src/lib/live-api.ts` so persistent browser network failures are normalized into a live API reachability message instead of exposing raw `Failed to fetch` after the existing one-time retry.
+  - Added regression coverage in `tests/live-page-editor.test.ts`.
+  - Red regression before the code change: `node --import tsx --test --test-name-pattern "persistent browser network failures" tests/live-page-editor.test.ts` failed with the old `Failed to fetch` message.
+  - Green targeted verification: `node --import tsx --test --test-name-pattern "persistent browser network failures|transient browser fetch failures" tests/live-page-editor.test.ts`.
+
+## 2026-05-26 Customer-Facing Ratings Review Audit Correction
+
+- Goal: remove internal ratings/reviews research prompts from shopper-facing product detail pages after `ACID 20 TORO MADURO 24/BX` exposed workflow copy instead of real review information.
+- Local Next.js 16.2.6 docs checked before editing:
+  - `node_modules/next/dist/docs/01-app/01-getting-started/03-layouts-and-pages.md`
+  - `node_modules/next/dist/docs/01-app/01-getting-started/14-metadata-and-og-images.md`
+- Storefront/product-review guidance checked:
+  - `storefront-best-practices`
+  - `storefront-best-practices/reference/components/product-reviews.md`
+  - `storefront-best-practices/reference/layouts/product-details.md`
+  - `storefront-best-practices/reference/seo.md`
+- Root cause:
+  - `getCatalogReviewAudit` generated internal audit/research guidance for every cigar product without sourced reviews.
+  - `src/app/shop/[slug]/page.tsx` rendered that audit payload in the public `Ratings & Reviews` panel.
+  - `getCatalogProductDetails` also surfaced `Review audit queued` in customer-visible catalog signals.
+- Patched:
+  - `src/lib/catalog.ts`
+  - `src/app/shop/[slug]/page.tsx`
+  - `tests/product-detail.test.ts`
+  - `docs/cigar-ratings-review-audit-2026-05-26.md`
+  - `docs/codex-worktree-tracking.md`
+- Fix:
+  - Removed public rendering of `Research query`, review-audit details, search instructions, and `Review audit queued`.
+  - Removed the catalog review-audit helper/export so product pages cannot accidentally re-import it.
+  - Added a neutral empty review state for products without verified publication or customer reviews.
+  - Removed the internal `searchQuery` row from sourced review profiles.
+  - Added sourced ACID 20 Maduro Toro review details from Cigar Coop, Cigar World, and Holt's instead of showing an audit prompt.
+  - Product JSON-LD still omits `aggregateRating`, `ratingValue`, and `reviewCount` unless a real aggregate model is added later.
+- Audit result after fix:
+  - Published catalog products: 921.
+  - Cigar and cigar-sampler products: 834.
+  - Products with sourced review coverage: 5.
+  - Products without sourced review coverage: 829.
+- Source checks used for `ACID 20 TORO MADURO 24/BX`:
+  - Cigar Coop exact Toro review: `https://cigar-coop.com/2021/05/agile-cigar-review-acid-20-toro-by-drew-estate.html`.
+  - Cigar World ACID 20 line/community page: `https://www.cigarworld.com/cigars/acid/acid-20/`.
+  - Holt's Acid 20 retailer/customer review page: `https://www.holts.com/cigars/all-cigar-brands/acid-20.html`.
+- Verification completed so far:
+  - Red regression before fix: `npm test -- tests/product-detail.test.ts` failed on missing ACID Toro sourced profile, `Review audit queued` signals, and the still-present `ReviewAuditPanel`.
+  - `npm test -- tests/product-detail.test.ts` - 373 tests passing.
+  - `npx tsc --noEmit`
+  - `npm run lint`
+  - Source-only audit grep found no internal review-audit prompt strings in `src/`.
+  - `npm test` - 373 tests passing.
+  - `npm run build` - Next.js 16.2.6 static export generated 953 pages.
+  - Playwright CLI static-preview QA at `http://127.0.0.1:3041/shop/acid-20-toro-maduro-24-bx/`: `Ratings & Reviews` rendered Cigar Coop, Cigar World, and Holt's sourced details; no research prompt or queued audit copy appeared; browser console showed 0 warnings/errors.
+  - Playwright CLI static-preview QA at `http://127.0.0.1:3041/shop/acid-kuba-kuba-24-bx/`: `Ratings & Reviews` rendered the neutral empty review state; `Catalog Signals` did not include `Review audit queued`; browser console showed 0 warnings/errors.
+- Dirty-area note:
+  - After verification, `src/lib/live-api.ts` and `tests/live-page-editor.test.ts` were dirty with live API network-error handling/test changes unrelated to this ratings/reviews fix. They were inspected and left intact.
+
 ## 2026-05-26 Deploy All Updates And Clean Worktree
 
 - Goal: deploy the current update set and clean the working tree.

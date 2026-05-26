@@ -458,6 +458,10 @@ export type HumidorItemInput = Partial<Omit<HumidorItem, "id" | "createdAt">> & 
   name: string;
 };
 
+export type HumidorItemUpdateInput = {
+  humidorLocation: string;
+};
+
 export type CigarImageIdentifyInput = {
   imageBase64: string;
   mimeType: string;
@@ -521,13 +525,15 @@ export type CigarImageIdentifyResponse = {
 export type HumidorEnrichmentField = "info" | "image" | "msrp";
 
 export type HumidorItemEnrichmentInput = {
+  approved?: boolean;
   fields?: HumidorEnrichmentField[];
 };
 
 export type HumidorItemEnrichmentResponse = {
   item: HumidorItem;
+  previewItem?: HumidorItem;
   enrichment: {
-    status: "updated" | "complete" | "needs_review";
+    status: "updated" | "complete" | "needs_review" | "pending_approval";
     requestedFields: HumidorEnrichmentField[];
     missingFields: HumidorEnrichmentField[];
     updatedFields: string[];
@@ -727,6 +733,14 @@ export async function createHumidorItem(input: HumidorItemInput, headers: LiveAp
   return postLive<{ item: HumidorItem; persistence: { status: string; table: string } }>("/humidor/items", input, headers);
 }
 
+export async function updateHumidorItem(itemId: string, input: HumidorItemUpdateInput, headers: LiveApiHeaders) {
+  return patchLive<{ item: HumidorItem; persistence: { status: string; table: string } }>(
+    `/humidor/items/${encodeURIComponent(itemId)}`,
+    input,
+    headers,
+  );
+}
+
 export async function enrichHumidorItem(itemId: string, input: HumidorItemEnrichmentInput, headers: LiveApiHeaders) {
   return patchLive<HumidorItemEnrichmentResponse>(`/humidor/items/${encodeURIComponent(itemId)}/enrich`, input, headers);
 }
@@ -778,6 +792,7 @@ export function getLiveApiErrorMessage(error: unknown) {
     voice_audio_too_large: "Record a voice message under 6 MB.",
     missing_voice_transcript: "The voice message could not be transcribed. Try again or send it as text.",
     voice_services_not_configured: "Voice transcription is not configured yet. Try sending the message as text.",
+    live_api_network_error: "The live Yuzu API could not be reached from this site. Try again once the API route and CORS access are available.",
     missing_cigar_image: "Upload or take a cigar photo before asking the humidor agent to identify it.",
     invalid_cigar_image: "The uploaded cigar image could not be decoded.",
     unsupported_cigar_image_type: "Upload a PNG, JPEG, GIF, or WebP cigar image.",
@@ -786,6 +801,7 @@ export function getLiveApiErrorMessage(error: unknown) {
     humidor_item_not_found: "That humidor cigar could not be found for this account.",
     invalid_humidor_enrichment_fields: "Choose info, image, or MSRP for humidor enrichment.",
     missing_humidor_item_id: "Open a saved cigar before asking the humidor agent to update it.",
+    missing_humidor_location: "Enter a humidor location before updating this cigar.",
     admin_agent_forbidden: "Only admins and concierge operators can use the admin agent.",
     news_agent_forbidden: "Only admins and concierge operators can use the weekly news agent.",
     news_agent_not_configured: "The weekly news agent is not configured for this environment yet.",
@@ -872,7 +888,15 @@ async function fetchLiveWithNetworkRetry(url: string, init: RequestInit) {
     }
 
     await new Promise((resolve) => setTimeout(resolve, 250));
-    return fetch(url, init);
+    try {
+      return await fetch(url, init);
+    } catch (retryError) {
+      if (isNetworkFetchError(retryError)) {
+        throw createLiveApiError("live_api_network_error", "Live API request failed at the network boundary.");
+      }
+
+      throw retryError;
+    }
   }
 }
 

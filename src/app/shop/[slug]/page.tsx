@@ -29,7 +29,7 @@ import { ProductCard } from "@/components/product-card";
 import { ReferenceImage } from "@/components/reference-image";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { getCatalogProductDetails, getCatalogReviewAudit, getStorefrontProductBySlug, storefrontProducts } from "@/lib/catalog";
+import { getCatalogProductDetails, getStorefrontProductBySlug, storefrontProducts } from "@/lib/catalog";
 import { siteUrl } from "@/lib/site";
 
 type ProductPageProps = {
@@ -84,7 +84,6 @@ export default async function ProductDetailPage({ params }: ProductPageProps) {
     .filter((candidate) => candidate.category === product.category || candidate.brand === product.brand)
     .slice(0, 3);
   const hasCigarSpecs = Boolean(product.vitola || product.length || product.gauge || product.strength || product.wrapper || product.filler || product.binder);
-  const reviewAudit = getCatalogReviewAudit(product);
   const productJsonLd = toJsonLd({
     type: "Product",
     name: product.name,
@@ -283,22 +282,7 @@ export default async function ProductDetailPage({ params }: ProductPageProps) {
 
             {product.reviewProfile && <ReviewProfilePanel profile={product.reviewProfile} />}
 
-            {!product.expertReview && !product.reviewProfile && reviewAudit && <ReviewAuditPanel audit={reviewAudit} />}
-
-            {!product.expertReview && !product.reviewProfile && !reviewAudit && (
-              <div className="grid gap-4 text-sm leading-7 text-yuzu-muted">
-                <p>No matched Cigar Aficionado review is attached to this inventory item yet.</p>
-                <a
-                  href={product.reviewSearchUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex min-h-10 w-fit items-center gap-2 border border-yuzu-gold px-3 text-xs font-bold uppercase tracking-[0.14em] text-yuzu-gold transition hover:bg-yuzu-gold hover:text-yuzu-ink"
-                >
-                  Search Ratings
-                  <ExternalLink className="size-4" />
-                </a>
-              </div>
-            )}
+            {!product.expertReview && !product.reviewProfile && <NoSourcedReviewsPanel />}
           </DetailPanel>
 
           <DetailPanel title="Fulfillment" icon={Truck}>
@@ -431,7 +415,6 @@ function ReviewProfilePanel({ profile }: { profile: NonNullable<ReturnType<typeo
   return (
     <div className="grid gap-4 text-sm leading-7 text-yuzu-muted">
       <p>{profile.summary}</p>
-      <ReviewQueryRow value={profile.searchQuery} />
       <ul className="grid gap-4">
         {profile.sources.map((source) => (
           <li key={source.sourceName} className="border-t border-yuzu-line/60 pt-4 first:border-t-0 first:pt-0">
@@ -465,37 +448,11 @@ function ReviewProfilePanel({ profile }: { profile: NonNullable<ReturnType<typeo
   );
 }
 
-function ReviewQueryRow({ value }: { value: string }) {
+function NoSourcedReviewsPanel() {
   return (
-    <div className="grid gap-2 border-b border-yuzu-line/60 pb-3 text-sm sm:grid-cols-[8rem_1fr]">
-      <dt className="text-yuzu-muted">Research query</dt>
-      <dd className="min-w-0 break-words font-heading text-base leading-6 text-yuzu-cream sm:text-right">{value}</dd>
-    </div>
-  );
-}
-
-function ReviewAuditPanel({ audit }: { audit: NonNullable<ReturnType<typeof getCatalogReviewAudit>> }) {
-  return (
-    <div className="grid gap-4 text-sm leading-7 text-yuzu-muted">
-      <p>{audit.summary}</p>
-      <ReviewQueryRow value={audit.searchPrompt} />
-      <dl className="grid gap-3">
-        {audit.details.map((detail) => (
-          <div key={detail.label} className="grid gap-1 border-b border-yuzu-line/50 pb-3 last:border-b-0 last:pb-0 sm:grid-cols-[7rem_1fr]">
-            <dt className="text-yuzu-muted">{detail.label}</dt>
-            <dd className="min-w-0 break-words font-heading text-base leading-6 text-yuzu-cream sm:text-right">{detail.value}</dd>
-          </div>
-        ))}
-      </dl>
-      <a
-        href={audit.sourceUrl}
-        target="_blank"
-        rel="noreferrer"
-        className="inline-flex min-h-10 w-fit items-center gap-2 border border-yuzu-gold px-3 text-xs font-bold uppercase tracking-[0.14em] text-yuzu-gold transition hover:bg-yuzu-gold hover:text-yuzu-ink"
-      >
-        Search Ratings
-        <ExternalLink className="size-4" />
-      </a>
+    <div className="grid gap-3 text-sm leading-7 text-yuzu-muted">
+      <p>Verified publication or customer reviews have not been attached to this item yet.</p>
+      <p>Scores appear here only when the source clearly matches the blend and size.</p>
     </div>
   );
 }

@@ -10,6 +10,21 @@ export type TotalAgeSnapshot = {
   ageMonths: number;
 };
 
+export type AgingStartPreset =
+  | "exact"
+  | "one_month_plus"
+  | "three_months_plus"
+  | "six_months_plus"
+  | "one_year_plus";
+
+export const agingStartPresetOptions: Array<{ value: AgingStartPreset; label: string; monthsAgo: number | null }> = [
+  { value: "exact", label: "Exact date", monthsAgo: null },
+  { value: "one_month_plus", label: "1 month+", monthsAgo: 1 },
+  { value: "three_months_plus", label: "3 months+", monthsAgo: 3 },
+  { value: "six_months_plus", label: "6 months+", monthsAgo: 6 },
+  { value: "one_year_plus", label: "1 year+", monthsAgo: 12 },
+];
+
 export type AgingTrackedCigar = {
   id: string;
   name: string;
@@ -53,6 +68,16 @@ export function getTotalAgeSnapshot(productionDate: string | null | undefined, n
   return {
     ageMonths: calculateAgeMonths(normalizedProductionDate, now),
   };
+}
+
+export function resolveAgingStartPresetDate(preset: AgingStartPreset, now = new Date()) {
+  const option = agingStartPresetOptions.find((candidate) => candidate.value === preset);
+
+  if (!option?.monthsAgo || Number.isNaN(now.getTime())) {
+    return "";
+  }
+
+  return formatDateOnly(subtractCalendarMonths(now, option.monthsAgo));
 }
 
 export function withAgingSnapshot<T extends { agingStartDate: string }>(cigar: T, now = new Date()): T & AgingSnapshot {
@@ -130,6 +155,23 @@ function calculateAgeMonths(agingStartDate: string, now: Date) {
   const completedMonthAdjustment = now.getDate() < start.getDate() ? 1 : 0;
 
   return Math.max(0, monthDifference - completedMonthAdjustment);
+}
+
+function subtractCalendarMonths(date: Date, months: number) {
+  const year = date.getFullYear();
+  const month = date.getMonth() - months;
+  const day = date.getDate();
+  const lastDayOfTargetMonth = new Date(year, month + 1, 0).getDate();
+
+  return new Date(year, month, Math.min(day, lastDayOfTargetMonth));
+}
+
+function formatDateOnly(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
 }
 
 function parseHumidorDate(value: string) {

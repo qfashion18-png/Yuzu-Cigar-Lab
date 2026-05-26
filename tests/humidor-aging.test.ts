@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  agingStartPresetOptions,
   applySmokeLogToCigars,
   getAgingSnapshot,
   normalizeStoredHumidorItems,
+  resolveAgingStartPresetDate,
   type AgingTrackedCigar,
 } from "../src/lib/humidor-aging";
 
@@ -53,6 +55,19 @@ test("derives total cigar age separately from the user humidor aging clock", asy
     ageMonths: 48,
   });
   assert.equal(getTotalAgeSnapshot?.("", reviewDate), null);
+});
+
+test("aging start presets resolve exact and approximate humidor start dates", () => {
+  assert.deepEqual(
+    agingStartPresetOptions.map((option) => option.label),
+    ["Exact date", "1 month+", "3 months+", "6 months+", "1 year+"],
+  );
+
+  assert.equal(resolveAgingStartPresetDate("exact", reviewDate), "");
+  assert.equal(resolveAgingStartPresetDate("one_month_plus", reviewDate), "2026-04-06");
+  assert.equal(resolveAgingStartPresetDate("three_months_plus", reviewDate), "2026-02-06");
+  assert.equal(resolveAgingStartPresetDate("six_months_plus", reviewDate), "2025-11-06");
+  assert.equal(resolveAgingStartPresetDate("one_year_plus", reviewDate), "2025-05-06");
 });
 
 test("normalizes stored humidor items by recalculating aging status", () => {

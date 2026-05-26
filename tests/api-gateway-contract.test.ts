@@ -35,6 +35,7 @@ const expectedRouteAuth = new Map([
   ["POST /humidor/identify-cigar", "JWT"],
   ["GET /humidor/items", "JWT"],
   ["POST /humidor/items", "JWT"],
+  ["PATCH /humidor/items/{id}", "JWT"],
   ["PATCH /humidor/items/{id}/enrich", "JWT"],
   ["GET /humidor/alerts", "JWT"],
   ["POST /humidor/alerts", "JWT"],
@@ -43,7 +44,7 @@ const expectedRouteAuth = new Map([
 
 function getRouteAuthorization(routeKey: string) {
   const escapedRoute = routeKey.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = templateSource.match(new RegExp(`RouteKey:\\s*["']?${escapedRoute}["']?[\\s\\S]*?AuthorizationType:\\s*(\\w+)`));
+  const match = templateSource.match(new RegExp(`RouteKey:\\s*(?:"${escapedRoute}"|'${escapedRoute}'|${escapedRoute})\\s*(?:\\r?\\n)[\\s\\S]*?AuthorizationType:\\s*(\\w+)`));
   return match?.[1] ?? null;
 }
 
