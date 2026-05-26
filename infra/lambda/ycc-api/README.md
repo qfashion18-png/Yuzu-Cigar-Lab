@@ -35,9 +35,10 @@ Stripe owns payment processing, hosted Checkout, Billing/subscriptions, Products
 
 ## Commerce Routes
 
-These routes are the Phase 5/6 commerce contract. The handler now registers them, but live launch remains blocked until Stripe approval, secrets, Price IDs, provider credentials, database migration, and test-mode webhook verification are complete.
+These routes are the Phase 5/6 commerce contract. The handler registers them and reads live commerce settings from Secrets Manager. Product checkout is allowed only when Stripe Tax, age verification, shipping, catalog, and Stripe readiness are all present; the backend intentionally rejects checkout when tax readiness is unavailable.
 
 - `POST /commerce/checkout-session`
+- `POST /commerce/age-verification-token`
 - `POST /commerce/membership-session`
 - `POST /commerce/customer-portal-session`
 - `POST /commerce/webhook/stripe`
@@ -51,15 +52,94 @@ These routes are the Phase 5/6 commerce contract. The handler now registers them
 
 Expected access model:
 
+- `POST /commerce/age-verification-token` is public checkout support. It validates an AgeChecker.Net verification UUID server-side and returns a short-lived signed checkout token.
 - `POST /commerce/checkout-session` and `POST /commerce/membership-session` are public guest-checkout starts, but they return `stripe_not_ready`/`commerce_not_configured` until Stripe keys and launch catalog readiness are configured.
 - `POST /commerce/webhook/stripe` is public ingress but must verify the Stripe signature with `STRIPE_WEBHOOK_SECRET`; unsigned events are rejected before Cognito auth.
 - Checkout-session creation must validate cart, price, inventory, age verification, destination, shipping, tax, and adult-signature requirements before returning a Stripe Checkout URL.
 - Member order/subscription reads require Cognito JWT claims.
+- Stripe webhooks link matched `members.stripe_customer_id` values from Checkout/subscription customer IDs. Customer Portal sessions use that member link first, then fall back to subscription/order history for older rows.
 - Admin commerce routes require Cognito admin or concierge/operator groups and durable audit logging.
 
-Required Stripe environment:
+Production commerce secrets should be stored in AWS Secrets Manager and exposed to Lambda with `COMMERCE_PROVIDER_SECRET_ARN` or `COMMERCE_PROVIDER_SECRET_ID`. Direct environment variables remain supported for local development and smoke tests only.
+
+Operator helper:
+
+```powershell
+.\scripts\configure-ycc-commerce-secret.ps1 -CommerceSecretJsonPath .\secure\commerce-prod.json
+```
+
+Required commerce secret shape:
+
+```json
+{
+  "stripe": {
+    "secretKey": "sk_live_replace_me",
+    "webhookSecret": "whsec_replace_me",
+    "apiVersion": "2026-02-25.clover",
+    "customerPortalConfigurationId": "bpc_replace_me",
+    "launchCatalogReady": true,
+    "launchCatalogS3Uri": "s3://classroom2/ycc/commerce/stripe-launch-catalog.json",
+    "launchCatalog": [
+      {
+        "sku": "APPROVED-BOX",
+        "name": "Approved Box",
+        "price": 120,
+        "publishStatus": "published",
+        "inventoryPolicy": "track",
+        "sourceQuantity": 5,
+        "shippable": true,
+        "adultSignatureRequired": true,
+        "stripePriceId": "price_replace_me"
+      }
+    ],
+    "priceIds": {
+      "SENSEI_MONTHLY": "price_replace_me"
+    }
+  },
+  "ageVerification": {
+    "vendor": "AgeChecker.Net",
+    "apiKey": "replace_me",
+    "accountSecret": "replace_me",
+    "signingSecret": "replace_me"
+  },
+  "tax": {
+    "provider": "Stripe Tax",
+    "ready": true,
+    "status": "ready",
+    "headOffice": {
+      "line1": "951 South Coral Key Ct",
+      "city": "Gilbert",
+      "state": "AZ",
+      "postalCode": "85233",
+      "country": "US"
+    },
+    "activeRegistrationIds": ["taxreg_replace_me"],
+    "defaultTaxCode": "txcd_99999999",
+    "defaultTaxBehavior": "exclusive"
+  },
+  "shipping": {
+    "provider": "USPS",
+    "adultSignatureCarrierApproved": true,
+    "adultSignature": {
+      "carrier": "USPS",
+      "service": "USPS Adult Signature Required",
+      "ready": true,
+      "accountConfigured": true
+    }
+  },
+  "membership": {
+    "entitlementSigningSecret": "replace_me"
+  }
+}
+```
+
+Use `launchCatalogS3Uri` for the full production catalog; inline `launchCatalog` is only suitable for small smoke-test catalogs that fit under the Secrets Manager value limit. Keep `tax.ready=true` only after live Stripe Tax settings are active, the verified head-office address is configured, required Tax registrations are reviewed, and the account default tax code/behavior are set.
+
+Local fallback environment:
 
 ```env
+# Leave this unset to use direct local/dev fallback values.
+COMMERCE_PROVIDER_SECRET_ARN=
 STRIPE_SECRET_KEY=sk_test_replace_me
 STRIPE_WEBHOOK_SECRET=whsec_replace_me
 STRIPE_API_VERSION=2026-02-25.clover
@@ -68,7 +148,12 @@ STRIPE_LAUNCH_CATALOG_READY=1
 STRIPE_LAUNCH_CATALOG_JSON=[{"sku":"APPROVED-BOX","name":"Approved Box","price":120,"publishStatus":"published","inventoryPolicy":"track","sourceQuantity":5,"shippable":true,"adultSignatureRequired":true,"stripePriceId":"price_replace_me"}]
 # or STRIPE_LAUNCH_CATALOG_PATH=./launch-catalog.json
 FEATURE_STRIPE_TAX=ready
+SHIPPING_PROVIDER=USPS
 STRIPE_PRICE_SENSEI_MONTHLY=price_replace_me
+AGE_VERIFICATION_SIGNING_SECRET=replace_me
+AGE_VERIFICATION_API_KEY=replace_me
+AGE_VERIFICATION_API_SECRET=replace_me
+MEMBERSHIP_ENTITLEMENT_SIGNING_SECRET=replace_me
 ```
 
 Supporting modules:
@@ -96,6 +181,7 @@ When `FEATURE_DB_WRITES=schema_ready`, protected routes write through RDS Proxy 
 - `POST /humidor/alerts` writes humidor alert preference settings (including push subscription details) to `member_profiles.preferences` and writes an audit row.
 - `POST /humidor/alerts/dispatch` sends reorder reminder pushes for due items after checking `HUMIDOR_ALERT_DISPATCH_SECRET`, writes `humidorReorderReminderDispatchedOn` into item metadata for sent items, and disables invalid push subscriptions when web-push returns 404/410.
 - `POST /concierge/voice` accepts a short member voice message, uses Amazon Transcribe for speech-to-text when `FEATURE_CONCIERGE_VOICE=ready`, routes the transcript through the same concierge exchange, and uses Amazon Polly for spoken replies.
+- Stripe Checkout and subscription webhooks write order/subscription rows and backfill the canonical Stripe Customer ID onto `members.stripe_customer_id` when the event email matches a member.
 
 If schema writes are not enabled, the same routes keep returning the contract response with persistence marked as pending. The handler reads the RDS credentials from Secrets Manager at runtime and never exposes database credentials in API responses.
 
@@ -116,6 +202,8 @@ Direct Lambda migration invokes are guarded and intended for operator use from t
 - `source=ycc.site_content.migration`, `action=verify_site_content_schema`
 - `source=ycc.newsroom.migration`, `action=apply_newsroom_schema`, confirm `APPLY_YCC_NEWSROOM_SCHEMA`
 - `source=ycc.newsroom.migration`, `action=verify_newsroom_schema`
+- `source=ycc.phase3.migration`, `action=apply_member_stripe_customer_link_schema`, confirm `APPLY_YCC_MEMBER_STRIPE_CUSTOMER_LINK_SCHEMA`
+- `source=ycc.phase3.migration`, `action=verify_member_stripe_customer_link_schema`
 
 ## AI Runtime
 

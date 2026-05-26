@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildNewsAgentPrompt,
   draftToBodyMarkdown,
+  hasUsableNewsDraftReply,
   normalizeNewsDraftFromAgentReply,
   normalizeNewsSourceCandidate,
   type NewsroomDraftInput,
@@ -134,4 +135,35 @@ test("draft markdown output drops empty editorial sections", () => {
 
   assert.match(bodyMarkdown, /## Release timing/);
   assert.doesNotMatch(bodyMarkdown, /## Additional context/);
+});
+
+test("news draft reply usability rejects missing and placeholder article bodies", () => {
+  assert.equal(hasUsableNewsDraftReply(""), false);
+  assert.equal(
+    hasUsableNewsDraftReply(
+      JSON.stringify({
+        title: "Daily Cigar Flow Update",
+        bodyMarkdown: [
+          "## What changed",
+          "Yuzu is tracking daily cigar flow based on the official source notes supplied for today. Keep this section factual and concise until an operator verifies each detail against the source URLs.",
+          "",
+          "## Why adult members may care",
+          "Frame the update around release timing, availability, craftsmanship, events, or education value. Avoid sales pressure and do not make health, cessation, medical, therapeutic, disease, or safety claims.",
+          "",
+          "## Operator review notes",
+          "Verify every product name, date, quote, MSRP, distributor note, and availability claim before publication. Attribute the company announcement and link to the primary source.",
+        ].join("\n"),
+      })
+    ),
+    false
+  );
+  assert.equal(
+    hasUsableNewsDraftReply(
+      JSON.stringify({
+        title: "Rocky Patel Updates Its Release Calendar",
+        bodyMarkdown: "## Release timing\nRocky Patel shared release timing details through its official news channel.",
+      })
+    ),
+    true
+  );
 });

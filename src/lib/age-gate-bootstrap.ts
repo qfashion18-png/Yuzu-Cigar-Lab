@@ -9,7 +9,20 @@ export const ageGateBootstrapScript = `(() => {
   const styleId = "${ageGateBootstrapStyleId}";
   const overlayRule = '[data-yuzu-age-gate="overlay"]{display:none!important;}';
   const storageKey = "${AGE_CONFIRMATION_STORAGE_KEY}";
+  const confirmedDocumentAttribute = "${AGE_CONFIRMED_DOCUMENT_ATTRIBUTE}";
   const maxAgeMs = ${ageConfirmationMaxAgeMs};
+
+  function setDocumentAgeConfirmed(isConfirmed) {
+    try {
+      if (isConfirmed) {
+        document.documentElement.setAttribute(confirmedDocumentAttribute, "true");
+      } else {
+        document.documentElement.removeAttribute(confirmedDocumentAttribute);
+      }
+    } catch {
+      // ignore
+    }
+  }
 
   function setGateHidden(isHidden) {
     const existingStyle = document.getElementById(styleId);
@@ -104,6 +117,7 @@ export const ageGateBootstrapScript = `(() => {
   try {
     const value = readStoredValue();
     if (!value) {
+      setDocumentAgeConfirmed(false);
       setGateHidden(false);
       return;
     }
@@ -111,12 +125,15 @@ export const ageGateBootstrapScript = `(() => {
     const isCurrent = isAgeConfirmationCurrent(value, Date.now());
 
     if (isCurrent) {
+      setDocumentAgeConfirmed(true);
       setGateHidden(true);
     } else {
       clearStorage();
+      setDocumentAgeConfirmed(false);
       setGateHidden(false);
     }
   } catch {
+    setDocumentAgeConfirmed(false);
     setGateHidden(false);
   }
 })();`;

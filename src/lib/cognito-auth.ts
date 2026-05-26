@@ -369,15 +369,16 @@ export function hydrateCognitoSessionFromProfile(session: CognitoAuthSession, sn
     return session;
   }
 
-  const name = session.user.name || snapshot.name;
-  const phone = session.user.phone || snapshot.phone;
+  const name = snapshot.name || session.user.name;
+  const phone = snapshot.phone || session.user.phone;
+  const hasSavedShippingAddress = hasProfileShippingAddress(snapshot.shippingAddress);
   const shippingAddress = normalizeAccountShippingAddress({
-    address1: session.user.shippingAddress.address1 || snapshot.shippingAddress.address1,
-    address2: session.user.shippingAddress.address2 || snapshot.shippingAddress.address2,
-    city: session.user.shippingAddress.city || snapshot.shippingAddress.city,
-    state: session.user.shippingAddress.state || snapshot.shippingAddress.state,
-    postalCode: session.user.shippingAddress.postalCode || snapshot.shippingAddress.postalCode,
-    country: session.user.shippingAddress.country || snapshot.shippingAddress.country,
+    address1: snapshot.shippingAddress.address1 || session.user.shippingAddress.address1,
+    address2: snapshot.shippingAddress.address2 || session.user.shippingAddress.address2,
+    city: snapshot.shippingAddress.city || session.user.shippingAddress.city,
+    state: snapshot.shippingAddress.state || session.user.shippingAddress.state,
+    postalCode: snapshot.shippingAddress.postalCode || session.user.shippingAddress.postalCode,
+    country: hasSavedShippingAddress ? snapshot.shippingAddress.country : session.user.shippingAddress.country,
   });
 
   return {
@@ -560,10 +561,10 @@ function getCognitoErrorMessage(payload: Record<string, unknown>) {
 
 function getCognitoChallengeMessage(challengeName: string) {
   if (challengeName === "NEW_PASSWORD_REQUIRED") {
-    return "This Cognito account needs a new password before it can sign in here. Please reset the password or contact Yuzu support.";
+    return "A new Cognito password is required. Continue with hosted Cognito sign-in so AWS can complete the password challenge securely.";
   }
 
-  return "This Cognito account needs an additional verification step before tokens can be issued.";
+  return "Additional Cognito verification is required. Continue with hosted Cognito sign-in so AWS can complete the challenge securely.";
 }
 
 function createMembership(
@@ -751,6 +752,10 @@ function normalizeCognitoProfileCache(value: unknown) {
   }
 
   return result;
+}
+
+function hasProfileShippingAddress(address: AccountShippingAddress) {
+  return Boolean(address.address1 || address.address2 || address.city || address.state || address.postalCode || address.country !== "US");
 }
 
 function isCognitoAuthSession(value: unknown): value is CognitoAuthSession {

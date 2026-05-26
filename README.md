@@ -6,13 +6,13 @@ Next.js + TypeScript + Tailwind + shadcn/ui storefront and digital humidor PWA f
 
 This repo now includes the production-launch scaffolding for Phases 0-12: Stripe Checkout/Billing client and Lambda helpers, commerce schema migration, compliance validation, production backup-admin lockout, product SEO, release checks, and launch operations docs.
 
-Live production commerce is still blocked until external launch gates are completed: written Stripe approval for cigar/tobacco commerce, live/test Stripe secrets and webhook secret in AWS, age/tax/shipping provider credentials, adult-signature carrier approval, AWS hardening, and staging smoke tests.
+Live production commerce now has the Stripe readiness path wired end to end: Stripe approval, live Stripe secrets/webhook, DB member-to-Stripe Customer linking, active Stripe Tax registration/defaults, age verification, USPS Adult Signature readiness, AWS hardening, and staging smoke checks are all represented in the strict readiness path. Remaining operational gates such as SES production sending, Stripe payout/legal Dashboard review, and the normal current-source release checks still need operator sign-off before public launch.
 
 Current launch gates:
 
 - Phase 1: `npm run lint`, `npm test`, `npx tsc --noEmit`, and `npm run build` must pass from the current source.
-- Phase 4: tobacco age verification, destination rules, adult-signature shipping, tax/excise review, and compliance holds must be enforced server-side.
-- Phase 5: Stripe must approve the cigar/tobacco business model before live payments, and Stripe Checkout/Billing/webhooks must pass test-mode verification.
+- Phase 4: tobacco age verification, destination rules, adult-signature shipping, tax/excise review, and compliance holds are enforced server-side; Stripe Tax is active with the Gilbert head-office address, an active Arizona state sales tax registration, and exclusive tangible-goods defaults.
+- Phase 5: Stripe has approved Company Q for the Services Agreement path, and Stripe Checkout/Billing/webhooks are wired through the backend readiness checks. A live no-charge Checkout smoke created and expired a Stripe Checkout Session with automatic tax enabled.
 - Phase 9: RDS, VPC, WAF, secrets, SES, alarms, backups, and IAM hardening must be complete.
 - Phase 10: automated QA, security triage, browser smoke tests, and performance checks must pass or have documented risk acceptance.
 
@@ -34,7 +34,7 @@ npm run db:check
 
 `npm run build` exports the site to `out/` for Amplify static hosting.
 `npm run start` serves the existing static export from `out/`; use `npm run preview` to rebuild first and then serve it locally.
-`npm run launch:ops-check` reports production-readiness gaps without blocking local work; `npm run launch:go-live-check` runs the same checks in strict mode and fails until external approvals, live Stripe/provider settings, staging QA, and AWS risk gates are confirmed.
+`npm run launch:ops-check` reports production-readiness gaps without blocking local work; `npm run launch:go-live-check` runs the same checks in strict mode for external approvals, live Stripe/provider settings, staging QA, and AWS risk gates.
 
 ## Database
 

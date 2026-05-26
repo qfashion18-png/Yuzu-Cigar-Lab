@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { canUseHumidorBulkImport, parseHumidorBulkImport } from "../src/lib/humidor-bulk-import";
@@ -12,9 +13,9 @@ test("humidor bulk import is available to Kisha Sensei and Daimyo only", () => {
 });
 
 test("humidor bulk import parses a CSV header into live API item input", () => {
-  const result = parseHumidorBulkImport(`name,brand,line,vitola,quantity,humidorLocation,rating,tastingNotes
-"Padron 1964 Anniversary",Padron,1964,Principe,2,"Locker A",94,"Cocoa, cedar"
-"Davidoff Signature No. 2",Davidoff,Signature,"No. 2",1,"Home Tray",90,"Creamy cedar"`);
+  const result = parseHumidorBulkImport(`name,brand,line,vitola,quantity,purchaseDate,agingStartDate,productionDate,humidorLocation,rating,tastingNotes
+"Padron 1964 Anniversary",Padron,1964,Principe,2,2026-03-12,2026-03-19,2022-05-01,"Locker A",94,"Cocoa, cedar"
+"Davidoff Signature No. 2",Davidoff,Signature,"No. 2",1,2026-04-04,,2024-01-15,"Home Tray",90,"Creamy cedar"`);
 
   assert.deepEqual(result.errors, []);
   assert.deepEqual(
@@ -24,6 +25,9 @@ test("humidor bulk import parses a CSV header into live API item input", () => {
       line: item.line,
       vitola: item.vitola,
       quantity: item.quantity,
+      purchaseDate: item.purchaseDate,
+      agingStartDate: item.agingStartDate,
+      productionDate: item.productionDate,
       humidorLocation: item.humidorLocation,
       rating: item.rating,
       tastingNotes: item.tastingNotes,
@@ -36,6 +40,9 @@ test("humidor bulk import parses a CSV header into live API item input", () => {
         line: "1964",
         vitola: "Principe",
         quantity: 2,
+        purchaseDate: "2026-03-12",
+        agingStartDate: "2026-03-19",
+        productionDate: "2022-05-01",
         humidorLocation: "Locker A",
         rating: 94,
         tastingNotes: "Cocoa, cedar",
@@ -47,6 +54,9 @@ test("humidor bulk import parses a CSV header into live API item input", () => {
         line: "Signature",
         vitola: "No. 2",
         quantity: 1,
+        purchaseDate: "2026-04-04",
+        agingStartDate: null,
+        productionDate: "2024-01-15",
         humidorLocation: "Home Tray",
         rating: 90,
         tastingNotes: "Creamy cedar",
@@ -54,6 +64,13 @@ test("humidor bulk import parses a CSV header into live API item input", () => {
       },
     ],
   );
+});
+
+test("humidor bulk import template includes production date provenance", () => {
+  const source = readFileSync(new URL("../src/lib/humidor-bulk-import.ts", import.meta.url), "utf8");
+
+  assert.ok(source.includes("productionDate"), "bulk imports should include productionDate in the template");
+  assert.ok(source.includes('"box date": "productionDate"'), "bulk imports should accept cigar box date aliases");
 });
 
 test("humidor bulk import rejects rows without a cigar name or valid quantity", () => {

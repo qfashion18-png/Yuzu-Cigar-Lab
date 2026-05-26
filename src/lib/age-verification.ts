@@ -1,17 +1,20 @@
 export const checkoutAgeVerificationStorageKey = "yuzu-checkout-age-verification-token";
+export const checkoutAgeVerificationIdentityStorageKey = "yuzu-checkout-age-verification-identity";
 
 const invalidCheckoutAgeVerificationTokens = new Set(["checkout_identity_verification_required"]);
 
 type TokenStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
-export function createCheckoutAgeVerificationToken(ageConfirmationValue = "") {
-  return JSON.stringify({
-    ageConfirmationValue,
-    issuedAt: Date.now(),
-    version: "1",
-    type: "checkout_age_verification",
-  });
-}
+export type CheckoutAgeVerificationTokenRequest = {
+  vendorTransactionId: string;
+};
+
+export type CheckoutAgeVerificationTokenResponse = {
+  ageVerificationToken: string;
+  vendor?: string;
+  vendorTransactionId?: string;
+  verifiedAt?: string;
+};
 
 export function writeCheckoutAgeVerificationToken(
   storage: TokenStorage | null | undefined = globalThis.sessionStorage,
@@ -50,5 +53,64 @@ export function normalizeCheckoutAgeVerificationToken(value: unknown) {
     return "";
   }
 
-  return token.slice(0, 200);
+  const normalized = token.slice(0, 600);
+  if (isSignedCheckoutAgeVerificationToken(normalized) || isLegacyProviderAgeVerificationToken(normalized)) {
+    return normalized;
+  }
+
+  return "";
+}
+
+export function isSignedCheckoutAgeVerificationToken(token: string) {
+  return /^yccav1\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{16,}$/.test(token);
+}
+
+export function isLegacyProviderAgeVerificationToken(token: string) {
+  return /^age_txn_[A-Za-z0-9_-]{8,160}$/.test(token);
+}
+
+export async function createCheckoutAgeVerificationToken(input: CheckoutAgeVerificationTokenRequest) {
+  const apiBaseUrl = getCommerceApiBaseUrl();
+
+  if (!apiBaseUrl) {
+    throw createAgeVerificationError("commerce_not_configured", "NEXT_PUBLIC_YCC_API_BASE_URL is not configured.");
+  }
+
+  const response = await fetch(`${apiBaseUrl}/commerce/age-verification-token`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      vendorTransactionId: input.vendorTransactionId,
+    }),
+  });
+  const payload = (await response.json().catch(() => ({}))) as Partial<CheckoutAgeVerificationTokenResponse> & {
+    error?: string;
+    message?: string;
+  };
+
+  if (!response.ok) {
+    throw createAgeVerificationError(payload.error || "age_verification_error", payload.message || "Age verification failed.");
+  }
+
+  const ageVerificationToken = normalizeCheckoutAgeVerificationToken(payload.ageVerificationToken);
+  if (!ageVerificationToken) {
+    throw createAgeVerificationError("age_verification_untrusted", "Age verification could not be trusted.");
+  }
+
+  return {
+    ...payload,
+    ageVerificationToken,
+  } as CheckoutAgeVerificationTokenResponse;
+}
+
+function getCommerceApiBaseUrl() {
+  return (process.env.NEXT_PUBLIC_YCC_API_BASE_URL || "").replace(/\/$/, "");
+}
+
+function createAgeVerificationError(code: string, message: string) {
+  const error = new Error(message);
+  Object.assign(error, { code, error: code });
+  return error;
 }

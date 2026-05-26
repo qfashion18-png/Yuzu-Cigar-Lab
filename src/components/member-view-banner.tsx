@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "@/components/static-link";
+import { motion, useReducedMotion } from "framer-motion";
 import { Crown, LockKeyhole, UserRound } from "lucide-react";
 
 import { useOptionalBackupAuth } from "@/components/backup-auth-provider";
@@ -42,6 +43,7 @@ const copyByContext: Record<MemberViewBannerProps["context"], { member: string; 
 
 export function MemberViewBanner({ context, className }: MemberViewBannerProps) {
   const auth = useOptionalBackupAuth();
+  const shouldReduceMotion = useReducedMotion();
 
   if (!auth?.isReady) {
     return null;
@@ -55,7 +57,13 @@ export function MemberViewBanner({ context, className }: MemberViewBannerProps) 
   const Icon = auth.isMember ? Crown : auth.isSignedIn ? UserRound : LockKeyhole;
 
   return (
-    <div className={cn("luxury-card p-4", className)}>
+    <motion.div
+      initial={shouldReduceMotion ? false : { opacity: 0, y: 14 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true, margin: "-60px" }}
+      transition={{ duration: 0.34, ease: "easeOut" }}
+      className={cn("luxury-card p-4", className)}
+    >
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div className="flex gap-3">
           <Icon className="mt-0.5 shrink-0 text-yuzu-gold" />
@@ -79,6 +87,6 @@ export function MemberViewBanner({ context, className }: MemberViewBannerProps) 
           </div>
         )}
       </div>
-    </div>
+    </motion.div>
   );
 }

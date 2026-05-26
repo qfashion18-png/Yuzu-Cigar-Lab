@@ -1,11 +1,48 @@
 "use strict";
 
-const adultSignatureShippingMethodIds = new Set([
-  "adult-signature-ground",
-  "adult-signature-express",
-  "ups-adult-signature-ground",
-  "ups-adult-signature-air",
+const requiredShippingCarrier = "USPS";
+const adultSignatureRequiredStates = new Set(["AR", "CA", "DE", "FL", "GA", "MA", "MN", "ND", "RI", "SC", "WY"]);
+const checkoutShippingMethods = new Map([
+  [
+    "usps-adult-signature-ground",
+    {
+      id: "usps-adult-signature-ground",
+      carrier: requiredShippingCarrier,
+      adultSignatureRequired: true,
+    },
+  ],
+  [
+    "usps-adult-signature-priority",
+    {
+      id: "usps-adult-signature-priority",
+      carrier: requiredShippingCarrier,
+      adultSignatureRequired: true,
+    },
+  ],
+  [
+    "adult-signature-ground",
+    {
+      id: "usps-adult-signature-ground",
+      carrier: requiredShippingCarrier,
+      adultSignatureRequired: true,
+      legacyId: "adult-signature-ground",
+    },
+  ],
+  [
+    "adult-signature-express",
+    {
+      id: "usps-adult-signature-priority",
+      carrier: requiredShippingCarrier,
+      adultSignatureRequired: true,
+      legacyId: "adult-signature-express",
+    },
+  ],
 ]);
+const adultSignatureShippingMethodIds = new Set(
+  [...checkoutShippingMethods.entries()]
+    .filter(([, method]) => method.adultSignatureRequired)
+    .map(([methodId]) => methodId)
+);
 
 const restrictedDestinationStates = new Set(["AR", "ME", "SD", "UT", "VT"]);
 const invalidAgeVerificationTokens = new Set(["checkout_identity_verification_required"]);
@@ -16,6 +53,9 @@ function validateCheckoutReadiness(input = {}) {
   const errors = [];
   const holdReasons = [];
   const normalizedItems = [];
+  const membership = normalizeMembership(input.membership);
+  const shippingMethod = resolveCheckoutShippingMethod(input.shippingMethodId);
+  const configuredShippingCarrier = normalizeShippingCarrier(input.shippingProvider || requiredShippingCarrier);
 
   for (const item of items) {
     const sku = normalizeSku(item.sku);
@@ -39,8 +79,18 @@ function validateCheckoutReadiness(input = {}) {
 
     const expectedPrice = Number(product.price);
     const submittedPrice = Number(item.unitPrice);
-    if (Number.isFinite(submittedPrice) && Number.isFinite(expectedPrice) && roundCurrency(submittedPrice) !== roundCurrency(expectedPrice)) {
+    if (!Number.isFinite(submittedPrice)) {
+      pushError(errors, "price_snapshot_required", `SKU ${sku} needs a fresh price snapshot. Refresh the cart before checkout.`);
+      continue;
+    }
+
+    if (Number.isFinite(expectedPrice) && roundCurrency(submittedPrice) !== roundCurrency(expectedPrice)) {
       pushError(errors, "stale_price", `SKU ${sku} price changed. Refresh the cart before checkout.`);
+      continue;
+    }
+
+    if (product.memberOnly === true && !membership.trusted) {
+      pushError(errors, "membership_required", `SKU ${sku} requires an active Yuzu membership.`);
       continue;
     }
 
@@ -70,6 +120,14 @@ function validateCheckoutReadiness(input = {}) {
     pushError(errors, "empty_cart", "Add at least one item before checkout.");
   }
 
+  if (input.quote && typeof input.quote === "object") {
+    const expectedSubtotal = roundCurrency(normalizedItems.reduce((sum, item) => sum + (item.unitAmountCents / 100) * item.quantity, 0));
+    const submittedSubtotal = Number(input.quote.subtotal);
+    if (Number.isFinite(submittedSubtotal) && roundCurrency(submittedSubtotal) !== expectedSubtotal) {
+      pushError(errors, "quote_mismatch", "Cart totals changed. Refresh the cart before checkout.");
+    }
+  }
+
   if (!isAgeVerified(input.ageVerification)) {
     pushError(errors, "age_verification_required", "Complete verified 21+ identity review before checkout.", holdReasons);
   }
@@ -78,8 +136,16 @@ function validateCheckoutReadiness(input = {}) {
     pushError(errors, "restricted_destination", "Yuzu cannot ship tobacco products to this destination.", holdReasons);
   }
 
-  const requiresAdultSignature = normalizedItems.some((item) => item.adultSignatureRequired);
-  if (requiresAdultSignature && !adultSignatureShippingMethodIds.has(String(input.shippingMethodId || ""))) {
+  if (configuredShippingCarrier !== requiredShippingCarrier) {
+    pushError(errors, "shipping_provider_unavailable", "USPS delivery is required for Yuzu checkout.", holdReasons);
+  }
+
+  if (normalizedItems.length > 0 && !shippingMethod) {
+    pushError(errors, "shipping_method_unavailable", "Choose a USPS delivery method before checkout.", holdReasons);
+  }
+
+  const requiresAdultSignature = requiresAdultSignatureDelivery(normalizedItems, input.destination);
+  if (requiresAdultSignature && !shippingMethod?.adultSignatureRequired) {
     pushError(errors, "adult_signature_required", "Choose an adult-signature shipping method for tobacco products.", holdReasons);
   }
 
@@ -92,7 +158,30 @@ function validateCheckoutReadiness(input = {}) {
     errors,
     holdReasons,
     normalizedItems,
+    shipping: {
+      methodId: shippingMethod?.id || normalizeShippingMethodId(input.shippingMethodId),
+      submittedMethodId: normalizeShippingMethodId(input.shippingMethodId),
+      carrier: shippingMethod?.carrier || requiredShippingCarrier,
+      adultSignatureRequired: requiresAdultSignature,
+      adultSignatureRequiredState: adultSignatureRequiredStates.has(getDestinationState(input.destination)),
+    },
   };
+}
+
+function resolveCheckoutShippingMethod(shippingMethodId) {
+  const normalizedId = normalizeShippingMethodId(shippingMethodId);
+  const method = checkoutShippingMethods.get(normalizedId);
+
+  return method
+    ? {
+        ...method,
+        submittedId: normalizedId,
+      }
+    : null;
+}
+
+function requiresAdultSignatureDelivery(normalizedItems = [], destination = {}) {
+  return normalizedItems.some((item) => item.adultSignatureRequired) || adultSignatureRequiredStates.has(getDestinationState(destination));
 }
 
 function isAgeVerified(ageVerification) {
@@ -114,7 +203,7 @@ function isRestrictedDestination(destination) {
   }
 
   const country = String(destination.country || "US").toUpperCase();
-  const state = String(destination.state || "").trim().toUpperCase();
+  const state = getDestinationState(destination);
 
   if (country !== "US") {
     return true;
@@ -123,12 +212,24 @@ function isRestrictedDestination(destination) {
   return !state || restrictedDestinationStates.has(state);
 }
 
+function getDestinationState(destination = {}) {
+  return String(destination.state || "").trim().toUpperCase();
+}
+
 function isTaxReady(tax) {
   if (!tax || typeof tax !== "object") {
     return false;
   }
 
   return tax.status === "ready" || tax.status === "estimated";
+}
+
+function normalizeMembership(value) {
+  const membership = value && typeof value === "object" ? value : {};
+  const status = String(membership.status || "").trim().toLowerCase();
+  return {
+    trusted: membership.trusted === true && status === "member",
+  };
 }
 
 function pushError(errors, code, message, holdReasons) {
@@ -148,6 +249,14 @@ function normalizeQuantity(value) {
   return Number.isFinite(quantity) ? quantity : 0;
 }
 
+function normalizeShippingMethodId(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function normalizeShippingCarrier(value) {
+  return String(value || "").trim().toUpperCase();
+}
+
 function currencyToCents(value) {
   return Math.round(roundCurrency(value) * 100);
 }
@@ -157,8 +266,13 @@ function roundCurrency(value) {
 }
 
 module.exports = {
+  adultSignatureRequiredStates,
   adultSignatureShippingMethodIds,
+  checkoutShippingMethods,
   invalidAgeVerificationTokens,
+  requiredShippingCarrier,
   restrictedDestinationStates,
+  requiresAdultSignatureDelivery,
+  resolveCheckoutShippingMethod,
   validateCheckoutReadiness,
 };

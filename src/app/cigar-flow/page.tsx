@@ -13,23 +13,25 @@ import {
 
 import Link from "@/components/static-link";
 import { CigarFlowExperience } from "@/components/cigar-flow-experience";
+import { NewsStoryFeed } from "@/components/news-story-feed";
 import { ReferenceImage } from "@/components/reference-image";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { cigarFlowAutomation, cigarFlowItems, cigarFlowSources, cigarFlowStats } from "@/lib/cigar-flow";
+import { cigarFlowAutomation, cigarFlowItems, cigarFlowNewsStories, cigarFlowSources, cigarFlowStats } from "@/lib/cigar-flow";
+import { officialCigarNewsSources } from "@/lib/newsroom";
 import { siteUrl } from "@/lib/site";
 
 export const metadata: Metadata = {
   title: "Cigar Flow | Yuzu Cigar Club",
   description:
-    "An Instagram-style cigar news feed for manufacturer releases, new drops, trusted cigar RSS sources, and member smoke posts.",
+    "An Instagram-style cigar news feed for manufacturer releases, new drops, trusted cigar RSS sources, public news updates, and member smoke posts.",
   alternates: {
     canonical: "/cigar-flow",
   },
   openGraph: {
     title: "Cigar Flow | Yuzu Cigar Club",
     description:
-      "Follow cigar manufacturer news, new drops, verified RSS sources, and Yuzu member smoke posts in one visual feed.",
+      "Follow cigar manufacturer news, new drops, verified RSS sources, public news updates, and Yuzu member smoke posts in one visual feed.",
     url: `${siteUrl}/cigar-flow/`,
     siteName: "Yuzu Cigar Club",
     type: "website",
@@ -62,7 +64,7 @@ export default function CigarFlowPage() {
                   Share a Smoke
                 </Button>
               </div>
-              <div className="mt-8 grid gap-3 sm:grid-cols-3">
+              <div className="mt-8 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                 {cigarFlowStats.map((stat) => (
                   <div key={stat.label} className="border border-yuzu-line/70 bg-yuzu-night/45 p-4">
                     <p className="font-heading text-4xl leading-none text-yuzu-gold">{stat.value}</p>
@@ -159,6 +161,38 @@ export default function CigarFlowPage() {
 
           <Card className="luxury-card">
             <CardContent className="grid gap-5 p-5">
+              <div className="flex items-start gap-3">
+                <span className="grid size-11 shrink-0 place-items-center border border-yuzu-gold/55 bg-yuzu-gold/10 text-yuzu-gold">
+                  <ShieldCheck className="size-5" />
+                </span>
+                <div>
+                  <h2 className="font-heading text-3xl leading-tight text-yuzu-cream">Manufacturer update watchlist</h2>
+                  <p className="mt-2 text-sm leading-6 text-yuzu-muted">
+                    Every configured official maker page is loaded into the newsroom seed list so updates can start from brand-direct sources.
+                  </p>
+                </div>
+              </div>
+              <div className="grid max-h-[28rem] gap-2 overflow-y-auto pr-1">
+                {officialCigarNewsSources.map((source) => (
+                  <a
+                    key={source.domain}
+                    href={source.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="group/source grid gap-1 border border-yuzu-line/60 bg-yuzu-night/36 p-3 transition hover:border-yuzu-gold/80 hover:bg-yuzu-forest/70"
+                  >
+                    <span className="truncate text-sm font-black uppercase tracking-[0.14em] text-yuzu-cream group-hover/source:text-yuzu-gold">
+                      {source.name}
+                    </span>
+                    <span className="truncate font-mono text-[0.68rem] text-yuzu-muted">{source.domain}</span>
+                  </a>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="luxury-card">
+            <CardContent className="grid gap-5 p-5">
               <div className="grid gap-3">
                 <span className="grid size-11 place-items-center border border-yuzu-gold/55 bg-yuzu-gold/10 text-yuzu-gold">
                   <UsersRound className="size-5" />
@@ -200,6 +234,21 @@ export default function CigarFlowPage() {
             </CardContent>
           </Card>
         </aside>
+      </section>
+
+      <section id="cigar-flow-news" className="relative border-t border-yuzu-line/70">
+        <div className="mx-auto max-w-[1520px] px-5 py-10 lg:px-10">
+          <div className="mb-6 max-w-3xl">
+            <p className="fine-label">News desk</p>
+            <h2 className="mt-3 font-heading text-4xl leading-tight text-yuzu-cream md:text-5xl">
+              Cigar Flow updates now live here.
+            </h2>
+            <p className="mt-4 text-sm leading-6 text-yuzu-muted">
+              Published newsroom stories are pulled into Cigar Flow with story images, so daily updates sit beside drops, maker watch cards, and member posts.
+            </p>
+          </div>
+          <NewsStoryFeed fallbackStories={cigarFlowNewsStories} limit={8} variant="cigarFlow" />
+        </div>
       </section>
     </div>
   );

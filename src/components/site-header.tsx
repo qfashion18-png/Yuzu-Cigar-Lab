@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "@/components/static-link";
+import { motion, useMotionValueEvent, useScroll } from "framer-motion";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { MailCheck, Menu, Search, ShoppingCart, UserRound } from "lucide-react";
@@ -29,6 +30,12 @@ export function SiteHeader() {
   const { itemCount } = useCart();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [joinSheetOpen, setJoinSheetOpen] = useState(false);
+  const [isScrolled, setIsScrolled] = useState(false);
+  const { scrollY } = useScroll();
+
+  useMotionValueEvent(scrollY, "change", (latest) => {
+    setIsScrolled(latest > 12);
+  });
 
   const closeMobileMenu = () => {
     setMobileMenuOpen(false);
@@ -53,22 +60,44 @@ export function SiteHeader() {
   }
 
   return (
-    <header className="sticky top-0 z-40 border-b border-yuzu-line/55 bg-yuzu-night/96 shadow-[0_12px_34px_rgba(0,0,0,0.28)] backdrop-blur-xl">
+    <motion.header
+      initial={false}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.38, ease: "easeOut" }}
+      className={cn(
+        "sticky top-0 z-40 border-b border-yuzu-line/55 backdrop-blur-xl transition-colors duration-300",
+        isScrolled
+          ? "bg-yuzu-night/98 shadow-[0_16px_42px_rgba(0,0,0,0.38)]"
+          : "bg-yuzu-night/92 shadow-[0_12px_34px_rgba(0,0,0,0.28)]"
+      )}
+    >
       <div className="mx-auto flex h-18 max-w-[1520px] items-center gap-4 px-5 lg:h-20 lg:px-10">
         <BrandMark compact />
         <nav className="ml-auto hidden items-center gap-6 lg:flex">
-          {navItems.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={cn(
-                "nav-link relative text-[0.74rem] font-bold uppercase tracking-[0.16em] text-yuzu-cream/76 transition hover:text-yuzu-gold",
-                pathname === item.href && "text-yuzu-gold after:absolute after:-bottom-6 after:left-0 after:h-px after:w-full after:bg-yuzu-gold lg:after:-bottom-7"
-              )}
-            >
-              {item.label}
-            </Link>
-          ))}
+          {navItems.map((item) => {
+            const isActive = pathname === item.href;
+
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                aria-current={isActive ? "page" : undefined}
+                className={cn(
+                  "nav-link relative flex h-18 items-center text-[0.74rem] font-bold uppercase tracking-[0.16em] text-yuzu-cream/76 transition hover:text-yuzu-gold lg:h-20",
+                  isActive && "text-yuzu-gold"
+                )}
+              >
+                {item.label}
+                {isActive && (
+                  <motion.span
+                    layoutId="site-header-active-nav"
+                    className="absolute bottom-0 left-0 h-px w-full bg-yuzu-gold shadow-[0_0_18px_rgba(220,169,58,0.72)]"
+                    transition={{ type: "spring", stiffness: 380, damping: 34 }}
+                  />
+                )}
+              </Link>
+            );
+          })}
         </nav>
         <div className="ml-auto flex items-center gap-2 lg:ml-6">
           <Button variant="ghost" size="icon-lg" aria-label="Search catalog" render={<Link href="/shop#catalog" />}>
@@ -99,9 +128,15 @@ export function SiteHeader() {
           )}
           <Link href="/cart" className="relative grid size-10 place-items-center text-yuzu-cream" aria-label={`Cart with ${itemCount} items`}>
             <ShoppingCart />
-            <span className="absolute right-0 top-1 grid size-5 place-items-center rounded-full bg-yuzu-gold text-[0.62rem] font-black text-yuzu-ink">
+            <motion.span
+              key={itemCount}
+              initial={false}
+              animate={{ scale: 1 }}
+              transition={{ type: "spring", stiffness: 520, damping: 24 }}
+              className="absolute right-0 top-1 grid size-5 place-items-center rounded-full bg-yuzu-gold text-[0.62rem] font-black text-yuzu-ink"
+            >
               <span aria-live="polite">{itemCount}</span>
-            </span>
+            </motion.span>
           </Link>
           <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
             <SheetTrigger
@@ -186,6 +221,6 @@ export function SiteHeader() {
           </div>
         </SheetContent>
       </Sheet>
-    </header>
+    </motion.header>
   );
 }

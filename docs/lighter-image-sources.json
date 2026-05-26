@@ -1000,6 +1000,26 @@
     "clustersDetected": 1
   },
   {
+    "sku": "85318",
+    "title": "SCORCH TORCH CLIK SINGLE FLAME CIGAR PUNCH DISPLAY 1 FLAME",
+    "source": "SWWest source product photo normalized to studio background",
+    "sourcePageUrl": "https://swwest.com/ItemDetail.aspx?ItemNo=85318",
+    "sourceImageUrl": "https://swwest.com/Images/SunsetItems/85318/0.jpg",
+    "sourceSearchQuery": "85318 SCORCH TORCH CLIK SINGLE FLAME CIGAR PUNCH DISPLAY 1 FLAME lighter only",
+    "asset": "/assets/inventory/lighters/85318-single-lighter.jpg",
+    "width": 900,
+    "height": 900,
+    "originalWidth": 838,
+    "originalHeight": 1044,
+    "crop": {
+      "left": 270,
+      "top": 495,
+      "width": 180,
+      "height": 325
+    },
+    "clustersDetected": 1
+  },
+  {
     "sku": "85319",
     "title": "SCORCH TORCH CIGAR & CIGARETTE SINGLE FLAM DISPLAY 1 FLAME",
     "source": "single-product crop from real product photo",
@@ -1482,7 +1502,7 @@
   {
     "sku": "76078",
     "title": "SCORCH TORCH TRIPLE TORCH W/CIGAR PUNCH 74581 3 FLAME",
-    "source": "real product photo normalized",
+    "source": "real product photo normalized to studio background",
     "sourcePageUrl": "https://www.etsy.com/listing/1866916339/scorch-torch-triple-flame-cigar-punch",
     "sourceImageUrl": "https://i.etsystatic.com/27920021/r/il/cb47b1/6645827022/il_1080xN.6645827022_4nyq.jpg",
     "sourceSearchQuery": "76078 SCORCH TORCH TRIPLE TORCH W/CIGAR PUNCH 74581 3 FLAME lighter only",
@@ -1493,9 +1513,9 @@
     "originalHeight": 771,
     "crop": {
       "left": 0,
-      "top": 0,
+      "top": 260,
       "width": 1080,
-      "height": 771
+      "height": 500
     },
     "clustersDetected": 1
   },
@@ -1798,6 +1818,26 @@
       "height": 500
     },
     "clustersDetected": 1
+  },
+  {
+    "sku": "81274",
+    "title": "SPECIAL BLUE CIGAR LIGHTER TORCH 2 FLAME",
+    "source": "high-resolution retailer product photo normalized to studio background",
+    "sourcePageUrl": "https://rrrwholesale.com/products/special-blue-catalyst-cigar-torch-9-pcs-pack",
+    "sourceImageUrl": "https://rrrwholesale.com/cdn/shop/files/SpecialBlueCatalystCigarTorch9pcsPack.png?v=1732684826&width=1000",
+    "sourceSearchQuery": "81274 SPECIAL BLUE CIGAR LIGHTER TORCH 2 FLAME lighter only",
+    "asset": "/assets/inventory/lighters/81274-single-lighter.jpg",
+    "width": 900,
+    "height": 900,
+    "originalWidth": 1000,
+    "originalHeight": 1000,
+    "crop": {
+      "left": 0,
+      "top": 0,
+      "width": 1000,
+      "height": 1000
+    },
+    "clustersDetected": 3
   },
   {
     "sku": "85997",

@@ -7,6 +7,9 @@ import {
   calculateCartTotals,
   checkoutPaymentMethods,
   createEmptyShoppingCart,
+  defaultDeliveryCarrier,
+  defaultDeliveryMethods,
+  adultSignatureRequiredStates,
   removeCartItem,
   updateCartItemQuantity,
 } from "../src/lib/shopping-cart";
@@ -84,4 +87,16 @@ test("checkout exposes only payment methods backed by Stripe Checkout", () => {
     ["stripe-checkout"]
   );
   assert.ok(checkoutPaymentMethods.every((method) => method.stripeMode === "checkout"));
+});
+
+test("default delivery methods use USPS adult-signature service", () => {
+  assert.equal(defaultDeliveryCarrier, "USPS");
+  assert.deepEqual(
+    defaultDeliveryMethods.map((method) => [method.id, method.carrier, method.adultSignatureRequired]),
+    [
+      ["usps-adult-signature-ground", "USPS", true],
+      ["usps-adult-signature-priority", "USPS", true],
+    ],
+  );
+  assert.deepEqual([...adultSignatureRequiredStates], ["AR", "CA", "DE", "FL", "GA", "MA", "MN", "ND", "RI", "SC", "WY"]);
 });

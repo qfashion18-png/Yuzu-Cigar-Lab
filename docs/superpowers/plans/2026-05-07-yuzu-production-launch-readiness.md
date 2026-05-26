@@ -21,7 +21,7 @@ Use these current official sources before implementing payment, tobacco, shippin
 - Stripe Tax: https://docs.stripe.com/tax
 - Stripe go-live checklist: https://docs.stripe.com/get-started/checklist/go-live
 - FDA Tobacco 21: https://www.fda.gov/tobacco-products/retail-sales-tobacco-products/tobacco-21
-- UPS tobacco shipping policy: https://www.ups.com/us/en/support/shipping-support/shipping-special-care-regulated-items/prohibited-items/tobacco
+- USPS Adult Signature service: https://faq.usps.com/articles/Knowledge/Adult-Signature-Required-and-Adult-Signature-Restricted-Delivery-Services
 
 ## Current Audit Baseline
 

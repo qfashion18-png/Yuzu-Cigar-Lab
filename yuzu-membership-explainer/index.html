@@ -1,0 +1,934 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1080, height=1920" />
+    <title>Yuzu Cigar Club Membership Explainer</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 1080px;
+        height: 1920px;
+        overflow: hidden;
+        background: #030504;
+      }
+
+      body {
+        color: #f8edd7;
+        font-family: Arial, ui-sans-serif, system-ui;
+      }
+
+      #root {
+        position: relative;
+        width: 1080px;
+        height: 1920px;
+        overflow: hidden;
+        background: #030504;
+      }
+
+      .clip {
+        position: absolute;
+      }
+
+      .scene {
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #030504;
+      }
+
+      .scene::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        z-index: 2;
+        pointer-events: none;
+        background:
+          radial-gradient(circle at 25% 12%, rgba(243, 200, 108, 0.14), rgba(243, 200, 108, 0) 28%),
+          radial-gradient(circle at 76% 86%, rgba(95, 181, 106, 0.08), rgba(95, 181, 106, 0) 34%),
+          linear-gradient(180deg, rgba(3, 5, 4, 0.2), rgba(3, 5, 4, 0.72));
+      }
+
+      .bg-img,
+      .bg-screen {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .bg-screen {
+        opacity: 0.18;
+        filter: saturate(0.8) contrast(1.08);
+      }
+
+      .scrim {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        background:
+          linear-gradient(180deg, rgba(3, 5, 4, 0.28), rgba(3, 5, 4, 0.78)),
+          linear-gradient(90deg, rgba(3, 5, 4, 0.76), rgba(7, 17, 13, 0.44));
+      }
+
+      .scene-content {
+        position: relative;
+        z-index: 4;
+        width: 100%;
+        height: 100%;
+        padding: 84px 72px 92px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        gap: 34px;
+      }
+
+      .brand-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 24px;
+      }
+
+      .logo {
+        width: 92px;
+        height: auto;
+        object-fit: contain;
+      }
+
+      .brand-lockup {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+      }
+
+      .brand-text {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        color: #f8edd7;
+        font-size: 34px;
+        font-weight: 900;
+        line-height: 0.95;
+      }
+
+      .brand-text span {
+        color: #dca93a;
+        font-size: 18px;
+        font-weight: 900;
+        text-transform: uppercase;
+      }
+
+      .age-pill,
+      .proof-pill,
+      .small-pill {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 48px;
+        border: 1px solid rgba(220, 169, 58, 0.36);
+        background: rgba(7, 17, 13, 0.76);
+        color: #f3c86c;
+        border-radius: 6px;
+        padding: 12px 16px;
+        font-size: 20px;
+        font-weight: 800;
+      }
+
+      .kicker {
+        color: #dca93a;
+        font-size: 24px;
+        font-weight: 900;
+        text-transform: uppercase;
+      }
+
+      .title {
+        max-width: 900px;
+        color: #f8edd7;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 86px;
+        line-height: 0.96;
+        font-weight: 400;
+      }
+
+      .title.compact {
+        font-size: 72px;
+        line-height: 1;
+      }
+
+      .copy {
+        max-width: 840px;
+        color: #dfd2b9;
+        font-size: 30px;
+        line-height: 1.28;
+        font-weight: 350;
+      }
+
+      .gold-rule {
+        width: 100%;
+        height: 2px;
+        transform-origin: left center;
+        background: #dca93a;
+      }
+
+      .proof-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+      }
+
+      .proof-pill {
+        justify-content: flex-start;
+        gap: 12px;
+        min-height: 72px;
+        color: #f8edd7;
+        font-size: 24px;
+        font-weight: 800;
+      }
+
+      .icon {
+        width: 30px;
+        height: 30px;
+        flex: 0 0 auto;
+        filter: invert(77%) sepia(57%) saturate(524%) hue-rotate(356deg) brightness(94%) contrast(92%);
+      }
+
+      .stat-row {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .stat,
+      .tier-card,
+      .feature-card,
+      .decision-card {
+        border: 1px solid rgba(220, 169, 58, 0.34);
+        border-radius: 7px;
+        background: rgba(16, 24, 18, 0.86);
+        backdrop-filter: blur(10px);
+      }
+
+      .stat {
+        min-height: 116px;
+        padding: 18px;
+      }
+
+      .stat-value {
+        color: #f3c86c;
+        font-size: 46px;
+        font-weight: 900;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .stat-label {
+        margin-top: 6px;
+        color: #b8aa8f;
+        font-size: 18px;
+        line-height: 1.2;
+        font-weight: 800;
+        text-transform: uppercase;
+      }
+
+      .photo-card {
+        position: absolute;
+        z-index: 3;
+        overflow: hidden;
+        border: 1px solid rgba(220, 169, 58, 0.38);
+        border-radius: 8px;
+        background: #101812;
+        box-shadow: 0 28px 64px rgba(0, 0, 0, 0.36);
+      }
+
+      .photo-card img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .product-fan {
+        position: absolute;
+        z-index: 3;
+        inset: auto 54px 160px 54px;
+        height: 510px;
+      }
+
+      .product-card {
+        position: absolute;
+        bottom: 0;
+        width: 250px;
+        min-height: 420px;
+        padding: 18px;
+        border: 1px solid rgba(220, 169, 58, 0.34);
+        border-radius: 8px;
+        background: rgba(16, 24, 18, 0.92);
+        box-shadow: 0 24px 52px rgba(0, 0, 0, 0.38);
+      }
+
+      .product-card:nth-child(1) {
+        left: 0;
+        transform: rotate(-7deg);
+      }
+
+      .product-card:nth-child(2) {
+        left: 178px;
+        bottom: 42px;
+        transform: rotate(-2deg);
+      }
+
+      .product-card:nth-child(3) {
+        left: 356px;
+        bottom: 12px;
+        transform: rotate(4deg);
+      }
+
+      .product-card:nth-child(4) {
+        left: 534px;
+        bottom: 54px;
+        transform: rotate(8deg);
+      }
+
+      .product-card img {
+        width: 100%;
+        height: 170px;
+        object-fit: contain;
+        border-radius: 5px;
+        background: rgba(3, 5, 4, 0.58);
+      }
+
+      .product-name {
+        margin-top: 18px;
+        color: #f8edd7;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 28px;
+        line-height: 1.05;
+      }
+
+      .product-meta {
+        margin-top: 10px;
+        color: #b8aa8f;
+        font-size: 18px;
+        font-weight: 700;
+      }
+
+      .value-tags {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+        margin-top: 26px;
+      }
+
+      .value-tag {
+        display: flex;
+        min-height: 104px;
+        align-items: center;
+        gap: 14px;
+        padding: 18px;
+        border: 1px solid rgba(220, 169, 58, 0.3);
+        border-radius: 7px;
+        background: rgba(7, 17, 13, 0.82);
+        color: #f8edd7;
+        font-size: 24px;
+        font-weight: 850;
+        line-height: 1.1;
+      }
+
+      .tier-stack {
+        display: grid;
+        gap: 14px;
+      }
+
+      .tier-card {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        align-items: center;
+        min-height: 142px;
+        padding: 22px 24px;
+      }
+
+      .tier-name {
+        color: #f8edd7;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 44px;
+        line-height: 1;
+      }
+
+      .tier-desc {
+        margin-top: 8px;
+        color: #b8aa8f;
+        font-size: 22px;
+        line-height: 1.18;
+      }
+
+      .tier-price {
+        color: #f3c86c;
+        font-size: 34px;
+        font-weight: 900;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .tier-card.featured {
+        border-color: rgba(243, 200, 108, 0.76);
+        background: rgba(26, 36, 24, 0.92);
+      }
+
+      .screen-stack {
+        position: absolute;
+        z-index: 3;
+        inset: 250px 42px auto 42px;
+        height: 860px;
+        perspective: 1300px;
+      }
+
+      .screen-panel {
+        position: absolute;
+        overflow: hidden;
+        border: 1px solid rgba(220, 169, 58, 0.44);
+        border-radius: 10px;
+        background: #07110d;
+        box-shadow: 0 26px 72px rgba(0, 0, 0, 0.42);
+      }
+
+      .screen-panel img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .screen-main {
+        left: 205px;
+        top: 12px;
+        width: 570px;
+        height: 820px;
+      }
+
+      .screen-side-a {
+        left: 18px;
+        top: 120px;
+        width: 390px;
+        height: 600px;
+        opacity: 0.82;
+      }
+
+      .screen-side-b {
+        right: 18px;
+        top: 165px;
+        width: 375px;
+        height: 565px;
+        opacity: 0.78;
+      }
+
+      .humidor-loop {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .loop-step {
+        min-height: 92px;
+        padding: 14px 8px;
+        border: 1px solid rgba(220, 169, 58, 0.34);
+        border-radius: 7px;
+        background: rgba(7, 17, 13, 0.84);
+        text-align: center;
+        color: #f8edd7;
+        font-size: 20px;
+        font-weight: 850;
+      }
+
+      .climate-pair {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+      }
+
+      .decision-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 18px;
+      }
+
+      .decision-card {
+        min-height: 176px;
+        padding: 26px;
+        display: grid;
+        grid-template-columns: auto 1fr;
+        align-items: center;
+        gap: 22px;
+      }
+
+      .decision-badge {
+        width: 82px;
+        height: 82px;
+        display: grid;
+        place-items: center;
+        border-radius: 50%;
+        border: 1px solid rgba(220, 169, 58, 0.5);
+        color: #f3c86c;
+        font-size: 30px;
+        font-weight: 900;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .decision-title {
+        color: #f8edd7;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 44px;
+        line-height: 1;
+      }
+
+      .decision-copy {
+        margin-top: 8px;
+        color: #b8aa8f;
+        font-size: 22px;
+        line-height: 1.22;
+      }
+
+      .feature-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+      }
+
+      .feature-card {
+        min-height: 146px;
+        padding: 22px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        gap: 16px;
+      }
+
+      .feature-title {
+        color: #f8edd7;
+        font-size: 26px;
+        font-weight: 900;
+        line-height: 1.08;
+      }
+
+      .feature-note {
+        color: #b8aa8f;
+        font-size: 18px;
+        line-height: 1.22;
+      }
+
+      .cta-row {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .small-pill {
+        min-height: 64px;
+        color: #07110d;
+        background: #dca93a;
+        border-color: #f3c86c;
+        font-size: 22px;
+      }
+
+      .closing-logo {
+        width: 178px;
+        height: auto;
+        margin: 0 auto;
+      }
+
+      .closing-brand {
+        color: #f8edd7;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 74px;
+        line-height: 0.96;
+      }
+
+      .closing-panel {
+        display: flex;
+        min-height: 100%;
+        flex-direction: column;
+        justify-content: center;
+        gap: 36px;
+        text-align: center;
+      }
+
+      .close-collage {
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+        opacity: 0.18;
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 16px;
+        padding: 40px;
+        filter: saturate(0.86);
+      }
+
+      .close-collage img {
+        width: 100%;
+        height: 100%;
+        min-height: 0;
+        object-fit: cover;
+        border: 1px solid rgba(220, 169, 58, 0.2);
+        border-radius: 8px;
+      }
+
+      .wash {
+        inset: 0;
+        z-index: 12;
+        pointer-events: none;
+        opacity: 0;
+        background:
+          radial-gradient(circle at 26% 40%, rgba(243, 200, 108, 0.48), rgba(243, 200, 108, 0) 34%),
+          linear-gradient(90deg, rgba(3, 5, 4, 0), rgba(248, 237, 215, 0.16), rgba(3, 5, 4, 0));
+        filter: blur(18px);
+      }
+
+      .grain {
+        position: absolute;
+        inset: 0;
+        z-index: 14;
+        pointer-events: none;
+        opacity: 0.12;
+        background-image:
+          linear-gradient(0deg, rgba(248, 237, 215, 0.08) 1px, rgba(248, 237, 215, 0) 1px),
+          linear-gradient(90deg, rgba(248, 237, 215, 0.04) 1px, rgba(248, 237, 215, 0) 1px);
+        background-size: 22px 22px;
+        mix-blend-mode: screen;
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="61"
+      data-width="1080"
+      data-height="1920"
+    >
+      <audio
+        id="narration"
+        class="clip"
+        data-start="0"
+        data-duration="61"
+        data-track-index="40"
+        src="assets/narration.wav"
+        data-volume="1"
+      ></audio>
+
+      <div id="scene-1" class="clip scene" data-start="0" data-duration="7.05" data-track-index="1">
+        <img class="bg-img s1-bg" src="assets/site/hero-boxes.png" alt="" data-layout-ignore />
+        <div class="scrim"></div>
+        <div class="scene-content">
+          <div class="brand-row">
+            <div class="brand-lockup s1-logo">
+              <img class="logo" src="assets/site/yuzu-logo.png" alt="Yuzu Cigar Club" />
+              <div class="brand-text">Yuzu<span>Cigar Club</span></div>
+            </div>
+            <div class="age-pill s1-age">21+ adult members</div>
+          </div>
+          <div>
+            <div class="kicker s1-kicker">Private cellar, mobile first</div>
+            <h1 class="title s1-title">Premium cigars with less guesswork.</h1>
+            <p class="copy s1-copy">Buy, track, age, and reorder with the club tools built around your collection.</p>
+          </div>
+          <div>
+            <div class="gold-rule s1-rule"></div>
+            <div class="proof-grid" style="margin-top: 20px">
+              <div class="proof-pill s1-pill"><img class="icon" src="assets/svgs/lucide-package.svg" alt="" />Curated boxes</div>
+              <div class="proof-pill s1-pill"><img class="icon" src="assets/svgs/lucide-lock-keyhole.svg" alt="" />Member access</div>
+              <div class="proof-pill s1-pill"><img class="icon" src="assets/svgs/lucide-droplets.svg" alt="" />Digital humidor</div>
+              <div class="proof-pill s1-pill"><img class="icon" src="assets/svgs/lucide-heart.svg" alt="" />Concierge help</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="scene-2" class="clip scene" data-start="6.65" data-duration="8.9" data-track-index="2">
+        <img class="bg-img s2-bg" src="assets/site/membership-boxes.png" alt="" data-layout-ignore />
+        <div class="scrim"></div>
+        <div class="product-fan" data-layout-ignore>
+          <div class="product-card s2-product"><img src="assets/site/product-padron.png" alt="" /><div class="product-name">Padron</div><div class="product-meta">Box-ready classic</div></div>
+          <div class="product-card s2-product"><img src="assets/site/product-davidoff.png" alt="" /><div class="product-name">Davidoff</div><div class="product-meta">Curated selection</div></div>
+          <div class="product-card s2-product"><img src="assets/site/product-liga.png" alt="" /><div class="product-name">Liga Privada</div><div class="product-meta">Member drop watch</div></div>
+          <div class="product-card s2-product"><img src="assets/site/product-plasencia.png" alt="" /><div class="product-name">Plasencia</div><div class="product-meta">Cellar candidate</div></div>
+        </div>
+        <div class="scene-content">
+          <div class="brand-row">
+            <div class="kicker s2-kicker">Why sign up</div>
+            <div class="age-pill s2-age">Member layer</div>
+          </div>
+          <div>
+            <h2 class="title compact s2-title">Membership unlocks more than a cart.</h2>
+            <p class="copy s2-copy">It gives the buying experience a club layer: access, pricing context, drops, events, and guidance.</p>
+            <div class="value-tags">
+              <div class="value-tag s2-tag"><img class="icon" src="assets/svgs/lucide-tag.svg" alt="" />Member-cost cigar boxes</div>
+              <div class="value-tag s2-tag"><img class="icon" src="assets/svgs/lucide-calendar-days.svg" alt="" />Private drops and events</div>
+              <div class="value-tag s2-tag"><img class="icon" src="assets/svgs/lucide-package.svg" alt="" />Curated monthly cigars</div>
+              <div class="value-tag s2-tag"><img class="icon" src="assets/svgs/lucide-heart.svg" alt="" />Concierge guidance</div>
+            </div>
+          </div>
+          <div class="stat-row">
+            <div class="stat s2-stat"><div class="stat-value">Boxes</div><div class="stat-label">Buy full boxes with member context</div></div>
+            <div class="stat s2-stat"><div class="stat-value">Drops</div><div class="stat-label">Watch allocations and releases</div></div>
+            <div class="stat s2-stat"><div class="stat-value">Events</div><div class="stat-label">Member-only access as available</div></div>
+          </div>
+        </div>
+      </div>
+
+      <div id="scene-3" class="clip scene" data-start="15.1" data-duration="11.95" data-track-index="3">
+        <img class="bg-screen s3-bg" src="assets/site/membership.png" alt="" data-layout-ignore />
+        <div class="scrim"></div>
+        <div class="scene-content">
+          <div class="brand-row">
+            <div class="kicker s3-kicker">What members get</div>
+            <div class="age-pill s3-age">Pick your cellar level</div>
+          </div>
+          <div>
+            <h2 class="title compact s3-title">Four ways to join the club.</h2>
+            <p class="copy s3-copy">Start with box access and humidor tools, then move into monthly cigars, stronger allocations, events, and concierge support.</p>
+          </div>
+          <div class="tier-stack">
+            <div class="tier-card s3-tier">
+              <div><div class="tier-name">Box Access Pass</div><div class="tier-desc">Member-cost box pricing, private catalog access, digital humidor.</div></div>
+              <div class="tier-price">$10/mo</div>
+            </div>
+            <div class="tier-card s3-tier">
+              <div><div class="tier-name">Kisha</div><div class="tier-desc">Four curated cigars, early releases, welcome kit, humidor access.</div></div>
+              <div class="tier-price">$49/mo</div>
+            </div>
+            <div class="tier-card featured s3-tier">
+              <div><div class="tier-name">Sensei</div><div class="tier-desc">Eight curated cigars, priority drops, concierge recommendations.</div></div>
+              <div class="tier-price">$99/mo</div>
+            </div>
+            <div class="tier-card s3-tier">
+              <div><div class="tier-name">Daimyo</div><div class="tier-desc">Twelve curated cigars, VIP concierge, private events, top allocations.</div></div>
+              <div class="tier-price">$199/mo</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="scene-4" class="clip scene" data-start="26.6" data-duration="13.45" data-track-index="4">
+        <img class="bg-screen s4-bg" src="assets/site/humidor.png" alt="" data-layout-ignore />
+        <div class="scrim"></div>
+        <div class="screen-stack" data-layout-ignore>
+          <div class="screen-panel screen-side-a s4-screen"><img src="assets/site/humidor.png" alt="" /></div>
+          <div class="screen-panel screen-main s4-screen"><img src="assets/site/mobile-layout.png" alt="" /></div>
+          <div class="screen-panel screen-side-b s4-screen"><img src="assets/site/journal.png" alt="" /></div>
+        </div>
+        <div class="scene-content">
+          <div class="brand-row">
+            <div class="kicker s4-kicker">Digital humidor</div>
+            <div class="age-pill s4-age">Collection dashboard</div>
+          </div>
+          <div style="margin-top: auto">
+            <h2 class="title compact s4-title">Add, track, age, note, reorder.</h2>
+            <p class="copy s4-copy">Your humidor keeps quantity, location, climate, tasting history, and next actions in view.</p>
+          </div>
+          <div>
+            <div class="climate-pair">
+              <div class="stat s4-stat"><div class="stat-value"><span id="humidityValue">0</span>%</div><div class="stat-label">Target humidity shown in Yuzu</div></div>
+              <div class="stat s4-stat"><div class="stat-value"><span id="tempValue">0</span> F</div><div class="stat-label">Default temperature reading</div></div>
+            </div>
+            <div class="humidor-loop" style="margin-top: 16px">
+              <div class="loop-step s4-step">Photo</div>
+              <div class="loop-step s4-step">QR</div>
+              <div class="loop-step s4-step">Label</div>
+              <div class="loop-step s4-step">Manual</div>
+              <div class="loop-step s4-step">Reorder</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="scene-5" class="clip scene" data-start="39.6" data-duration="7.45" data-track-index="5">
+        <img class="bg-img s5-bg" src="assets/site/shop-hero.png" alt="" data-layout-ignore />
+        <div class="scrim"></div>
+        <div class="photo-card s5-photo" style="right: 66px; top: 148px; width: 420px; height: 420px" data-layout-ignore>
+          <img src="assets/site/product-fuente.png" alt="" />
+        </div>
+        <div class="scene-content">
+          <div class="brand-row">
+            <div class="kicker s5-kicker">Smoke smarter</div>
+            <div class="age-pill s5-age">Ready signals</div>
+          </div>
+          <div>
+            <h2 class="title compact s5-title">Know the next move.</h2>
+            <p class="copy s5-copy">Use the humidor to decide what to smoke, what to rest, and what to replace before it runs low.</p>
+          </div>
+          <div class="decision-grid">
+            <div class="decision-card s5-card"><div class="decision-badge">01</div><div><div class="decision-title">Ready to smoke</div><div class="decision-copy">Aging window and climate look steady.</div></div></div>
+            <div class="decision-card s5-card"><div class="decision-badge">02</div><div><div class="decision-title">Keep resting</div><div class="decision-copy">Give the box more time before the first draw.</div></div></div>
+            <div class="decision-card s5-card"><div class="decision-badge">03</div><div><div class="decision-title">Reorder soon</div><div class="decision-copy">Low quantity becomes a member action, not a surprise.</div></div></div>
+          </div>
+        </div>
+      </div>
+
+      <div id="scene-6" class="clip scene" data-start="46.6" data-duration="9.45" data-track-index="6">
+        <img class="bg-screen s6-bg" src="assets/site/checkout.png" alt="" data-layout-ignore />
+        <div class="scrim"></div>
+        <div class="scene-content">
+          <div class="brand-row">
+            <div class="kicker s6-kicker">Other features</div>
+            <div class="age-pill s6-age">Trust layer</div>
+          </div>
+          <div>
+            <h2 class="title compact s6-title">The club runs beyond checkout.</h2>
+            <p class="copy s6-copy">Yuzu keeps compliance, account tools, support, and member-only releases in the same member experience.</p>
+          </div>
+          <div class="feature-grid">
+            <div class="feature-card s6-feature"><img class="icon" src="assets/svgs/lucide-shield-check.svg" alt="" /><div><div class="feature-title">Age verification</div><div class="feature-note">Adults only, where permitted.</div></div></div>
+            <div class="feature-card s6-feature"><img class="icon" src="assets/svgs/lucide-map-pin.svg" alt="" /><div><div class="feature-title">Destination rules</div><div class="feature-note">Shipping eligibility is checked.</div></div></div>
+            <div class="feature-card s6-feature"><img class="icon" src="assets/svgs/lucide-truck.svg" alt="" /><div><div class="feature-title">Adult signature</div><div class="feature-note">Delivery rules stay visible.</div></div></div>
+            <div class="feature-card s6-feature"><img class="icon" src="assets/svgs/lucide-package.svg" alt="" /><div><div class="feature-title">Orders and billing</div><div class="feature-note">Account tools stay close.</div></div></div>
+            <div class="feature-card s6-feature"><img class="icon" src="assets/svgs/lucide-heart.svg" alt="" /><div><div class="feature-title">Support</div><div class="feature-note">Concierge handoff when needed.</div></div></div>
+            <div class="feature-card s6-feature"><img class="icon" src="assets/svgs/lucide-calendar-days.svg" alt="" /><div><div class="feature-title">Member releases</div><div class="feature-note">Drops and events for the club.</div></div></div>
+          </div>
+        </div>
+      </div>
+
+      <div id="scene-7" class="clip scene" data-start="55.6" data-duration="5.4" data-track-index="7">
+        <div class="close-collage" data-layout-ignore>
+          <img src="assets/site/frontpage.png" alt="" />
+          <img src="assets/site/membership-boxes.png" alt="" />
+          <img src="assets/site/humidor.png" alt="" />
+          <img src="assets/site/checkout.png" alt="" />
+        </div>
+        <div class="scrim"></div>
+        <div class="scene-content closing-panel">
+          <img class="closing-logo s7-logo" src="assets/site/yuzu-logo.png" alt="Yuzu Cigar Club" />
+          <div class="closing-brand s7-brand">Yuzu Cigar Club</div>
+          <div>
+            <div class="kicker s7-kicker">Join Yuzu Cigar Club</div>
+            <h2 class="title s7-title" style="margin: 18px auto 0">Build a box-worthy cellar.</h2>
+            <p class="copy s7-copy" style="margin: 22px auto 0">Membership, humidor tools, member drops, and support in one club experience.</p>
+          </div>
+          <div class="cta-row">
+            <div class="small-pill s7-cta">Join Now</div>
+            <div class="small-pill s7-cta">Shop Boxes</div>
+            <div class="small-pill s7-cta">Explore Humidor</div>
+          </div>
+        </div>
+      </div>
+
+      <div id="wash-1" class="clip wash" data-start="6.35" data-duration="0.85" data-track-index="20"></div>
+      <div id="wash-2" class="clip wash" data-start="14.8" data-duration="0.85" data-track-index="20"></div>
+      <div id="wash-3" class="clip wash" data-start="26.3" data-duration="0.9" data-track-index="20"></div>
+      <div id="wash-4" class="clip wash" data-start="39.3" data-duration="0.8" data-track-index="20"></div>
+      <div id="wash-5" class="clip wash" data-start="46.3" data-duration="0.8" data-track-index="20"></div>
+      <div id="wash-6" class="clip wash" data-start="55.3" data-duration="0.85" data-track-index="20"></div>
+      <div class="grain" data-layout-ignore></div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+      function enter(scene, time) {
+        tl.from(`${scene}`, { opacity: 0, filter: "blur(22px)", scale: 1.015, duration: 0.55, ease: "sine.out" }, time);
+      }
+
+      function wash(id, time) {
+        tl.fromTo(id, { opacity: 0, x: -130 }, { opacity: 1, x: 30, duration: 0.3, ease: "power2.out" }, time);
+        tl.to(id, { opacity: 0, x: 130, duration: 0.48, ease: "sine.inOut" }, time + 0.28);
+      }
+
+      function countTo(selector, end, at, duration) {
+        const target = document.querySelector(selector);
+        const state = { value: 0 };
+        tl.to(state, {
+          value: end,
+          duration,
+          ease: "power2.out",
+          snap: { value: 1 },
+          onUpdate: () => {
+            target.textContent = String(state.value);
+          },
+        }, at);
+      }
+
+      enter("#scene-1", 0.12);
+      tl.from(".s1-bg", { scale: 1.08, opacity: 0.65, duration: 6.8, ease: "sine.out" }, 0.12);
+      tl.from(".s1-logo", { y: 30, opacity: 0, duration: 0.55, ease: "power3.out" }, 0.35);
+      tl.from(".s1-age", { scale: 0.86, opacity: 0, duration: 0.45, ease: "back.out(1.8)" }, 0.52);
+      tl.from(".s1-kicker", { x: -48, opacity: 0, duration: 0.48, ease: "expo.out" }, 0.8);
+      tl.from(".s1-title", { y: 58, opacity: 0, duration: 0.72, ease: "power4.out" }, 1.02);
+      tl.from(".s1-copy", { y: 34, opacity: 0, duration: 0.56, ease: "power2.out" }, 1.45);
+      tl.from(".s1-rule", { scaleX: 0, opacity: 0, duration: 0.52, ease: "power1.out" }, 2.1);
+      tl.from(".s1-pill", { y: 26, opacity: 0, scale: 0.96, duration: 0.42, stagger: 0.09, ease: "back.out(1.35)" }, 2.34);
+
+      enter("#scene-2", 6.65);
+      tl.from(".s2-bg", { scale: 1.06, x: 42, opacity: 0.64, duration: 8.6, ease: "sine.out" }, 6.65);
+      tl.from(".s2-kicker", { x: -46, opacity: 0, duration: 0.45, ease: "expo.out" }, 6.9);
+      tl.from(".s2-age", { y: -24, opacity: 0, duration: 0.42, ease: "power2.out" }, 7.05);
+      tl.from(".s2-title", { y: 52, opacity: 0, duration: 0.64, ease: "power4.out" }, 7.22);
+      tl.from(".s2-copy", { y: 30, opacity: 0, duration: 0.5, ease: "sine.out" }, 7.62);
+      tl.from(".s2-tag", { y: 34, opacity: 0, rotation: -1.6, duration: 0.48, stagger: 0.08, ease: "back.out(1.45)" }, 8.0);
+      tl.from(".s2-product", { y: 120, opacity: 0, scale: 0.9, duration: 0.56, stagger: 0.1, ease: "power3.out" }, 9.2);
+      tl.from(".s2-stat", { y: 28, opacity: 0, duration: 0.42, stagger: 0.08, ease: "power2.out" }, 12.0);
+
+      enter("#scene-3", 15.1);
+      tl.from(".s3-bg", { scale: 1.04, opacity: 0, duration: 0.78, ease: "sine.out" }, 15.18);
+      tl.from(".s3-kicker", { x: -44, opacity: 0, duration: 0.45, ease: "expo.out" }, 15.38);
+      tl.from(".s3-age", { scale: 0.86, opacity: 0, duration: 0.42, ease: "back.out(1.65)" }, 15.54);
+      tl.from(".s3-title", { y: 48, opacity: 0, duration: 0.62, ease: "power4.out" }, 15.78);
+      tl.from(".s3-copy", { y: 28, opacity: 0, duration: 0.48, ease: "sine.out" }, 16.2);
+      tl.from(".s3-tier", { x: -52, opacity: 0, scale: 0.98, duration: 0.5, stagger: 0.12, ease: "power3.out" }, 16.9);
+
+      enter("#scene-4", 26.6);
+      tl.from(".s4-bg", { scale: 1.04, opacity: 0, duration: 0.7, ease: "sine.out" }, 26.7);
+      tl.from(".s4-screen", { y: 74, opacity: 0, rotationY: -8, duration: 0.58, stagger: 0.11, ease: "power3.out" }, 27.0);
+      tl.from(".s4-kicker", { x: -42, opacity: 0, duration: 0.45, ease: "expo.out" }, 27.35);
+      tl.from(".s4-age", { y: -22, opacity: 0, duration: 0.42, ease: "power2.out" }, 27.52);
+      tl.from(".s4-title", { y: 50, opacity: 0, duration: 0.64, ease: "power4.out" }, 32.1);
+      tl.from(".s4-copy", { y: 28, opacity: 0, duration: 0.52, ease: "sine.out" }, 32.5);
+      tl.from(".s4-stat", { y: 34, opacity: 0, scale: 0.96, duration: 0.46, stagger: 0.12, ease: "back.out(1.5)" }, 33.0);
+      countTo("#humidityValue", 69, 33.18, 0.82);
+      countTo("#tempValue", 70, 33.32, 0.78);
+      tl.from(".s4-step", { y: 26, opacity: 0, duration: 0.36, stagger: 0.08, ease: "power2.out" }, 33.82);
+
+      enter("#scene-5", 39.6);
+      tl.from(".s5-bg", { scale: 1.08, opacity: 0.5, duration: 7.1, ease: "sine.out" }, 39.6);
+      tl.from(".s5-photo", { x: 60, y: -30, opacity: 0, scale: 0.88, duration: 0.55, ease: "power3.out" }, 39.92);
+      tl.from(".s5-kicker", { x: -42, opacity: 0, duration: 0.45, ease: "expo.out" }, 40.08);
+      tl.from(".s5-age", { y: -22, opacity: 0, duration: 0.42, ease: "power2.out" }, 40.25);
+      tl.from(".s5-title", { y: 46, opacity: 0, duration: 0.6, ease: "power4.out" }, 40.65);
+      tl.from(".s5-copy", { y: 26, opacity: 0, duration: 0.48, ease: "sine.out" }, 41.05);
+      tl.from(".s5-card", { x: -54, opacity: 0, scale: 0.98, duration: 0.48, stagger: 0.1, ease: "back.out(1.35)" }, 41.7);
+
+      enter("#scene-6", 46.6);
+      tl.from(".s6-bg", { scale: 1.04, opacity: 0, duration: 0.7, ease: "sine.out" }, 46.7);
+      tl.from(".s6-kicker", { x: -42, opacity: 0, duration: 0.45, ease: "expo.out" }, 46.92);
+      tl.from(".s6-age", { scale: 0.9, opacity: 0, duration: 0.42, ease: "back.out(1.5)" }, 47.08);
+      tl.from(".s6-title", { y: 50, opacity: 0, duration: 0.62, ease: "power4.out" }, 47.46);
+      tl.from(".s6-copy", { y: 28, opacity: 0, duration: 0.48, ease: "sine.out" }, 47.86);
+      tl.from(".s6-feature", { y: 34, opacity: 0, scale: 0.96, duration: 0.42, stagger: 0.07, ease: "power3.out" }, 48.65);
+
+      enter("#scene-7", 55.6);
+      tl.from(".close-collage", { opacity: 0, scale: 1.04, duration: 0.65, ease: "sine.out" }, 55.72);
+      tl.from(".s7-logo", { y: 34, opacity: 0, scale: 0.92, duration: 0.58, ease: "back.out(1.45)" }, 55.95);
+      tl.from(".s7-brand", { y: 28, opacity: 0, duration: 0.52, ease: "power3.out" }, 56.16);
+      tl.from(".s7-kicker", { y: 26, opacity: 0, duration: 0.4, ease: "expo.out" }, 56.48);
+      tl.from(".s7-title", { y: 46, opacity: 0, duration: 0.62, ease: "power4.out" }, 56.68);
+      tl.from(".s7-copy", { y: 28, opacity: 0, duration: 0.5, ease: "sine.out" }, 57.08);
+      tl.from(".s7-cta", { y: 22, opacity: 0, scale: 0.96, duration: 0.38, stagger: 0.08, ease: "back.out(1.5)" }, 57.48);
+      tl.to("#scene-7 .closing-panel, #scene-7 .close-collage", { opacity: 0, duration: 0.55, ease: "sine.inOut" }, 60.34);
+
+      wash("#wash-1", 6.35);
+      wash("#wash-2", 14.8);
+      wash("#wash-3", 26.3);
+      wash("#wash-4", 39.3);
+      wash("#wash-5", 46.3);
+      wash("#wash-6", 55.3);
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>

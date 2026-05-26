@@ -30,18 +30,22 @@ test("stored age confirmations hide the gate before hydration can flash it", () 
   const ageGateSource = readFileSync(new URL("../src/components/age-gate.tsx", import.meta.url), "utf8");
   const rootLayout = readFileSync(new URL("../src/app/layout.tsx", import.meta.url), "utf8");
   const dialog = markup.indexOf('role="dialog"');
+  const bootstrapScript = rootLayout.indexOf('id="yuzu-age-gate-bootstrap"');
+  const appChrome = rootLayout.indexOf("<BackupAuthProvider>");
 
   assert.ok(dialog >= 0, "age gate dialog should still render in static HTML for unconfirmed visitors");
   assert.doesNotMatch(markup, /<script/, "client age gate must not render a raw script tag");
   assert.doesNotMatch(ageGateSource, /<script/, "client age gate must not render a raw script tag");
-  assert.match(rootLayout, /from "next\/script"/, "root layout should use Next's Script component");
+  assert.doesNotMatch(rootLayout, /from "next\/script"/, "age gate bootstrap should run as a synchronous inline script");
   assert.match(rootLayout, /ageGateBootstrapScript/, "root layout should own the pre-hydration age gate bootstrap");
-  assert.match(rootLayout, /strategy="beforeInteractive"/, "age gate bootstrap must run before hydration");
+  assert.match(rootLayout, /<script\s+id="yuzu-age-gate-bootstrap"/, "age gate bootstrap should render as a parser-blocking script");
+  assert.ok(bootstrapScript >= 0 && appChrome > bootstrapScript, "age gate bootstrap should run before the app chrome can render");
   assert.match(rootLayout, /id="yuzu-age-gate-bootstrap"/, "age gate bootstrap should use a stable script id");
   assert.match(markup, /data-yuzu-age-gate="overlay"/);
   assert.match(ageGateBootstrapScript, /yuzu-age-gate-bootstrap-style/);
   assert.match(ageGateBootstrapScript, /\[data-yuzu-age-gate="overlay"\]/);
-  assert.doesNotMatch(ageGateBootstrapScript, /document\.documentElement\.setAttribute/);
+  assert.match(ageGateBootstrapScript, /document\.documentElement\.setAttribute/);
+  assert.match(ageGateBootstrapScript, /data-yuzu-age-confirmed/);
   assert.match(rootLayout, /<html[^>]+suppressHydrationWarning/);
 });
 

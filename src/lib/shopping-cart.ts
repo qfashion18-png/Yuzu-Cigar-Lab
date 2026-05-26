@@ -40,6 +40,8 @@ export type DeliveryMethod = {
   title: string;
   estimate: string;
   price: number;
+  carrier: "USPS";
+  adultSignatureRequired: boolean;
   medusaOptionId: string;
 };
 
@@ -51,20 +53,27 @@ export type PaymentMethod = {
   stripeMode?: "checkout" | "invoice";
 };
 
+export const defaultDeliveryCarrier = "USPS";
+export const adultSignatureRequiredStates = ["AR", "CA", "DE", "FL", "GA", "MA", "MN", "ND", "RI", "SC", "WY"] as const;
+
 export const defaultDeliveryMethods: DeliveryMethod[] = [
   {
-    id: "adult-signature-ground",
-    title: "Adult Signature Ground",
+    id: "usps-adult-signature-ground",
+    title: "USPS Adult Signature Ground",
     estimate: "3-5 business days",
     price: 18,
-    medusaOptionId: "so_adult_signature_ground",
+    carrier: defaultDeliveryCarrier,
+    adultSignatureRequired: true,
+    medusaOptionId: "so_usps_adult_signature_ground",
   },
   {
-    id: "adult-signature-express",
-    title: "Adult Signature Express",
-    estimate: "2 business days",
+    id: "usps-adult-signature-priority",
+    title: "USPS Adult Signature Priority",
+    estimate: "2-3 business days",
     price: 32,
-    medusaOptionId: "so_adult_signature_express",
+    carrier: defaultDeliveryCarrier,
+    adultSignatureRequired: true,
+    medusaOptionId: "so_usps_adult_signature_priority",
   },
 ];
 

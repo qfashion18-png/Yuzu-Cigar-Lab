@@ -62,6 +62,7 @@ const HUMIDOR_ROUTES = new Set([
   "POST /humidor/identify-cigar",
   "POST /humidor/alerts",
   "POST /humidor/items",
+  "PATCH /humidor/items/{id}/enrich",
 ]);
 const HUMIDOR_ALERT_DISPATCH_ROUTE = "POST /humidor/alerts/dispatch";
 const HUMIDOR_ALERT_DISPATCH_SECRET_HEADER = "x-humidor-alert-dispatch-secret";
@@ -69,9 +70,13 @@ const HUMIDOR_REORDER_REMINDER_DISPATCH_MARKER = "humidorReorderReminderDispatch
 const HUMIDOR_ALERT_DISPATCH_NOTIFICATION_TAG = "digital-humidor-alert";
 const HUMIDOR_DISPATCH_ACTOR_SUB = "system.humidor-dispatch";
 const ADMIN_ROUTES = new Set([
+  "GET /admin/commerce/orders",
+  "PATCH /admin/commerce/orders/{id}",
   "POST /admin/commerce/stripe-sync-products",
   "GET /admin/commerce/webhook-events",
   "GET /admin/commerce/compliance-holds",
+  "GET /admin/members",
+  "PATCH /admin/members/{id}/access",
   "POST /content/pages",
   "POST /news/story-drafts",
   "POST /news/stories",
@@ -80,6 +85,16 @@ const ADMIN_ROUTES = new Set([
 const COMMERCE_MIGRATION_CONFIRM = "APPLY_YCC_COMMERCE_SCHEMA";
 const SITE_CONTENT_MIGRATION_CONFIRM = "APPLY_YCC_SITE_CONTENT_SCHEMA";
 const NEWSROOM_MIGRATION_CONFIRM = "APPLY_YCC_NEWSROOM_SCHEMA";
+const MEMBER_STRIPE_CUSTOMER_LINK_MIGRATION_CONFIRM = "APPLY_YCC_MEMBER_STRIPE_CUSTOMER_LINK_SCHEMA";
+const ADMIN_ORDER_STATUSES = new Set(["pending", "open", "processing", "requires_review", "paid", "complete", "completed", "succeeded", "refunded", "refund_pending", "partially_refunded", "failed", "canceled", "cancelled"]);
+const ADMIN_FULFILLMENT_STATUSES = new Set(["not_started", "pending", "packed", "shipped", "delivered", "fulfilled", "blocked", "cancelled", "canceled"]);
+const ADMIN_COMPLIANCE_STATUSES = new Set(["pending", "verified", "review", "hold", "rejected", "cleared", "blocked"]);
+const ADMIN_MEMBER_ROLES = new Set(["customer", "operator", "admin"]);
+const ADMIN_MEMBER_STATUSES = new Set(["non_member", "active", "paused", "cancelled", "banned"]);
+const ADMIN_MEMBERSHIP_TIERS = new Set(["box_access_pass", "kisha", "sensei", "daimyo"]);
+const ADMIN_LIST_DEFAULT_LIMIT = 50;
+const ADMIN_LIST_MAX_LIMIT = 250;
+const ADMIN_AGENT_USER_REPLY_LIMIT = 50;
 const OFFICIAL_CIGAR_NEWS_DOMAINS = new Set([
   "arturofuente.com",
   "cigarworld.com",
@@ -142,10 +157,46 @@ const DEFAULT_HUMIDOR_ALERT_PREFERENCES = Object.freeze({
   reorderRemindersEnabled: true,
   climateAlertsEnabled: false,
   pushSubscription: null,
+  pairedDevices: [],
+  humidorProfile: {
+    humidorName: "",
+    defaultLocation: "",
+  },
 });
+const HUMIDOR_CLIMATE_ALERT_TARGET = Object.freeze({
+  minHumidity: 65,
+  maxHumidity: 72,
+  minTemperature: 64,
+  maxTemperature: 74,
+});
+const HUMIDOR_ENRICHMENT_FIELDS = new Set(["info", "image", "msrp"]);
 const CHECKOUT_AGE_TOKEN_VERSION = "yccav1";
 const CHECKOUT_AGE_TOKEN_TTL_SECONDS = 30 * 60;
+const AGECHECKER_DEFAULT_BASE_URL = "https://api.agechecker.net";
+const MEMBERSHIP_ENTITLEMENT_TOKEN_VERSION = "yccmem1";
+const MEMBERSHIP_ENTITLEMENT_TOKEN_TTL_SECONDS = 30 * 60;
+const CHECKOUT_STATUS_TOKEN_PREFIX = "chkst_";
 const DEFAULT_CORS_ALLOW_ORIGINS = ["https://yuzucigarclub.com", "https://www.yuzucigarclub.com"];
+const COMMERCE_SECRET_ENV_KEYS = [
+  "COMMERCE_PROVIDER_SECRET_ARN",
+  "COMMERCE_PROVIDER_SECRET_ID",
+  "YCC_COMMERCE_SECRET_ARN",
+  "YCC_COMMERCE_SECRET_ID",
+];
+const COMMERCE_SECRET_FLAT_KEY_PATTERNS = [
+  /^STRIPE_(SECRET_KEY|WEBHOOK_SECRET|API_VERSION|CUSTOMER_PORTAL_CONFIGURATION_ID|LAUNCH_CATALOG_READY|LAUNCH_CATALOG_JSON|LAUNCH_CATALOG_PATH|LAUNCH_CATALOG_S3_URI|TOBACCO_APPROVAL_CONFIRMED)$/,
+  /^STRIPE_PRICE_[A-Z0-9_]+$/,
+  /^AGE_VERIFICATION_(VENDOR|API_KEY|API_SECRET|ACCOUNT_SECRET|CLIENT_ID|CLIENT_SECRET|BASE_URL|WEBHOOK_SECRET|SIGNING_SECRET)$/,
+  /^MEMBERSHIP_ENTITLEMENT_SIGNING_SECRET$/,
+  /^FEATURE_STRIPE_TAX$/,
+  /^TAX_(PROVIDER|API_KEY|API_SECRET|CLIENT_ID|CLIENT_SECRET|ACCOUNT_ID|BASE_URL|WEBHOOK_SECRET)$/,
+  /^SHIPPING_(PROVIDER|API_KEY|API_SECRET|CLIENT_ID|CLIENT_SECRET|ACCOUNT_ID|ADULT_SIGNATURE_ACCOUNT_ID|BASE_URL)$/,
+  /^AVALARA_[A-Z0-9_]+$/,
+  /^TAXJAR_[A-Z0-9_]+$/,
+  /^UPS_[A-Z0-9_]+$/,
+  /^USPS_[A-Z0-9_]+$/,
+];
+let commerceRuntimeSecretCache = null;
 let activeRequestOrigin = "";
 
 exports.handler = async function handler(event = {}, context = {}) {
@@ -196,6 +247,12 @@ exports.handler = async function handler(event = {}, context = {}) {
 
     if (routeKey === "POST /commerce/checkout-session") {
       const response = await handleCommerceCheckoutSession(event, requestId);
+      logCompleted(event, routeKey, response.statusCode, startedAt, requestId);
+      return response;
+    }
+
+    if (routeKey === "POST /commerce/age-verification-token") {
+      const response = await handleCommerceAgeVerificationToken(event, requestId);
       logCompleted(event, routeKey, response.statusCode, startedAt, requestId);
       return response;
     }
@@ -258,12 +315,20 @@ exports.handler = async function handler(event = {}, context = {}) {
     } else if (isCommerceOrderRoute(routeKey)) {
       response = await handleCommerceOrderStatus(event, actor, requestId);
     } else if (isAdminRoute(routeKey)) {
-      if (routeKey === "POST /admin/commerce/stripe-sync-products") {
+      if (routeKey === "GET /admin/commerce/orders") {
+        response = await handleAdminOrders(event, actor, requestId);
+      } else if (isAdminCommerceOrderMutationRoute(routeKey)) {
+        response = await handleAdminOrderUpdate(event, actor, requestId);
+      } else if (routeKey === "POST /admin/commerce/stripe-sync-products") {
         response = await handleAdminStripeSyncProducts(event, actor, requestId);
       } else if (routeKey === "GET /admin/commerce/webhook-events") {
         response = await handleAdminWebhookEvents(event, actor, requestId);
       } else if (routeKey === "GET /admin/commerce/compliance-holds") {
         response = await handleAdminComplianceHolds(event, actor, requestId);
+      } else if (routeKey === "GET /admin/members") {
+        response = await handleAdminMembers(event, actor, requestId);
+      } else if (isAdminMemberAccessMutationRoute(routeKey)) {
+        response = await handleAdminMemberAccessUpdate(event, actor, requestId);
       } else if (routeKey === "POST /content/pages") {
         response = await handleLivePagePublish(event, actor, requestId);
       } else if (routeKey === "POST /news/story-drafts") {
@@ -298,6 +363,8 @@ exports.handler = async function handler(event = {}, context = {}) {
         response = await handleHumidorCigarIdentification(event, actor, requestId);
       } else if (routeKey === "POST /humidor/alerts") {
         response = await handleHumidorAlertPreferencesUpdate(event, actor, requestId);
+      } else if (routeKey === "PATCH /humidor/items/{id}/enrich") {
+        response = await handleHumidorItemEnrichment(event, actor, requestId);
       } else if (routeKey === "POST /humidor/items") {
         response = await handleHumidorItem(event, actor, requestId);
       }
@@ -442,6 +509,8 @@ async function handleCommerceCheckoutSession(event, requestId) {
     return body.error;
   }
 
+  const commerceEnv = await getCommerceRuntimeEnv();
+
   const items = Array.isArray(body.value.items) ? body.value.items : [];
   const customer = normalizeCheckoutCustomer(body.value.customer);
   const shippingAddress = normalizeCheckoutShippingAddress(body.value.shippingAddress);
@@ -466,21 +535,21 @@ async function handleCommerceCheckoutSession(event, requestId) {
     });
   }
 
-  if (!process.env.STRIPE_SECRET_KEY) {
+  if (!commerceEnv.STRIPE_SECRET_KEY) {
     return json(409, requestId, {
       error: "stripe_not_ready",
       message: "Stripe checkout is not configured for this environment.",
     });
   }
 
-  if (!process.env.STRIPE_LAUNCH_CATALOG_READY) {
+  if (!commerceEnv.STRIPE_LAUNCH_CATALOG_READY) {
     return json(409, requestId, {
       error: "commerce_not_configured",
       message: "The approved Stripe launch catalog has not been synced for checkout.",
     });
   }
 
-  const launchCatalog = loadStripeLaunchCatalog(process.env);
+  const launchCatalog = loadStripeLaunchCatalog(commerceEnv);
   if (launchCatalog.error || launchCatalog.catalog.length === 0) {
     return json(409, requestId, {
       error: launchCatalog.error || "commerce_not_configured",
@@ -489,7 +558,7 @@ async function handleCommerceCheckoutSession(event, requestId) {
     });
   }
 
-  const ageVerification = resolveCheckoutAgeVerification(body.value.compliance?.ageVerificationToken, process.env);
+  const ageVerification = resolveCheckoutAgeVerification(body.value.compliance?.ageVerificationToken, commerceEnv);
   if (!ageVerification.ok) {
     return json(400, requestId, {
       error: ageVerification.error || "age_verification_required",
@@ -497,14 +566,18 @@ async function handleCommerceCheckoutSession(event, requestId) {
     });
   }
 
+  const membership = resolveCheckoutMembershipEntitlement(body.value.membership?.entitlementToken, customer, commerceEnv);
   const compliance = validateCheckoutReadiness({
     items,
+    quote: body.value.quote,
     catalog: launchCatalog.catalog,
     ageVerification: ageVerification.value,
+    membership,
     destination: shippingAddress,
     shippingMethodId: body.value.shippingMethodId,
+    shippingProvider: commerceEnv.SHIPPING_PROVIDER,
     tax: {
-      status: process.env.FEATURE_STRIPE_TAX === "ready" ? "ready" : "unavailable",
+      status: commerceEnv.FEATURE_STRIPE_TAX === "ready" ? "ready" : "unavailable",
       provider: "stripe_tax",
     },
   });
@@ -523,13 +596,17 @@ async function handleCommerceCheckoutSession(event, requestId) {
     });
   }
 
-  const stripe = createStripeClient();
+  const stripe = createStripeClient(commerceEnv);
+  const statusToken = createCheckoutStatusToken();
   const session = await createCommerceCheckoutSession(stripe, {
     cartId: body.value.cartId,
     customer,
     items: compliance.normalizedItems,
+    statusToken,
     shipping: {
-      methodId: body.value.shippingMethodId,
+      methodId: compliance.shipping.methodId,
+      carrier: compliance.shipping.carrier,
+      adultSignatureRequired: compliance.shipping.adultSignatureRequired,
       address: shippingAddress,
     },
     compliance: {
@@ -537,11 +614,62 @@ async function handleCommerceCheckoutSession(event, requestId) {
       verifiedAt: ageVerification.value.verifiedAt,
       policyVersion: "2026-05-07",
     },
-  });
+  }, commerceEnv);
 
   return json(200, requestId, {
     id: session.id,
     url: session.url,
+  });
+}
+
+async function handleCommerceAgeVerificationToken(event, requestId) {
+  const body = parseJsonBody(event);
+  if (body.error) {
+    return body.error;
+  }
+
+  const commerceEnv = await getCommerceRuntimeEnv();
+  const uuid = normalizeAgeCheckerUuid(
+    body.value.vendorTransactionId || body.value.uuid || body.value.ageCheckerUuid || body.value.agecheckerUuid
+  );
+
+  if (!uuid) {
+    return json(400, requestId, {
+      error: "age_verification_required",
+      message: "Complete verified 21+ identity review before checkout.",
+    });
+  }
+
+  if (!commerceEnv.AGE_VERIFICATION_API_KEY || !getAgeCheckerAccountSecret(commerceEnv) || !getCheckoutAgeSigningSecret(commerceEnv)) {
+    return json(409, requestId, {
+      error: "age_verification_not_configured",
+      message: "AgeChecker.Net checkout verification is not configured for this environment.",
+    });
+  }
+
+  const verification = await validateAgeCheckerVerification(uuid, commerceEnv);
+  const status = sanitizeText(verification.status, 40).toLowerCase();
+
+  if (status !== "accepted") {
+    const failedStatuses = new Set(["denied", "not_created", "failed", "blocked"]);
+    return json(failedStatuses.has(status) || verification.blocked || verification.error ? 400 : 409, requestId, {
+      error: failedStatuses.has(status) || verification.blocked || verification.error ? "age_verification_failed" : "age_verification_pending",
+      message:
+        failedStatuses.has(status) || verification.blocked || verification.error
+          ? "AgeChecker.Net could not approve this identity review."
+          : "AgeChecker.Net identity review is still pending.",
+      status: status || null,
+    });
+  }
+
+  const vendorTransactionId = `age_txn_${uuid}`;
+  const verifiedAt = toValidIsoTimestamp(verification.verifiedAt || verification.verified_at || verification.updatedAt || verification.createdAt) || new Date().toISOString();
+
+  return json(200, requestId, {
+    vendor: "AgeChecker.Net",
+    vendorTransactionId,
+    verifiedAt,
+    ageVerificationToken: createSignedCheckoutAgeToken({ vendorTransactionId, verifiedAt }, commerceEnv),
   });
 }
 
@@ -554,9 +682,10 @@ async function handleCommerceMembershipSession(event, requestId) {
   const tierKey = slugify(body.value.tierName || body.value.tierKey);
   const billingPeriod = sanitizeText(body.value.billingPeriod, 40) || "monthly";
   const priceEnvKey = `STRIPE_PRICE_${tierKey.replace(/-/g, "_").toUpperCase()}_${billingPeriod.toUpperCase()}`;
-  const stripePriceId = process.env[priceEnvKey];
+  const commerceEnv = await getCommerceRuntimeEnv();
+  const stripePriceId = commerceEnv[priceEnvKey];
 
-  if (!process.env.STRIPE_SECRET_KEY || !stripePriceId) {
+  if (!commerceEnv.STRIPE_SECRET_KEY || !stripePriceId) {
     return json(409, requestId, {
       error: "stripe_not_ready",
       message: "Stripe membership checkout is not configured for this environment.",
@@ -564,13 +693,26 @@ async function handleCommerceMembershipSession(event, requestId) {
     });
   }
 
-  const stripe = createStripeClient();
+  const customerEmail = normalizeEmailAddresses(body.value.customer?.email, 1)[0] || "";
+  if (!customerEmail) {
+    return json(400, requestId, {
+      error: "missing_customer_email",
+      message: "A valid customer email is required before membership checkout.",
+    });
+  }
+
+  const stripe = createStripeClient(commerceEnv);
+  const statusToken = createCheckoutStatusToken();
   const session = await createMembershipCheckoutSession(stripe, {
     tierKey,
     billingPeriod,
     stripePriceId,
-    customer: body.value.customer,
-  });
+    statusToken,
+    customer: {
+      ...body.value.customer,
+      email: customerEmail,
+    },
+  }, commerceEnv);
 
   return json(200, requestId, {
     id: session.id,
@@ -587,7 +729,8 @@ async function handleStripeWebhook(event, requestId) {
     });
   }
 
-  if (!process.env.STRIPE_WEBHOOK_SECRET || !process.env.STRIPE_SECRET_KEY) {
+  const commerceEnv = await getCommerceRuntimeEnv();
+  if (!commerceEnv.STRIPE_WEBHOOK_SECRET || !commerceEnv.STRIPE_SECRET_KEY) {
     return json(409, requestId, {
       error: "stripe_webhook_not_configured",
       message: "Stripe webhook verification is not configured for this environment.",
@@ -595,13 +738,13 @@ async function handleStripeWebhook(event, requestId) {
   }
 
   try {
-    const stripe = createStripeClient();
+    const stripe = createStripeClient(commerceEnv);
     const rawBody = event.isBase64Encoded ? Buffer.from(event.body || "", "base64").toString("utf8") : event.body || "";
     const stripeEvent = verifyStripeWebhook({
       stripe,
       rawBody,
       signature,
-      webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
+      webhookSecret: commerceEnv.STRIPE_WEBHOOK_SECRET,
     });
     const action = getHandledStripeEventAction(stripeEvent.type);
     let processing = {
@@ -624,8 +767,9 @@ async function handleStripeWebhook(event, requestId) {
       processing,
     });
   } catch (error) {
+    const errorCode = error && typeof error === "object" ? error.code : null;
     return json(400, requestId, {
-      error: error.code || "invalid_stripe_signature",
+      error: errorCode || "invalid_stripe_signature",
       message: "Stripe webhook signature verification failed.",
     });
   }
@@ -633,16 +777,39 @@ async function handleStripeWebhook(event, requestId) {
 
 async function handleCheckoutSessionStatus(event, requestId) {
   const sessionId = extractLastPathSegment(event);
+  const suppliedStatusToken = getQueryParam(event, "status_token");
+  const commerceEnv = await getCommerceRuntimeEnv();
 
-  if (!process.env.STRIPE_SECRET_KEY) {
+  if (!commerceEnv.STRIPE_SECRET_KEY) {
     return json(409, requestId, {
       error: "stripe_not_ready",
       message: "Stripe checkout status is not configured for this environment.",
     });
   }
 
-  const stripe = createStripeClient();
-  const session = await stripe.checkout.sessions.retrieve(sessionId);
+  const stripe = createStripeClient(commerceEnv);
+  let session;
+  try {
+    session = await stripe.checkout.sessions.retrieve(sessionId);
+  } catch (error) {
+    const mappedError = mapStripeCheckoutSessionRetrieveError(error);
+    if (mappedError) {
+      return json(mappedError.statusCode, requestId, {
+        error: mappedError.error,
+        message: mappedError.message,
+      });
+    }
+
+    throw error;
+  }
+  const expectedStatusToken = session?.metadata?.checkout_status_token || session?.metadata?.checkoutStatusToken || "";
+  if (!isValidCheckoutStatusToken(suppliedStatusToken, expectedStatusToken)) {
+    return json(403, requestId, {
+      error: "checkout_status_forbidden",
+      message: "Checkout session status requires the verification token returned from Stripe Checkout.",
+    });
+  }
+
   const status = mapCheckoutSessionStatus(session);
   const persistedOrder = shouldPersistDatabaseWrites() ? await findCommerceOrderByCheckoutSessionId(sessionId) : null;
   const effectiveStatus = applyPersistedOrderToCheckoutStatus(status, persistedOrder);
@@ -651,6 +818,30 @@ async function handleCheckoutSessionStatus(event, requestId) {
     ...effectiveStatus,
     id: effectiveStatus.id || sessionId,
   });
+}
+
+function mapStripeCheckoutSessionRetrieveError(error) {
+  const code = sanitizeText(error?.code, 80).toLowerCase();
+  const type = sanitizeText(error?.type, 80).toLowerCase();
+  const statusCode = Number(error?.statusCode || error?.status || 0);
+
+  if (statusCode === 404 || code === "resource_missing") {
+    return {
+      statusCode: 404,
+      error: "checkout_session_not_found",
+      message: "The requested checkout session was not found.",
+    };
+  }
+
+  if (statusCode === 400 || type === "stripeinvalidrequesterror") {
+    return {
+      statusCode: 400,
+      error: "invalid_checkout_session",
+      message: "The checkout session id is invalid.",
+    };
+  }
+
+  return null;
 }
 
 function loadStripeLaunchCatalog(env = process.env) {
@@ -662,7 +853,7 @@ function loadStripeLaunchCatalog(env = process.env) {
   let parsed;
   try {
     parsed = JSON.parse(source.content);
-  } catch (error) {
+  } catch {
     return {
       catalog: [],
       error: "commerce_catalog_invalid",
@@ -698,7 +889,7 @@ function readStripeLaunchCatalogSource(env) {
 
     try {
       return { name: "STRIPE_LAUNCH_CATALOG_PATH", content: fsSync.readFileSync(catalogPath, "utf8") };
-    } catch (error) {
+    } catch {
       return { name: "STRIPE_LAUNCH_CATALOG_PATH", content: "" };
     }
   }
@@ -727,6 +918,7 @@ function normalizeLaunchCatalogProduct(product) {
     inventoryPolicy: sanitizeText(product.inventoryPolicy || (product.managedStock === false ? "manual" : "track"), 40),
     sourceQuantity: product.sourceQuantity ?? product.quantity ?? product.inventory ?? null,
     shippable: product.shippable !== false,
+    memberOnly: product.memberOnly === true || product.member_only === true || product.requiresMembership === true,
     adultSignatureRequired: product.adultSignatureRequired !== false,
     stripeProductId: sanitizeText(product.stripeProductId, 200) || null,
     stripePriceId,
@@ -756,16 +948,17 @@ async function handleCustomerPortalSession(event, actor, requestId) {
   }
 
   const stripeCustomerId = resolvedStripeCustomerId;
-  if (!process.env.STRIPE_SECRET_KEY || !stripeCustomerId) {
+  const commerceEnv = await getCommerceRuntimeEnv();
+  if (!commerceEnv.STRIPE_SECRET_KEY || !stripeCustomerId) {
     return json(409, requestId, {
       error: "stripe_not_ready",
       message: "Stripe Customer Portal is not configured for this member yet.",
     });
   }
 
-  const stripe = createStripeClient();
+  const stripe = createStripeClient(commerceEnv);
   const session = await stripe.billingPortal.sessions.create(
-    buildCustomerPortalSessionParams({ stripeCustomerId })
+    buildCustomerPortalSessionParams({ stripeCustomerId }, commerceEnv)
   );
 
   return json(200, requestId, {
@@ -774,15 +967,113 @@ async function handleCustomerPortalSession(event, actor, requestId) {
 }
 
 async function handleCommerceMembership(event, actor, requestId) {
-  return json(200, requestId, {
-    membership: getMembershipSnapshot(actor, null),
-    source: "cognito-jwt",
-    subscription: {
-      status: "pending_backend_sync",
-      stripeCustomerId: null,
-      stripeSubscriptionId: null,
-    },
+  const commerceEnv = await getCommerceRuntimeEnv();
+
+  if (!shouldPersistDatabaseWrites()) {
+    const membership = getMembershipSnapshot(actor, null);
+    return json(200, requestId, {
+      membership,
+      source: "cognito-jwt",
+      subscription: {
+        status: "pending_backend_sync",
+        stripeCustomerId: null,
+        stripeSubscriptionId: null,
+      },
+      membershipEntitlementToken: createMembershipEntitlementTokenForCheckout(actor, membership, commerceEnv),
+    });
+  }
+
+  return withDatabaseClient("ycc-api-commerce-membership", async (client) => {
+    const member = await upsertMember(client, actor, requestId);
+    const subscription = await findMemberSubscriptionForCheckout(client, member.id, actor.email || member.email);
+    const membership = getMembershipSnapshotFromSubscription(actor, member, subscription);
+
+    return json(200, requestId, {
+      membership,
+      source: subscription ? "postgres" : "cognito-jwt",
+      subscription: subscription
+        ? {
+            id: subscription.id,
+            status: subscription.status,
+            stripeCustomerId: subscription.stripeCustomerId,
+            stripeSubscriptionId: subscription.stripeSubscriptionId,
+            stripePriceId: subscription.stripePriceId,
+            checkoutSessionId: subscription.checkoutSessionId,
+            tierKey: subscription.tierKey,
+            billingPeriod: subscription.billingPeriod,
+            currentPeriodEnd: subscription.currentPeriodEnd,
+          }
+        : {
+            status: "pending_backend_sync",
+            stripeCustomerId: null,
+            stripeSubscriptionId: null,
+          },
+      membershipEntitlementToken: createMembershipEntitlementTokenForCheckout(actor, membership, commerceEnv),
+    });
   });
+}
+
+async function findMemberSubscriptionForCheckout(client, memberId, email) {
+  const result = await client.query(
+    `
+      select
+        id,
+        email,
+        stripe_customer_id,
+        stripe_subscription_id,
+        stripe_price_id,
+        stripe_checkout_session_id,
+        tier_key,
+        billing_period,
+        status,
+        current_period_end,
+        created_at,
+        updated_at
+      from public.member_subscriptions
+      where member_id = $1
+         or lower(email) = lower($2)
+      order by
+        case when lower(status) in ('active', 'trialing') then 0 else 1 end,
+        coalesce(updated_at, created_at) desc
+      limit 1
+    `,
+    [memberId, email || ""]
+  );
+
+  const row = result.rows[0];
+  return row ? mapMemberSubscriptionForCheckout(row) : null;
+}
+
+function mapMemberSubscriptionForCheckout(row) {
+  return {
+    id: row.id,
+    email: row.email || null,
+    stripeCustomerId: row.stripe_customer_id || null,
+    stripeSubscriptionId: row.stripe_subscription_id || null,
+    stripePriceId: row.stripe_price_id || null,
+    checkoutSessionId: row.stripe_checkout_session_id || null,
+    tierKey: row.tier_key || null,
+    billingPeriod: row.billing_period || null,
+    status: sanitizeText(row.status, 40).toLowerCase() || null,
+    currentPeriodEnd: row.current_period_end ? toIsoString(row.current_period_end) : null,
+  };
+}
+
+function getMembershipSnapshotFromSubscription(actor, member, subscription) {
+  const snapshot = getMembershipSnapshot(actor, member);
+  if (!subscription || !doesSubscriptionConferMembership(subscription.status)) {
+    return snapshot;
+  }
+
+  return {
+    ...snapshot,
+    tier: subscription.tierKey || snapshot.tier,
+    status: "active",
+  };
+}
+
+function doesSubscriptionConferMembership(status) {
+  return ["active", "trialing"].includes(sanitizeText(status, 40).toLowerCase());
 }
 
 async function handleCommerceOrderStatus(event, actor, requestId) {
@@ -869,6 +1160,245 @@ async function handleCommerceOrders(event, actor, requestId) {
   });
 }
 
+async function handleAdminOrders(event, actor, requestId) {
+  if (!canUseAdminAgent(actor)) {
+    return json(403, requestId, {
+      error: "admin_forbidden",
+      message: "Customer order administration requires an admin or concierge operator group.",
+    });
+  }
+
+  if (!shouldPersistDatabaseWrites()) {
+    return json(200, requestId, {
+      orders: [],
+      summary: buildEmptyAdminOrdersSummary(),
+      persistence: getDatabasePersistenceStatus(),
+    });
+  }
+
+  return withDatabaseClient("ycc-api-admin-orders", async (client) => {
+    const summary = await loadAdminOrdersSummary(client);
+    const orders = await loadAdminOrderRows(client, {
+      status: sanitizeText(getQueryParam(event, "status"), 40),
+      q: sanitizeText(getQueryParam(event, "q"), 120),
+    });
+
+    return json(200, requestId, {
+      orders,
+      summary,
+      persistence: "stored",
+    });
+  });
+}
+
+async function handleAdminOrderUpdate(event, actor, requestId) {
+  if (!canUseAdminAgent(actor)) {
+    return json(403, requestId, {
+      error: "admin_forbidden",
+      message: "Customer order administration requires an admin or concierge operator group.",
+    });
+  }
+
+  const orderId = getPathId(event, "id");
+  if (!orderId || !isUuid(orderId)) {
+    return json(400, requestId, {
+      error: "missing_order_id",
+      message: "A valid order id is required in the admin order path.",
+    });
+  }
+
+  const body = parseJsonBody(event);
+  if (body.error) {
+    return body.error;
+  }
+
+  const status = normalizeOptionalStatus(body.value.status, ADMIN_ORDER_STATUSES);
+  const fulfillmentStatus = normalizeOptionalStatus(body.value.fulfillmentStatus, ADMIN_FULFILLMENT_STATUSES);
+  const complianceStatus = normalizeOptionalStatus(body.value.complianceStatus, ADMIN_COMPLIANCE_STATUSES);
+
+  if (status.error || fulfillmentStatus.error || complianceStatus.error) {
+    return json(400, requestId, {
+      error: "invalid_admin_order_update",
+      message: status.error || fulfillmentStatus.error || complianceStatus.error,
+    });
+  }
+
+  if (!status.supplied && !fulfillmentStatus.supplied && !complianceStatus.supplied) {
+    return json(400, requestId, {
+      error: "empty_admin_order_update",
+      message: "Provide status, fulfillmentStatus, or complianceStatus to update an order.",
+    });
+  }
+
+  if (!shouldPersistDatabaseWrites()) {
+    return json(409, requestId, {
+      error: "database_writes_not_ready",
+      message: "Admin order updates require the commerce database schema.",
+      persistence: getDatabasePersistenceStatus(),
+    });
+  }
+
+  return withDatabaseClient("ycc-api-admin-order-update", async (client) => {
+    const order = await updateAdminOrderRow(client, {
+      orderId,
+      status: status.value,
+      fulfillmentStatus: fulfillmentStatus.value,
+      complianceStatus: complianceStatus.value,
+      actor,
+      requestId,
+    });
+
+    if (!order) {
+      return json(404, requestId, {
+        error: "order_not_found",
+        message: "The requested customer order was not found.",
+      });
+    }
+
+    await insertCommerceAuditLog(client, {
+      actor,
+      requestId,
+      action: "admin.order.update",
+      targetType: "commerce_order",
+      targetId: order.id,
+      orderId: order.id,
+      payload: {
+        status: status.value,
+        fulfillmentStatus: fulfillmentStatus.value,
+        complianceStatus: complianceStatus.value,
+      },
+    });
+
+    return json(200, requestId, {
+      order,
+      persistence: {
+        status: "stored",
+        table: "commerce_orders",
+      },
+    });
+  });
+}
+
+async function handleAdminMembers(event, actor, requestId) {
+  if (!canUseAdminAgent(actor)) {
+    return json(403, requestId, {
+      error: "admin_forbidden",
+      message: "User access administration requires an admin or concierge operator group.",
+    });
+  }
+
+  if (!shouldPersistDatabaseWrites()) {
+    return json(200, requestId, {
+      members: [],
+      summary: buildEmptyAdminMembersSummary(),
+      persistence: getDatabasePersistenceStatus(),
+    });
+  }
+
+  return withDatabaseClient("ycc-api-admin-members", async (client) => {
+    const summary = await loadAdminMembersSummary(client);
+    const members = await loadAdminMemberRows(client, {
+      status: sanitizeText(getQueryParam(event, "status"), 40),
+      q: sanitizeText(getQueryParam(event, "q"), 120),
+      limit: resolveAdminListLimit(getQueryParam(event, "limit")),
+    });
+
+    return json(200, requestId, {
+      members,
+      summary,
+      persistence: "stored",
+    });
+  });
+}
+
+async function handleAdminMemberAccessUpdate(event, actor, requestId) {
+  if (!canUseAdminAgent(actor)) {
+    return json(403, requestId, {
+      error: "admin_forbidden",
+      message: "User access administration requires an admin or concierge operator group.",
+    });
+  }
+
+  const memberId = getPathId(event, "id");
+  if (!memberId || !isUuid(memberId)) {
+    return json(400, requestId, {
+      error: "missing_member_id",
+      message: "A valid member id is required in the admin member access path.",
+    });
+  }
+
+  const body = parseJsonBody(event);
+  if (body.error) {
+    return body.error;
+  }
+
+  const role = normalizeOptionalStatus(body.value.role, ADMIN_MEMBER_ROLES);
+  const memberStatus = normalizeOptionalStatus(body.value.memberStatus, ADMIN_MEMBER_STATUSES);
+  const membershipTier = normalizeOptionalNullableStatus(body.value.membershipTier, ADMIN_MEMBERSHIP_TIERS);
+
+  if (role.error || memberStatus.error || membershipTier.error) {
+    return json(400, requestId, {
+      error: "invalid_admin_member_access_update",
+      message: role.error || memberStatus.error || membershipTier.error,
+    });
+  }
+
+  if (!role.supplied && !memberStatus.supplied && !membershipTier.supplied) {
+    return json(400, requestId, {
+      error: "empty_admin_member_access_update",
+      message: "Provide role, memberStatus, or membershipTier to update user access.",
+    });
+  }
+
+  if (!shouldPersistDatabaseWrites()) {
+    return json(409, requestId, {
+      error: "database_writes_not_ready",
+      message: "Admin member access updates require the member database schema.",
+      persistence: getDatabasePersistenceStatus(),
+    });
+  }
+
+  return withDatabaseClient("ycc-api-admin-member-access-update", async (client) => {
+    const member = await updateAdminMemberAccessRow(client, {
+      memberId,
+      role: role.value,
+      memberStatus: memberStatus.value,
+      membershipTier: membershipTier.value,
+      actor,
+      requestId,
+    });
+
+    if (!member) {
+      return json(404, requestId, {
+        error: "member_not_found",
+        message: "The requested member was not found.",
+      });
+    }
+
+    await insertAuditLog(client, event, {
+      actor,
+      requestId,
+      memberId,
+      action: "admin.member_access.update",
+      resourceType: "member",
+      resourceId: memberId,
+      afterData: {
+        role: role.value,
+        memberStatus: memberStatus.value,
+        membershipTier: membershipTier.value,
+      },
+    });
+
+    return json(200, requestId, {
+      member,
+      persistence: {
+        status: "stored",
+        table: "members",
+      },
+    });
+  });
+}
+
 async function handleAdminStripeSyncProducts(event, actor, requestId) {
   if (!canUseAdminAgent(actor)) {
     return json(403, requestId, {
@@ -877,8 +1407,9 @@ async function handleAdminStripeSyncProducts(event, actor, requestId) {
     });
   }
 
+  const commerceEnv = await getCommerceRuntimeEnv();
   return json(202, requestId, {
-    sync: buildAdminStripeSyncSnapshot(process.env),
+    sync: buildAdminStripeSyncSnapshot(commerceEnv),
   });
 }
 
@@ -988,6 +1519,371 @@ function buildEmptyAdminOverview() {
       auditAt: null,
     },
   };
+}
+
+function buildEmptyAdminOrdersSummary() {
+  return {
+    total: 0,
+    paid: 0,
+    pending: 0,
+    fulfilled: 0,
+    needsAttention: 0,
+  };
+}
+
+function buildEmptyAdminMembersSummary() {
+  return {
+    total: 0,
+    admins: 0,
+    operators: 0,
+    members: 0,
+    nonMembers: 0,
+    banned: 0,
+  };
+}
+
+async function loadAdminOrdersSummary(client) {
+  const result = await client.query(
+    `
+      select /* admin_orders_summary */
+        (select count(*)::integer from public.commerce_orders) as orders_total,
+        (
+          select count(*)::integer
+          from public.commerce_orders
+          where lower(status) in ('paid', 'complete', 'completed', 'succeeded')
+        ) as orders_paid,
+        (
+          select count(*)::integer
+          from public.commerce_orders
+          where lower(status) in ('pending', 'open', 'processing', 'requires_review')
+        ) as orders_pending,
+        (
+          select count(*)::integer
+          from public.commerce_orders
+          where lower(fulfillment_status) in ('shipped', 'delivered', 'fulfilled')
+        ) as orders_fulfilled,
+        (
+          select count(*)::integer
+          from public.commerce_orders
+          where lower(compliance_status) in ('pending', 'review', 'hold', 'blocked')
+             or lower(fulfillment_status) in ('not_started', 'pending', 'blocked')
+        ) as orders_needs_attention
+    `
+  );
+  const row = result.rows[0] || {};
+
+  return {
+    total: Number(row.orders_total || 0),
+    paid: Number(row.orders_paid || 0),
+    pending: Number(row.orders_pending || 0),
+    fulfilled: Number(row.orders_fulfilled || 0),
+    needsAttention: Number(row.orders_needs_attention || 0),
+  };
+}
+
+async function loadAdminOrderRows(client, filters = {}) {
+  const result = await client.query(
+    `
+      select /* admin_orders_list */
+        o.id,
+        o.stripe_checkout_session_id,
+        o.email,
+        o.status,
+        o.fulfillment_status,
+        o.compliance_status,
+        o.subtotal_cents,
+        o.tax_cents,
+        o.shipping_cents,
+        o.total_cents,
+        o.currency,
+        o.shipping_snapshot,
+        o.created_at,
+        o.updated_at,
+        coalesce(sum(i.quantity), 0)::integer as item_count,
+        m.display_name as customer_name,
+        m.role as member_role,
+        m.membership_tier,
+        m.member_status
+      from public.commerce_orders o
+      left join public.members m on m.id = o.member_id
+      left join public.commerce_order_items i on i.order_id = o.id
+      where (
+        $1 = ''
+        or lower(o.status) = lower($1)
+        or lower(o.fulfillment_status) = lower($1)
+        or lower(o.compliance_status) = lower($1)
+      )
+      and (
+        $2 = ''
+        or lower(o.email) like lower('%' || $2 || '%')
+        or lower(o.stripe_checkout_session_id) like lower('%' || $2 || '%')
+      )
+      group by
+        o.id,
+        o.stripe_checkout_session_id,
+        o.email,
+        o.status,
+        o.fulfillment_status,
+        o.compliance_status,
+        o.subtotal_cents,
+        o.tax_cents,
+        o.shipping_cents,
+        o.total_cents,
+        o.currency,
+        o.shipping_snapshot,
+        o.created_at,
+        o.updated_at,
+        m.display_name,
+        m.role,
+        m.membership_tier,
+        m.member_status
+      order by o.created_at desc
+      limit 50
+    `,
+    [filters.status || "", filters.q || ""]
+  );
+
+  return result.rows.map(mapAdminOrderRow);
+}
+
+async function updateAdminOrderRow(client, details) {
+  const result = await client.query(
+    `
+      with updated as (
+        update public.commerce_orders
+        set status = coalesce($2, status),
+            fulfillment_status = coalesce($3, fulfillment_status),
+            compliance_status = coalesce($4, compliance_status),
+            updated_at = now()
+        where id = $1
+        returning *
+      )
+      select /* admin_order_update */
+        u.id,
+        u.stripe_checkout_session_id,
+        u.email,
+        u.status,
+        u.fulfillment_status,
+        u.compliance_status,
+        u.subtotal_cents,
+        u.tax_cents,
+        u.shipping_cents,
+        u.total_cents,
+        u.currency,
+        u.shipping_snapshot,
+        u.created_at,
+        u.updated_at,
+        coalesce((select sum(quantity) from public.commerce_order_items where order_id = u.id), 0)::integer as item_count,
+        m.display_name as customer_name,
+        m.role as member_role,
+        m.membership_tier,
+        m.member_status
+      from updated u
+      left join public.members m on m.id = u.member_id
+      limit 1
+    `,
+    [details.orderId, details.status, details.fulfillmentStatus, details.complianceStatus]
+  );
+
+  return result.rows[0] ? mapAdminOrderRow(result.rows[0]) : null;
+}
+
+function mapAdminOrderRow(row) {
+  const shippingSnapshot = row.shipping_snapshot && typeof row.shipping_snapshot === "object" ? row.shipping_snapshot : {};
+  const customerName = row.customer_name || shippingSnapshot.name || null;
+
+  return {
+    id: row.id,
+    orderNumber: row.stripe_checkout_session_id || null,
+    email: row.email || null,
+    status: row.status,
+    fulfillmentStatus: row.fulfillment_status,
+    complianceStatus: row.compliance_status,
+    subtotal: Number(row.subtotal_cents || 0) / 100,
+    tax: Number(row.tax_cents || 0) / 100,
+    shipping: Number(row.shipping_cents || 0) / 100,
+    total: Number(row.total_cents || 0) / 100,
+    currency: row.currency || "usd",
+    itemCount: Number(row.item_count || 0),
+    placedAt: toIsoString(row.created_at),
+    updatedAt: row.updated_at ? toIsoString(row.updated_at) : null,
+    customer: {
+      email: row.email || null,
+      name: customerName,
+      role: row.member_role || null,
+      membershipTier: row.membership_tier || null,
+      memberStatus: row.member_status || null,
+    },
+  };
+}
+
+async function loadAdminMembersSummary(client) {
+  const result = await client.query(
+    `
+      select /* admin_members_summary */
+        (select count(*)::integer from public.members) as members_total,
+        (
+          select count(*)::integer
+          from public.members
+          where lower(role) = 'admin'
+        ) as members_admins,
+        (
+          select count(*)::integer
+          from public.members
+          where lower(role) = 'operator'
+        ) as members_operators,
+        (
+          select count(*)::integer
+          from public.members
+          where lower(member_status) in ('active', 'paused')
+        ) as members_active,
+        (
+          select count(*)::integer
+          from public.members
+          where lower(member_status) = 'non_member'
+        ) as members_non_member,
+        (
+          select count(*)::integer
+          from public.members
+          where lower(member_status) = 'banned'
+        ) as members_banned
+    `
+  );
+  const row = result.rows[0] || {};
+
+  return {
+    total: Number(row.members_total || 0),
+    admins: Number(row.members_admins || 0),
+    operators: Number(row.members_operators || 0),
+    members: Number(row.members_active || 0),
+    nonMembers: Number(row.members_non_member || 0),
+    banned: Number(row.members_banned || 0),
+  };
+}
+
+async function loadAdminMemberRows(client, filters = {}) {
+  const limit = resolveAdminListLimit(filters.limit);
+  const result = await client.query(
+    `
+      select /* admin_members_list */
+        m.id,
+        m.cognito_sub,
+        m.email,
+        m.email_verified,
+        m.display_name,
+        m.role,
+        m.membership_tier,
+        m.member_status,
+        m.last_seen_at,
+        m.created_at,
+        m.updated_at,
+        sub.status as subscription_status,
+        sub.tier_key as subscription_tier,
+        sub.billing_period as subscription_period,
+        coalesce(orders.order_count, 0)::integer as order_count,
+        coalesce(orders.total_spend_cents, 0)::integer as total_spend_cents,
+        coalesce(humidor.humidor_item_count, 0)::integer as humidor_item_count
+      from public.members m
+      left join lateral (
+        select status, tier_key, billing_period
+        from public.member_subscriptions
+        where member_id = m.id or lower(email) = lower(m.email)
+        order by coalesce(updated_at, created_at) desc
+        limit 1
+      ) sub on true
+      left join lateral (
+        select count(*)::integer as order_count, coalesce(sum(total_cents), 0)::integer as total_spend_cents
+        from public.commerce_orders
+        where member_id = m.id or lower(email) = lower(m.email)
+      ) orders on true
+      left join lateral (
+        select count(*)::integer as humidor_item_count
+        from public.humidor_items
+        where member_id = m.id and archived_at is null
+      ) humidor on true
+      where (
+        $1 = ''
+        or lower(m.role) = lower($1)
+        or lower(m.member_status) = lower($1)
+        or lower(coalesce(m.membership_tier, '')) = lower($1)
+      )
+      and (
+        $2 = ''
+        or lower(m.email) like lower('%' || $2 || '%')
+        or lower(coalesce(m.display_name, '')) like lower('%' || $2 || '%')
+      )
+      order by coalesce(m.last_seen_at, m.updated_at, m.created_at) desc
+      limit $3
+    `,
+    [filters.status || "", filters.q || "", limit]
+  );
+
+  return result.rows.map(mapAdminMemberRow);
+}
+
+async function updateAdminMemberAccessRow(client, details) {
+  const clearMembershipTier = details.membershipTier === null;
+  const result = await client.query(
+    `
+      with updated as (
+        update public.members
+        set role = coalesce($2, role),
+            membership_tier = case when $4 then null else coalesce($3, membership_tier) end,
+            member_status = coalesce($5, member_status),
+            actor_id = $6,
+            request_id = $7,
+            updated_at = now()
+        where id = $1
+        returning *
+      )
+      select /* admin_member_access_update */
+        id,
+        cognito_sub,
+        email,
+        email_verified,
+        display_name,
+        role,
+        membership_tier,
+        member_status,
+        last_seen_at,
+        created_at,
+        updated_at
+      from updated
+      limit 1
+    `,
+    [details.memberId, details.role, details.membershipTier, clearMembershipTier, details.memberStatus, details.actor.sub, details.requestId]
+  );
+
+  return result.rows[0] ? mapAdminMemberRow(result.rows[0]) : null;
+}
+
+function mapAdminMemberRow(row) {
+  return {
+    id: row.id,
+    cognitoSub: row.cognito_sub || null,
+    email: row.email,
+    emailVerified: Boolean(row.email_verified),
+    displayName: row.display_name || null,
+    role: row.role,
+    membershipTier: row.membership_tier || null,
+    memberStatus: row.member_status,
+    lastSeenAt: row.last_seen_at ? toIsoString(row.last_seen_at) : null,
+    createdAt: row.created_at ? toIsoString(row.created_at) : null,
+    updatedAt: row.updated_at ? toIsoString(row.updated_at) : null,
+    subscriptionStatus: row.subscription_status || null,
+    subscriptionTier: row.subscription_tier || null,
+    subscriptionPeriod: row.subscription_period || null,
+    orderCount: Number(row.order_count || 0),
+    totalSpend: Number(row.total_spend_cents || 0) / 100,
+    humidorItemCount: Number(row.humidor_item_count || 0),
+  };
+}
+
+function resolveAdminListLimit(value, fallback = ADMIN_LIST_DEFAULT_LIMIT) {
+  const parsed = Number.parseInt(String(value || ""), 10);
+  const requested = Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+
+  return Math.min(Math.max(requested, 1), ADMIN_LIST_MAX_LIMIT);
 }
 
 async function loadAdminOperationsOverview(client) {
@@ -1391,7 +2287,7 @@ function buildAdminStripeSyncSnapshot(env = process.env) {
   return {
     status,
     seedScope,
-    liveApprovalRequired: true,
+    liveApprovalRequired: !isSecretFlagEnabled(env.STRIPE_TOBACCO_APPROVAL_CONFIRMED),
     catalogReady: Boolean(env.STRIPE_LAUNCH_CATALOG_READY),
     stripeConfigured: Boolean(env.STRIPE_SECRET_KEY),
     webhookConfigured: Boolean(env.STRIPE_WEBHOOK_SECRET),
@@ -1418,6 +2314,14 @@ function shouldUseLocalAdminSummary(message) {
   return /(backend health|admin follow|queue|summary|webhook|hold|stripe sync|catalog|orders|memberships|audit)/.test(normalized);
 }
 
+function shouldUseLocalAdminUserList(message) {
+  const normalized = String(message || "").toLowerCase();
+  const mentionsUserRoster = /\b(users?|members?|accounts?|operators?|admins?)\b/.test(normalized) || normalized.includes("user access");
+  const asksToList = /\b(list|show|see|view|display|get|pull)\b/.test(normalized) || /\ball\b/.test(normalized);
+
+  return mentionsUserRoster && asksToList;
+}
+
 function getAdminQueueFromMessage(message) {
   const normalized = String(message || "").toLowerCase();
   if (normalized.includes("compliance") || normalized.includes("hold")) {
@@ -1441,6 +2345,103 @@ function getAdminQueueFromMessage(message) {
   return "support";
 }
 
+async function buildAdminUserListSnapshot() {
+  if (!shouldPersistDatabaseWrites()) {
+    const summary = buildEmptyAdminMembersSummary();
+    const persistence = getDatabasePersistenceStatus();
+    const lines = buildAdminUserListLines({
+      summary,
+      members: [],
+      persistence,
+    });
+
+    return {
+      members: [],
+      summary,
+      persistence,
+      reply: lines.join("\n"),
+      nextActions: ["Enable schema-backed writes before expecting live user records."],
+    };
+  }
+
+  return withDatabaseClient("ycc-api-admin-agent-users", async (client) => {
+    const summary = await loadAdminMembersSummary(client);
+    const members = await loadAdminMemberRows(client, {
+      limit: ADMIN_LIST_MAX_LIMIT,
+    });
+    const persistence = "stored";
+    const lines = buildAdminUserListLines({
+      summary,
+      members,
+      persistence,
+    });
+
+    return {
+      members,
+      summary,
+      persistence,
+      reply: lines.join("\n"),
+      nextActions: buildAdminUserListFollowUps({ summary, members }),
+    };
+  });
+}
+
+function buildAdminUserListLines(details) {
+  const { members, persistence, summary } = details;
+  const lines = [
+    `User access roster: ${summary.total} users (${summary.admins} admins, ${summary.operators} operators, ${summary.members} active members, ${summary.banned} banned).`,
+  ];
+
+  if (!members.length) {
+    lines.push("No user access records are currently visible in the live backend.");
+  } else {
+    for (const [index, member] of members.slice(0, ADMIN_AGENT_USER_REPLY_LIMIT).entries()) {
+      const label = member.displayName || member.email || member.id;
+      const tier = member.membershipTier || member.subscriptionTier || "no tier";
+      const subscription = member.subscriptionStatus ? `, ${humanizeStatus(member.subscriptionStatus)} subscription` : "";
+      lines.push(
+        `${index + 1}. ${label} <${member.email}> - ${humanizeStatus(member.role || "customer")} / ` +
+          `${humanizeStatus(member.memberStatus || "non_member")} / ${humanizeStatus(tier)}; ` +
+          `${member.orderCount || 0} orders, ${formatAdminMoney(member.totalSpend)} spend, ${member.humidorItemCount || 0} humidor items${subscription}.`
+      );
+    }
+  }
+
+  if (members.length < summary.total) {
+    lines.push(`Showing ${members.length} of ${summary.total} users. Open User Access for the live roster view and targeted actions.`);
+  }
+
+  if (persistence !== "stored") {
+    lines.push(`Persistence status is ${humanizeStatus(persistence)} until schema-backed writes are enabled.`);
+  }
+
+  return lines;
+}
+
+function buildAdminUserListFollowUps(details) {
+  const actions = ["Open User Access to promote operators, activate members, pause access, or review individual records."];
+
+  if (details.summary.banned > 0) {
+    actions.push("Review banned accounts before restoring access.");
+  }
+
+  if (details.members.length < details.summary.total) {
+    actions.push("Use the admin members endpoint with filters when the roster exceeds the loaded limit.");
+  }
+
+  return actions;
+}
+
+function formatAdminMoney(value) {
+  const amount = Number(value || 0);
+
+  if (!Number.isFinite(amount)) {
+    return "$0.00";
+  }
+
+  return `$${amount.toFixed(2)}`;
+}
+
 function isAdminGuardrailReply(reply) {
   const normalized = String(reply || "").toLowerCase();
   return normalized.includes("cannot help with that request") || normalized.includes("concierge operator can review");
@@ -1448,7 +2449,8 @@ function isAdminGuardrailReply(reply) {
 
 async function buildAdminQueueSummarySnapshot(queue) {
   const normalizedQueue = sanitizeText(queue, 40) || "support";
-  const sync = buildAdminStripeSyncSnapshot(process.env);
+  const commerceEnv = await getCommerceRuntimeEnv();
+  const sync = buildAdminStripeSyncSnapshot(commerceEnv);
 
   if (!shouldPersistDatabaseWrites()) {
     const overview = buildEmptyAdminOverview();
@@ -1727,14 +2729,43 @@ async function handleNewsStoryDraft(event, actor, requestId) {
   let bedrock = await maybeBuildBedrockReply("YCCNewsAgent", actor, basePrompt, conversationId);
   let draft = normalizeNewsDraftFromAgentReply(bedrock.reply || "", input);
 
-  if (isPlaceholderNewsBodyMarkdown(draft.bodyMarkdown)) {
+  if (!hasUsableNewsDraftReply(bedrock.reply || "") || isPlaceholderNewsBodyMarkdown(draft.bodyMarkdown)) {
     const retryConversationId = `${conversationId}_retry`;
     const strictDraft = await maybeBuildBedrockReply("YCCNewsAgent", actor, strictPrompt, retryConversationId);
     const strictNormalizedDraft = normalizeNewsDraftFromAgentReply(strictDraft.reply || "", input);
-    if (!isPlaceholderNewsBodyMarkdown(strictNormalizedDraft.bodyMarkdown)) {
+    if (hasUsableNewsDraftReply(strictDraft.reply || "") && !isPlaceholderNewsBodyMarkdown(strictNormalizedDraft.bodyMarkdown)) {
       bedrock = strictDraft;
       draft = strictNormalizedDraft;
     }
+  }
+
+  if (!hasUsableNewsDraftReply(bedrock.reply || "") || isPlaceholderNewsBodyMarkdown(draft.bodyMarkdown)) {
+    const directDraft = await maybeBuildNewsDraftRuntimeReply(actor, strictPrompt);
+    const directNormalizedDraft = normalizeNewsDraftFromAgentReply(directDraft.reply || "", input);
+    bedrock = directDraft;
+    draft = directNormalizedDraft;
+    if (hasUsableNewsDraftReply(directDraft.reply || "") && !isPlaceholderNewsBodyMarkdown(directNormalizedDraft.bodyMarkdown)) {
+      draft = directNormalizedDraft;
+    }
+  }
+
+  if (!hasUsableNewsDraftReply(bedrock.reply || "") || isPlaceholderNewsBodyMarkdown(draft.bodyMarkdown)) {
+    return json(502, requestId, {
+      error: "news_story_generation_failed",
+      message: "YCCNewsAgent did not return a publication-ready story draft. Add concrete source details or try again before publishing.",
+      prompt: {
+        acceptedSourceCount: acceptedSources.length,
+        blockedSourceCount: input.sourceUrls.length - acceptedSources.length,
+      },
+      ai: {
+        status: bedrock.status,
+        modelId: bedrock.modelId,
+        agentId: bedrock.agentId,
+        agentAliasId: bedrock.agentAliasId,
+        knowledgeBaseStatus: bedrock.knowledgeBaseStatus,
+        retrievedContextCount: bedrock.retrievedContextCount,
+      },
+    });
   }
 
   return json(200, requestId, {
@@ -1958,7 +2989,13 @@ async function buildConciergeExchange(event, actor, requestId, details) {
   let adminSummary = null;
   let bedrock;
 
-  if (agent === "YCCAdminAgent" && shouldUseLocalAdminSummary(message)) {
+  if (agent === "YCCAdminAgent" && shouldUseLocalAdminUserList(message)) {
+    adminSummary = await buildAdminUserListSnapshot();
+    bedrock = {
+      status: "admin_user_list",
+      reply: adminSummary.reply,
+    };
+  } else if (agent === "YCCAdminAgent" && shouldUseLocalAdminSummary(message)) {
     adminSummary = await buildAdminQueueSummarySnapshot(getAdminQueueFromMessage(message));
     bedrock = {
       status: "admin_queue_summary",
@@ -2369,6 +3406,7 @@ async function handleBedrockActionGroup(event, requestId) {
       rating: params.rating,
       purchaseDate: params.purchaseDate,
       agingStartDate: params.agingStartDate,
+      productionDate: params.productionDate || params.producedDate || params.boxDate,
       reorderReminder: params.reorderReminder,
       humidorLocation: params.humidorLocation || params.location,
       tray: params.tray,
@@ -2459,6 +3497,7 @@ async function handleHumidorItem(event, actor, requestId) {
       id: persistedItem?.itemId || `humidor_${crypto.randomUUID()}`,
       ownerSub: actor.sub,
       ...item,
+      cigarImage: summarizeStoredHumidorCigarImage(item.cigarImage),
       createdAt: persistedItem?.createdAt || new Date().toISOString(),
     },
     persistence: {
@@ -2469,6 +3508,146 @@ async function handleHumidorItem(event, actor, requestId) {
       "support_photo_intake",
       "generate_reorder_and_aging_recommendations",
     ],
+  });
+}
+
+async function handleHumidorItemEnrichment(event, actor, requestId) {
+  const itemId = getPathId(event, "id");
+  if (!itemId || !isUuid(itemId)) {
+    return json(400, requestId, {
+      error: "missing_humidor_item_id",
+      message: "A valid humidor item id is required before the humidor agent can update it.",
+    });
+  }
+
+  const body = parseJsonBody(event);
+  if (body.error) {
+    return body.error;
+  }
+
+  const requestedFields = normalizeHumidorEnrichmentFields(body.value.fields);
+  if (requestedFields.error) {
+    return json(400, requestId, {
+      error: "invalid_humidor_enrichment_fields",
+      message: requestedFields.error,
+    });
+  }
+
+  if (!shouldPersistDatabaseWrites()) {
+    return json(409, requestId, {
+      error: "database_writes_not_ready",
+      message: "Humidor enrichment updates require the member humidor database.",
+      persistence: getDatabasePersistenceStatus(),
+    });
+  }
+
+  return withDatabaseTransaction("ycc-api-humidor-item-enrichment", async (client) => {
+    const member = await upsertMember(client, actor, requestId);
+    const currentRow = await loadHumidorItemRowForMember(client, itemId, member.id);
+
+    if (!currentRow) {
+      return json(404, requestId, {
+        error: "humidor_item_not_found",
+        message: "The requested humidor item was not found or is not visible to this member.",
+      });
+    }
+
+    const currentItem = mapHumidorItemRow(currentRow);
+    const missingFields = getMissingHumidorEnrichmentFields(currentItem);
+    const fieldsToEnrich = requestedFields.value.length
+      ? requestedFields.value.filter((field) => missingFields.includes(field))
+      : missingFields;
+
+    if (!fieldsToEnrich.length) {
+      return json(200, requestId, {
+        item: currentItem,
+        enrichment: {
+          status: "complete",
+          requestedFields: requestedFields.value,
+          missingFields: [],
+          updatedFields: [],
+          evidence: [],
+          needsReview: [],
+        },
+        ai: {
+          status: "not_needed",
+        },
+        persistence: {
+          status: "stored",
+          table: "humidor_items",
+        },
+      });
+    }
+
+    const ai = await maybeEnrichHumidorItem(currentItem, fieldsToEnrich, actor, requestId);
+    const merge = mergeHumidorEnrichment(currentItem, ai.suggestion, fieldsToEnrich);
+
+    if (!merge.updatedFields.length) {
+      return json(200, requestId, {
+        item: currentItem,
+        enrichment: {
+          status: "needs_review",
+          requestedFields: fieldsToEnrich,
+          missingFields,
+          updatedFields: [],
+          evidence: ai.suggestion.evidence,
+          needsReview: ai.suggestion.needsReview.length
+            ? ai.suggestion.needsReview
+            : ["The humidor agent did not find enough verified detail to update this cigar automatically."],
+          confidence: ai.suggestion.confidence,
+        },
+        ai: buildHumidorEnrichmentAiSummary(ai),
+        persistence: {
+          status: "stored",
+          table: "humidor_items",
+        },
+      });
+    }
+
+    const updatedRow = await updateHumidorItemEnrichment(client, {
+      actor,
+      enrichment: ai.suggestion,
+      item: merge.item,
+      itemId,
+      memberId: member.id,
+      requestId,
+      updatedFields: merge.updatedFields,
+    });
+    const updatedItem = mapHumidorItemRow(updatedRow);
+
+    await insertAuditLog(client, event, {
+      action: "humidor_item.enriched",
+      actor,
+      afterData: {
+        itemId,
+        requestedFields: fieldsToEnrich,
+        updatedFields: merge.updatedFields,
+        evidence: ai.suggestion.evidence,
+        confidence: ai.suggestion.confidence,
+      },
+      memberId: member.id,
+      requestId,
+      resourceId: itemId,
+      resourceType: "humidor_item",
+    });
+
+    return json(200, requestId, {
+      item: updatedItem,
+      enrichment: {
+        status: "updated",
+        requestedFields: fieldsToEnrich,
+        missingFields: getMissingHumidorEnrichmentFields(updatedItem),
+        updatedFields: merge.updatedFields,
+        evidence: ai.suggestion.evidence,
+        needsReview: ai.suggestion.needsReview,
+        confidence: ai.suggestion.confidence,
+      },
+      ai: buildHumidorEnrichmentAiSummary(ai),
+      persistence: {
+        status: "stored",
+        table: "humidor_items",
+      },
+    });
   });
 }
 
@@ -2569,14 +3748,34 @@ async function handleHumidorAlertDispatch(event, requestId) {
       [dispatchDate]
     );
 
-    if (dueResult.rows.length === 0) {
+    const climateResult = await client.query(
+      `
+        select
+          m.id as member_id,
+          m.cognito_sub as member_sub,
+          mp.preferences
+        from public.members m
+        join public.member_profiles mp on mp.member_id = m.id
+        where coalesce((mp.preferences->>'pushEnabled')::boolean, false) = true
+          and coalesce((mp.preferences->>'climateAlertsEnabled')::boolean, false) = true
+          and mp.preferences->'pushSubscription' is not null
+          and jsonb_array_length(coalesce(mp.preferences->'pairedDevices', '[]'::jsonb)) > 0
+        order by m.id
+      `
+    );
+    const climateGroups = buildHumidorClimateAlertGroups(climateResult.rows);
+
+    if (dueResult.rows.length === 0 && climateGroups.length === 0) {
       return json(200, requestId, {
         status: "no_due_items",
         summary: {
           notificationDate: dispatchDate,
           dueItems: 0,
+          climateDevices: 0,
           sentNotifications: 0,
+          sentClimateNotifications: 0,
           failedNotifications: 0,
+          failedClimateNotifications: 0,
           sentItems: 0,
         },
       });
@@ -2589,6 +3788,9 @@ async function handleHumidorAlertDispatch(event, requestId) {
     let failedNotifications = 0;
     let sentItems = 0;
     let invalidSubscriptionItems = 0;
+    let climateDevices = 0;
+    let sentClimateNotifications = 0;
+    let failedClimateNotifications = 0;
 
     for (const row of dueResult.rows) {
       const memberId = String(row.member_id || "");
@@ -2692,20 +3894,141 @@ async function handleHumidorAlertDispatch(event, requestId) {
       }
     }
 
+    for (const group of climateGroups) {
+      if (group.alerts.length === 0 || !group.pushSubscription) {
+        continue;
+      }
+
+      climateDevices += group.alerts.length;
+      const payload = buildHumidorClimateAlertPayload(group);
+      try {
+        await webPush.sendNotification(group.pushSubscription, JSON.stringify(payload));
+        sentClimateNotifications += 1;
+
+        await insertAuditLog(client, event, {
+          action: "humidor_climate_alert.dispatched",
+          actor: systemActor,
+          afterData: {
+            memberSub: group.memberSub,
+            itemCount: group.alerts.length,
+            locations: group.alerts.map((alert) => alert.location),
+          },
+          memberId: group.memberId,
+          requestId,
+          resourceId: group.memberId,
+          resourceType: "member_profile",
+        });
+      } catch (error) {
+        failedClimateNotifications += 1;
+        const statusCode = Number(error instanceof Error ? error.statusCode : NaN);
+        const pushErrorStatus = Number.isFinite(statusCode) ? statusCode : null;
+        failedMembers.push({
+          memberId: group.memberId,
+          reason: pushErrorStatus ? `climate_push_send_status_${pushErrorStatus}` : "climate_push_send_error",
+          statusCode: pushErrorStatus,
+          itemCount: group.alerts.length,
+          errorName: error instanceof Error ? error.name : "UnknownError",
+        });
+
+        if (pushErrorStatus === 404 || pushErrorStatus === 410) {
+          await upsertHumidorAlertPreferences(client, systemActor, requestId, group.memberId, { pushEnabled: false });
+        }
+      }
+    }
+
     return json(200, requestId, {
       status: "dispatched",
       summary: {
         notificationDate: dispatchDate,
         dueItems: dueResult.rows.length,
+        climateDevices,
         attemptedMembers: memberGroups.size,
+        attemptedClimateMembers: climateGroups.length,
         sentNotifications,
+        sentClimateNotifications,
         failedNotifications,
+        failedClimateNotifications,
         sentItems,
         invalidSubscriptionItems,
       },
       failed: failedMembers,
     });
   });
+}
+
+function buildHumidorClimateAlertGroups(rows) {
+  return rows.flatMap((row) => {
+    const memberId = String(row.member_id || "");
+    if (!memberId) {
+      return [];
+    }
+
+    const preferences = normalizeHumidorAlertPreferences(row.preferences);
+    const pushSubscription = preferences.pushEnabled ? preferences.pushSubscription : null;
+    const alerts = getHumidorClimateDeviceAlerts(preferences.pairedDevices);
+
+    if (!preferences.climateAlertsEnabled || !pushSubscription || alerts.length === 0) {
+      return [];
+    }
+
+    return [
+      {
+        memberId,
+        memberSub: String(row.member_sub || ""),
+        pushSubscription,
+        alerts,
+      },
+    ];
+  });
+}
+
+function getHumidorClimateDeviceAlerts(devices) {
+  return normalizeHumidorPairedDevices(devices).flatMap((device) => {
+    const humidityOutOfRange = device.humidity < HUMIDOR_CLIMATE_ALERT_TARGET.minHumidity || device.humidity > HUMIDOR_CLIMATE_ALERT_TARGET.maxHumidity;
+    const temperatureOutOfRange =
+      device.temperature < HUMIDOR_CLIMATE_ALERT_TARGET.minTemperature || device.temperature > HUMIDOR_CLIMATE_ALERT_TARGET.maxTemperature;
+
+    if (!humidityOutOfRange && !temperatureOutOfRange) {
+      return [];
+    }
+
+    const issues = [];
+    if (humidityOutOfRange) {
+      issues.push(`${device.humidity}% RH`);
+    }
+
+    if (temperatureOutOfRange) {
+      issues.push(`${device.temperature} F`);
+    }
+
+    return [
+      {
+        deviceId: device.id,
+        deviceName: device.name,
+        location: device.location,
+        humidity: device.humidity,
+        temperature: device.temperature,
+        message: `${device.name} at ${device.location}: ${issues.join(" and ")}.`,
+      },
+    ];
+  });
+}
+
+function buildHumidorClimateAlertPayload(group) {
+  const preview = group.alerts
+    .slice(0, 2)
+    .map((alert) => alert.message)
+    .join(" ");
+  const extraCount = Math.max(0, group.alerts.length - 2);
+
+  return {
+    title: "Humidor climate alert",
+    body: extraCount ? `${preview} ${extraCount} more paired device${extraCount === 1 ? "" : "s"} need attention.` : preview,
+    data: {
+      tag: HUMIDOR_ALERT_DISPATCH_NOTIFICATION_TAG,
+      url: "/humidor?section=alerts",
+    },
+  };
 }
 
 async function maybeIdentifyCigarFromImage(actor, image, notes) {
@@ -2775,6 +4098,44 @@ async function maybeIdentifyCigarFromImage(actor, image, notes) {
       suggestion: buildFallbackCigarSuggestion(notes, "low"),
     };
   }
+}
+
+async function maybeEnrichHumidorItem(item, requestedFields, actor, requestId) {
+  const conversationId = `humidor_enrich_${item.id}_${requestId}`;
+  const prompt = buildHumidorEnrichmentPrompt(item, requestedFields);
+  const bedrock = await maybeBuildBedrockReply("YCCHumidorAgent", actor, prompt, conversationId);
+
+  return {
+    ...bedrock,
+    suggestion: parseHumidorEnrichmentReply(bedrock.reply || "", item, requestedFields),
+  };
+}
+
+function buildHumidorEnrichmentPrompt(item, requestedFields) {
+  return [
+    "Locate missing reference data for this member humidor cigar and return only strict JSON.",
+    "Do not overwrite member-entered values. Fill only the requested missing groups: info, image, and/or MSRP.",
+    "Use this top-level schema exactly: brand, line, vitola, wrapper, origin, strength, tastingNotes, estimatedValue, estimatedValueCurrency, estimatedValueSource, cigarImage, confidence, evidence, needsReview, details.",
+    "cigarImage must be an object with imageUrl, mimeType, fileName, and source. Use only stable HTTPS product/reference image URLs; leave imageUrl empty if no reliable image is known.",
+    "details must be an object with this schema exactly: manufacturer, country, region, factory, size, length, ringGauge, shape, wrapper, binder, filler, blend, flavorProfile, body, finish, msrp, releaseStatus, packaging, sourceSummary, imageObservations.",
+    "Set estimatedValue to the best per-cigar retail/MSRP number when known, otherwise null. Set estimatedValueCurrency to USD unless another currency is explicit.",
+    "Evidence and needsReview must be arrays of short strings. Avoid health, cessation, medical, safety, or underage tobacco claims.",
+    `Requested missing groups: ${requestedFields.join(", ")}`,
+    `Current humidor item: ${JSON.stringify({
+      name: item.name,
+      brand: item.brand,
+      line: item.line,
+      vitola: item.vitola,
+      wrapper: item.wrapper,
+      origin: item.origin,
+      strength: item.strength,
+      estimatedValue: item.estimatedValue,
+      estimatedValueCurrency: item.estimatedValueCurrency,
+      estimatedValueSource: item.estimatedValueSource,
+      hasVisibleImage: hasHumidorVisibleImage(item),
+      tastingNotes: item.tastingNotes ? "present" : "",
+    })}`,
+  ].join("\n");
 }
 
 async function handleHumidorItems(event, actor, requestId) {
@@ -2883,6 +4244,7 @@ async function handleHumidorAlertPreferencesUpdate(event, actor, requestId) {
         reorderRemindersEnabled: preferences.reorderRemindersEnabled,
         climateAlertsEnabled: preferences.climateAlertsEnabled,
         hasPushSubscription: Boolean(preferences.pushSubscription),
+        defaultHumidorLocation: preferences.humidorProfile.defaultLocation,
       },
       memberId: member.id,
       requestId,
@@ -2952,6 +4314,27 @@ function isValidDispatchSecret(providedSecret, expectedSecret) {
   return crypto.timingSafeEqual(supplied, expected);
 }
 
+function createCheckoutStatusToken() {
+  return `${CHECKOUT_STATUS_TOKEN_PREFIX}${crypto.randomBytes(24).toString("base64url")}`;
+}
+
+function isValidCheckoutStatusToken(suppliedToken, expectedToken) {
+  const supplied = sanitizeText(suppliedToken, 120);
+  const expected = sanitizeText(expectedToken, 120);
+
+  if (!supplied || !expected || !supplied.startsWith(CHECKOUT_STATUS_TOKEN_PREFIX) || !expected.startsWith(CHECKOUT_STATUS_TOKEN_PREFIX)) {
+    return false;
+  }
+
+  const suppliedBuffer = Buffer.from(supplied, "utf8");
+  const expectedBuffer = Buffer.from(expected, "utf8");
+  if (suppliedBuffer.length !== expectedBuffer.length) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(suppliedBuffer, expectedBuffer);
+}
+
 async function markHumidorReminderDispatched(client, itemId, dispatchDate, requestId) {
   const result = await client.query(
     `
@@ -3010,10 +4393,18 @@ async function handlePhase3Migration(event, requestId) {
     return applyNewsroomSchema(event, requestId);
   }
 
+  if (event.action === "verify_member_stripe_customer_link_schema") {
+    return verifyMemberStripeCustomerLinkSchema(requestId);
+  }
+
+  if (event.action === "apply_member_stripe_customer_link_schema") {
+    return applyMemberStripeCustomerLinkSchema(event, requestId);
+  }
+
   if (event.action !== "apply_phase3_schema") {
     return json(400, requestId, {
       error: "invalid_migration_action",
-      message: "Use apply_phase3_schema, verify_phase3_schema, apply_commerce_schema, verify_commerce_schema, apply_site_content_schema, verify_site_content_schema, apply_newsroom_schema, or verify_newsroom_schema.",
+      message: "Use apply_phase3_schema, verify_phase3_schema, apply_commerce_schema, verify_commerce_schema, apply_site_content_schema, verify_site_content_schema, apply_newsroom_schema, verify_newsroom_schema, apply_member_stripe_customer_link_schema, or verify_member_stripe_customer_link_schema.",
     });
   }
 
@@ -3200,6 +4591,52 @@ async function verifyNewsroomSchema(requestId) {
   });
 }
 
+async function applyMemberStripeCustomerLinkSchema(event, requestId) {
+  if (event.confirm !== MEMBER_STRIPE_CUSTOMER_LINK_MIGRATION_CONFIRM) {
+    return json(403, requestId, {
+      error: "migration_confirmation_required",
+      message: "Direct migration invokes must include the member Stripe customer link confirmation token.",
+    });
+  }
+
+  const secret = await getDatabaseSecret();
+  const databaseName = getDatabaseName();
+  await ensureDatabaseExists(databaseName, secret);
+
+  const sql = await readMigrationSql("0005_member_stripe_customer_link.sql");
+  const client = createPgClient(databaseName, secret, "ycc-member-stripe-link-migration");
+
+  await client.connect();
+  try {
+    await client.query("set statement_timeout = '45s'");
+    await client.query(sql);
+  } finally {
+    await client.end();
+  }
+
+  const verification = await collectMemberStripeCustomerLinkVerification(databaseName, secret);
+
+  return json(200, requestId, {
+    status: "applied",
+    database: databaseName,
+    migration: "0005_member_stripe_customer_link",
+    ...verification,
+  });
+}
+
+async function verifyMemberStripeCustomerLinkSchema(requestId) {
+  const secret = await getDatabaseSecret();
+  const databaseName = getDatabaseName();
+  const verification = await collectMemberStripeCustomerLinkVerification(databaseName, secret);
+
+  return json(200, requestId, {
+    status: "verified",
+    database: databaseName,
+    migration: "0005_member_stripe_customer_link",
+    ...verification,
+  });
+}
+
 async function readMigrationSql(fileName) {
   const candidates = [
     path.join(__dirname, "migrations", fileName),
@@ -3355,6 +4792,56 @@ async function collectNewsroomVerification(databaseName, secret) {
   }
 }
 
+async function collectMemberStripeCustomerLinkVerification(databaseName, secret) {
+  const client = createPgClient(databaseName, secret, "ycc-member-stripe-link-verify");
+
+  await client.connect();
+  try {
+    const columnResult = await client.query(
+      `
+        select column_name
+        from information_schema.columns
+        where table_schema = 'public'
+          and table_name = 'members'
+          and column_name = 'stripe_customer_id'
+      `
+    );
+    const migrationResult = await client.query(
+      `
+        select version, name, applied_at
+        from public.schema_migrations
+        where version = '0005'
+      `
+    );
+    const indexResult = await client.query(
+      `
+        select count(*)::int as index_count
+        from pg_indexes
+        where schemaname = 'public'
+          and indexname = 'members_stripe_customer_id_uidx'
+      `
+    );
+    const linkedResult = await client.query(
+      `
+        select count(*)::int as linked_member_count
+        from public.members
+        where stripe_customer_id is not null
+      `
+    );
+    const columns = columnResult.rows.map((row) => row.column_name);
+
+    return {
+      columns,
+      missingColumns: columns.includes("stripe_customer_id") ? [] : ["stripe_customer_id"],
+      indexCount: indexResult.rows[0]?.index_count || 0,
+      linkedMemberCount: linkedResult.rows[0]?.linked_member_count || 0,
+      migrationRow: migrationResult.rows[0] || null,
+    };
+  } finally {
+    await client.end();
+  }
+}
+
 async function collectPhase3Verification(databaseName, secret) {
   const expectedTables = getPhase3Tables();
   const client = createPgClient(databaseName, secret, "ycc-phase3-verify");
@@ -3437,11 +4924,7 @@ async function getDatabaseSecret() {
     throw new Error("DB_SECRET_ARN is not configured.");
   }
 
-  const { GetSecretValueCommand, SecretsManagerClient } = require("@aws-sdk/client-secrets-manager");
-  const client = new SecretsManagerClient({ region: process.env.AWS_REGION || "us-east-1" });
-  const result = await client.send(new GetSecretValueCommand({ SecretId: secretArn }));
-  const parsed = JSON.parse(result.SecretString || "{}");
-
+  const parsed = await readJsonSecretFromSecretsManager(secretArn, "Database");
   if (!parsed.username || !parsed.password) {
     throw new Error("Database secret must include username and password.");
   }
@@ -3450,6 +4933,327 @@ async function getDatabaseSecret() {
     username: String(parsed.username),
     password: String(parsed.password),
   };
+}
+
+async function getCommerceRuntimeEnv() {
+  const secretId = getCommerceSecretId();
+  if (!secretId) {
+    return process.env;
+  }
+
+  if (!commerceRuntimeSecretCache || commerceRuntimeSecretCache.secretId !== secretId) {
+    const parsed = await readJsonSecretFromSecretsManager(secretId, "Commerce provider");
+    const values = normalizeCommerceProviderSecret(parsed);
+    if (values.STRIPE_LAUNCH_CATALOG_S3_URI && !values.STRIPE_LAUNCH_CATALOG_JSON) {
+      values.STRIPE_LAUNCH_CATALOG_JSON = await readS3TextObject(values.STRIPE_LAUNCH_CATALOG_S3_URI);
+    }
+
+    commerceRuntimeSecretCache = {
+      secretId,
+      values,
+    };
+  }
+
+  return {
+    ...process.env,
+    ...commerceRuntimeSecretCache.values,
+  };
+}
+
+function getCommerceSecretId() {
+  for (const key of COMMERCE_SECRET_ENV_KEYS) {
+    const value = sanitizeText(process.env[key], 400);
+    if (value) {
+      return value;
+    }
+  }
+
+  return "";
+}
+
+async function readJsonSecretFromSecretsManager(secretId, description) {
+  const { GetSecretValueCommand, SecretsManagerClient } = require("@aws-sdk/client-secrets-manager");
+  const client = new SecretsManagerClient({ region: process.env.AWS_REGION || "us-east-1" });
+  const result = await client.send(new GetSecretValueCommand({ SecretId: secretId }));
+  const rawSecret = result.SecretString || (result.SecretBinary ? Buffer.from(result.SecretBinary).toString("utf8") : "{}");
+
+  try {
+    const parsed = JSON.parse(rawSecret || "{}");
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("secret_json_object_required");
+    }
+
+    return parsed;
+  } catch (error) {
+    const wrapped = new Error(`${description} secret must be valid JSON.`);
+    wrapped.cause = error;
+    throw wrapped;
+  }
+}
+
+function normalizeCommerceProviderSecret(secret) {
+  const env = {};
+  const source = asPlainObject(secret);
+  if (!source) {
+    return env;
+  }
+
+  copyFlatCommerceSecretEnv(source, env);
+
+  const providers = asPlainObject(source.providers) || {};
+  const stripe = asPlainObject(firstDefined(source.stripe, source.Stripe, providers.stripe, providers.Stripe)) || {};
+  const ageVerification =
+    asPlainObject(firstDefined(source.ageVerification, source.age_verification, source.age, providers.ageVerification, providers.age_verification, providers.age)) ||
+    {};
+  const tax = asPlainObject(firstDefined(source.tax, source.stripeTax, source.stripe_tax, providers.tax, providers.stripeTax, providers.stripe_tax)) || {};
+  const shipping = asPlainObject(firstDefined(source.shipping, providers.shipping)) || {};
+  const membership = asPlainObject(firstDefined(source.membership, source.entitlements, providers.membership)) || {};
+
+  putSecretEnv(env, "STRIPE_SECRET_KEY", firstDefined(stripe.secretKey, stripe.secret_key, stripe.apiKey, stripe.api_key));
+  putSecretEnv(env, "STRIPE_WEBHOOK_SECRET", firstDefined(stripe.webhookSecret, stripe.webhook_secret, stripe.signingSecret, stripe.signing_secret));
+  putSecretEnv(env, "STRIPE_API_VERSION", firstDefined(stripe.apiVersion, stripe.api_version));
+  putSecretEnv(
+    env,
+    "STRIPE_CUSTOMER_PORTAL_CONFIGURATION_ID",
+    firstDefined(stripe.customerPortalConfigurationId, stripe.customer_portal_configuration_id, stripe.portalConfigurationId)
+  );
+  putSecretFlagEnv(env, "STRIPE_LAUNCH_CATALOG_READY", firstDefined(stripe.launchCatalogReady, stripe.launch_catalog_ready, stripe.catalogReady));
+  putSecretFlagEnv(
+    env,
+    "STRIPE_TOBACCO_APPROVAL_CONFIRMED",
+    firstDefined(
+      stripe.tobaccoApprovalConfirmed,
+      stripe.tobacco_approval_confirmed,
+      stripe.approvalConfirmed,
+      stripe.approval_confirmed,
+      source.stripeTobaccoApprovalConfirmed,
+      source.stripe_tobacco_approval_confirmed
+    )
+  );
+  putSecretEnv(env, "STRIPE_LAUNCH_CATALOG_PATH", firstDefined(stripe.launchCatalogPath, stripe.launch_catalog_path));
+  putSecretEnv(env, "STRIPE_LAUNCH_CATALOG_S3_URI", firstDefined(stripe.launchCatalogS3Uri, stripe.launch_catalog_s3_uri, stripe.catalogS3Uri));
+  putSecretJsonEnv(
+    env,
+    "STRIPE_LAUNCH_CATALOG_JSON",
+    firstDefined(stripe.launchCatalogJson, stripe.launch_catalog_json, stripe.launchCatalog, stripe.launch_catalog, stripe.catalog, stripe.products)
+  );
+  mergeStripePriceIds(env, firstDefined(stripe.priceIds, stripe.price_ids, stripe.prices, source.stripePriceIds, source.stripe_price_ids));
+
+  putSecretEnv(env, "AGE_VERIFICATION_VENDOR", firstDefined(ageVerification.vendor, ageVerification.provider, source.ageVerificationVendor));
+  const ageVerificationAccountSecret = firstDefined(
+    ageVerification.accountSecret,
+    ageVerification.account_secret,
+    ageVerification.secret,
+    ageVerification.apiSecret,
+    ageVerification.api_secret
+  );
+  putSecretEnv(env, "AGE_VERIFICATION_API_KEY", firstDefined(ageVerification.apiKey, ageVerification.api_key));
+  putSecretEnv(env, "AGE_VERIFICATION_API_SECRET", ageVerificationAccountSecret);
+  putSecretEnv(env, "AGE_VERIFICATION_ACCOUNT_SECRET", firstDefined(ageVerification.accountSecret, ageVerification.account_secret));
+  putSecretEnv(env, "AGE_VERIFICATION_CLIENT_ID", firstDefined(ageVerification.clientId, ageVerification.client_id));
+  putSecretEnv(env, "AGE_VERIFICATION_CLIENT_SECRET", firstDefined(ageVerification.clientSecret, ageVerification.client_secret));
+  putSecretEnv(env, "AGE_VERIFICATION_BASE_URL", firstDefined(ageVerification.baseUrl, ageVerification.base_url));
+  putSecretEnv(env, "AGE_VERIFICATION_WEBHOOK_SECRET", firstDefined(ageVerification.webhookSecret, ageVerification.webhook_secret));
+  putSecretEnv(env, "AGE_VERIFICATION_SIGNING_SECRET", firstDefined(ageVerification.signingSecret, ageVerification.signing_secret, ageVerificationAccountSecret));
+
+  putSecretEnv(env, "TAX_PROVIDER", firstDefined(tax.provider, source.taxProvider));
+  putSecretEnv(env, "TAX_API_KEY", firstDefined(tax.apiKey, tax.api_key));
+  putSecretEnv(env, "TAX_API_SECRET", firstDefined(tax.apiSecret, tax.api_secret));
+  putSecretEnv(env, "TAX_CLIENT_ID", firstDefined(tax.clientId, tax.client_id));
+  putSecretEnv(env, "TAX_CLIENT_SECRET", firstDefined(tax.clientSecret, tax.client_secret));
+  putSecretEnv(env, "TAX_ACCOUNT_ID", firstDefined(tax.accountId, tax.account_id));
+  putSecretEnv(env, "TAX_BASE_URL", firstDefined(tax.baseUrl, tax.base_url));
+  putSecretEnv(env, "TAX_WEBHOOK_SECRET", firstDefined(tax.webhookSecret, tax.webhook_secret));
+  putSecretTaxStatus(env, firstDefined(tax.status, tax.ready, tax.featureStripeTax, source.featureStripeTax));
+
+  putSecretEnv(env, "SHIPPING_PROVIDER", firstDefined(shipping.provider, source.shippingProvider));
+  putSecretEnv(env, "SHIPPING_API_KEY", firstDefined(shipping.apiKey, shipping.api_key));
+  putSecretEnv(env, "SHIPPING_API_SECRET", firstDefined(shipping.apiSecret, shipping.api_secret));
+  putSecretEnv(env, "SHIPPING_CLIENT_ID", firstDefined(shipping.clientId, shipping.client_id));
+  putSecretEnv(env, "SHIPPING_CLIENT_SECRET", firstDefined(shipping.clientSecret, shipping.client_secret));
+  putSecretEnv(env, "SHIPPING_ACCOUNT_ID", firstDefined(shipping.accountId, shipping.account_id));
+  putSecretEnv(
+    env,
+    "SHIPPING_ADULT_SIGNATURE_ACCOUNT_ID",
+    firstDefined(shipping.adultSignatureAccountId, shipping.adult_signature_account_id)
+  );
+  putSecretEnv(env, "SHIPPING_BASE_URL", firstDefined(shipping.baseUrl, shipping.base_url));
+
+  putSecretEnv(
+    env,
+    "MEMBERSHIP_ENTITLEMENT_SIGNING_SECRET",
+    firstDefined(membership.entitlementSigningSecret, membership.entitlement_signing_secret, membership.signingSecret, membership.signing_secret)
+  );
+
+  return env;
+}
+
+function copyFlatCommerceSecretEnv(source, env) {
+  for (const [key, value] of Object.entries(source)) {
+    const envKey = String(key).trim().toUpperCase();
+    if (!COMMERCE_SECRET_FLAT_KEY_PATTERNS.some((pattern) => pattern.test(envKey))) {
+      continue;
+    }
+
+    if (envKey === "STRIPE_LAUNCH_CATALOG_READY") {
+      putSecretFlagEnv(env, envKey, value);
+    } else if (envKey === "FEATURE_STRIPE_TAX") {
+      putSecretTaxStatus(env, value);
+    } else if (envKey === "STRIPE_LAUNCH_CATALOG_JSON") {
+      putSecretJsonEnv(env, envKey, value);
+    } else {
+      putSecretEnv(env, envKey, value);
+    }
+  }
+}
+
+function mergeStripePriceIds(env, priceIds) {
+  const prices = asPlainObject(priceIds);
+  if (!prices) {
+    return;
+  }
+
+  for (const [rawKey, rawValue] of Object.entries(prices)) {
+    const nestedPrices = asPlainObject(rawValue);
+    if (nestedPrices) {
+      for (const [period, priceId] of Object.entries(nestedPrices)) {
+        putSecretEnv(env, `STRIPE_PRICE_${toEnvKeySegment(rawKey)}_${toEnvKeySegment(period)}`, priceId);
+      }
+      continue;
+    }
+
+    const normalizedKey = String(rawKey || "").trim().toUpperCase();
+    const envKey = normalizedKey.startsWith("STRIPE_PRICE_") ? normalizedKey : `STRIPE_PRICE_${toEnvKeySegment(rawKey)}`;
+    putSecretEnv(env, envKey, rawValue);
+  }
+}
+
+function putSecretEnv(env, key, value) {
+  if (value === undefined || value === null) {
+    return;
+  }
+
+  env[key] = toSecretEnvString(value);
+}
+
+function putSecretJsonEnv(env, key, value) {
+  if (value === undefined || value === null || value === "") {
+    return;
+  }
+
+  env[key] = typeof value === "string" ? value : JSON.stringify(value);
+}
+
+function putSecretFlagEnv(env, key, value) {
+  if (value === undefined || value === null) {
+    return;
+  }
+
+  if (typeof value === "boolean") {
+    env[key] = value ? "1" : "";
+    return;
+  }
+
+  const normalized = String(value).trim().toLowerCase();
+  if (["1", "true", "ready", "yes", "y"].includes(normalized)) {
+    env[key] = "1";
+  } else if (["", "0", "false", "no", "n", "pending", "unavailable"].includes(normalized)) {
+    env[key] = "";
+  } else {
+    env[key] = String(value);
+  }
+}
+
+function isSecretFlagEnabled(value) {
+  return ["1", "true", "ready", "yes", "y"].includes(String(value || "").trim().toLowerCase());
+}
+
+function putSecretTaxStatus(env, value) {
+  if (value === undefined || value === null) {
+    return;
+  }
+
+  if (typeof value === "boolean") {
+    env.FEATURE_STRIPE_TAX = value ? "ready" : "";
+    return;
+  }
+
+  const normalized = String(value).trim().toLowerCase();
+  env.FEATURE_STRIPE_TAX = ["1", "true", "yes", "ready"].includes(normalized) ? "ready" : String(value);
+}
+
+function toSecretEnvString(value) {
+  if (typeof value === "boolean") {
+    return value ? "1" : "";
+  }
+
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? String(value) : "";
+  }
+
+  if (Array.isArray(value) || (value && typeof value === "object")) {
+    return JSON.stringify(value);
+  }
+
+  return String(value);
+}
+
+function toEnvKeySegment(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function firstDefined(...values) {
+  return values.find((value) => value !== undefined && value !== null);
+}
+
+function asPlainObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+
+async function readS3TextObject(s3Uri) {
+  const parsed = parseS3Uri(s3Uri);
+  if (!parsed) {
+    throw new Error("STRIPE_LAUNCH_CATALOG_S3_URI must be an s3://bucket/key URI.");
+  }
+
+  const { GetObjectCommand, S3Client } = require("@aws-sdk/client-s3");
+  const client = new S3Client({ region: process.env.AWS_REGION || "us-east-1" });
+  const result = await client.send(new GetObjectCommand({ Bucket: parsed.bucket, Key: parsed.key }));
+  return streamToString(result.Body);
+}
+
+function parseS3Uri(value) {
+  const uri = sanitizeText(value, 1200);
+  const match = /^s3:\/\/([^/]+)\/(.+)$/.exec(uri);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    bucket: match[1],
+    key: match[2],
+  };
+}
+
+async function streamToString(body) {
+  if (!body) {
+    return "";
+  }
+
+  if (typeof body.transformToString === "function") {
+    return body.transformToString("utf8");
+  }
+
+  const chunks = [];
+  for await (const chunk of body) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 function createPgClient(databaseName, secret, applicationName) {
@@ -3803,7 +5607,7 @@ async function fetchPublishedNewsStories(limit) {
   return withDatabaseClient("ycc-api-news-stories", async (client) => {
     const result = await client.query(
       `
-        select id, slug, title, dek, category, body_markdown, source_notes, official_sources, status, published_at, updated_at
+        select id, slug, title, dek, category, body_markdown, source_notes, official_sources, metadata, status, published_at, updated_at
         from public.news_stories
         where status = 'published'
           and published_at is not null
@@ -3839,6 +5643,118 @@ async function persistNewsStory(event, actor, requestId, story) {
 
     return persistedStory;
   });
+}
+
+async function loadHumidorItemRowForMember(client, itemId, memberId) {
+  const result = await client.query(
+    `
+      /* humidor_item_enrichment_lookup */
+      select
+        id,
+        name,
+        brand,
+        line,
+        vitola,
+        wrapper,
+        origin,
+        strength,
+        quantity,
+        rating,
+        purchase_date,
+        aging_start_date,
+        reorder_reminder,
+        humidor_location,
+        tray,
+        tasting_notes,
+        source,
+        metadata,
+        created_at
+      from public.humidor_items
+      where id = $1 and member_id = $2 and archived_at is null
+      limit 1
+    `,
+    [itemId, memberId]
+  );
+
+  return result.rows[0] || null;
+}
+
+async function updateHumidorItemEnrichment(client, details) {
+  const metadata = buildHumidorEnrichmentMetadata(details);
+  const result = await client.query(
+    `
+      /* humidor_item_enrichment_update */
+      update public.humidor_items
+      set brand = $3,
+          line = $4,
+          vitola = $5,
+          wrapper = $6,
+          origin = $7,
+          strength = $8,
+          tasting_notes = $9,
+          metadata = coalesce(metadata, '{}'::jsonb) || $10::jsonb,
+          actor_id = $11,
+          request_id = $12,
+          updated_at = now()
+      where id = $1 and member_id = $2 and archived_at is null
+      returning
+        id,
+        name,
+        brand,
+        line,
+        vitola,
+        wrapper,
+        origin,
+        strength,
+        quantity,
+        rating,
+        purchase_date,
+        aging_start_date,
+        reorder_reminder,
+        humidor_location,
+        tray,
+        tasting_notes,
+        source,
+        metadata,
+        created_at
+    `,
+    [
+      details.itemId,
+      details.memberId,
+      nullable(details.item.brand),
+      nullable(details.item.line),
+      nullable(details.item.vitola),
+      nullable(details.item.wrapper),
+      nullable(details.item.origin),
+      nullable(details.item.strength),
+      nullable(details.item.tastingNotes),
+      JSON.stringify(metadata),
+      details.actor.sub,
+      details.requestId,
+    ]
+  );
+
+  const row = result.rows[0];
+  if (!row) {
+    throw new Error(`Humidor enrichment update did not return item ${details.itemId}.`);
+  }
+
+  return row;
+}
+
+function buildHumidorEnrichmentMetadata(details) {
+  const metadata = buildHumidorItemMetadata(details.actor, details.item);
+  metadata.humidorEnrichment = {
+    agent: "YCCHumidorAgent",
+    enrichedAt: new Date().toISOString(),
+    requestId: details.requestId,
+    updatedFields: details.updatedFields,
+    confidence: details.enrichment.confidence,
+    evidence: details.enrichment.evidence.slice(0, 6),
+    needsReview: details.enrichment.needsReview.slice(0, 6),
+  };
+
+  return metadata;
 }
 
 async function persistHumidorItem(event, actor, requestId, item) {
@@ -3908,6 +5824,7 @@ async function persistHumidorItem(event, actor, requestId, item) {
         quantity: item.quantity,
         purchaseDate: item.purchaseDate,
         agingStartDate: item.agingStartDate,
+        productionDate: item.productionDate,
         reorderReminder: item.reorderReminder,
         estimatedValue: item.estimatedValue,
         estimatedValueCurrency: item.estimatedValueCurrency,
@@ -4033,54 +5950,109 @@ async function withDatabaseTransaction(applicationName, callback) {
 
 async function upsertMember(client, actor, requestId) {
   const normalized = normalizeActorForMember(actor);
-  const result = await client.query(
-    `
-      insert into public.members (
-        cognito_sub,
-        email,
-        email_verified,
-        display_name,
-        role,
-        membership_tier,
-        member_status,
-        last_seen_at,
-        metadata,
-        actor_id,
-        request_id
-      )
-      values ($1, $2, $3, $4, $5, $6, $7, now(), $8::jsonb, $9, $10)
-      on conflict (cognito_sub) do update
-      set email = excluded.email,
-          email_verified = excluded.email_verified,
-          display_name = coalesce(excluded.display_name, public.members.display_name),
-          role = excluded.role,
-          membership_tier = excluded.membership_tier,
-          member_status = excluded.member_status,
-          last_seen_at = now(),
-          metadata = public.members.metadata || excluded.metadata,
-          actor_id = excluded.actor_id,
-          request_id = excluded.request_id,
-          updated_at = now()
-      returning id, cognito_sub, email, display_name, role, membership_tier, member_status
-    `,
-    [
-      actor.sub,
-      normalized.email,
-      actor.emailVerified,
-      nullable(actor.name),
-      normalized.role,
-      normalized.membershipTier,
-      normalized.memberStatus,
+  const metadata = JSON.stringify({
+    cognitoGroups: actor.groups,
+    cognitoUsername: actor.username,
+    emailMissingInToken: !actor.email,
+    source: "cognito-jwt",
+  });
+  const params = [
+    actor.sub,
+    normalized.email,
+    actor.emailVerified,
+    nullable(actor.name),
+    normalized.role,
+    normalized.membershipTier,
+    normalized.memberStatus,
+    normalized.stripeCustomerId,
+    metadata,
+    actor.sub,
+    requestId,
+  ];
+
+  let result;
+  try {
+    result = await client.query(
+      `
+        insert into public.members (
+          cognito_sub,
+          email,
+          email_verified,
+          display_name,
+          role,
+          membership_tier,
+          member_status,
+          stripe_customer_id,
+          last_seen_at,
+          metadata,
+          actor_id,
+          request_id
+        )
+        values ($1, $2, $3, $4, $5, $6, $7, $8, now(), $9::jsonb, $10, $11)
+        on conflict (cognito_sub) do update
+        set email = excluded.email,
+            email_verified = excluded.email_verified,
+            display_name = coalesce(excluded.display_name, public.members.display_name),
+            role = excluded.role,
+            membership_tier = excluded.membership_tier,
+            member_status = excluded.member_status,
+            stripe_customer_id = coalesce(excluded.stripe_customer_id, public.members.stripe_customer_id),
+            last_seen_at = now(),
+            metadata = public.members.metadata || excluded.metadata,
+            actor_id = excluded.actor_id,
+            request_id = excluded.request_id,
+            updated_at = now()
+        returning id, cognito_sub, email, display_name, role, membership_tier, member_status, stripe_customer_id
+      `,
+      params
+    );
+  } catch (error) {
+    if (!actor.email || !actor.emailVerified || !isMemberEmailUniqueConflict(error)) {
+      throw error;
+    }
+
+    console.warn(
       JSON.stringify({
-        cognitoGroups: actor.groups,
-        cognitoUsername: actor.username,
-        emailMissingInToken: !actor.email,
-        source: "cognito-jwt",
-      }),
-      actor.sub,
-      requestId,
-    ]
-  );
+        level: "warn",
+        event: "member_email_conflict_repair",
+        requestId,
+        actorHash: hashActor(actor.sub),
+      })
+    );
+
+    result = await client.query(
+      `
+        update public.members
+        set cognito_sub = $2,
+            email_verified = $3,
+            display_name = coalesce($4, public.members.display_name),
+            role = $5,
+            membership_tier = $6,
+            member_status = $7,
+            stripe_customer_id = coalesce($8, public.members.stripe_customer_id),
+            last_seen_at = now(),
+            metadata = coalesce(public.members.metadata, '{}'::jsonb) || $9::jsonb,
+            actor_id = $10,
+            request_id = $11,
+            updated_at = now()
+        where lower(email) = lower($1)
+        returning id, cognito_sub, email, display_name, role, membership_tier, member_status, stripe_customer_id
+      `,
+      [
+        normalized.email,
+        actor.sub,
+        actor.emailVerified,
+        nullable(actor.name),
+        normalized.role,
+        normalized.membershipTier,
+        normalized.memberStatus,
+        normalized.stripeCustomerId,
+        metadata,
+        actor.sub,
+        requestId,
+      ]
+    );
+  }
 
   const row = result.rows[0];
   if (!row) {
@@ -4095,7 +6067,17 @@ async function upsertMember(client, actor, requestId) {
     memberStatus: row.member_status,
     membershipTier: row.membership_tier,
     role: row.role,
+    stripeCustomerId: row.stripe_customer_id || null,
   };
+}
+
+function isMemberEmailUniqueConflict(error) {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const candidate = error;
+  return candidate.code === "23505" && String(candidate.constraint || "").includes("members_email_lower_uidx");
 }
 
 async function upsertConversation(client, memberId, actor, requestId, details) {
@@ -4422,7 +6404,7 @@ async function upsertNewsStory(client, memberId, actor, requestId, story) {
           actor_id = excluded.actor_id,
           request_id = excluded.request_id,
           updated_at = now()
-      returning id, slug, title, dek, category, body_markdown, source_notes, official_sources, status, published_at, updated_at
+      returning id, slug, title, dek, category, body_markdown, source_notes, official_sources, metadata, status, published_at, updated_at
     `,
     [
       story.slug,
@@ -4434,11 +6416,7 @@ async function upsertNewsStory(client, memberId, actor, requestId, story) {
       JSON.stringify(story.officialSources),
       story.status,
       memberId,
-      JSON.stringify({
-        complianceReview: story.complianceReview || null,
-        source: "newsroom-agent",
-        updatedBySub: actor.sub,
-      }),
+      JSON.stringify(buildNewsStoryMetadata(story, actor)),
       actor.sub,
       requestId,
     ]
@@ -4617,6 +6595,38 @@ async function insertAuditLog(client, event, details) {
   );
 }
 
+async function insertCommerceAuditLog(client, details) {
+  await client.query(
+    `
+      insert into public.commerce_audit_log (
+        actor_sub,
+        actor_email,
+        action,
+        target_type,
+        target_id,
+        request_id,
+        stripe_event_id,
+        order_id,
+        compliance_hold_id,
+        payload
+      )
+      values ($1, $2, $3, $4, $5, $6, $7, $8::uuid, $9::uuid, $10::jsonb)
+    `,
+    [
+      details.actor?.sub || "system",
+      details.actor?.email || null,
+      details.action,
+      details.targetType,
+      details.targetId,
+      details.requestId,
+      details.stripeEventId || null,
+      details.orderId || null,
+      details.complianceHoldId || null,
+      JSON.stringify(details.payload || {}),
+    ]
+  );
+}
+
 function shouldPersistDatabaseWrites() {
   return process.env.FEATURE_DB_WRITES === "schema_ready";
 }
@@ -4694,8 +6704,154 @@ function resolveCheckoutAgeVerification(rawToken, env = process.env) {
   };
 }
 
+async function validateAgeCheckerVerification(uuid, env = process.env) {
+  const baseUrl = (sanitizeText(env.AGE_VERIFICATION_BASE_URL, 240) || AGECHECKER_DEFAULT_BASE_URL).replace(/\/+$/, "");
+  const response = await fetch(`${baseUrl}/v1/status/${encodeURIComponent(uuid)}`, {
+    method: "GET",
+    headers: {
+      accept: "application/json",
+      "X-AgeChecker-Secret": getAgeCheckerAccountSecret(env),
+    },
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    return {
+      ...(payload && typeof payload === "object" ? payload : {}),
+      status: sanitizeText(payload?.status, 40) || "not_created",
+      error: sanitizeText(payload?.error, 80) || `http_${response.status}`,
+      httpStatus: response.status,
+    };
+  }
+
+  return payload && typeof payload === "object" ? payload : {};
+}
+
+function normalizeAgeCheckerUuid(value) {
+  const rawValue = sanitizeText(value, 220);
+  const uuid = rawValue.replace(/^age_txn_/, "").replace(/^agechecker_/, "");
+
+  return /^[A-Za-z0-9_-]{8,160}$/.test(uuid) ? uuid : "";
+}
+
+function createSignedCheckoutAgeToken({ vendorTransactionId, verifiedAt }, env = process.env) {
+  const signingSecret = getCheckoutAgeSigningSecret(env);
+  if (!signingSecret) {
+    throw new Error("AGE_VERIFICATION_SIGNING_SECRET is required to sign checkout age tokens.");
+  }
+
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const payload = {
+    txn: vendorTransactionId,
+    iat: nowSeconds,
+    exp: nowSeconds + CHECKOUT_AGE_TOKEN_TTL_SECONDS,
+    verifiedAt,
+  };
+  const payloadSegment = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+  const signedMessage = `${CHECKOUT_AGE_TOKEN_VERSION}.${payloadSegment}`;
+  const signatureSegment = crypto.createHmac("sha256", signingSecret).update(signedMessage).digest("base64url");
+
+  return `${signedMessage}.${signatureSegment}`;
+}
+
+function resolveCheckoutMembershipEntitlement(rawToken, customer, env = process.env) {
+  const signed = parseSignedMembershipEntitlementToken(rawToken, env);
+  if (!signed) {
+    return {
+      trusted: false,
+      status: "guest",
+      tiers: [],
+    };
+  }
+
+  const customerEmail = String(customer?.email || "").trim().toLowerCase();
+  if (customerEmail && signed.email && customerEmail !== signed.email) {
+    return {
+      trusted: false,
+      status: "guest",
+      tiers: [],
+    };
+  }
+
+  return {
+    trusted: true,
+    status: "member",
+    subject: signed.subject,
+    email: signed.email,
+    tiers: signed.tiers,
+  };
+}
+
+function parseSignedMembershipEntitlementToken(rawToken, env = process.env) {
+  const signingSecret = String(env.MEMBERSHIP_ENTITLEMENT_SIGNING_SECRET || "");
+  const token = sanitizeText(rawToken, 1200);
+  if (!signingSecret || !token) {
+    return null;
+  }
+
+  const parts = token.split(".");
+  if (parts.length !== 3 || parts[0] !== MEMBERSHIP_ENTITLEMENT_TOKEN_VERSION) {
+    return null;
+  }
+
+  const payloadSegment = parts[1];
+  const signatureSegment = parts[2];
+  const signedMessage = `${parts[0]}.${payloadSegment}`;
+  const expectedSignature = crypto.createHmac("sha256", signingSecret).update(signedMessage).digest();
+  const suppliedSignature = decodeBase64UrlToBuffer(signatureSegment);
+
+  if (
+    !suppliedSignature ||
+    suppliedSignature.length !== expectedSignature.length ||
+    !crypto.timingSafeEqual(suppliedSignature, expectedSignature)
+  ) {
+    return null;
+  }
+
+  const payloadBytes = decodeBase64UrlToBuffer(payloadSegment);
+  if (!payloadBytes) {
+    return null;
+  }
+
+  let payload;
+  try {
+    payload = JSON.parse(payloadBytes.toString("utf8"));
+  } catch {
+    return null;
+  }
+
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const issuedAtSeconds = Number(payload.iat);
+  const explicitExpirySeconds = Number(payload.exp);
+  const expiresAtSeconds = Number.isFinite(explicitExpirySeconds)
+    ? explicitExpirySeconds
+    : Number.isFinite(issuedAtSeconds)
+      ? issuedAtSeconds + MEMBERSHIP_ENTITLEMENT_TOKEN_TTL_SECONDS
+      : null;
+  if (!Number.isFinite(expiresAtSeconds) || expiresAtSeconds <= nowSeconds) {
+    return null;
+  }
+
+  const status = sanitizeText(payload.status, 40).toLowerCase();
+  if (status !== "member") {
+    return null;
+  }
+
+  const subject = sanitizeText(payload.sub || payload.subject, 160);
+  const email = normalizeEmailAddresses(payload.email, 1)[0] || "";
+  const tiers = (Array.isArray(payload.tiers) ? payload.tiers : [payload.tier])
+    .map((tier) => sanitizeText(tier, 40).toLowerCase())
+    .filter(Boolean);
+
+  return {
+    subject,
+    email,
+    tiers,
+  };
+}
+
 function parseSignedCheckoutAgeToken(token, env = process.env) {
-  const signingSecret = String(env.AGE_VERIFICATION_SIGNING_SECRET || "");
+  const signingSecret = getCheckoutAgeSigningSecret(env);
   if (!signingSecret) {
     return null;
   }
@@ -4755,6 +6911,14 @@ function parseSignedCheckoutAgeToken(token, env = process.env) {
   };
 }
 
+function getCheckoutAgeSigningSecret(env = process.env) {
+  return String(env.AGE_VERIFICATION_SIGNING_SECRET || env.AGE_VERIFICATION_API_SECRET || env.AGE_VERIFICATION_ACCOUNT_SECRET || "");
+}
+
+function getAgeCheckerAccountSecret(env = process.env) {
+  return String(env.AGE_VERIFICATION_ACCOUNT_SECRET || env.AGE_VERIFICATION_API_SECRET || "");
+}
+
 function decodeBase64UrlToBuffer(value) {
   const normalized = String(value || "")
     .replace(/-/g, "+")
@@ -4782,6 +6946,43 @@ function toValidIsoTimestamp(value) {
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
+function createMembershipEntitlementTokenForCheckout(actor, membership, env = process.env) {
+  const signingSecret = String(env.MEMBERSHIP_ENTITLEMENT_SIGNING_SECRET || "");
+  const email = normalizeEmailAddresses(actor?.email, 1)[0] || "";
+  const status = sanitizeText(membership?.status, 40).toLowerCase();
+  if (!signingSecret || !email || !["active", "member"].includes(status)) {
+    return null;
+  }
+
+  const tiers = [
+    normalizeMembershipEntitlementTier(membership?.tier),
+    ...(Array.isArray(membership?.groups) ? membership.groups.map(normalizeMembershipEntitlementTier) : []),
+  ].filter(Boolean);
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const payload = {
+    sub: sanitizeText(actor?.sub, 160),
+    email,
+    status: "member",
+    tiers: [...new Set(tiers)],
+    iat: nowSeconds,
+    exp: nowSeconds + MEMBERSHIP_ENTITLEMENT_TOKEN_TTL_SECONDS,
+  };
+  const payloadSegment = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+  const signedMessage = `${MEMBERSHIP_ENTITLEMENT_TOKEN_VERSION}.${payloadSegment}`;
+  const signatureSegment = crypto.createHmac("sha256", signingSecret).update(signedMessage).digest("base64url");
+
+  return `${signedMessage}.${signatureSegment}`;
+}
+
+function normalizeMembershipEntitlementTier(value) {
+  const normalized = sanitizeText(value, 80)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+  return ["box_access_pass", "kisha", "sensei", "daimyo", "member"].includes(normalized) ? normalized : "";
+}
+
 async function resolveMemberStripeCustomerId(actor, requestId) {
   const claimCustomerId = sanitizeText(actor.stripeCustomerId, 160);
   if (claimCustomerId) {
@@ -4799,6 +7000,21 @@ async function resolveMemberStripeCustomerId(actor, requestId) {
 }
 
 async function findMemberStripeCustomerIdForMember(client, memberId, email) {
+  const memberResult = await client.query(
+    `
+      select stripe_customer_id
+      from public.members
+      where id = $1
+        and stripe_customer_id is not null
+      limit 1
+    `,
+    [memberId]
+  );
+  const fromMember = sanitizeText(memberResult.rows[0]?.stripe_customer_id, 160);
+  if (fromMember) {
+    return fromMember;
+  }
+
   const subscriptionResult = await client.query(
     `
       select stripe_customer_id
@@ -4976,6 +7192,7 @@ async function upsertCommerceOrderFromStripeCheckoutEvent(client, stripe, stripe
           : "pending_payment";
   const fulfillmentStatus = paymentStatus === "paid" ? "pending" : "awaiting_payment";
   const memberId = await findMemberIdByEmail(client, email);
+  const stripeCustomerId = sanitizeText(session.customer, 160) || null;
   const subtotalCents = toNonNegativeInteger(session.amount_subtotal);
   const totalCents = toNonNegativeInteger(session.amount_total);
   const taxCents = toNonNegativeInteger(session.total_details?.amount_tax);
@@ -5030,7 +7247,7 @@ async function upsertCommerceOrderFromStripeCheckoutEvent(client, stripe, stripe
       memberId,
       email,
       status,
-      sanitizeText(session.customer, 160) || null,
+      stripeCustomerId,
       checkoutSessionId,
       sanitizeText(session.payment_intent, 160) || null,
       stripeEvent.id,
@@ -5049,6 +7266,10 @@ async function upsertCommerceOrderFromStripeCheckoutEvent(client, stripe, stripe
   const row = result.rows[0];
   if (row?.id) {
     await upsertCommerceOrderItemsFromStripeSession(client, stripe, row.id, session);
+  }
+
+  if (memberId && stripeCustomerId) {
+    await linkMemberStripeCustomer(client, memberId, stripeCustomerId);
   }
 
   return row
@@ -5097,6 +7318,7 @@ async function upsertCommerceSubscriptionFromStripeEvent(client, stripeEvent, ac
     return null;
   }
 
+  const metadata = subscriptionLike.metadata && typeof subscriptionLike.metadata === "object" ? subscriptionLike.metadata : {};
   const subscriptionId = sanitizeText(
     subscriptionLike.id || subscriptionLike.subscription || subscriptionLike.subscription_id || subscriptionLike.stripe_subscription_id,
     200
@@ -5107,23 +7329,33 @@ async function upsertCommerceSubscriptionFromStripeEvent(client, stripeEvent, ac
 
   const subscriptionPriceId =
     sanitizeText(
-      subscriptionLike.items?.data?.[0]?.price?.id || subscriptionLike.price?.id || subscriptionLike.plan?.id,
+      subscriptionLike.items?.data?.[0]?.price?.id || subscriptionLike.price?.id || subscriptionLike.plan?.id || metadata.stripe_price_id,
       160
     ) || null;
   const subscriptionCheckoutSessionId = sanitizeText(
-    subscriptionLike.checkout_session || subscriptionLike.checkout?.session || subscriptionLike.checkout_session_id || null,
+    subscriptionLike.checkout_session || subscriptionLike.checkout?.session || subscriptionLike.checkout_session_id || metadata.checkout_session_id || null,
     200
   ) || null;
   const tierKey =
     sanitizeText(
-      subscriptionLike.metadata?.tier_key || subscriptionLike.plan?.metadata?.tier_key || subscriptionLike.items?.data?.[0]?.price?.metadata?.tier_key,
+      metadata.tier_key || subscriptionLike.plan?.metadata?.tier_key || subscriptionLike.items?.data?.[0]?.price?.metadata?.tier_key,
       120
     ) || null;
   const billingPeriod =
     sanitizeText(
-      subscriptionLike.metadata?.billing_period || subscriptionLike.items?.data?.[0]?.price?.recurring?.interval || subscriptionLike.billing_period,
+      metadata.billing_period || subscriptionLike.items?.data?.[0]?.price?.recurring?.interval || subscriptionLike.billing_period,
       80
     ) || null;
+  const email =
+    normalizeEmailAddresses(subscriptionLike.customer_details?.email, 1)[0] ||
+    normalizeEmailAddresses(subscriptionLike.customer_email, 1)[0] ||
+    normalizeEmailAddresses(metadata.customer_email, 1)[0] ||
+    "";
+  const stripeCustomerId = sanitizeText(subscriptionLike.customer || subscriptionLike.customer_id, 160) || null;
+
+  if (!email || !stripeCustomerId || !subscriptionPriceId || !tierKey || !billingPeriod) {
+    return null;
+  }
 
   const status =
     action === "record_subscription_payment_failure"
@@ -5133,25 +7365,84 @@ async function upsertCommerceSubscriptionFromStripeEvent(client, stripeEvent, ac
         : "active";
   const currentPeriodEnd = Number(subscriptionLike.current_period_end);
   const currentPeriodEndIso = Number.isFinite(currentPeriodEnd) ? new Date(currentPeriodEnd * 1000).toISOString() : null;
+  const memberId = await findMemberIdByEmail(client, email);
 
   const result = await client.query(
     `
-      update public.member_subscriptions
-      set status = $1,
-          stripe_price_id = coalesce($2, public.member_subscriptions.stripe_price_id),
-          stripe_checkout_session_id = coalesce($3, public.member_subscriptions.stripe_checkout_session_id),
-          tier_key = coalesce($4, public.member_subscriptions.tier_key),
-          billing_period = coalesce($5, public.member_subscriptions.billing_period),
-          current_period_end = coalesce($6::timestamptz, public.member_subscriptions.current_period_end),
+      insert into public.member_subscriptions (
+        member_id,
+        email,
+        stripe_customer_id,
+        stripe_subscription_id,
+        stripe_price_id,
+        stripe_checkout_session_id,
+        tier_key,
+        billing_period,
+        status,
+        current_period_end
+      )
+      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::timestamptz)
+      on conflict (stripe_subscription_id) do update
+      set member_id = coalesce(excluded.member_id, public.member_subscriptions.member_id),
+          email = excluded.email,
+          stripe_customer_id = excluded.stripe_customer_id,
+          stripe_price_id = excluded.stripe_price_id,
+          stripe_checkout_session_id = coalesce(excluded.stripe_checkout_session_id, public.member_subscriptions.stripe_checkout_session_id),
+          tier_key = excluded.tier_key,
+          billing_period = excluded.billing_period,
+          status = excluded.status,
+          current_period_end = coalesce(excluded.current_period_end, public.member_subscriptions.current_period_end),
           updated_at = now()
-      where stripe_subscription_id = $7
-      returning id
+      returning id, status
     `,
-    [status, subscriptionPriceId, subscriptionCheckoutSessionId, tierKey, billingPeriod, currentPeriodEndIso, subscriptionId]
+    [
+      memberId,
+      email,
+      stripeCustomerId,
+      subscriptionId,
+      subscriptionPriceId,
+      subscriptionCheckoutSessionId,
+      tierKey,
+      billingPeriod,
+      status,
+      currentPeriodEndIso,
+    ]
   );
 
   const row = result.rows[0];
-  return row ? { id: row.id, status } : null;
+  if (memberId && stripeCustomerId) {
+    await linkMemberStripeCustomer(client, memberId, stripeCustomerId);
+  }
+  return row ? { id: row.id, status: row.status || status } : null;
+}
+
+async function linkMemberStripeCustomer(client, memberId, stripeCustomerId) {
+  const normalizedCustomerId = sanitizeText(stripeCustomerId, 160) || null;
+  if (!memberId || !normalizedCustomerId) {
+    return null;
+  }
+
+  const result = await client.query(
+    `
+      update public.members
+      set stripe_customer_id = coalesce(public.members.stripe_customer_id, $2),
+          updated_at = case when public.members.stripe_customer_id is null then now() else public.members.updated_at end
+      where id = $1
+        and (
+          public.members.stripe_customer_id is not null
+          or not exists (
+            select 1
+            from public.members other
+            where other.stripe_customer_id = $2
+              and other.id <> public.members.id
+          )
+        )
+      returning id, stripe_customer_id
+    `,
+    [memberId, normalizedCustomerId]
+  );
+
+  return result.rows[0] || null;
 }
 
 async function upsertCommerceOrderItemsFromStripeSession(client, stripe, orderId, session) {
@@ -5310,6 +7601,8 @@ function buildShippingSnapshotFromStripeSession(session, metadata) {
     postalCode: sanitizeText(address.postal_code || metadata.shipping_postal_code, 40),
     country: sanitizeText(address.country || metadata.shipping_country, 10).toUpperCase() || "US",
     shippingMethodId: sanitizeText(metadata.shipping_method_id, 120),
+    carrier: sanitizeText(metadata.shipping_carrier, 40).toUpperCase() || "USPS",
+    adultSignatureRequired: String(metadata.adult_signature_required || "true").toLowerCase() !== "false",
   };
 }
 
@@ -5489,6 +7782,7 @@ function normalizeActorForMember(actor) {
     memberStatus: normalizeMemberStatus(actor.memberStatus, actor.groups),
     membershipTier: normalizeMembershipTier(actor.membershipTier, actor.groups),
     role: normalizeMemberRole(actor.groups),
+    stripeCustomerId: sanitizeText(actor.stripeCustomerId, 160) || null,
   };
 }
 
@@ -5599,6 +7893,8 @@ function mapSitePageContentRow(row, route) {
 }
 
 function mapNewsStoryRow(row) {
+  const metadata = normalizeMetadataObject(row.metadata);
+
   return {
     id: row.id,
     slug: row.slug,
@@ -5606,6 +7902,7 @@ function mapNewsStoryRow(row) {
     dek: row.dek || "",
     category: row.category || "Industry News",
     bodyMarkdown: row.body_markdown || "",
+    images: normalizeNewsStoryImages(metadata.images || metadata.storyImages),
     sourceNotes: normalizeNewsSourceNotes(row.source_notes),
     officialSources: normalizeStringArray(row.official_sources),
     status: row.status || "draft",
@@ -5621,6 +7918,7 @@ function normalizeNewsDraftInput(value) {
     audience: sanitizeText(value.audience, 140) || "adult Yuzu Cigar Club members of legal tobacco age",
     sourceUrls: normalizeStringArray(value.sourceUrls || value.sources || value.urls).slice(0, 12),
     sourceNotes: normalizeStringArray(value.sourceNotes || value.notes).slice(0, 12),
+    storyImages: normalizeNewsStoryImages(value.storyImages || value.images).slice(0, 6),
   };
 }
 
@@ -5629,6 +7927,7 @@ function buildNewsAgentPrompt(input, options = {}) {
   const vettedSources = input.sourceUrls.map(normalizeNewsSourceCandidate);
   const acceptedSources = vettedSources.filter((source) => source.status === "official" || source.status === "needs_review");
   const blockedSources = vettedSources.filter((source) => source.status === "blocked_secondary" || source.status === "invalid");
+  const storyImages = normalizeNewsStoryImages(input.storyImages);
   const sourceLines = acceptedSources.length
     ? acceptedSources.map((source, index) => `${index + 1}. ${source.url} (${source.reviewNote})`).join("\n")
     : "No accepted primary sources were supplied.";
@@ -5638,6 +7937,11 @@ function buildNewsAgentPrompt(input, options = {}) {
   const blockedLines = blockedSources.length
     ? blockedSources.map((source) => `- ${source.input}: ${source.reviewNote}`).join("\n")
     : "None.";
+  const storyImageLines = storyImages.length
+    ? storyImages
+        .map((image, index) => `${index + 1}. ${image.label}: ${image.image}${image.sourceUrl ? ` (source: ${image.sourceUrl})` : ""}`)
+        .join("\n")
+    : "No operator-provided story image URLs supplied.";
 
   const promptLines = [
     "You are YCCNewsAgent, an internal editorial agent for authorized Yuzu operators.",
@@ -5664,10 +7968,14 @@ function buildNewsAgentPrompt(input, options = {}) {
     "Operator source notes:",
     noteLines,
     "",
+    "Operator-provided story images:",
+    storyImageLines,
+    "",
     "Blocked or invalid sources:",
     blockedLines,
     "",
-    "Return JSON with title, dek, category, bodyMarkdown (a complete publication-ready story in markdown), sections[{heading,body}], and sourceNotes[{label,url,note}].",
+    "Return JSON with title, dek, category, bodyMarkdown (a complete publication-ready story in markdown), sections[{heading,body}], images[{label,image,imagePosition,alt,sourceUrl}], and sourceNotes[{label,url,note}].",
+    "Use only actual image URLs from operator-provided story images or accepted source pages. Do not invent image URLs.",
     "BodyMarkdown should be a full draft article for operator approval; sections should be a readable breakdown of that article.",
   ];
 
@@ -5733,11 +8041,80 @@ function normalizeNewsDraftFromAgentReply(reply, input) {
     category: sanitizeText(parsed?.category, 80) || "Industry News",
     bodyMarkdown: bodyMarkdown || draftNewsSectionsToMarkdown(sections),
     sections,
+    images: mergeNewsStoryImages(input.storyImages, parsed?.images, parsed?.storyImages),
     sourceNotes: normalizeNewsSourceNotes(parsed?.sourceNotes, input),
     publishStatus: "draft",
     operatorReviewRequired: true,
     complianceReview: buildNewsComplianceReview(),
   };
+}
+
+function hasUsableNewsDraftReply(reply) {
+  const parsed = parseAgentJson(reply);
+  const bodyMarkdown = sanitizeMultilineText(parsed?.bodyMarkdown, 12000);
+  const sections = normalizeNewsSections(parsed?.sections);
+  const body = bodyMarkdown || draftNewsSectionsToMarkdown(sections);
+
+  return Boolean(body) && !isPlaceholderNewsBodyMarkdown(body);
+}
+
+function mergeNewsStoryImages(...values) {
+  const seen = new Set();
+
+  return values
+    .flatMap((value) => normalizeNewsStoryImages(value))
+    .filter((image) => {
+      const key = image.image.toLowerCase();
+
+      if (seen.has(key)) {
+        return false;
+      }
+
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 6);
+}
+
+function normalizeNewsStoryImages(value) {
+  const rawImages = Array.isArray(value) ? value : [];
+
+  return rawImages
+    .map((item) => {
+      const record = typeof item === "string" ? { image: item } : item && typeof item === "object" ? item : null;
+
+      if (!record) {
+        return null;
+      }
+
+      const image = sanitizeText(record.image || record.src || record.url, 1000);
+      if (!isHttpUrl(image)) {
+        return null;
+      }
+
+      const sourceUrl = sanitizeText(record.sourceUrl || record.storyUrl || record.href, 1000);
+      const imagePosition = sanitizeText(record.imagePosition || record.objectPosition, 40);
+      const alt = sanitizeText(record.alt, 180);
+      const normalized = {
+        label: sanitizeText(record.label || record.title, 90) || "Story image",
+        image,
+      };
+
+      if (imagePosition) {
+        normalized.imagePosition = imagePosition;
+      }
+
+      if (alt) {
+        normalized.alt = alt;
+      }
+
+      if (isHttpUrl(sourceUrl)) {
+        normalized.sourceUrl = sourceUrl;
+      }
+
+      return normalized;
+    })
+    .filter(Boolean);
 }
 
 function normalizeNewsStoryInput(value) {
@@ -5746,6 +8123,7 @@ function normalizeNewsStoryInput(value) {
   const sections = normalizeNewsSections(value.sections);
   const bodyMarkdown = sanitizeMultilineText(value.bodyMarkdown || draftNewsSectionsToMarkdown(sections), 12000);
   const status = value.publishStatus === "published" || value.status === "published" ? "published" : "draft";
+  const images = mergeNewsStoryImages(value.images, value.storyImages);
 
   if (!title) {
     return {
@@ -5765,7 +8143,7 @@ function normalizeNewsStoryInput(value) {
     };
   }
 
-  if (isPlaceholderNewsBodyMarkdown(bodyMarkdown)) {
+  if (status === "published" && isPlaceholderNewsBodyMarkdown(bodyMarkdown)) {
     return {
       error: {
         error: "news_story_placeholder_body",
@@ -5790,6 +8168,7 @@ function normalizeNewsStoryInput(value) {
       dek: sanitizeText(value.dek || value.summary, 240),
       category: sanitizeText(value.category, 80) || "Industry News",
       bodyMarkdown,
+      images,
       sourceNotes,
       officialSources: sourceNotes
         .filter((source) => source.sourceType === "official" || source.sourceType === "needs_review")
@@ -6039,6 +8418,15 @@ function normalizeNewsDomain(value) {
   return String(value || "").toLowerCase().replace(/^www\./, "");
 }
 
+function isHttpUrl(value) {
+  try {
+    const parsedUrl = new URL(value);
+    return parsedUrl.protocol === "https:" || parsedUrl.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
 function isBlockedSecondaryNewsDomain(domain) {
   return BLOCKED_SECONDARY_NEWS_DOMAINS.has(domain) || [...BLOCKED_SECONDARY_NEWS_DOMAINS].some((blocked) => domain.endsWith(`.${blocked}`));
 }
@@ -6065,7 +8453,7 @@ function toTitleCase(value) {
 function mapHumidorItemRow(row) {
   const metadata = normalizeMetadataObject(row.metadata);
   const estimatedValue = normalizeHumidorMoneyValue(metadata.estimatedValue);
-  const cigarImage = normalizeStoredHumidorCigarImage(metadata.cigarImage);
+  const cigarImage = summarizeStoredHumidorCigarImage(metadata.cigarImage);
 
   return {
     id: row.id,
@@ -6080,6 +8468,7 @@ function mapHumidorItemRow(row) {
     rating: row.rating === null || row.rating === undefined ? null : Number(row.rating),
     purchaseDate: toDateOnly(row.purchase_date),
     agingStartDate: toDateOnly(row.aging_start_date),
+    productionDate: toDateOnly(metadata.productionDate),
     reorderReminder: toDateOnly(row.reorder_reminder),
     humidorLocation: row.humidor_location || "",
     tray: row.tray || "",
@@ -6100,6 +8489,8 @@ function normalizeHumidorAlertPreferences(value) {
     reorderRemindersEnabled: raw.reorderRemindersEnabled === undefined ? true : Boolean(raw.reorderRemindersEnabled),
     climateAlertsEnabled: Boolean(raw.climateAlertsEnabled),
     pushSubscription: normalizeHumidorPushSubscription(raw.pushSubscription),
+    pairedDevices: normalizeHumidorPairedDevices(raw.pairedDevices),
+    humidorProfile: normalizeHumidorLocationProfile(raw.humidorProfile),
   };
 
   return {
@@ -6120,6 +8511,17 @@ function normalizeHumidorAlertPreferencesInput(value) {
     reorderRemindersEnabled,
     climateAlertsEnabled,
     pushSubscription: pushEnabled ? normalizeHumidorPushSubscription(raw.pushSubscription) : null,
+    pairedDevices: normalizeHumidorPairedDevices(raw.pairedDevices),
+    humidorProfile: normalizeHumidorLocationProfile(raw.humidorProfile),
+  };
+}
+
+function normalizeHumidorLocationProfile(value) {
+  const raw = value && typeof value === "object" ? value : {};
+
+  return {
+    humidorName: sanitizeText(raw.humidorName || raw.name, 120),
+    defaultLocation: sanitizeText(raw.defaultLocation || raw.location || raw.defaultHumidorLocation, 120),
   };
 }
 
@@ -6148,6 +8550,84 @@ function normalizeHumidorPushSubscription(value) {
   };
 }
 
+function normalizeHumidorPairedDevices(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") {
+      return [];
+    }
+
+    const deviceType = normalizeHumidorDeviceType(item.deviceType);
+    const connection = normalizeHumidorDeviceConnection(item.connection);
+    const name = sanitizeText(item.name, 120);
+    const location = sanitizeText(item.location, 120);
+    const identifier = sanitizeText(item.identifier, 180);
+    const humidity = Number(item.humidity);
+    const temperature = Number(item.temperature);
+
+    if (!deviceType || !connection || !name || !location || !identifier || !isValidHumidorDeviceClimate(humidity, temperature)) {
+      return [];
+    }
+
+    const syncIntervalMinutes = Math.max(5, Math.min(120, Math.round(Number(item.syncIntervalMinutes) || 15)));
+    const id = sanitizeText(item.id, 220) || buildHumidorPairedDeviceId(deviceType, connection, name, location, identifier);
+
+    return [
+      {
+        id,
+        name,
+        location,
+        deviceType,
+        connection,
+        identifier,
+        humidity,
+        temperature,
+        syncIntervalMinutes,
+        status: item.status === "Ready to sync" ? "Ready to sync" : "Connected",
+        lastSyncedAt: sanitizeText(item.lastSyncedAt, 80) || "Just now",
+      },
+    ];
+  });
+}
+
+function normalizeHumidorDeviceType(value) {
+  if (value === "HUMIDIFIER" || value === "HYGROMETER_THERMOMETER") {
+    return value;
+  }
+
+  const normalized = sanitizeText(value, 80)
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+
+  if (normalized === "humidifier") {
+    return "HUMIDIFIER";
+  }
+
+  if (normalized === "hygrometer" || normalized === "hygrometer_thermometer") {
+    return "HYGROMETER_THERMOMETER";
+  }
+
+  return "";
+}
+
+function normalizeHumidorDeviceConnection(value) {
+  return value === "Bluetooth" || value === "WiFi" ? value : "";
+}
+
+function isValidHumidorDeviceClimate(humidity, temperature) {
+  return Number.isFinite(humidity) && humidity >= 1 && humidity <= 100 && Number.isFinite(temperature) && temperature >= 40 && temperature <= 95;
+}
+
+function buildHumidorPairedDeviceId(deviceType, connection, name, location, identifier) {
+  return `device-${deviceType}-${connection}-${name}-${location}-${identifier}`
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
 function normalizeMetadataObject(value) {
   if (typeof value === "string") {
     try {
@@ -6165,6 +8645,21 @@ function normalizeMetadataObject(value) {
   return value;
 }
 
+function buildNewsStoryMetadata(story, actor) {
+  const metadata = {
+    complianceReview: story.complianceReview || null,
+    source: "newsroom-agent",
+    updatedBySub: actor.sub,
+  };
+  const images = normalizeNewsStoryImages(story.images);
+
+  if (images.length) {
+    metadata.images = images;
+  }
+
+  return metadata;
+}
+
 function buildHumidorItemMetadata(actor, item) {
   const metadata = {
     ownerSub: actor.sub,
@@ -6174,6 +8669,10 @@ function buildHumidorItemMetadata(actor, item) {
     metadata.estimatedValue = item.estimatedValue;
     metadata.estimatedValueCurrency = item.estimatedValueCurrency || "USD";
     metadata.estimatedValueSource = item.estimatedValueSource || "member_estimate";
+  }
+
+  if (item.productionDate) {
+    metadata.productionDate = item.productionDate;
   }
 
   if (item.cigarImage) {
@@ -6343,6 +8842,75 @@ async function maybeBuildBedrockReply(agent, actor, message, conversationId) {
       retrievedContextCount: knowledgeBaseRetrieval.count,
       guardrailId,
       guardrailVersion,
+      reply: null,
+    };
+  }
+}
+
+async function maybeBuildNewsDraftRuntimeReply(actor, prompt) {
+  const modelId = process.env.BEDROCK_MODEL_ID || DEFAULT_BEDROCK_MODEL_ID;
+  const knowledgeBaseId = process.env.BEDROCK_KNOWLEDGE_BASE_ID || null;
+
+  if (process.env.FEATURE_BEDROCK !== "runtime_ready") {
+    return {
+      status: process.env.FEATURE_BEDROCK || "pending_agent",
+      modelId,
+      knowledgeBaseId,
+      reply: null,
+    };
+  }
+
+  try {
+    const { BedrockRuntimeClient, ConverseCommand } = require("@aws-sdk/client-bedrock-runtime");
+    const client = new BedrockRuntimeClient({ region: process.env.AWS_REGION || "us-east-1" });
+    const command = new ConverseCommand({
+      modelId,
+      messages: [
+        {
+          role: "user",
+          content: [{ text: prompt }],
+        },
+      ],
+      system: [
+        {
+          text:
+            "You are YCCNewsAgent in a newsroom drafting workflow. Return JSON only. " +
+            "The JSON must include title, dek, category, bodyMarkdown, sections, and sourceNotes. " +
+            "Do not return operator scaffolding, checklists, or placeholder copy.",
+        },
+      ],
+      inferenceConfig: {
+        maxTokens: 1600,
+        temperature: 0.25,
+        topP: 0.9,
+      },
+    });
+    const result = await client.send(command);
+    const reply = extractConverseText(result);
+
+    return {
+      status: reply ? "bedrock_runtime_news_draft" : "fallback",
+      modelId,
+      knowledgeBaseId,
+      stopReason: result.stopReason || null,
+      tokenUsage: result.usage || null,
+      reply,
+    };
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        level: "warn",
+        event: "bedrock_news_draft_runtime_fallback",
+        modelId,
+        name: error instanceof Error ? error.name : null,
+        message: error instanceof Error ? error.message : String(error),
+      })
+    );
+
+    return {
+      status: "fallback",
+      modelId,
+      knowledgeBaseId,
       reply: null,
     };
   }
@@ -7026,6 +9594,246 @@ function messageNeedsHumanSupport(message) {
   );
 }
 
+function normalizeHumidorEnrichmentFields(value) {
+  if (value === undefined || value === null || value === "") {
+    return { value: [], error: "" };
+  }
+
+  const rawFields = Array.isArray(value) ? value : String(value).split(",");
+  const fields = [];
+
+  for (const field of rawFields) {
+    const normalized = sanitizeText(String(field || ""), 40)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "");
+
+    if (!normalized) {
+      continue;
+    }
+
+    if (!HUMIDOR_ENRICHMENT_FIELDS.has(normalized)) {
+      return {
+        value: [],
+        error: `Allowed values are: ${Array.from(HUMIDOR_ENRICHMENT_FIELDS).sort().join(", ")}.`,
+      };
+    }
+
+    if (!fields.includes(normalized)) {
+      fields.push(normalized);
+    }
+  }
+
+  return { value: fields, error: "" };
+}
+
+function getMissingHumidorEnrichmentFields(item) {
+  const fields = [];
+  const missingInfo = ["brand", "line", "vitola", "wrapper", "origin", "strength"].some((field) => !sanitizeText(item[field], MAX_FIELD_LENGTH));
+
+  if (missingInfo) {
+    fields.push("info");
+  }
+
+  if (!hasHumidorVisibleImage(item)) {
+    fields.push("image");
+  }
+
+  if (item.estimatedValue === null || item.estimatedValue === undefined) {
+    fields.push("msrp");
+  }
+
+  return fields;
+}
+
+function hasHumidorVisibleImage(item) {
+  return Boolean(item?.cigarImage?.imageUrl || item?.cigarImage?.dataUrl);
+}
+
+function parseHumidorEnrichmentReply(reply, item, requestedFields) {
+  const parsed = parseFirstJsonObject(reply);
+  if (!parsed) {
+    return buildFallbackHumidorEnrichmentSuggestion(item, requestedFields);
+  }
+
+  const normalized = normalizeHumidorItem({
+    ...parsed,
+    name: item.name,
+    quantity: item.quantity || 1,
+    source: "ai_humidor_enrichment",
+  });
+  const details = normalizeCigarDetails(parsed, normalized);
+  const referenceImage = normalizeHumidorReferenceImage(
+    parsed.cigarImage ||
+      parsed.image ||
+      parsed.referenceImage ||
+      {
+        imageUrl: parsed.imageUrl || parsed.referenceImageUrl || parsed.productImageUrl,
+        mimeType: parsed.mimeType,
+        fileName: parsed.fileName,
+        source: parsed.imageSource || parsed.imageSourceUrl,
+      }
+  );
+  const estimatedValue = normalized.estimatedValue ?? normalizeHumidorMoneyValue(parsed.msrp ?? details.msrp);
+  const estimatedValueSource = sanitizeText(parsed.estimatedValueSource || parsed.valueSource, 120);
+
+  return {
+    brand: normalized.brand || sanitizeText(parsed.manufacturer || details.manufacturer, MAX_FIELD_LENGTH),
+    line: normalized.line,
+    vitola: normalized.vitola || details.shape || details.size,
+    wrapper: normalized.wrapper || details.wrapper,
+    origin: normalized.origin || details.country,
+    strength: normalized.strength || details.body,
+    tastingNotes: normalized.tastingNotes,
+    estimatedValue,
+    estimatedValueCurrency: estimatedValue === null ? "" : normalized.estimatedValueCurrency || "USD",
+    estimatedValueSource: estimatedValue === null ? "" : estimatedValueSource || "ai_humidor_enrichment_msrp",
+    cigarImage: referenceImage,
+    confidence: normalizeCigarConfidence(parsed.confidence),
+    evidence: normalizeTextList(parsed.evidence, [`YCCHumidorAgent reviewed ${item.name} for ${requestedFields.join(", ")} gaps.`]),
+    needsReview: normalizeTextList(parsed.needsReview || parsed.review, []),
+    details,
+  };
+}
+
+function buildFallbackHumidorEnrichmentSuggestion(item, requestedFields) {
+  return {
+    brand: "",
+    line: "",
+    vitola: "",
+    wrapper: "",
+    origin: "",
+    strength: "",
+    tastingNotes: "",
+    estimatedValue: null,
+    estimatedValueCurrency: "",
+    estimatedValueSource: "",
+    cigarImage: null,
+    confidence: "low",
+    evidence: [],
+    needsReview: [`YCCHumidorAgent could not locate enough reference data for ${item.name} (${requestedFields.join(", ")}).`],
+    details: normalizeCigarDetails({}, item),
+  };
+}
+
+function mergeHumidorEnrichment(currentItem, enrichment, requestedFields) {
+  const item = { ...currentItem };
+  const updatedFields = [];
+
+  if (requestedFields.includes("info")) {
+    fillMissingHumidorText(item, updatedFields, "brand", enrichment.brand);
+    fillMissingHumidorText(item, updatedFields, "line", enrichment.line);
+    fillMissingHumidorText(item, updatedFields, "vitola", enrichment.vitola);
+    fillMissingHumidorText(item, updatedFields, "wrapper", enrichment.wrapper);
+    fillMissingHumidorText(item, updatedFields, "origin", enrichment.origin);
+    fillMissingHumidorText(item, updatedFields, "strength", enrichment.strength);
+    fillMissingHumidorText(item, updatedFields, "tastingNotes", enrichment.tastingNotes);
+  }
+
+  if (requestedFields.includes("msrp") && item.estimatedValue === null && enrichment.estimatedValue !== null) {
+    item.estimatedValue = enrichment.estimatedValue;
+    item.estimatedValueCurrency = enrichment.estimatedValueCurrency || "USD";
+    item.estimatedValueSource = enrichment.estimatedValueSource || "ai_humidor_enrichment_msrp";
+    updatedFields.push("estimatedValue");
+  }
+
+  if (requestedFields.includes("image") && !hasHumidorVisibleImage(item) && enrichment.cigarImage?.imageUrl) {
+    item.cigarImage = enrichment.cigarImage;
+    updatedFields.push("cigarImage");
+  }
+
+  return { item, updatedFields };
+}
+
+function fillMissingHumidorText(item, updatedFields, field, value) {
+  const text = sanitizeText(value, field === "tastingNotes" ? 2000 : MAX_FIELD_LENGTH);
+
+  if (!text || sanitizeText(item[field], field === "tastingNotes" ? 2000 : MAX_FIELD_LENGTH)) {
+    return;
+  }
+
+  item[field] = text;
+  updatedFields.push(field);
+}
+
+function buildHumidorEnrichmentAiSummary(ai) {
+  return {
+    status: ai.status,
+    modelId: ai.modelId,
+    agentId: ai.agentId,
+    agentAliasId: ai.agentAliasId,
+    knowledgeBaseStatus: ai.knowledgeBaseStatus,
+    retrievedContextCount: ai.retrievedContextCount,
+    stopReason: ai.stopReason || null,
+  };
+}
+
+function normalizeHumidorReferenceImage(value) {
+  const raw =
+    typeof value === "string"
+      ? { imageUrl: value }
+      : value && typeof value === "object" && !Array.isArray(value)
+        ? value
+        : {};
+  const imageUrl = sanitizeHumidorImageUrl(raw.imageUrl || raw.url || raw.src || raw.href);
+
+  if (!imageUrl) {
+    return null;
+  }
+
+  const mimeType = sanitizeText(raw.mimeType || raw.contentType, 80).toLowerCase().split(";", 1)[0] || inferHumidorImageMimeType(imageUrl);
+
+  if (!CIGAR_IMAGE_MIME_FORMATS.has(mimeType)) {
+    return null;
+  }
+
+  return {
+    dataUrl: "",
+    imageUrl,
+    mimeType,
+    fileName: sanitizeText(raw.fileName || raw.name, 180) || buildHumidorImageFileName(imageUrl),
+    bytes: 0,
+    source: sanitizeText(raw.source || raw.sourceUrl || raw.attribution, 200) || "agent_reference",
+  };
+}
+
+function sanitizeHumidorImageUrl(value) {
+  const text = sanitizeText(value, 1000);
+
+  if (/^https:\/\/[^\s"<>]+$/i.test(text)) {
+    return text;
+  }
+
+  if (/^\/assets\/[A-Za-z0-9._~/%-]+\.(?:png|jpe?g|gif|webp)$/i.test(text)) {
+    return text;
+  }
+
+  return "";
+}
+
+function inferHumidorImageMimeType(imageUrl) {
+  const path = imageUrl.split("?", 1)[0].toLowerCase();
+
+  if (path.endsWith(".png")) {
+    return "image/png";
+  }
+
+  if (path.endsWith(".gif")) {
+    return "image/gif";
+  }
+
+  if (path.endsWith(".webp")) {
+    return "image/webp";
+  }
+
+  return "image/jpeg";
+}
+
+function buildHumidorImageFileName(imageUrl) {
+  const lastPathPart = imageUrl.split("?", 1)[0].split("/").filter(Boolean).pop() || "humidor-reference-image.jpg";
+  return sanitizeText(lastPathPart, 180) || "humidor-reference-image.jpg";
+}
+
 function normalizeHumidorItem(value) {
   const brand = sanitizeText(value.brand, MAX_FIELD_LENGTH);
   const line = sanitizeText(value.line, MAX_FIELD_LENGTH);
@@ -7057,6 +9865,7 @@ function normalizeHumidorItem(value) {
     rating: Number.isFinite(rating) ? Math.max(0, Math.min(100, Math.round(rating))) : null,
     purchaseDate: normalizeDateOnly(value.purchaseDate),
     agingStartDate: normalizeDateOnly(value.agingStartDate),
+    productionDate: normalizeDateOnly(value.productionDate || value.producedDate || value.boxDate),
     reorderReminder: normalizeDateOnly(value.reorderReminder),
     humidorLocation: sanitizeText(value.humidorLocation || value.location, MAX_FIELD_LENGTH),
     tray: sanitizeText(value.tray, MAX_FIELD_LENGTH),
@@ -7168,8 +9977,48 @@ function normalizeStoredHumidorCigarImage(value) {
     return null;
   }
 
+  const referenceImage = normalizeHumidorReferenceImage(value);
+  if (referenceImage) {
+    return referenceImage;
+  }
+
   const attachment = normalizeHumidorCigarImageAttachment(value);
   return attachment.value || null;
+}
+
+function summarizeStoredHumidorCigarImage(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const referenceImage = normalizeHumidorReferenceImage(value);
+  if (referenceImage) {
+    return referenceImage;
+  }
+
+  const dataUrlMimeType = parseImageDataUrlMimeType(value.imageDataUrl || value.dataUrl || value.image);
+  const mimeType = sanitizeText(value.mimeType || value.contentType || dataUrlMimeType, 80)
+    .toLowerCase()
+    .split(";", 1)[0];
+  if (!CIGAR_IMAGE_MIME_FORMATS.has(mimeType)) {
+    return null;
+  }
+
+  const bytes = Number(value.bytes ?? value.size ?? value.byteLength ?? 0);
+
+  return {
+    dataUrl: "",
+    mimeType,
+    fileName: sanitizeText(value.fileName || value.name, 180),
+    bytes: Number.isFinite(bytes) && bytes > 0 ? Math.round(bytes) : 0,
+    source: sanitizeText(value.source, 120) || "member_upload",
+  };
+}
+
+function parseImageDataUrlMimeType(value) {
+  const text = typeof value === "string" ? value.trim() : "";
+  const match = text.match(/^data:(image\/[a-z0-9.+-]+);base64,/i);
+  return match ? match[1].toLowerCase() : "";
 }
 
 function parseConciergeVoiceAudio(value) {
@@ -7334,7 +10183,7 @@ function buildCigarVisionSystemPrompt(actor) {
 function buildCigarImageIdentificationPrompt(notes) {
   return [
     "Identify the cigar in this image and return only strict JSON. If the exact cigar is visually identifiable, include generally known reference details; if it is not, leave uncertain fields empty and add review notes.",
-    "Use this top-level schema exactly: name, brand, line, vitola, wrapper, origin, strength, quantity, purchaseDate, agingStartDate, reorderReminder, humidorLocation, tray, rating, estimatedValue, estimatedValueCurrency, tastingNotes, confidence, evidence, needsReview, details.",
+    "Use this top-level schema exactly: name, brand, line, vitola, wrapper, origin, strength, quantity, purchaseDate, agingStartDate, productionDate, reorderReminder, humidorLocation, tray, rating, estimatedValue, estimatedValueCurrency, tastingNotes, confidence, evidence, needsReview, details.",
     "details must be an object with this schema exactly: manufacturer, country, region, factory, size, length, ringGauge, shape, wrapper, binder, filler, blend, flavorProfile, body, finish, msrp, releaseStatus, packaging, sourceSummary, imageObservations.",
     "Set estimatedValue to the best per-cigar retail/MSRP number when visible or generally known, otherwise null. Set estimatedValueCurrency to USD unless another currency is explicit.",
     "Set confidence to high, medium, or low. Use null for unknown dates, rating, and estimatedValue. Use empty strings for unknown text fields. Use empty arrays for unknown array fields. Use quantity 1 unless a count is visible.",
@@ -7491,6 +10340,7 @@ function getCigarSuggestionCoverage(suggestion) {
     "quantity",
     "purchaseDate",
     "agingStartDate",
+    "productionDate",
     "reorderReminder",
     "humidorLocation",
     "tray",
@@ -7816,8 +10666,16 @@ function isCommerceOrderRoute(routeKey) {
   return routeKey === "GET /commerce/orders/{id}" || /^GET \/commerce\/orders\/[^/]+$/.test(routeKey);
 }
 
+function isAdminCommerceOrderMutationRoute(routeKey) {
+  return routeKey === "PATCH /admin/commerce/orders/{id}" || /^PATCH \/admin\/commerce\/orders\/[^/]+$/.test(routeKey);
+}
+
+function isAdminMemberAccessMutationRoute(routeKey) {
+  return routeKey === "PATCH /admin/members/{id}/access" || /^PATCH \/admin\/members\/[^/]+\/access$/.test(routeKey);
+}
+
 function isAdminRoute(routeKey) {
-  return ADMIN_ROUTES.has(routeKey);
+  return ADMIN_ROUTES.has(routeKey) || isAdminCommerceOrderMutationRoute(routeKey) || isAdminMemberAccessMutationRoute(routeKey);
 }
 
 function isHumidorRoute(routeKey) {
@@ -7874,10 +10732,122 @@ function getHeader(event, name) {
   return "";
 }
 
+function getQueryParam(event, name) {
+  const target = String(name || "").toLowerCase();
+  const params = event.queryStringParameters || {};
+  for (const [key, value] of Object.entries(params)) {
+    if (String(key).toLowerCase() === target) {
+      return Array.isArray(value) ? value[0] : value;
+    }
+  }
+
+  const rawQueryString = String(event.rawQueryString || "");
+  if (rawQueryString) {
+    const searchParams = new URLSearchParams(rawQueryString);
+    return searchParams.get(name) || "";
+  }
+
+  return "";
+}
+
 function extractLastPathSegment(event) {
   const pathValue = event.rawPath || event.path || "";
   const lastSegment = String(pathValue).split("/").filter(Boolean).pop();
-  return sanitizeText(decodeURIComponent(lastSegment || ""), 180);
+  let decodedSegment = lastSegment || "";
+  try {
+    decodedSegment = decodeURIComponent(decodedSegment);
+  } catch {
+    decodedSegment = String(lastSegment || "");
+  }
+
+  return sanitizeText(decodedSegment, 180);
+}
+
+function getPathId(event, name) {
+  const params = event.pathParameters || {};
+  for (const [key, value] of Object.entries(params)) {
+    if (String(key).toLowerCase() === String(name).toLowerCase()) {
+      return sanitizeText(String(value || ""), 180);
+    }
+  }
+
+  const parts = String(event.rawPath || event.path || "")
+    .split("/")
+    .filter(Boolean)
+    .map((part) => {
+      try {
+        return decodeURIComponent(part);
+      } catch {
+        return part;
+      }
+    });
+
+  if (parts[0] === "admin" && parts[1] === "commerce" && parts[2] === "orders") {
+    return sanitizeText(parts[3] || "", 180);
+  }
+
+  if (parts[0] === "admin" && parts[1] === "members") {
+    return sanitizeText(parts[2] || "", 180);
+  }
+
+  if (parts[0] === "humidor" && parts[1] === "items") {
+    return sanitizeText(parts[2] || "", 180);
+  }
+
+  return "";
+}
+
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ""));
+}
+
+function normalizeOptionalStatus(value, allowedValues) {
+  if (value === undefined) {
+    return {
+      supplied: false,
+      value: null,
+      error: "",
+    };
+  }
+
+  const normalized = sanitizeText(String(value || ""), 80)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+  if (!normalized || !allowedValues.has(normalized)) {
+    return {
+      supplied: true,
+      value: null,
+      error: `Allowed values are: ${Array.from(allowedValues).sort().join(", ")}.`,
+    };
+  }
+
+  return {
+    supplied: true,
+    value: normalized,
+    error: "",
+  };
+}
+
+function normalizeOptionalNullableStatus(value, allowedValues) {
+  if (value === undefined) {
+    return {
+      supplied: false,
+      value: undefined,
+      error: "",
+    };
+  }
+
+  if (value === null || sanitizeText(String(value), 80) === "") {
+    return {
+      supplied: true,
+      value: null,
+      error: "",
+    };
+  }
+
+  return normalizeOptionalStatus(value, allowedValues);
 }
 
 function optionalString(value) {
@@ -7912,7 +10882,7 @@ function empty(statusCode, requestId) {
 function corsHeaders() {
   return {
     "access-control-allow-origin": getCorsAllowOrigin(),
-    "access-control-allow-methods": "GET,POST,OPTIONS",
+    "access-control-allow-methods": "GET,POST,PATCH,OPTIONS",
     "access-control-allow-headers": "accept,authorization,content-type,stripe-signature,x-request-id,x-humidor-alert-dispatch-secret",
     vary: "origin",
   };

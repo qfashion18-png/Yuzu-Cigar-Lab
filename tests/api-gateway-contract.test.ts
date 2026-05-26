@@ -13,6 +13,7 @@ const expectedRouteAuth = new Map([
   ["POST /news/story-drafts", "JWT"],
   ["POST /news/stories", "JWT"],
   ["POST /commerce/checkout-session", "NONE"],
+  ["POST /commerce/age-verification-token", "NONE"],
   ["POST /commerce/membership-session", "NONE"],
   ["POST /commerce/webhook/stripe", "NONE"],
   ["GET /commerce/checkout-session/{id}", "NONE"],
@@ -20,9 +21,13 @@ const expectedRouteAuth = new Map([
   ["GET /commerce/membership", "JWT"],
   ["GET /commerce/orders", "JWT"],
   ["GET /commerce/orders/{id}", "JWT"],
+  ["GET /admin/commerce/orders", "JWT"],
+  ["PATCH /admin/commerce/orders/{id}", "JWT"],
   ["POST /admin/commerce/stripe-sync-products", "JWT"],
   ["GET /admin/commerce/webhook-events", "JWT"],
   ["GET /admin/commerce/compliance-holds", "JWT"],
+  ["GET /admin/members", "JWT"],
+  ["PATCH /admin/members/{id}/access", "JWT"],
   ["POST /concierge/chat", "JWT"],
   ["POST /concierge/voice", "JWT"],
   ["POST /support/email-draft", "JWT"],
@@ -30,6 +35,7 @@ const expectedRouteAuth = new Map([
   ["POST /humidor/identify-cigar", "JWT"],
   ["GET /humidor/items", "JWT"],
   ["POST /humidor/items", "JWT"],
+  ["PATCH /humidor/items/{id}/enrich", "JWT"],
   ["GET /humidor/alerts", "JWT"],
   ["POST /humidor/alerts", "JWT"],
   ["POST /humidor/alerts/dispatch", "NONE"],
@@ -59,6 +65,7 @@ test("API Gateway template allows Bedrock action groups to invoke the shared Lam
 test("API Gateway CORS allows Stripe webhook signatures", () => {
   assert.match(templateSource, /AllowHeaders:[\s\S]*stripe-signature/);
   assert.match(templateSource, /AllowHeaders:[\s\S]*x-humidor-alert-dispatch-secret/);
+  assert.match(templateSource, /AllowMethods:[\s\S]*PATCH/);
 });
 
 test("API Gateway CORS allows the deployed storefront origins", () => {

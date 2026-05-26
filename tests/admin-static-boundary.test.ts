@@ -43,8 +43,32 @@ test("admin console route does not render the seeded local console", () => {
   assert.match(adminConsolePageSource, /AdminAccessGate/);
   assert.match(adminConsolePageSource, /BackendAdminConsole/);
   assert.match(backendAdminConsoleSource, /fetchAdminComplianceHolds/);
+  assert.match(backendAdminConsoleSource, /fetchAdminOrders/);
+  assert.match(backendAdminConsoleSource, /fetchAdminMembers/);
+  assert.match(backendAdminConsoleSource, /updateAdminOrder/);
+  assert.match(backendAdminConsoleSource, /updateAdminMemberAccess/);
   assert.match(backendAdminConsoleSource, /sendConciergeChat/);
   assert.equal(adminConsolePageSource.includes("YuzuAdminConsole"), false);
   assert.equal(adminConsolePageSource.includes("createAdminSeedState"), false);
   assert.equal(backendAdminConsoleSource.includes("createAdminSeedState"), false);
+});
+
+test("admin console user access tile opens the full user list", () => {
+  const userAccessTarget = backendAdminConsoleSource.indexOf('id="admin-user-access"');
+  const operationsQueueHeading = backendAdminConsoleSource.indexOf(">Operations Queue<");
+  const customerOrdersHeading = backendAdminConsoleSource.indexOf(">Customer Orders<");
+  const userAccessHeading = backendAdminConsoleSource.indexOf(">User Access<", operationsQueueHeading + 1);
+
+  assert.match(backendAdminConsoleSource, /handleOpenUserAccess/);
+  assert.notEqual(userAccessTarget, -1);
+  assert.notEqual(operationsQueueHeading, -1);
+  assert.notEqual(customerOrdersHeading, -1);
+  assert.notEqual(userAccessHeading, -1);
+  assert.ok(userAccessTarget > operationsQueueHeading, "the click target must not point at the operations queue");
+  assert.ok(userAccessTarget > customerOrdersHeading, "the click target must not point at the customer orders list");
+  assert.ok(userAccessTarget < userAccessHeading, "the click target should be on the user access roster section");
+  assert.match(backendAdminConsoleSource, /ariaLabel="Open user access list"/);
+  assert.match(backendAdminConsoleSource, /aria-label=\{ariaLabel \|\| label\}/);
+  assert.match(backendAdminConsoleSource, /itemsToRender = limit \? items\.slice\(0, limit\) : items/);
+  assert.match(backendAdminConsoleSource, /limit=\{null\}/);
 });

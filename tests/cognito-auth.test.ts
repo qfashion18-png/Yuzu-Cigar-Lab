@@ -9,6 +9,7 @@ import {
   createCognitoApiHeaders,
   createCognitoSessionFromTokens,
   getCognitoTokenResponse,
+  hydrateCognitoSessionFromProfile,
   resolveCognitoConfig,
   shouldShowInlineCognitoSignIn,
   signInWithCognitoPassword,
@@ -177,6 +178,35 @@ test("Cognito password auth surfaces service errors without changing screens", a
   assert.equal(result.message, "Incorrect username or password.");
 });
 
+test("Cognito password auth gives hosted UI recovery for challenge states", async () => {
+  const result = await signInWithCognitoPassword(
+    config,
+    { username: "member@yuzucigarclub.com", password: "Secret123!" },
+    async () => ({
+      ok: true,
+      async json() {
+        return {
+          ChallengeName: "SMS_MFA",
+          Session: "challenge-session-123",
+        };
+      },
+    })
+  );
+
+  assert.equal(result.status, "challenge_required");
+
+  if (result.status !== "challenge_required") {
+    throw new Error("Expected challenge_required result");
+  }
+
+  assert.equal(result.challengeName, "SMS_MFA");
+  assert.equal(result.challengeSession, "challenge-session-123");
+  assert.equal(
+    result.message,
+    "Additional Cognito verification is required. Continue with hosted Cognito sign-in so AWS can complete the challenge securely."
+  );
+});
+
 test("Cognito password auth explains when the app client blocks in-app sign-in", async () => {
   const result = await signInWithCognitoPassword(
     config,
@@ -314,6 +344,78 @@ test("Cognito account profile keeps a saved shipping address for checkout prefil
     city: "Phoenix",
     state: "Arizona",
     postalCode: "85018",
+    country: "US",
+  });
+});
+
+test("Cognito login hydration restores a saved storefront profile over stale token claims", () => {
+  const staleTokenSession = createCognitoSessionFromTokens(
+    {
+      id_token: createJwt({
+        sub: "member-123",
+        email: "member@yuzucigarclub.com",
+        name: "Directory Member",
+        phone_number: "+16025550000",
+        "custom:shipping_address1": "100 Old St",
+        "custom:shipping_city": "Mesa",
+        "custom:shipping_state": "AZ",
+        "custom:shipping_postal_code": "85201",
+        "custom:shipping_country": "US",
+        exp: 1_900_000_000,
+      }),
+      access_token: createJwt({ sub: "member-123", exp: 1_900_000_000 }),
+      expires_in: 3600,
+      token_type: "Bearer",
+    },
+    1_800_000_000_000
+  );
+  const editedSession = updateCognitoSessionProfile(staleTokenSession, {
+    name: "  Test Account Pilot  ",
+    phone: "  480-555-0199  ",
+    shippingAddress: {
+      address1: "  200 New Ave  ",
+      city: " Chandler ",
+      state: " az ",
+      postalCode: " 85225 ",
+      country: " us ",
+    },
+  });
+  const nextLoginSession = createCognitoSessionFromTokens(
+    {
+      id_token: createJwt({
+        sub: "member-123",
+        email: "member@yuzucigarclub.com",
+        name: "Directory Member",
+        phone_number: "+16025550000",
+        "custom:shipping_address1": "100 Old St",
+        "custom:shipping_city": "Mesa",
+        "custom:shipping_state": "AZ",
+        "custom:shipping_postal_code": "85201",
+        "custom:shipping_country": "US",
+        exp: 1_900_000_000,
+      }),
+      access_token: createJwt({ sub: "member-123", exp: 1_900_000_000 }),
+      expires_in: 3600,
+      token_type: "Bearer",
+    },
+    1_800_000_000_000
+  );
+
+  const hydrated = hydrateCognitoSessionFromProfile(nextLoginSession, {
+    name: editedSession.user.name,
+    phone: editedSession.user.phone,
+    shippingAddress: editedSession.user.shippingAddress,
+  });
+
+  assert.equal(hydrated.user.name, "Test Account Pilot");
+  assert.equal(hydrated.claims.name, "Test Account Pilot");
+  assert.equal(hydrated.user.phone, "480-555-0199");
+  assert.deepEqual(hydrated.user.shippingAddress, {
+    address1: "200 New Ave",
+    address2: "",
+    city: "Chandler",
+    state: "AZ",
+    postalCode: "85225",
     country: "US",
   });
 });

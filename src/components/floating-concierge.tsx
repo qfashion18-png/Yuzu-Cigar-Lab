@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "@/components/static-link";
+import { AnimatePresence, motion } from "framer-motion";
 import { Bot, Headphones, Home, LoaderCircle, MessageCircle, Mic, Send, Volume2, VolumeX, X } from "lucide-react";
 import { FormEvent, useEffect, useRef, useState } from "react";
 
@@ -98,7 +99,7 @@ export function FloatingConcierge() {
   async function handleTextSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-      const nextMessage = message.trim();
+    const nextMessage = message.trim();
     if (!nextMessage) {
       setStatusMessage("Enter a message for the Yuzu concierge.");
       return;
@@ -296,128 +297,149 @@ export function FloatingConcierge() {
 
   return (
     <div className="fixed bottom-4 right-4 z-[45]">
-      {isOpen ? (
-        <aside className="flex max-h-[calc(100vh-2rem)] w-[min(24rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-lg border border-yuzu-line bg-yuzu-forest text-yuzu-cream shadow-[0_24px_80px_rgba(0,0,0,0.56)]">
-          <header className="flex items-center gap-3 border-b border-yuzu-line px-4 py-3">
-            <div className="grid size-10 shrink-0 place-items-center rounded-lg border border-yuzu-gold/50 bg-yuzu-gold/10 text-yuzu-gold">
-              <MessageCircle className="size-5" />
-            </div>
-            <div className="min-w-0">
-              <p className="truncate text-sm font-black uppercase tracking-[0.16em] text-yuzu-gold">Yuzu Concierge</p>
-              <p className="truncate text-xs text-yuzu-muted">{response ? formatStatusLabel(response.agent) : "Member support"}</p>
-            </div>
-            <Button className="ml-auto border-yuzu-line text-yuzu-cream" size="icon-sm" type="button" variant="outline" aria-label="Close concierge" onClick={() => setIsOpen(false)}>
-              <X />
-            </Button>
-          </header>
-
-          <div className="grid min-h-0 gap-3 overflow-y-auto p-4">
-            <div className="grid grid-cols-4 gap-1">
-              {conciergeModes.map((item) => {
-                const Icon = item.icon;
-                const isActive = mode === item.id;
-
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    aria-label={item.label}
-                    title={item.label}
-                    className={cn(
-                      "grid h-10 min-w-0 place-items-center rounded-md border text-yuzu-cream transition",
-                      isActive ? "border-yuzu-gold bg-yuzu-gold text-yuzu-ink" : "border-yuzu-line bg-yuzu-night/45 hover:border-yuzu-gold hover:text-yuzu-gold"
-                    )}
-                    onClick={() => setMode(item.id)}
-                  >
-                    <Icon className="size-4" />
-                  </button>
-                );
-              })}
-            </div>
-
-            {!isLiveReady ? (
-              <div className="grid gap-3 rounded-md border border-yuzu-line bg-yuzu-night/50 p-3 text-sm text-yuzu-muted">
-                <p>Sign in with Cognito to use the live concierge.</p>
-                <Link className="inline-flex h-9 items-center justify-center rounded-md bg-yuzu-gold px-3 text-sm font-black text-yuzu-ink" href="/account">
-                  Account
-                </Link>
+      <AnimatePresence initial={false} mode="wait">
+        {isOpen ? (
+          <motion.aside
+            key="concierge-panel"
+            initial={{ opacity: 0, y: 18, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 12, scale: 0.98 }}
+            transition={{ type: "spring", stiffness: 220, damping: 24 }}
+            className="flex max-h-[calc(100vh-2rem)] w-[min(24rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-lg border border-yuzu-line bg-yuzu-forest text-yuzu-cream shadow-[0_24px_80px_rgba(0,0,0,0.56)]"
+          >
+            <header className="flex items-center gap-3 border-b border-yuzu-line px-4 py-3">
+              <div className="grid size-10 shrink-0 place-items-center rounded-lg border border-yuzu-gold/50 bg-yuzu-gold/10 text-yuzu-gold">
+                <MessageCircle className="size-5" />
               </div>
-            ) : null}
-
-            <form className="grid gap-2" onSubmit={handleTextSubmit}>
-              <Textarea
-                aria-label="Concierge message"
-                className="max-h-36 min-h-24 rounded-md border-yuzu-line bg-yuzu-night text-sm text-yuzu-cream"
-                placeholder="Ask the concierge"
-                value={message}
-                onChange={(event) => {
-                  setMessage(event.currentTarget.value);
-                  setStatusMessage("");
-                }}
-              />
-              <div className="grid grid-cols-[auto_auto_1fr_auto] gap-2">
-                <Button
-                  className={cn("border-yuzu-line text-yuzu-cream", isRecording && "border-red-400 bg-red-500/15 text-red-100")}
-                  disabled={isSending}
-                  size="icon-lg"
-                  title={isRecording ? "Stop recording" : "Record voice"}
-                  type="button"
-                  variant="outline"
-                  aria-label={isRecording ? "Stop recording" : "Record voice"}
-                  onClick={isRecording ? stopRecording : startRecording}
-                >
-                  <Mic />
-                </Button>
-                <Button
-                  className={voiceEnabled ? "bg-yuzu-gold text-yuzu-ink hover:bg-yuzu-gold-light" : "border-yuzu-line text-yuzu-cream"}
-                  size="icon-lg"
-                  title={voiceEnabled ? "Voice on" : "Voice off"}
-                  type="button"
-                  variant={voiceEnabled ? "default" : "outline"}
-                  aria-label={voiceEnabled ? "Turn voice off" : "Turn voice on"}
-                  onClick={() => setVoiceEnabled((current) => !current)}
-                >
-                  {voiceEnabled ? <Volume2 /> : <VolumeX />}
-                </Button>
-                <p className="min-w-0 self-center truncate text-xs text-yuzu-gold" aria-live="polite">
-                  {statusMessage}
-                </p>
-                <Button className="bg-yuzu-gold text-yuzu-ink hover:bg-yuzu-gold-light" disabled={!canSendText} size="icon-lg" type="submit" aria-label="Send concierge message">
-                  {isSending ? <LoaderCircle className="animate-spin" /> : <Send />}
-                </Button>
+              <div className="min-w-0">
+                <p className="truncate text-sm font-black uppercase tracking-[0.16em] text-yuzu-gold">Yuzu Concierge</p>
+                <p className="truncate text-xs text-yuzu-muted">{response ? formatStatusLabel(response.agent) : "Member support"}</p>
               </div>
-            </form>
+              <Button className="ml-auto border-yuzu-line text-yuzu-cream" size="icon-sm" type="button" variant="outline" aria-label="Close concierge" onClick={() => setIsOpen(false)}>
+                <X />
+              </Button>
+            </header>
 
-            {response ? (
-              <div className="grid gap-2 rounded-md border border-yuzu-line/70 bg-yuzu-night/55 p-3">
-                <div className="flex items-center justify-between gap-2 text-[0.68rem] font-bold uppercase tracking-[0.14em] text-yuzu-muted">
-                  <span>{formatStatusLabel(response.agent)}</span>
-                  <span>{formatStatusLabel(response.ai.status)}</span>
+            <div className="grid min-h-0 gap-3 overflow-y-auto p-4">
+              <div className="grid grid-cols-4 gap-1">
+                {conciergeModes.map((item) => {
+                  const Icon = item.icon;
+                  const isActive = mode === item.id;
+
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      aria-label={item.label}
+                      title={item.label}
+                      className={cn(
+                        "grid h-10 min-w-0 place-items-center rounded-md border text-yuzu-cream transition",
+                        isActive ? "border-yuzu-gold bg-yuzu-gold text-yuzu-ink" : "border-yuzu-line bg-yuzu-night/45 hover:border-yuzu-gold hover:text-yuzu-gold"
+                      )}
+                      onClick={() => setMode(item.id)}
+                    >
+                      <Icon className="size-4" />
+                    </button>
+                  );
+                })}
+              </div>
+
+              {!isLiveReady ? (
+                <div className="grid gap-3 rounded-md border border-yuzu-line bg-yuzu-night/50 p-3 text-sm text-yuzu-muted">
+                  <p>Sign in with Cognito to use the live concierge.</p>
+                  <Link className="inline-flex h-9 items-center justify-center rounded-md bg-yuzu-gold px-3 text-sm font-black text-yuzu-ink" href="/account">
+                    Account
+                  </Link>
                 </div>
-                {response.voice && "transcription" in response.voice ? (
-                  <p className="text-xs leading-5 text-yuzu-muted">You said: {response.voice.transcription.transcript}</p>
-                ) : null}
-                <p className="text-sm leading-6 text-yuzu-cream">{response.reply}</p>
-                {speech?.audioBase64 ? (
-                  <Button className="w-fit border-yuzu-line text-yuzu-cream" size="sm" type="button" variant="outline" onClick={() => playSpeech(speech)}>
-                    <Volume2 data-icon="inline-start" />
-                    Play
+              ) : null}
+
+              <form className="grid gap-2" onSubmit={handleTextSubmit}>
+                <Textarea
+                  aria-label="Concierge message"
+                  className="max-h-36 min-h-24 rounded-md border-yuzu-line bg-yuzu-night text-sm text-yuzu-cream"
+                  placeholder="Ask the concierge"
+                  value={message}
+                  onChange={(event) => {
+                    setMessage(event.currentTarget.value);
+                    setStatusMessage("");
+                  }}
+                />
+                <div className="grid grid-cols-[auto_auto_1fr_auto] gap-2">
+                  <Button
+                    className={cn("border-yuzu-line text-yuzu-cream", isRecording && "border-red-400 bg-red-500/15 text-red-100")}
+                    disabled={isSending}
+                    size="icon-lg"
+                    title={isRecording ? "Stop recording" : "Record voice"}
+                    type="button"
+                    variant="outline"
+                    aria-label={isRecording ? "Stop recording" : "Record voice"}
+                    onClick={isRecording ? stopRecording : startRecording}
+                  >
+                    <Mic />
                   </Button>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-        </aside>
-      ) : (
-        <button
-          type="button"
-          className="grid size-14 place-items-center rounded-lg border border-yuzu-gold bg-yuzu-gold text-yuzu-ink shadow-[0_18px_52px_rgba(0,0,0,0.5)] transition hover:bg-yuzu-gold-light"
-          aria-label="Open Yuzu Concierge"
-          onClick={() => setIsOpen(true)}
-        >
-          <MessageCircle className="size-6" />
-        </button>
-      )}
+                  <Button
+                    className={voiceEnabled ? "bg-yuzu-gold text-yuzu-ink hover:bg-yuzu-gold-light" : "border-yuzu-line text-yuzu-cream"}
+                    size="icon-lg"
+                    title={voiceEnabled ? "Voice on" : "Voice off"}
+                    type="button"
+                    variant={voiceEnabled ? "default" : "outline"}
+                    aria-label={voiceEnabled ? "Turn voice off" : "Turn voice on"}
+                    onClick={() => setVoiceEnabled((current) => !current)}
+                  >
+                    {voiceEnabled ? <Volume2 /> : <VolumeX />}
+                  </Button>
+                  <p className="min-w-0 self-center truncate text-xs text-yuzu-gold" aria-live="polite">
+                    {statusMessage}
+                  </p>
+                  <Button className="bg-yuzu-gold text-yuzu-ink hover:bg-yuzu-gold-light" disabled={!canSendText} size="icon-lg" type="submit" aria-label="Send concierge message">
+                    {isSending ? <LoaderCircle className="animate-spin" /> : <Send />}
+                  </Button>
+                </div>
+              </form>
+
+              {response ? (
+                <div className="grid gap-2 rounded-md border border-yuzu-line/70 bg-yuzu-night/55 p-3">
+                  <div className="flex items-center justify-between gap-2 text-[0.68rem] font-bold uppercase tracking-[0.14em] text-yuzu-muted">
+                    <span>{formatStatusLabel(response.agent)}</span>
+                    <span>{formatStatusLabel(response.ai.status)}</span>
+                  </div>
+                  {response.voice && "transcription" in response.voice ? (
+                    <p className="text-xs leading-5 text-yuzu-muted">You said: {response.voice.transcription.transcript}</p>
+                  ) : null}
+                  <p className="text-sm leading-6 text-yuzu-cream">{response.reply}</p>
+                  {speech?.audioBase64 ? (
+                    <Button className="w-fit border-yuzu-line text-yuzu-cream" size="sm" type="button" variant="outline" onClick={() => playSpeech(speech)}>
+                      <Volume2 data-icon="inline-start" />
+                      Play
+                    </Button>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          </motion.aside>
+        ) : (
+          <motion.button
+            key="concierge-launcher"
+            initial={false}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 10, scale: 0.94 }}
+            whileHover={{ y: -3, scale: 1.04 }}
+            whileTap={{ scale: 0.97 }}
+            transition={{
+              opacity: { duration: 0.2 },
+              y: { type: "spring", stiffness: 260, damping: 22 },
+              scale: { type: "spring", stiffness: 260, damping: 22 },
+            }}
+            type="button"
+            data-concierge-launcher="sitewide"
+            className="grid size-14 place-items-center rounded-lg border border-yuzu-gold bg-yuzu-gold text-yuzu-ink shadow-[0_18px_52px_rgba(0,0,0,0.5)] transition hover:bg-yuzu-gold-light"
+            aria-label="Open Yuzu Concierge"
+            onClick={() => setIsOpen(true)}
+          >
+            <MessageCircle className="size-6" />
+          </motion.button>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

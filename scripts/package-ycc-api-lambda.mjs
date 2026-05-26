@@ -23,6 +23,7 @@ const migrationFiles = [
   "0002_commerce_schema.sql",
   "0003_site_content_schema.sql",
   "0004_newsroom_schema.sql",
+  "0005_member_stripe_customer_link.sql",
 ];
 
 const lambdaDependencies = [

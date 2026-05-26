@@ -7,24 +7,37 @@ import {
   CheckCircle2,
   Database,
   Loader2,
+  PackageCheck,
   RefreshCw,
   Send,
   ShieldCheck,
   SquareActivity,
   UploadCloud,
+  UserCheck,
+  Users,
 } from "lucide-react";
 
 import { useBackupAuth } from "@/components/backup-auth-provider";
 import { Button } from "@/components/ui/button";
 import {
   fetchAdminComplianceHolds,
+  fetchAdminMembers,
+  fetchAdminOrders,
   fetchAdminWebhookEvents,
   getLiveApiErrorMessage,
   sendConciergeChat,
   syncAdminStripeProducts,
+  updateAdminMemberAccess,
+  updateAdminOrder,
   type AdminAuditEntry,
   type AdminComplianceHold,
   type AdminComplianceHoldsResponse,
+  type AdminMember,
+  type AdminMemberAccessUpdateInput,
+  type AdminMembersResponse,
+  type AdminOrder,
+  type AdminOrdersResponse,
+  type AdminOrderUpdateInput,
   type AdminPersistence,
   type AdminRecentOrder,
   type AdminRecentSubscription,
@@ -41,6 +54,8 @@ export function BackendAdminConsole() {
   const auth = useBackupAuth();
   const [compliance, setCompliance] = useState<AdminComplianceHoldsResponse | null>(null);
   const [webhooks, setWebhooks] = useState<AdminWebhookEventsResponse | null>(null);
+  const [ordersBackend, setOrdersBackend] = useState<AdminOrdersResponse | null>(null);
+  const [membersBackend, setMembersBackend] = useState<AdminMembersResponse | null>(null);
   const [syncResult, setSyncResult] = useState<AdminStripeSyncProductsResponse | null>(null);
   const [adminPrompt, setAdminPrompt] = useState("Summarize backend health and any admin follow-ups.");
   const [adminReply, setAdminReply] = useState("");
@@ -49,6 +64,8 @@ export function BackendAdminConsole() {
   const [isRefreshing, setIsRefreshing] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isAsking, setIsAsking] = useState(false);
+  const [updatingOrderId, setUpdatingOrderId] = useState("");
+  const [updatingMemberId, setUpdatingMemberId] = useState("");
   const createApiHeaders = auth.createApiHeaders;
 
   const refreshBackend = useCallback(async () => {
@@ -57,13 +74,17 @@ export function BackendAdminConsole() {
 
     try {
       const headers = await createApiHeaders();
-      const [nextCompliance, nextWebhooks] = await Promise.all([
+      const [nextCompliance, nextWebhooks, nextOrders, nextMembers] = await Promise.all([
         fetchAdminComplianceHolds(headers),
         fetchAdminWebhookEvents(headers),
+        fetchAdminOrders(headers),
+        fetchAdminMembers(headers, { limit: 250 }),
       ]);
 
       setCompliance(nextCompliance);
       setWebhooks(nextWebhooks);
+      setOrdersBackend(nextOrders);
+      setMembersBackend(nextMembers);
       setMessage("Backend admin endpoints responded.");
     } catch (refreshError) {
       setError(getLiveApiErrorMessage(refreshError));
@@ -80,21 +101,28 @@ export function BackendAdminConsole() {
     return () => window.clearTimeout(timer);
   }, [refreshBackend]);
 
-  const holdCount = compliance?.holds.length ?? 0;
-  const eventCount = webhooks?.events.length ?? 0;
+  const holdCount = compliance?.holds?.length ?? 0;
+  const eventCount = webhooks?.events?.length ?? 0;
   const overview = compliance?.overview;
   const holdSummary = compliance?.summary;
   const webhookSummary = webhooks?.summary;
+  const orderSummary = ordersBackend?.summary;
+  const memberSummary = membersBackend?.summary;
   const persistenceLabel = useMemo(
-    () => formatPersistence(compliance?.persistence ?? webhooks?.persistence),
-    [compliance?.persistence, webhooks?.persistence]
+    () => formatPersistence(ordersBackend?.persistence ?? membersBackend?.persistence ?? compliance?.persistence ?? webhooks?.persistence),
+    [compliance?.persistence, membersBackend?.persistence, ordersBackend?.persistence, webhooks?.persistence]
   );
-  const orderCount = overview?.counts.orders.total ?? 0;
-  const paidOrders = overview?.counts.orders.paid ?? 0;
-  const pendingOrders = overview?.counts.orders.pending ?? 0;
+  const orderCount = orderSummary?.total ?? overview?.counts.orders.total ?? 0;
+  const paidOrders = orderSummary?.paid ?? overview?.counts.orders.paid ?? 0;
+  const pendingOrders = orderSummary?.pending ?? overview?.counts.orders.pending ?? 0;
+  const fulfilledOrders = orderSummary?.fulfilled ?? 0;
+  const needsAttentionOrders = orderSummary?.needsAttention ?? 0;
   const activeSubscriptions = overview?.counts.subscriptions.active ?? 0;
   const totalSubscriptions = overview?.counts.subscriptions.total ?? 0;
   const pastDueSubscriptions = overview?.counts.subscriptions.pastDue ?? 0;
+  const totalMembers = memberSummary?.total ?? totalSubscriptions;
+  const operatorCount = (memberSummary?.admins ?? 0) + (memberSummary?.operators ?? 0);
+  const bannedMembers = memberSummary?.banned ?? 0;
   const openHolds = holdSummary?.open ?? holdCount;
   const totalHolds = holdSummary?.total ?? holdCount;
   const processedWebhooks = webhookSummary?.processed ?? overview?.counts.webhooks.processed ?? 0;
@@ -147,6 +175,70 @@ export function BackendAdminConsole() {
     }
   }
 
+  async function handleOrderUpdate(order: AdminOrder, input: AdminOrderUpdateInput, successMessage: string) {
+    setUpdatingOrderId(order.id);
+    setError("");
+    setMessage("");
+
+    try {
+      const headers = await createApiHeaders();
+      await updateAdminOrder(order.id, input, headers);
+      await refreshBackend();
+      setMessage(successMessage);
+    } catch (updateError) {
+      setError(getLiveApiErrorMessage(updateError));
+    } finally {
+      setUpdatingOrderId("");
+    }
+  }
+
+  async function handleAdvanceOrder(order: AdminOrder) {
+    const fulfillmentStatus = getNextFulfillmentStatus(order.fulfillmentStatus);
+    await handleOrderUpdate(order, { fulfillmentStatus }, `${getOrderLabel(order)} moved to ${humanizeStatus(fulfillmentStatus)}.`);
+  }
+
+  async function handleReleaseOrder(order: AdminOrder) {
+    await handleOrderUpdate(order, { complianceStatus: "verified" }, `${getOrderLabel(order)} compliance marked verified.`);
+  }
+
+  async function handleMemberAccessUpdate(member: AdminMember, input: AdminMemberAccessUpdateInput, successMessage: string) {
+    setUpdatingMemberId(member.id);
+    setError("");
+    setMessage("");
+
+    try {
+      const headers = await createApiHeaders();
+      await updateAdminMemberAccess(member.id, input, headers);
+      await refreshBackend();
+      setMessage(successMessage);
+    } catch (updateError) {
+      setError(getLiveApiErrorMessage(updateError));
+    } finally {
+      setUpdatingMemberId("");
+    }
+  }
+
+  async function handlePromoteMember(member: AdminMember) {
+    await handleMemberAccessUpdate(member, { role: "operator" }, `${getMemberLabel(member)} can now operate the backend.`);
+  }
+
+  async function handleActivateMember(member: AdminMember) {
+    await handleMemberAccessUpdate(member, { memberStatus: "active" }, `${getMemberLabel(member)} marked active.`);
+  }
+
+  async function handlePauseMember(member: AdminMember) {
+    await handleMemberAccessUpdate(member, { memberStatus: "paused" }, `${getMemberLabel(member)} access paused.`);
+  }
+
+  function handleOpenUserAccess() {
+    const userAccessSection = document.getElementById("admin-user-access");
+    userAccessSection?.scrollIntoView({ behavior: "smooth", block: "start" });
+
+    if (userAccessSection instanceof HTMLElement) {
+      userAccessSection.focus({ preventScroll: true });
+    }
+  }
+
   return (
     <main className="min-h-screen bg-yuzu-night text-yuzu-cream">
       <section className="border-b border-yuzu-line/70 bg-[radial-gradient(circle_at_14%_0%,rgba(15,83,55,0.24),transparent_28rem),#030504]">
@@ -193,7 +285,7 @@ export function BackendAdminConsole() {
           </div>
         ) : null}
 
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
           <StatusTile
             icon={ShieldCheck}
             label="Cognito Admin"
@@ -209,25 +301,34 @@ export function BackendAdminConsole() {
             note={overview?.latest.auditAt ? `Latest audit ${formatTimestamp(overview.latest.auditAt)}` : "Awaiting live audit activity"}
           />
           <StatusTile
-            icon={SquareActivity}
+            icon={PackageCheck}
             label="Orders"
-            tone={pendingOrders ? "warn" : "ok"}
+            tone={needsAttentionOrders || pendingOrders ? "warn" : "ok"}
             value={String(orderCount)}
-            note={`${paidOrders} paid / ${pendingOrders} pending`}
+            note={`${paidOrders} paid / ${fulfilledOrders} fulfilled`}
           />
           <StatusTile
-            icon={Bot}
+            ariaLabel="Open user access list"
+            icon={Users}
+            label="User Access"
+            onClick={handleOpenUserAccess}
+            tone={bannedMembers ? "warn" : "ok"}
+            value={String(totalMembers)}
+            note={`${operatorCount} operators / ${bannedMembers} banned`}
+          />
+          <StatusTile
+            icon={UserCheck}
             label="Memberships"
             tone={pastDueSubscriptions ? "warn" : "ok"}
             value={String(activeSubscriptions)}
             note={`${pastDueSubscriptions} past due / ${totalSubscriptions} total`}
           />
           <StatusTile
-            icon={AlertTriangle}
+            icon={SquareActivity}
             label="Queue Health"
-            tone={openHolds || pendingWebhooks ? "warn" : totalWebhooks ? "neutral" : "ok"}
-            value={`${openHolds} / ${pendingWebhooks}`}
-            note="open holds / pending webhooks"
+            tone={needsAttentionOrders || openHolds || pendingWebhooks ? "warn" : totalWebhooks ? "neutral" : "ok"}
+            value={`${needsAttentionOrders || openHolds} / ${pendingWebhooks}`}
+            note="orders needing attention / pending webhooks"
           />
         </div>
 
@@ -303,6 +404,72 @@ export function BackendAdminConsole() {
           </div>
         </div>
 
+        <div className="grid gap-6 xl:grid-cols-2">
+          <section className="border border-yuzu-line bg-yuzu-panel/72">
+            <div className="border-b border-yuzu-line px-5 py-4">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-sm font-black uppercase tracking-[0.18em] text-yuzu-gold">Customer Orders</h2>
+                  <p className="mt-2 text-sm leading-6 text-yuzu-muted">
+                    {orderSummary
+                      ? `${orderSummary.total} total orders. ${orderSummary.needsAttention} need admin attention.`
+                      : "Live customer orders appear here after the backend refresh completes."}
+                  </p>
+                </div>
+                <PackageCheck className="size-5 shrink-0 text-yuzu-gold" />
+              </div>
+            </div>
+            <AdminList
+              empty="No customer orders returned by the backend."
+              items={ordersBackend?.orders ?? []}
+              renderItem={(order, index) => (
+                <AdminOrderRow
+                  index={index}
+                  isUpdating={updatingOrderId === order.id}
+                  onAdvance={handleAdvanceOrder}
+                  onRelease={handleReleaseOrder}
+                  order={order}
+                />
+              )}
+            />
+          </section>
+
+          <section
+            className="scroll-mt-6 border border-yuzu-line bg-yuzu-panel/72 outline-none focus:ring-2 focus:ring-yuzu-gold/40"
+            id="admin-user-access"
+            tabIndex={-1}
+          >
+            <div className="border-b border-yuzu-line px-5 py-4">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-sm font-black uppercase tracking-[0.18em] text-yuzu-gold">User Access</h2>
+                  <p className="mt-2 text-sm leading-6 text-yuzu-muted">
+                    {memberSummary
+                      ? `${memberSummary.total} users. ${memberSummary.admins} admins and ${memberSummary.operators} operators.`
+                      : "Live users, roles, and membership status appear here after refresh."}
+                  </p>
+                </div>
+                <Users className="size-5 shrink-0 text-yuzu-gold" />
+              </div>
+            </div>
+            <AdminList
+              empty="No user access records returned by the backend."
+              items={membersBackend?.members ?? []}
+              limit={null}
+              renderItem={(member, index) => (
+                <AdminMemberRow
+                  index={index}
+                  isUpdating={updatingMemberId === member.id}
+                  member={member}
+                  onActivate={handleActivateMember}
+                  onPause={handlePauseMember}
+                  onPromote={handlePromoteMember}
+                />
+              )}
+            />
+          </section>
+        </div>
+
         <div className="grid gap-6 xl:grid-cols-3">
           <section className="border border-yuzu-line bg-yuzu-panel/72">
             <div className="border-b border-yuzu-line px-5 py-4">
@@ -353,20 +520,24 @@ export function BackendAdminConsole() {
 }
 
 function StatusTile({
+  ariaLabel,
   icon: Icon,
   label,
+  onClick,
   tone,
   value,
   note,
 }: {
+  ariaLabel?: string;
   icon: ComponentType<{ className?: string }>;
   label: string;
+  onClick?: () => void;
   tone: StatusTone;
   value: string;
   note?: string;
 }) {
-  return (
-    <section className="border border-yuzu-line bg-yuzu-panel/72 p-5">
+  const tileContent = (
+    <>
       <div className="flex items-start justify-between gap-4">
         <div>
           <div className="text-xs font-black uppercase tracking-[0.18em] text-yuzu-muted">{label}</div>
@@ -380,6 +551,25 @@ function StatusTile({
           )}
         />
       </div>
+    </>
+  );
+
+  if (onClick) {
+    return (
+      <button
+        aria-label={ariaLabel || label}
+        className="border border-yuzu-line bg-yuzu-panel/72 p-5 text-left transition hover:border-yuzu-gold/70 focus:outline-none focus:ring-2 focus:ring-yuzu-gold/40"
+        onClick={onClick}
+        type="button"
+      >
+        {tileContent}
+      </button>
+    );
+  }
+
+  return (
+    <section className="border border-yuzu-line bg-yuzu-panel/72 p-5">
+      {tileContent}
     </section>
   );
 }
@@ -411,20 +601,150 @@ function QueueBlock<T>({
 function AdminList<T>({
   empty,
   items,
+  limit = 8,
   renderItem,
 }: {
   empty: string;
   items: T[];
+  limit?: number | null;
   renderItem: (item: T, index: number) => React.ReactNode;
 }) {
+  const itemsToRender = limit ? items.slice(0, limit) : items;
+
   return (
     <section>
       {items.length ? (
-        <div className="divide-y divide-yuzu-line/70">{items.slice(0, 8).map(renderItem)}</div>
+        <>
+          <div className="divide-y divide-yuzu-line/70">{itemsToRender.map(renderItem)}</div>
+          {limit && items.length > limit ? (
+            <div className="border-t border-yuzu-line/70 px-5 py-3 text-xs uppercase tracking-[0.14em] text-yuzu-muted">
+              Showing {limit} of {items.length} records.
+            </div>
+          ) : null}
+        </>
       ) : (
         <div className="p-5 text-sm leading-6 text-yuzu-muted">{empty}</div>
       )}
     </section>
+  );
+}
+
+function AdminOrderRow({
+  index,
+  isUpdating,
+  onAdvance,
+  onRelease,
+  order,
+}: {
+  index: number;
+  isUpdating: boolean;
+  onAdvance: (order: AdminOrder) => void;
+  onRelease: (order: AdminOrder) => void;
+  order: AdminOrder;
+}) {
+  const fulfillmentStatus = order.fulfillmentStatus || "not_started";
+  const complianceStatus = order.complianceStatus || "pending";
+  const canAdvance = !isTerminalFulfillmentStatus(fulfillmentStatus);
+  const canRelease = needsComplianceRelease(complianceStatus);
+
+  return (
+    <div className="grid gap-3 p-5 text-sm">
+      <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
+        <div>
+          <div className="font-semibold text-yuzu-cream">{getOrderLabel(order) || `Order ${index + 1}`}</div>
+          <div className="mt-1 text-yuzu-muted">
+            {order.customer?.name || order.email || "customer unavailable"} {order.itemCount ? `· ${order.itemCount} items` : ""}
+          </div>
+        </div>
+        <div className="text-left text-sm text-yuzu-muted sm:text-right">
+          <div className="font-semibold text-yuzu-cream">{formatCurrency(order.total, order.currency)}</div>
+          <div>{formatTimestamp(order.placedAt || "")}</div>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs uppercase tracking-[0.12em] text-yuzu-muted">
+        <span>{humanizeStatus(order.status || "pending")}</span>
+        <span>{humanizeStatus(fulfillmentStatus)}</span>
+        <span>{humanizeStatus(complianceStatus)}</span>
+        {order.customer?.membershipTier ? <span>{humanizeStatus(order.customer.membershipTier)}</span> : null}
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <Button className="border-yuzu-line text-yuzu-cream" disabled={isUpdating || !canAdvance} onClick={() => void onAdvance(order)} size="sm" variant="outline">
+          {isUpdating ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <PackageCheck data-icon="inline-start" />}
+          Advance
+        </Button>
+        <Button className="border-yuzu-line text-yuzu-cream" disabled={isUpdating || !canRelease} onClick={() => void onRelease(order)} size="sm" variant="outline">
+          {isUpdating ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <ShieldCheck data-icon="inline-start" />}
+          Release
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function AdminMemberRow({
+  index,
+  isUpdating,
+  member,
+  onActivate,
+  onPause,
+  onPromote,
+}: {
+  index: number;
+  isUpdating: boolean;
+  member: AdminMember;
+  onActivate: (member: AdminMember) => void;
+  onPause: (member: AdminMember) => void;
+  onPromote: (member: AdminMember) => void;
+}) {
+  const role = member.role || "customer";
+  const status = member.memberStatus || "non_member";
+  const canPromote = !["admin", "operator"].includes(role);
+  const canActivate = status !== "active";
+  const canPause = status === "active";
+
+  return (
+    <div className="grid gap-3 p-5 text-sm">
+      <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
+        <div>
+          <div className="font-semibold text-yuzu-cream">{getMemberLabel(member) || `User ${index + 1}`}</div>
+          <div className="mt-1 text-yuzu-muted">{member.email}</div>
+        </div>
+        <div className="text-left text-sm text-yuzu-muted sm:text-right">
+          <div className="font-semibold text-yuzu-cream">{formatCurrency(member.totalSpend)}</div>
+          <div>{member.orderCount ?? 0} orders</div>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs uppercase tracking-[0.12em] text-yuzu-muted">
+        <span>{humanizeStatus(role)}</span>
+        <span>{humanizeStatus(status)}</span>
+        <span>{humanizeStatus(member.membershipTier || member.subscriptionTier || "no tier")}</span>
+        <span>{member.humidorItemCount ?? 0} humidor items</span>
+      </div>
+
+      <div className="text-sm leading-6 text-yuzu-muted">
+        {member.subscriptionStatus
+          ? `${humanizeStatus(member.subscriptionStatus)} subscription${member.subscriptionPeriod ? ` / ${humanizeStatus(member.subscriptionPeriod)}` : ""}`
+          : "No active subscription record linked."}
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <Button className="border-yuzu-line text-yuzu-cream" disabled={isUpdating || !canPromote} onClick={() => void onPromote(member)} size="sm" variant="outline">
+          {isUpdating ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <UserCheck data-icon="inline-start" />}
+          Operator
+        </Button>
+        <Button className="border-yuzu-line text-yuzu-cream" disabled={isUpdating || !canActivate} onClick={() => void onActivate(member)} size="sm" variant="outline">
+          {isUpdating ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <ShieldCheck data-icon="inline-start" />}
+          Activate
+        </Button>
+        <Button className="border-yuzu-line text-yuzu-cream" disabled={isUpdating || !canPause} onClick={() => void onPause(member)} size="sm" variant="outline">
+          {isUpdating ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <AlertTriangle data-icon="inline-start" />}
+          Pause
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -620,6 +940,40 @@ function formatTimestamp(value: string) {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function getOrderLabel(order: AdminOrder) {
+  return order.orderNumber || order.id;
+}
+
+function getMemberLabel(member: AdminMember) {
+  return member.displayName || member.email || member.id;
+}
+
+function getNextFulfillmentStatus(value?: string | null) {
+  const status = String(value || "").toLowerCase();
+
+  if (status === "packed") {
+    return "shipped";
+  }
+
+  if (status === "shipped") {
+    return "delivered";
+  }
+
+  if (status === "delivered") {
+    return "fulfilled";
+  }
+
+  return "packed";
+}
+
+function isTerminalFulfillmentStatus(value: string) {
+  return ["delivered", "fulfilled", "cancelled", "canceled"].includes(value.toLowerCase());
+}
+
+function needsComplianceRelease(value: string) {
+  return ["pending", "review", "hold", "blocked"].includes(value.toLowerCase());
 }
 
 function humanizeStatus(value: string) {

@@ -26,7 +26,6 @@ export const navItems = [
   { href: "/membership", label: "Membership" },
   { href: "/humidor", label: "Humidor" },
   { href: "/cigar-flow", label: "Cigar Flow" },
-  { href: "/news", label: "News" },
   { href: "/education", label: "Education" },
   { href: "/events", label: "Events" },
   { href: "/about", label: "About" },
@@ -766,6 +765,8 @@ export const educationArticles = cigarEducationStories.map((story) => ({
 export type EventExperience = {
   slug: string;
   title: string;
+  startsAt: string;
+  endsAt: string;
   date: string;
   time: string;
   location: string;
@@ -785,6 +786,8 @@ export const events: EventExperience[] = [
   {
     slug: "aire-by-puro-open-event",
     title: "Aire by Puro [Open event]",
+    startsAt: "2026-05-07T19:00:00-07:00",
+    endsAt: "2026-05-07T23:00:00-07:00",
     date: "May 7, 2026",
     time: "7:00 PM - 11:00 PM MST",
     location: "111 W Boston St, Chandler, AZ 85225",
@@ -807,6 +810,8 @@ export const events: EventExperience[] = [
   {
     slug: "founder-reserve-tasting",
     title: "Founder Reserve Tasting",
+    startsAt: "2026-05-22T19:00:00-07:00",
+    endsAt: "2026-05-22T21:00:00-07:00",
     date: "May 22, 2026",
     time: "7:00 PM - 9:00 PM",
     location: "Yuzu Lounge, Phoenix",
@@ -829,6 +834,8 @@ export const events: EventExperience[] = [
   {
     slug: "cigar-aging-workshop",
     title: "Cigar Aging Workshop",
+    startsAt: "2026-06-06T14:00:00-07:00",
+    endsAt: "2026-06-06T15:30:00-07:00",
     date: "June 6, 2026",
     time: "2:00 PM - 3:30 PM",
     location: "Digital + In-store",
@@ -851,6 +858,8 @@ export const events: EventExperience[] = [
   {
     slug: "opus-x-allocation-night",
     title: "Opus X Allocation Night",
+    startsAt: "2026-06-18T20:00:00-07:00",
+    endsAt: "2026-06-18T22:00:00-07:00",
     date: "June 18, 2026",
     time: "8:00 PM - 10:00 PM",
     location: "Private Locker Room",
@@ -1036,13 +1045,13 @@ export const complianceStack = [
   "AgeChecker.Net / Veratad checkout verification",
   "Adult signature required shipping",
   "State-level shipping rules",
-  "Avalara Tobacco & Vape tax readiness",
+  "Stripe Tax and tobacco excise readiness",
   "Compliance audit log per order",
 ];
 
 export const humidorFeatureList = [
-  { title: "Cognito gate", icon: ShieldCheck },
-  { title: "Live inventory", icon: Package },
+  { title: "Private access", icon: ShieldCheck },
+  { title: "Saved collection", icon: Package },
   { title: "Aging dates", icon: CalendarDays },
   { title: "Reorder reminders", icon: ShoppingCart },
   { title: "Member ratings", icon: Star },
@@ -1051,11 +1060,13 @@ export const humidorFeatureList = [
 
 export const awsServices = [
   ["Amplify Hosting", "Static Next.js storefront and PWA"],
-  ["S3", "Cigar photos and media"],
-  ["RDS PostgreSQL", "Members, orders, humidor inventory"],
-  ["ECS Fargate", "MedusaJS commerce workers"],
+  ["API Gateway + Lambda", "Checkout, account, support, humidor, and compliance API"],
+  ["Stripe", "Hosted Checkout, Billing, Customer Portal, refunds, and disputes"],
+  ["S3", "Cigar photos, media, raw support mail, and catalog assets"],
+  ["RDS PostgreSQL", "Members, orders, subscriptions, humidor inventory, and audit logs"],
   ["Cognito", "Member authentication"],
-  ["IoT Core", "MQTT smart humidor sensor flow"],
-  ["EventBridge + SNS", "Humidity and compliance alerts"],
-  ["Secrets Manager", "API keys for AgeChecker, Avalara, NMI"],
+  ["EventBridge + SQS/SNS", "Commerce, support, fulfillment, and compliance events"],
+  ["SES", "Inbound support email and guarded outbound operator sends"],
+  ["Secrets Manager", "Stripe, AgeChecker, tax-provider, shipping, and database secrets"],
+  ["Bedrock", "Concierge, support, cigar guide, humidor, admin, and news agents"],
 ];

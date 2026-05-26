@@ -6,6 +6,7 @@ import { AgeGate } from "@/components/age-gate";
 import { CartProvider } from "@/components/cart-provider";
 import { FloatingConcierge } from "@/components/floating-concierge";
 import { LivePageEditor } from "@/components/live-page-editor";
+import { PageFade } from "@/components/motion-primitives";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
 
@@ -15,14 +16,16 @@ export function SiteChrome({ children }: { children: React.ReactNode }) {
   const isAuth = pathname.startsWith("/auth");
 
   if (isAdmin || isAuth) {
-    return <>{children}</>;
+    return <CartProvider>{children}</CartProvider>;
   }
 
   return (
     <CartProvider>
       <AgeGate />
       <SiteHeader />
-      <main>{children}</main>
+      <PageFade key={pathname} duration={0.28}>
+        <main>{children}</main>
+      </PageFade>
       <SiteFooter />
       <LivePageEditor />
       <FloatingConcierge />

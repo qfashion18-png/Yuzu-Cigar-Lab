@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 
 import { useCart } from "@/components/cart-provider";
 import { Button } from "@/components/ui/button";
-import { getCheckoutErrorMessage, getCheckoutSessionStatus, type CheckoutSessionStatus } from "@/lib/stripe-checkout";
+import { getCheckoutErrorMessage, getCheckoutSessionStatus, shouldClearCartAfterCheckoutStatus, type CheckoutSessionStatus } from "@/lib/stripe-checkout";
 
 export default function CheckoutSuccessPage() {
   const { clearCart } = useCart();
@@ -17,9 +17,15 @@ export default function CheckoutSuccessPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const sessionId = params.get("session_id");
+    const statusToken = params.get("status_token") || "";
 
     if (!sessionId) {
       queueMicrotask(() => setError("Checkout session is missing."));
+      return;
+    }
+
+    if (!statusToken) {
+      queueMicrotask(() => setError("Checkout status token is missing. Return from Stripe Checkout or contact support with your receipt."));
       return;
     }
 
@@ -34,7 +40,7 @@ export default function CheckoutSuccessPage() {
 
       pollCount += 1;
       try {
-        const sessionStatus = await getCheckoutSessionStatus(sessionId);
+        const sessionStatus = await getCheckoutSessionStatus(sessionId, statusToken);
         if (cancelled) {
           return;
         }
@@ -42,8 +48,11 @@ export default function CheckoutSuccessPage() {
         setStatus(sessionStatus);
         setError("");
 
-        if (sessionStatus.orderRecorded) {
+        if (shouldClearCartAfterCheckoutStatus(sessionStatus)) {
           clearCart();
+        }
+
+        if (sessionStatus.orderRecorded) {
           return;
         }
 

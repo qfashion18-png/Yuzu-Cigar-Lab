@@ -1,7 +1,9 @@
 "use client";
 
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { Search } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { useMemo, useState } from "react";
 
 import { ProductCard } from "@/components/product-card";
 import { Button } from "@/components/ui/button";
@@ -17,43 +19,33 @@ type ShopCatalogProps = {
   categories: string[];
 };
 
-function getInitialCategory(categories: string[]) {
-  if (typeof window === "undefined") {
-    return "All";
-  }
+type CatalogPagination = {
+  category: string;
+  visibleCount: number;
+};
 
-  const params = new URLSearchParams(window.location.search);
-  const category = params.get(categoryParamKey);
-
+function getCategoryFromParam(category: string | null, categories: string[]) {
   return category && categories.includes(category) ? category : "All";
 }
 
 export function ShopCatalog({ products, categories }: ShopCatalogProps) {
+  const searchParams = useSearchParams();
+  const activeCategory = getCategoryFromParam(searchParams.get(categoryParamKey), categories);
   const [query, setQuery] = useState("");
-  const [activeCategory, setActiveCategory] = useState(() => getInitialCategory(categories));
-  const [visibleCount, setVisibleCount] = useState(pageSize);
-
-  useEffect(() => {
-    function syncCategoryFromUrl() {
-      setActiveCategory(getInitialCategory(categories));
-      setVisibleCount(pageSize);
-    }
-
-    window.addEventListener("popstate", syncCategoryFromUrl);
-
-    return () => {
-      window.removeEventListener("popstate", syncCategoryFromUrl);
-    };
-  }, [categories]);
+  const shouldReduceMotion = useReducedMotion();
+  const [pagination, setPagination] = useState<CatalogPagination>(() => ({
+    category: activeCategory,
+    visibleCount: pageSize,
+  }));
+  const visibleCount = pagination.category === activeCategory ? pagination.visibleCount : pageSize;
 
   function updateQuery(nextQuery: string) {
     setQuery(nextQuery);
-    setVisibleCount(pageSize);
+    setPagination({ category: activeCategory, visibleCount: pageSize });
   }
 
   function updateCategory(nextCategory: string) {
-    setActiveCategory(nextCategory);
-    setVisibleCount(pageSize);
+    setPagination({ category: nextCategory, visibleCount: pageSize });
 
     const url = new URL(window.location.href);
 
@@ -90,9 +82,15 @@ export function ShopCatalog({ products, categories }: ShopCatalogProps) {
         <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-end">
           <div>
             <p className="text-xs font-bold uppercase tracking-[0.16em] text-yuzu-gold">Sort by: Imported catalog order</p>
-            <p className="mt-2 text-sm text-yuzu-muted">
+            <motion.p
+              key={`${activeCategory}-${query}-${visibleProducts.length}-${filteredProducts.length}`}
+              initial={shouldReduceMotion ? false : { opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.22 }}
+              className="mt-2 text-sm text-yuzu-muted"
+            >
               Showing {visibleProducts.length.toLocaleString()} of {filteredProducts.length.toLocaleString()} matched catalog items
-            </p>
+            </motion.p>
           </div>
           <label className="relative w-full max-w-xl">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-yuzu-muted" />
@@ -126,9 +124,20 @@ export function ShopCatalog({ products, categories }: ShopCatalogProps) {
       </div>
 
       <div className="grid items-start gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-        {visibleProducts.map((product) => (
-          <ProductCard key={product.id} product={product} />
-        ))}
+        <AnimatePresence mode="popLayout">
+          {visibleProducts.map((product) => (
+            <motion.div
+              key={product.id}
+              layout
+              initial={shouldReduceMotion ? false : { opacity: 0, y: 18 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={shouldReduceMotion ? undefined : { opacity: 0, y: -10 }}
+              transition={{ duration: 0.24, ease: "easeOut" }}
+            >
+              <ProductCard product={product} />
+            </motion.div>
+          ))}
+        </AnimatePresence>
       </div>
 
       {visibleProducts.length < filteredProducts.length && (
@@ -136,7 +145,12 @@ export function ShopCatalog({ products, categories }: ShopCatalogProps) {
           <Button
             className="h-11 border-yuzu-gold px-7 text-yuzu-gold hover:bg-yuzu-gold hover:text-yuzu-ink"
             variant="outline"
-            onClick={() => setVisibleCount((current) => current + pageSize)}
+            onClick={() =>
+              setPagination((current) => ({
+                category: activeCategory,
+                visibleCount: (current.category === activeCategory ? current.visibleCount : pageSize) + pageSize,
+              }))
+            }
           >
             Load More
           </Button>

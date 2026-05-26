@@ -7,6 +7,7 @@ import type { ComponentProps, FormEvent, ReactNode } from "react";
 import { useMemo, useState } from "react";
 
 import { useBackupAuth } from "@/components/backup-auth-provider";
+import { AgeCheckerVerification } from "@/components/agechecker-verification";
 import {
   checkoutPaymentMethods,
   defaultDeliveryMethods,
@@ -23,7 +24,7 @@ import {
   formatCurrency,
   isMemberOnlyCart,
 } from "@/lib/shopping-cart";
-import { createCheckoutSession, getCheckoutErrorMessage } from "@/lib/stripe-checkout";
+import { createCheckoutSession, getCheckoutErrorMessage, getCommerceMembership } from "@/lib/stripe-checkout";
 
 const taxRate = 0.066;
 
@@ -68,7 +69,8 @@ function CheckoutExperienceContent({ accountSession }: { accountSession: BackupA
   const [isSubmitting, setIsSubmitting] = useState(false);
   const selectedDelivery = defaultDeliveryMethods.find((method) => method.id === deliveryMethodId) ?? defaultDeliveryMethods[0];
   const selectedPayment = checkoutPaymentMethods.find((method) => method.id === paymentMethodId) ?? checkoutPaymentMethods[0];
-  const isMemberOnlyLocked = isMemberOnlyCart(cart) && !auth.isMember;
+  const hasMemberOnlyItems = isMemberOnlyCart(cart);
+  const isMemberOnlyLocked = hasMemberOnlyItems && !auth.isMember;
   const totals = useMemo(
     () =>
       calculateCartTotals(cart, {
@@ -118,6 +120,25 @@ function CheckoutExperienceContent({ accountSession }: { accountSession: BackupA
     setError("");
 
     try {
+      let membershipEntitlementToken: string | undefined;
+      if (hasMemberOnlyItems) {
+        const authHeaders = await auth.createApiHeaders();
+        if (!authHeaders.Authorization) {
+          setError("Sign in with Cognito so Yuzu can verify your active membership before checkout.");
+          setIsSubmitting(false);
+          return;
+        }
+
+        const membership = await getCommerceMembership(authHeaders);
+        if (!membership.membershipEntitlementToken) {
+          setError("Yuzu could not verify an active membership for this checkout.");
+          setIsSubmitting(false);
+          return;
+        }
+
+        membershipEntitlementToken = membership.membershipEntitlementToken;
+      }
+
       const session = await createCheckoutSession({
         cart,
         customer: {
@@ -136,6 +157,7 @@ function CheckoutExperienceContent({ accountSession }: { accountSession: BackupA
         },
         shippingMethodId: deliveryMethodId,
         complianceToken: ageVerificationToken,
+        membershipEntitlementToken,
       });
 
       window.location.assign(session.url);
@@ -263,6 +285,16 @@ function CheckoutExperienceContent({ accountSession }: { accountSession: BackupA
         </CheckoutPanel>
 
         <CheckoutPanel icon={ShieldCheck} title="4. Review">
+          <AgeCheckerVerification
+            email={form.email}
+            phone={form.phone}
+            fullName={form.fullName}
+            address1={form.address1}
+            city={form.city}
+            state={form.state}
+            postalCode={form.postalCode}
+            country={form.country}
+          />
           <div className="grid gap-3">
             {cart.items.map((item) => (
               <div key={item.lineId} className="flex items-center justify-between gap-4 border-b border-yuzu-line/60 pb-3 text-sm last:border-b-0 last:pb-0">

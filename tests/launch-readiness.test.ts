@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
   assessLaunchReadiness,
   findPlaceholderKeys,
+  materializeCommerceSecretEnv,
   parseEnvSource,
   planGeneratedArtifactCleanup,
   validateDeployZipEntries,
@@ -45,6 +47,7 @@ const completeEnv = {
   STRIPE_TEST_MODE_E2E_CONFIRMED: "true",
   AGE_VERIFICATION_PROVIDER_CONFIRMED: "true",
   TAX_PROVIDER_CONFIRMED: "true",
+  SHIPPING_PROVIDER: "USPS",
   ADULT_SIGNATURE_CARRIER_APPROVED: "true",
   AWS_RESTORE_DRILL_COMPLETED: "true",
   STAGING_BROWSER_QA_PASSED: "true",
@@ -86,12 +89,51 @@ test("go-live readiness passes when storefront, commerce, compliance, QA, and AW
   );
 });
 
+test("commerce provider secret marks tax unconfirmed unless the live provider is ready", () => {
+  assert.equal(materializeCommerceSecretEnv({ tax: { ready: true } }).TAX_PROVIDER_CONFIRMED, "true");
+  assert.equal(materializeCommerceSecretEnv({ tax: { status: "ready" } }).TAX_PROVIDER_CONFIRMED, "true");
+  assert.equal(materializeCommerceSecretEnv({ tax: { ready: false } }).TAX_PROVIDER_CONFIRMED, "false");
+  assert.equal(materializeCommerceSecretEnv({ tax: { status: "pending" } }).TAX_PROVIDER_CONFIRMED, "false");
+});
+
+test("commerce provider secret carries confirmed Stripe tobacco approval", () => {
+  assert.equal(
+    materializeCommerceSecretEnv({
+      stripe: {
+        tobaccoApprovalConfirmed: true,
+      },
+    }).STRIPE_TOBACCO_APPROVAL_CONFIRMED,
+    "true",
+  );
+  assert.equal(
+    materializeCommerceSecretEnv({
+      stripe_tobacco_approval_confirmed: "yes",
+    }).STRIPE_TOBACCO_APPROVAL_CONFIRMED,
+    "true",
+  );
+});
+
+test("commerce provider secret carries nested USPS adult-signature readiness", () => {
+  assert.equal(
+    materializeCommerceSecretEnv({
+      shipping: {
+        provider: "USPS",
+        adultSignature: {
+          accountConfigured: true,
+        },
+      },
+    }).ADULT_SIGNATURE_CARRIER_APPROVED,
+    "true",
+  );
+});
+
 test("local ops readiness warns instead of blocking on external launch gates", () => {
   const checks = assessLaunchReadiness(
     {
       ...completeEnv,
       STRIPE_TOBACCO_APPROVAL_CONFIRMED: "false",
       STRIPE_SECRET_KEY: "",
+      SHIPPING_PROVIDER: "UPS",
       ADULT_SIGNATURE_CARRIER_APPROVED: "false",
     },
     { strictExternal: false },
@@ -103,6 +145,7 @@ test("local ops readiness warns instead of blocking on external launch gates", (
   );
   assert.ok(checks.some((check) => check.status === "warn" && check.id === "stripe-approval"));
   assert.ok(checks.some((check) => check.status === "warn" && check.id === "stripe-secret"));
+  assert.ok(checks.some((check) => check.status === "warn" && check.id === "shipping-provider-usps"));
   assert.ok(checks.some((check) => check.status === "warn" && check.id === "adult-signature-carrier"));
 });
 
@@ -116,6 +159,7 @@ test("strict readiness fails when external launch gates are missing or unsafe", 
       STRIPE_TOBACCO_APPROVAL_CONFIRMED: "false",
       STRIPE_SECRET_KEY: "sk_test_replace_me",
       AGE_VERIFICATION_PROVIDER_CONFIRMED: "false",
+      SHIPPING_PROVIDER: "UPS",
     },
     { strictExternal: true },
   );
@@ -127,6 +171,7 @@ test("strict readiness fails when external launch gates are missing or unsafe", 
     "stripe-approval",
     "stripe-secret",
     "age-verification-provider",
+    "shipping-provider-usps",
     "next-public-admin-app-url-configured",
     "admin-url-format",
   ].sort());
@@ -169,6 +214,27 @@ test("deploy zip validation rejects Windows paths and nested build folders", () 
   ]);
 });
 
+test("Amplify custom headers include production browser security headers", () => {
+  const customHeaders = readFileSync("customHttp.yml", "utf8");
+
+  assert.match(customHeaders, /pattern:\s*"?\*\*"?/u);
+
+  for (const headerName of [
+    "Strict-Transport-Security",
+    "Content-Security-Policy",
+    "X-Frame-Options",
+    "Referrer-Policy",
+    "Permissions-Policy",
+    "X-Content-Type-Options",
+  ]) {
+    assert.match(customHeaders, new RegExp(`key:\\s*"${headerName}"`, "u"));
+  }
+
+  assert.match(customHeaders, /frame-ancestors 'none'/u);
+  assert.match(customHeaders, /object-src 'none'/u);
+  assert.match(customHeaders, /connect-src 'self' https:\/\/api\.yuzucigarclub\.com/u);
+});
+
 test("Lambda deploy zip validation requires runtime files, CA bundle, and migrations", () => {
   assert.deepEqual(
     validateLambdaDeployZipEntries([
@@ -180,6 +246,7 @@ test("Lambda deploy zip validation requires runtime files, CA bundle, and migrat
       "migrations/0002_commerce_schema.sql",
       "migrations/0003_site_content_schema.sql",
       "migrations/0004_newsroom_schema.sql",
+      "migrations/0005_member_stripe_customer_link.sql",
       "node_modules/pg/package.json",
     ]),
     [],
@@ -193,6 +260,7 @@ test("Lambda deploy zip validation requires runtime files, CA bundle, and migrat
     "missing:migrations/0002_commerce_schema.sql",
     "missing:migrations/0003_site_content_schema.sql",
     "missing:migrations/0004_newsroom_schema.sql",
+    "missing:migrations/0005_member_stripe_customer_link.sql",
     "invalid:infra/lambda/ycc-api/index.js",
     "invalid:assets\\bad.js",
   ]);

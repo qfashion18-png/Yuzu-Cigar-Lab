@@ -47,6 +47,7 @@ export function BackupAuthPanel({ intent = "account", className, adminAppUrl: ad
   const [setupMode, setSetupMode] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
   const [isCognitoSubmitting, setIsCognitoSubmitting] = useState(false);
+  const [cognitoChallenge, setCognitoChallenge] = useState<{ name: string; message: string } | null>(null);
   const cognitoAvailable = auth.isCognitoConfigured;
 
   async function handleCognitoPasswordLogin(event: FormEvent<HTMLFormElement>) {
@@ -60,7 +61,24 @@ export function BackupAuthPanel({ intent = "account", className, adminAppUrl: ad
 
       if (result.status === "signed_in") {
         setPassword("");
+        setCognitoChallenge(null);
+      } else if (result.status === "challenge_required") {
+        setCognitoChallenge({ name: result.challengeName, message: result.message });
+      } else {
+        setCognitoChallenge(null);
       }
+    } finally {
+      setIsCognitoSubmitting(false);
+    }
+  }
+
+  async function handleHostedCognitoLogin() {
+    setIsCognitoSubmitting(true);
+    setStatusMessage("Opening hosted Cognito sign-in...");
+
+    try {
+      const result = await auth.startCognitoLogin();
+      setStatusMessage(result.message);
     } finally {
       setIsCognitoSubmitting(false);
     }
@@ -397,6 +415,17 @@ export function BackupAuthPanel({ intent = "account", className, adminAppUrl: ad
           {isCognitoSubmitting ? <LoaderCircle className="animate-spin" data-icon="inline-start" /> : <LogIn data-icon="inline-start" />}
           {isCognitoSubmitting ? "Signing In" : "Sign In"}
         </Button>
+        {cognitoChallenge ? (
+          <div className="grid gap-3 border border-yuzu-line bg-yuzu-night/60 p-4 text-sm leading-6 text-yuzu-muted">
+            <p>
+              {cognitoChallenge.message} Challenge: <span className="font-semibold text-yuzu-cream">{cognitoChallenge.name}</span>.
+            </p>
+            <Button className="h-11 border-yuzu-gold text-yuzu-gold hover:bg-yuzu-gold hover:text-yuzu-ink" type="button" variant="outline" onClick={handleHostedCognitoLogin}>
+              <ExternalLink data-icon="inline-start" />
+              Continue with Hosted Cognito
+            </Button>
+          </div>
+        ) : null}
       </form>
     );
   }

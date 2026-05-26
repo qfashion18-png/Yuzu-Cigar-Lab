@@ -34,6 +34,7 @@ function buildCheckoutSessionParams(input = {}, env = process.env) {
   const shipping = input.shipping || {};
   const shippingAddress = shipping.address && typeof shipping.address === "object" ? shipping.address : {};
   const shippingCountry = normalizeCountryCode(shippingAddress.country || "US");
+  const statusToken = toMetadataString(input.statusToken, 120);
 
   return {
     mode: "payment",
@@ -49,7 +50,7 @@ function buildCheckoutSessionParams(input = {}, env = process.env) {
     })),
     automatic_tax: { enabled: true },
     allow_promotion_codes: true,
-    success_url: `${siteUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
+    success_url: `${siteUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}&status_token=${encodeURIComponent(statusToken)}`,
     cancel_url: `${siteUrl}/checkout/cancel`,
     metadata: {
       order_kind: "product",
@@ -57,6 +58,8 @@ function buildCheckoutSessionParams(input = {}, env = process.env) {
       age_verification_id: compliance.ageVerificationId || "",
       compliance_policy_version: compliance.policyVersion || "",
       shipping_method_id: shipping.methodId || "",
+      shipping_carrier: toMetadataString(shipping.carrier || "USPS", 20),
+      adult_signature_required: shipping.adultSignatureRequired === false ? "false" : "true",
       order_id: input.orderId || "",
       shipping_name: toMetadataString(input.customer?.fullName, 120),
       shipping_address1: toMetadataString(shippingAddress.address1, 120),
@@ -65,6 +68,7 @@ function buildCheckoutSessionParams(input = {}, env = process.env) {
       shipping_state: toMetadataString(shippingAddress.state, 40),
       shipping_postal_code: toMetadataString(shippingAddress.postalCode, 40),
       shipping_country: shippingCountry,
+      checkout_status_token: statusToken,
     },
   };
 }
@@ -73,23 +77,28 @@ function buildMembershipSessionParams(input = {}, env = process.env) {
   const siteUrl = getSiteUrl(env);
   const tierKey = input.tierKey || "";
   const billingPeriod = input.billingPeriod || "monthly";
+  const statusToken = toMetadataString(input.statusToken, 120);
+  const customerEmail = toMetadataString(input.customer?.email, 160);
 
   return {
     mode: "subscription",
-    customer_email: input.customer?.email,
+    customer_email: customerEmail,
     line_items: [{ price: input.stripePriceId, quantity: 1 }],
     allow_promotion_codes: true,
-    success_url: `${siteUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
+    success_url: `${siteUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}&status_token=${encodeURIComponent(statusToken)}`,
     cancel_url: `${siteUrl}/checkout/cancel`,
     metadata: {
       order_kind: "membership",
       tier_key: tierKey,
       billing_period: billingPeriod,
+      customer_email: customerEmail,
+      checkout_status_token: statusToken,
     },
     subscription_data: {
       metadata: {
         tier_key: tierKey,
         billing_period: billingPeriod,
+        customer_email: customerEmail,
       },
     },
   };

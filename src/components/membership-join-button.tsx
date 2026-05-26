@@ -42,12 +42,19 @@ export function MembershipJoinButton({
     setIsSubmitting(true);
     setStatusMessage("");
 
+    const email = auth.session?.email ?? "";
+    if (!email) {
+      setStatusMessage("Sign in with an email before membership checkout.");
+      setIsSubmitting(false);
+      return;
+    }
+
     try {
       const session = await createMembershipCheckoutSession({
         tierName: tier.name,
         billingPeriod: tier.billingPeriod ?? "monthly",
         customer: {
-          email: auth.session?.email ?? "",
+          email,
           fullName: auth.session?.name ?? "",
         },
       });

@@ -12,6 +12,7 @@ type HumidorBulkImportColumn =
   | "quantity"
   | "purchaseDate"
   | "agingStartDate"
+  | "productionDate"
   | "reorderReminder"
   | "humidorLocation"
   | "tray"
@@ -24,7 +25,7 @@ export type HumidorBulkImportResult = {
 };
 
 export const humidorBulkImportTemplate =
-  "name,brand,line,vitola,wrapper,origin,strength,quantity,purchaseDate,agingStartDate,reorderReminder,humidorLocation,tray,rating,tastingNotes";
+  "name,brand,line,vitola,wrapper,origin,strength,quantity,purchaseDate,agingStartDate,productionDate,reorderReminder,humidorLocation,tray,rating,tastingNotes";
 
 const eligibleBulkImportTiers: BackupMembershipTier[] = ["Kisha", "Sensei", "Daimyo"];
 const defaultColumns: HumidorBulkImportColumn[] = [
@@ -38,6 +39,7 @@ const defaultColumns: HumidorBulkImportColumn[] = [
   "quantity",
   "purchaseDate",
   "agingStartDate",
+  "productionDate",
   "reorderReminder",
   "humidorLocation",
   "tray",
@@ -49,6 +51,8 @@ const columnAliases: Record<string, HumidorBulkImportColumn> = {
   "aging start": "agingStartDate",
   agingstart: "agingStartDate",
   agingstartdate: "agingStartDate",
+  "box date": "productionDate",
+  boxdate: "productionDate",
   brand: "brand",
   cigar: "name",
   cigarname: "name",
@@ -62,6 +66,11 @@ const columnAliases: Record<string, HumidorBulkImportColumn> = {
   origin: "origin",
   purchasedate: "purchaseDate",
   "purchase date": "purchaseDate",
+  "produced date": "productionDate",
+  produceddate: "productionDate",
+  productionDate: "productionDate",
+  "production date": "productionDate",
+  productiondate: "productionDate",
   quantity: "quantity",
   qty: "quantity",
   rating: "rating",
@@ -127,6 +136,7 @@ export function parseHumidorBulkImport(source: string): HumidorBulkImportResult 
       quantity,
       purchaseDate: cleanNullableText(rowValue.purchaseDate),
       agingStartDate: cleanNullableText(rowValue.agingStartDate),
+      productionDate: cleanNullableText(rowValue.productionDate),
       reorderReminder: cleanNullableText(rowValue.reorderReminder),
       humidorLocation: cleanText(rowValue.humidorLocation),
       tray: cleanText(rowValue.tray),

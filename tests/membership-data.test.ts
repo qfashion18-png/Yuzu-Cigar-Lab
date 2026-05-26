@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { readFileSync } from "node:fs";
+
 import { membershipPrepaidPricing, tiers, wholesaleCostDefinition } from "../src/lib/data";
 import {
   getMembershipBilling,
@@ -61,6 +63,15 @@ test("membership prepaid pricing and cost definition protect wholesale margins",
   assert.match(wholesaleCostDefinition.formula, /supplier cost/i);
   assert.match(wholesaleCostDefinition.formula, /payment-processing cost/i);
   assert.match(wholesaleCostDefinition.rule, /membership dues only/i);
+});
+
+test("membership knowledge base matches launch tier pricing", () => {
+  const membershipKnowledge = readFileSync(new URL("../knowledge/ycc-kb/membership.md", import.meta.url), "utf8");
+
+  assert.match(membershipKnowledge, /Box Access Pass: 18 dollars per month/);
+  assert.match(membershipKnowledge, /Quarterly dues are 49 dollars/);
+  assert.match(membershipKnowledge, /Yearly dues are 179 dollars/);
+  assert.doesNotMatch(membershipKnowledge, /Box Access Pass: 10 dollars per month/);
 });
 
 test("membership billing selector exposes monthly quarterly and yearly pricing", () => {

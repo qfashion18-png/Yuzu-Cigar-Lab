@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import Link from "@/components/static-link";
 import { Check, Crown, Truck } from "lucide-react";
 
@@ -43,6 +44,19 @@ function getShopCategoryHref(category: string) {
   return `/shop?${params.toString()}#catalog`;
 }
 
+function ShopCatalogFallback() {
+  return (
+    <div className="grid gap-4 border border-yuzu-line/70 bg-yuzu-panel/70 p-4" aria-label="Loading catalog">
+      <div className="h-11 max-w-xl animate-pulse rounded-sm bg-yuzu-line/25" />
+      <div className="flex gap-2 overflow-hidden">
+        {Array.from({ length: 5 }).map((_, index) => (
+          <span key={index} className="h-10 w-32 shrink-0 animate-pulse border border-yuzu-line/60 bg-yuzu-night/65" />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function ShopPage() {
   return (
     <div className="mx-auto grid max-w-[1520px] gap-7 px-5 py-8 lg:grid-cols-[220px_minmax(0,1fr)] lg:px-10 2xl:grid-cols-[220px_minmax(0,1fr)_260px]">
@@ -51,11 +65,8 @@ export default function ShopPage() {
           <h1 className="border-b border-yuzu-line/70 pb-3 text-sm font-bold uppercase tracking-[0.16em] text-yuzu-gold">Shop Boxes</h1>
         </div>
         <div>
-          <h2 className="border-b border-yuzu-line/70 pb-3 text-sm font-bold uppercase tracking-[0.16em] text-yuzu-gold">Catalog Controls</h2>
-          <p className="mt-3 text-sm leading-6 text-yuzu-muted">
-            Search, category chips, empty states, and load-more controls are active in the live catalog below.
-          </p>
-          <div className="mt-4 grid gap-2 text-sm text-yuzu-muted">
+          <h2 className="border-b border-yuzu-line/70 pb-3 text-sm font-bold uppercase tracking-[0.16em] text-yuzu-gold">Categories</h2>
+          <div className="mt-3 grid gap-2 text-sm text-yuzu-muted">
             {storefrontCategories.slice(0, 6).map((category) => (
               <Link key={category} href={getShopCategoryHref(category)} className="border border-yuzu-line/65 bg-yuzu-night/70 px-3 py-2 transition hover:border-yuzu-gold hover:text-yuzu-gold">
                 {category}
@@ -121,7 +132,9 @@ export default function ShopPage() {
         </section>
 
         <section>
-          <ShopCatalog products={storefrontProductCards} categories={storefrontCategories} />
+          <Suspense fallback={<ShopCatalogFallback />}>
+            <ShopCatalog products={storefrontProductCards} categories={storefrontCategories} />
+          </Suspense>
         </section>
       </div>
 

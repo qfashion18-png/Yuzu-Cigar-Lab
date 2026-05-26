@@ -35,13 +35,14 @@ import {
 import { cn } from "@/lib/utils";
 
 const defaultAudience = "Adult Yuzu Cigar Club members of legal tobacco age";
+const defaultManufacturerSourceText = officialCigarNewsSources.map((source) => source.url).join("\n");
 
 export function NewsroomAgentPanel() {
   const auth = useBackupAuth();
   const [angle, setAngle] = useState("cigar industry brand announcements");
   const [timeframe, setTimeframe] = useState("this week");
   const [audience, setAudience] = useState(defaultAudience);
-  const [sourceText, setSourceText] = useState(officialCigarNewsSources.slice(0, 3).map((source) => source.url).join("\n"));
+  const [sourceText, setSourceText] = useState(defaultManufacturerSourceText);
   const [sourceNoteText, setSourceNoteText] = useState("");
   const [draft, setDraft] = useState<NewsroomDraft | null>(null);
   const [publishedStory, setPublishedStory] = useState<PublishNewsStoryResponse["story"] | null>(null);
@@ -115,6 +116,7 @@ export function NewsroomAgentPanel() {
         category: draft.category,
         bodyMarkdown: draftToBodyMarkdown(draft),
         sections: draft.sections,
+        images: draft.images,
         sourceNotes: draft.sourceNotes,
         operatorReviewRequired: draft.operatorReviewRequired,
         complianceReview: draft.complianceReview,
@@ -505,8 +507,8 @@ function PublishedStoryNotice({ story }: { story: PublishNewsStoryResponse["stor
       <p className="text-xs font-black uppercase tracking-[0.18em] text-yuzu-gold">Published</p>
       <h3 className="mt-2 font-heading text-2xl text-yuzu-cream">{story.title}</h3>
       <p className="mt-2 text-sm leading-6 text-yuzu-muted">{story.dek}</p>
-      <a className="mt-3 inline-flex items-center gap-2 text-sm font-semibold text-yuzu-gold" href="/news">
-        View News Page
+      <a className="mt-3 inline-flex items-center gap-2 text-sm font-semibold text-yuzu-gold" href="/cigar-flow#cigar-flow-news">
+        View Cigar Flow
         <ExternalLink className="size-4" />
       </a>
     </div>

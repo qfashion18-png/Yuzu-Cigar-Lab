@@ -24,6 +24,7 @@ export type NewsroomDraftInput = {
   audience?: string;
   sourceUrls: string[];
   sourceNotes?: string[];
+  storyImages?: NewsStoryImage[];
 };
 
 export type NewsroomSection = {
@@ -37,6 +38,7 @@ export type NewsroomDraft = {
   category: string;
   bodyMarkdown: string;
   sections: NewsroomSection[];
+  images?: NewsStoryImage[];
   sourceNotes: NewsSourceNote[];
   publishStatus: "draft";
   operatorReviewRequired: true;
@@ -49,6 +51,14 @@ export type NewsroomDraft = {
   };
 };
 
+export type NewsStoryImage = {
+  label: string;
+  image: string;
+  imagePosition?: string;
+  alt?: string;
+  sourceUrl?: string;
+};
+
 export type NewsStory = {
   id?: string;
   slug: string;
@@ -56,6 +66,7 @@ export type NewsStory = {
   dek: string;
   category: string;
   bodyMarkdown: string;
+  images?: NewsStoryImage[];
   sourceNotes: NewsSourceNote[];
   officialSources: string[];
   status: "draft" | "published" | "archived";
@@ -64,8 +75,40 @@ export type NewsStory = {
 };
 
 export const officialCigarNewsSources = [
+  { name: "A.J. Fernandez", url: "https://ajfcigars.com/", domain: "ajfcigars.com" },
+  { name: "Aganorsa Leaf", url: "https://www.aganorsaleaf.com/", domain: "aganorsaleaf.com" },
+  { name: "Alec Bradley", url: "https://alecbradley.com/", domain: "alecbradley.com" },
+  { name: "Ashton", url: "https://www.ashtoncigar.com/", domain: "ashtoncigar.com" },
+  { name: "Black Label Trading Company", url: "https://blacklabeltrading.com/", domain: "blacklabeltrading.com" },
+  { name: "CAO", url: "https://www.caocigars.com/", domain: "caocigars.com" },
+  { name: "Camacho", url: "https://www.camachocigars.com/", domain: "camachocigars.com" },
+  { name: "Casdagli Cigars", url: "https://casdaglicigars.com/", domain: "casdaglicigars.com" },
+  { name: "Cavalier Geneve", url: "https://www.cavaliergeneve.com/", domain: "cavaliergeneve.com" },
+  { name: "CLE Cigar Company", url: "https://www.clecigarcompany.com/", domain: "clecigarcompany.com" },
+  { name: "Cohiba", url: "https://www.cohiba.com/", domain: "cohiba.com" },
+  { name: "Crowned Heads", url: "https://www.crownedheads.com/", domain: "crownedheads.com" },
+  { name: "Dunbarton Tobacco & Trust", url: "https://dunbartoncigars.com/", domain: "dunbartoncigars.com" },
   { name: "Drew Estate", url: "https://drewestate.com/", domain: "drewestate.com" },
+  { name: "E.P. Carrillo", url: "https://epcarrillo.com/", domain: "epcarrillo.com" },
+  { name: "Espinosa Cigars", url: "https://espinosacigars.com/", domain: "espinosacigars.com" },
+  { name: "Gurkha Cigars", url: "https://gurkhacigars.com/", domain: "gurkhacigars.com" },
+  { name: "Kristoff Cigars", url: "https://kristoff.com/", domain: "kristoff.com" },
+  { name: "La Flor Dominicana", url: "https://www.laflordominicana.com/", domain: "laflordominicana.com" },
+  { name: "Luciano Cigars", url: "https://lucianocigars.com/", domain: "lucianocigars.com" },
+  { name: "Macanudo", url: "https://www.macanudo.com/", domain: "macanudo.com" },
+  { name: "Montecristo", url: "https://www.montecristo.com/", domain: "montecristo.com" },
+  { name: "My Father Cigars", url: "https://myfathercigars.com/", domain: "myfathercigars.com" },
+  { name: "Padron Cigars", url: "https://padron.com/", domain: "padron.com" },
+  { name: "PDR Cigars", url: "https://pdrcigars.com/", domain: "pdrcigars.com" },
+  { name: "Plasencia Cigars", url: "https://plasenciacigars.com/", domain: "plasenciacigars.com" },
+  { name: "Quesada Cigars", url: "https://quesadacigars.com/", domain: "quesadacigars.com" },
+  { name: "RoMa Craft Tobac", url: "https://romacrafttobac.com/", domain: "romacrafttobac.com" },
+  { name: "Romeo y Julieta", url: "https://www.romeoyjulietacigars.com/", domain: "romeoyjulietacigars.com" },
   { name: "Rocky Patel", url: "https://www.rockypatel.com/cigar-news/", domain: "rockypatel.com" },
+  { name: "Room101 Brand", url: "https://room101brand.com/", domain: "room101brand.com" },
+  { name: "Tatuaje", url: "https://www.tatuajecigars.com/", domain: "tatuajecigars.com" },
+  { name: "Viaje", url: "https://www.viajecigars.com/", domain: "viajecigars.com" },
+  { name: "West Tampa Tobacco Company", url: "https://westtampatobacco.com/", domain: "westtampatobacco.com" },
   { name: "J.C. Newman", url: "https://www.jcnewman.com/", domain: "jcnewman.com" },
   { name: "Arturo Fuente", url: "https://arturofuente.com/", domain: "arturofuente.com" },
   { name: "Oliva", url: "https://olivacigar.com/news/", domain: "olivacigar.com" },
@@ -163,11 +206,17 @@ export function buildNewsAgentPrompt(input: NewsroomDraftInput, options: { stric
   const vettedSources = input.sourceUrls.map(normalizeNewsSourceCandidate);
   const officialSources = vettedSources.filter((source) => source.status === "official" || source.status === "needs_review");
   const blockedSources = vettedSources.filter((source) => source.status === "blocked_secondary" || source.status === "invalid");
+  const storyImages = normalizeNewsStoryImages(input.storyImages);
   const sourceLines = officialSources.length
     ? officialSources.map((source, index) => `${index + 1}. ${source.url} (${source.reviewNote})`).join("\n")
     : "No accepted primary sources were supplied.";
   const noteLines = (input.sourceNotes ?? []).filter(Boolean).map((note, index) => `${index + 1}. ${note}`).join("\n") || "No operator notes supplied.";
   const blockedLines = blockedSources.map((source) => `- ${source.input}: ${source.reviewNote}`).join("\n") || "None.";
+  const storyImageLines = storyImages.length
+    ? storyImages
+        .map((image, index) => `${index + 1}. ${image.label}: ${image.image}${image.sourceUrl ? ` (source: ${image.sourceUrl})` : ""}`)
+        .join("\n")
+    : "No operator-provided story image URLs supplied.";
 
   const promptLines = [
     "You are YCCNewsAgent, an internal editorial agent for authorized Yuzu operators.",
@@ -194,10 +243,14 @@ export function buildNewsAgentPrompt(input: NewsroomDraftInput, options: { stric
     "Operator source notes:",
     noteLines,
     "",
+    "Operator-provided story images:",
+    storyImageLines,
+    "",
     "Blocked or invalid sources:",
     blockedLines,
     "",
-    "Return JSON with title, dek, category, bodyMarkdown (a complete publication-ready story in markdown), sections[{heading,body}], and sourceNotes[{label,url,note}].",
+    "Return JSON with title, dek, category, bodyMarkdown (a complete publication-ready story in markdown), sections[{heading,body}], images[{label,image,imagePosition,alt,sourceUrl}], and sourceNotes[{label,url,note}].",
+    "Use only actual image URLs from operator-provided story images or accepted source pages. Do not invent image URLs.",
     "BodyMarkdown should be a full draft article for operator approval; sections should be a readable breakdown of that article.",
   ];
 
@@ -238,11 +291,80 @@ export function normalizeNewsDraftFromAgentReply(reply: string, input: NewsroomD
     category: cleanText(parsed?.category, 80) || "Industry News",
     bodyMarkdown: bodyMarkdown || draftToBodyMarkdown({ sections }),
     sections,
+    images: mergeNewsStoryImages(input.storyImages, parsed?.images, parsed?.storyImages),
     sourceNotes,
     publishStatus: "draft",
     operatorReviewRequired: true,
     complianceReview: buildComplianceReview(),
   };
+}
+
+export function hasUsableNewsDraftReply(reply: string) {
+  const parsed = parseAgentJson(reply);
+  const bodyMarkdown = trimNewsMarkdownText(parsed?.bodyMarkdown, 12000);
+  const sections = normalizeSections(parsed?.sections);
+  const body = bodyMarkdown || draftToBodyMarkdown({ sections });
+
+  return Boolean(body) && !isPlaceholderNewsBodyMarkdown(body);
+}
+
+export function mergeNewsStoryImages(...values: unknown[]) {
+  const seen = new Set<string>();
+
+  return values
+    .flatMap((value) => normalizeNewsStoryImages(value))
+    .filter((image) => {
+      const key = image.image.toLowerCase();
+
+      if (seen.has(key)) {
+        return false;
+      }
+
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 6);
+}
+
+export function normalizeNewsStoryImages(value: unknown): NewsStoryImage[] {
+  const rawImages = Array.isArray(value) ? value : [];
+
+  return rawImages
+    .map((item): NewsStoryImage | null => {
+      const record = typeof item === "string" ? { image: item } : item && typeof item === "object" ? (item as Record<string, unknown>) : null;
+
+      if (!record) {
+        return null;
+      }
+
+      const image = cleanText(record.image || record.src || record.url, 1000);
+      if (!isHttpUrl(image)) {
+        return null;
+      }
+
+      const sourceUrl = cleanText(record.sourceUrl || record.storyUrl || record.href, 1000);
+      const imagePosition = cleanText(record.imagePosition || record.objectPosition, 40);
+      const alt = cleanText(record.alt, 180);
+      const normalized: NewsStoryImage = {
+        label: cleanText(record.label || record.title, 90) || "Story image",
+        image,
+      };
+
+      if (imagePosition) {
+        normalized.imagePosition = imagePosition;
+      }
+
+      if (alt) {
+        normalized.alt = alt;
+      }
+
+      if (isHttpUrl(sourceUrl)) {
+        normalized.sourceUrl = sourceUrl;
+      }
+
+      return normalized;
+    })
+    .filter((image): image is NewsStoryImage => Boolean(image));
 }
 
 export function draftToBodyMarkdown(draft: Pick<NewsroomDraft, "sections">) {
@@ -447,6 +569,15 @@ function invalidSource(input: string, reviewNote: string): NewsSourceCandidate {
 
 function normalizeDomain(value: string) {
   return value.toLowerCase().replace(/^www\./, "");
+}
+
+function isHttpUrl(value: string) {
+  try {
+    const parsedUrl = new URL(value);
+    return parsedUrl.protocol === "https:" || parsedUrl.protocol === "http:";
+  } catch {
+    return false;
+  }
 }
 
 function isBlockedSecondaryDomain(domain: string) {

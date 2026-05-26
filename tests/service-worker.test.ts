@@ -17,3 +17,9 @@ test("service worker checks the network before cached navigation pages", () => {
   assert.ok(networkLookup >= 0, "navigation handler should request the network first");
   assert.ok(cacheFallback > networkLookup, "cached navigation pages should only be fallback responses");
 });
+
+test("service worker constrains notification click targets to same-origin paths", () => {
+  assert.match(serviceWorker, /function getSafeNotificationTargetUrl/);
+  assert.match(serviceWorker, /target\.origin !== self\.location\.origin/);
+  assert.match(serviceWorker, /return self\.clients\.openWindow\(targetUrl\)/);
+});

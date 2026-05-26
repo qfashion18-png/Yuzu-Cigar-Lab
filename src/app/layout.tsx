@@ -1,5 +1,4 @@
 import type { Metadata, Viewport } from "next";
-import Script from "next/script";
 
 import { BackupAuthProvider } from "@/components/backup-auth-provider";
 import { PwaRegister } from "@/components/pwa-register";
@@ -42,9 +41,8 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark h-full" suppressHydrationWarning>
       <body className="min-h-full">
-        <Script
+        <script
           id="yuzu-age-gate-bootstrap"
-          strategy="beforeInteractive"
           dangerouslySetInnerHTML={{ __html: ageGateBootstrapScript }}
         />
         <BackupAuthProvider>

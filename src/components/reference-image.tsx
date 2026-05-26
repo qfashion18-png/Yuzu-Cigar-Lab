@@ -27,7 +27,7 @@ export function ReferenceImage({
         alt={alt}
         fill
         priority={priority}
-        loading={priority ? undefined : "lazy"}
+        loading={priority ? "eager" : "lazy"}
         sizes="(max-width: 768px) 100vw, 50vw"
         className={cn("relative z-10 object-cover", imageClassName)}
         style={{ objectPosition }}

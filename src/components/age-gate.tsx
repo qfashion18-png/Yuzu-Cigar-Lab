@@ -15,8 +15,6 @@ import {
 } from "@/lib/age-gate-bootstrap";
 import {
   clearCheckoutAgeVerificationToken,
-  createCheckoutAgeVerificationToken,
-  writeCheckoutAgeVerificationToken,
 } from "@/lib/age-verification";
 
   const minimumAge = 21;
@@ -249,15 +247,10 @@ export function AgeGate() {
       setConfirmed(hasCurrentConfirmation);
       setDocumentAgeConfirmed(hasCurrentConfirmation);
 
-      if (hasCurrentConfirmation && value !== null) {
-        writeCheckoutAgeVerificationToken(
-          window.sessionStorage,
-          createCheckoutAgeVerificationToken(value),
-        );
-      }
-
       if (!hasCurrentConfirmation) {
         clearAgeConfirmationStorage();
+        clearCheckoutAgeVerificationToken(window.sessionStorage);
+      } else {
         clearCheckoutAgeVerificationToken(window.sessionStorage);
       }
     } catch {
@@ -421,10 +414,7 @@ export function AgeGate() {
     const ageConfirmationValue = createAgeConfirmationValue();
 
     persistAgeConfirmation(ageConfirmationValue);
-    writeCheckoutAgeVerificationToken(
-      window.sessionStorage,
-      createCheckoutAgeVerificationToken(ageConfirmationValue),
-    );
+    clearCheckoutAgeVerificationToken(window.sessionStorage);
 
     setDocumentAgeConfirmed(true);
     setConfirmed(true);

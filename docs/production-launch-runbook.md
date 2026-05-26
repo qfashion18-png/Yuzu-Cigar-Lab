@@ -1,11 +1,11 @@
 # Yuzu Production Launch Runbook
 
-Date: 2026-05-12
-Status: Repo implementation updated through Phases 3-12; AWS launch hardening gates are verified; live commerce launch remains gated by external approvals and provider credentials.
+Date: 2026-05-26
+Status: Repo implementation updated through Phases 3-12; AWS launch hardening gates, Stripe approval/secrets/webhook/catalog, DB member-to-Stripe Customer linking, active Stripe Tax registration/defaults, age verification, USPS Adult Signature readiness, and no-charge Stripe Checkout smoke are verified.
 
 ## Launch Posture
 
-Yuzu Cigar Club must not accept live production commerce until the external commerce gates in `docs/superpowers/plans/2026-05-07-yuzu-production-launch-readiness.md` are complete. The AWS launch blockers that can be closed in-account are now verified: WAF/rate limiting, API access logs, private Lambda egress, RDS restore drill, staging deploy, and the full repo launch check. Stripe live checkout, fulfillment release, and production admin commerce operations still require provider approval, provider secrets, and end-to-end payment/compliance verification.
+Yuzu Cigar Club now has the Stripe product-commerce path ready from the backend/provider side: WAF/rate limiting, API access logs, private Lambda egress, RDS restore drill, staging deploy, Stripe live checkout wiring, live secrets/webhook, catalog Price IDs, DB member-to-Stripe Customer linking, age verification, USPS Adult Signature readiness, and Stripe Tax are configured. Stripe Tax has the Gilbert, AZ head-office address, active Arizona state sales tax registration, default tangible-goods tax code, and exclusive tax behavior. Public launch still needs normal current-source release verification, SES production/access decisions, and Stripe payout/legal Dashboard review.
 
 ## Phase 3-12 Implementation Status
 
@@ -13,13 +13,13 @@ Owner: launch lead
 
 | Phase | Repo Status | Live Launch Gate |
 | --- | --- | --- |
-| 3 Data and catalog | Commerce migration `0002_commerce_schema.sql`, catalog launch fields, membership Stripe price env keys, and schema tests are in place. | Apply migration through the approved RDS path after `npm run db:check` connects from the same network path Lambda uses. |
-| 4 Compliance | Server-side compliance helper rejects unknown/unpublished SKUs, stale prices, inventory mismatch, unverified age, restricted destinations, missing adult signature, and unavailable tax. | Connect the chosen age-verification, tax, and shipping providers and store live secrets in Secrets Manager. |
-| 5 Stripe | Stripe SDK, Checkout/Billing/Portal/webhook helper functions, idempotency primitives, and Lambda route scaffolding are implemented. | Written Stripe approval for cigar/tobacco commerce, live/test keys, webhook secret, and test-mode end-to-end event replay. |
-| 6 Frontend checkout | Cart checkout redirects through the backend to Stripe Checkout, membership buttons start subscription checkout, and success/cancel pages are static-export safe. | Deploy the updated API routes and verify real test-mode Checkout Sessions and webhook fulfillment. |
+| 3 Data and catalog | Commerce migrations `0002_commerce_schema.sql` and `0005_member_stripe_customer_link.sql`, catalog launch fields, membership Stripe price env keys, and schema tests are in place. Migration `0005` is applied live and `members.stripe_customer_id` is verified. | Keep migrations verified after every Lambda deploy and reconcile any future Stripe Customers that predate webhook processing. |
+| 4 Compliance | Server-side compliance helper rejects unknown/unpublished SKUs, stale prices, inventory mismatch, unverified age, restricted destinations, missing adult signature, and unavailable tax. | Age verification, Stripe Tax, and USPS Adult Signature readiness are stored in Secrets Manager and pass strict readiness. |
+| 5 Stripe | Stripe SDK, Checkout/Billing/Portal/webhook helper functions, idempotency primitives, live secrets, approval confirmation, webhook endpoint, Customer Portal config, membership prices, member Customer linking, launch catalog, active Stripe Tax registration, and Tax defaults are wired. | Review Stripe payout/legal Dashboard status before public release. |
+| 6 Frontend checkout | Cart checkout redirects through the backend to Stripe Checkout, membership buttons start subscription checkout, and success/cancel pages are static-export safe. | Live backend smoke created and expired a no-charge Checkout Session; run final browser smoke after the next static deploy. |
 | 7 Auth/admin | Production backup admin is disabled unless the explicit break-glass flag is set; admin seed state surfaces Stripe, webhooks, and compliance holds. | Cognito/RBAC must guard every live admin commerce action and refund/cancel mutation before production. |
 | 8 SEO | Product/event sitemap entries, robots exclusions, canonical metadata, Product JSON-LD, and breadcrumb JSON-LD are implemented. | Submit the sitemap after production domain deploy and verify Search Console indexing. |
-| 9 Infrastructure | Hardening checklist is documented below and in `docs/aws-live-architecture-setup.md`. | AWS-account launch blockers are closed except external SES production approval; commerce providers and secrets remain pending. |
+| 9 Infrastructure | Hardening checklist is documented below and in `docs/aws-live-architecture-setup.md`. | AWS-account launch blockers are closed except external SES production approval and support-mail forwarding. |
 | 10 QA/security/performance | `npm run launch:check` captures the CI-equivalent sequence; latest run passed lint, TypeScript, 265 tests, static build, and production dependency audit. | Run browser/Lighthouse/PageSpeed again after final provider credentials are connected. |
 | 11 Release | Amplify artifact rules remain documented and the deploy/package flow produced a POSIX-path artifact from `out/`. | Staging job `81` succeeded and home/static asset smoke returned HTTP `200`; promote only after external commerce gates close. |
 | 12 Operations | Daily/weekly checklists and incident workflows are listed in this runbook. | Assign named operators and confirm alert routing before launch day. |
@@ -197,11 +197,18 @@ npm audit --omit=dev
 
 Current audit posture: `npm audit --omit=dev` is expected to report 0 production vulnerabilities after the pinned dependency override. Do not run `npm audit fix --force` unless the resulting Next.js/static export build and tests are verified because forced remediation can introduce breaking framework changes.
 
-Latest verification on 2026-05-12:
+Latest verification on 2026-05-26:
 
-- `npm run launch:check` passed lint, `tsc --noEmit`, 265 tests, `next build`, and `npm audit --omit=dev`.
-- `npm run launch:go-live-check` passes the AWS gates `aws-restore-drill`, `staging-browser-qa`, and `waf-or-rate-limiting`.
-- `npm run launch:go-live-check` still fails the external gates for Stripe approval/live secrets/Price IDs/webhook/test replay, age verification, tax provider readiness, and adult-signature carrier approval.
+- Lambda `ycyyy` deployed package `output/ycc-api-lambda-member-stripe-customer-link-20260526.zip` with code hash `1XVby3Y9TTUf3I8hF5DHhHQJhRG/DE4ZHzMaY9QgoEE=`.
+- Guarded live migration `0005_member_stripe_customer_link` verified `members.stripe_customer_id`, `indexCount=1`, `linkedMemberCount=0`, and migration row `0005`; zero links is expected because live Stripe currently has no Customers.
+- Direct Lambda `GET /health?deep=1` returned HTTP `200`, `status=ok`, and `db.proxyReachable=true`.
+- `node --import tsx --test tests/lambda-ycc-api.test.ts` passed 85 tests.
+- `node --import tsx --test tests/commerce-schema.test.ts tests/member-stripe-customer-link-schema.test.ts tests/stripe-commerce.test.ts tests/launch-readiness.test.ts tests/commerce-rules.test.ts` passed 32 tests.
+- `node --import tsx --test tests/launch-readiness.test.ts` passed 14 tests.
+- `node --import tsx --test tests/commerce-rules.test.ts` passed 7 tests.
+- Stripe Tax is active with AZ registration `taxreg_1TbQiD0r0rWXiDV5IKP7bReS`, account defaults `txcd_99999999` and `exclusive`, and live Tax calculation `taxcalc_1TbQxC0r0rWXiDV5Rpo2gl8e` returned `amount_tax=28` on a $3.39 Gilbert, AZ calculation.
+- Direct Lambda `POST /commerce/checkout-session` smoke selected SKU `11738`, created live Checkout Session `cs_live_b1WFLmMXyD18cXDWoKyzCrHEnc3qqmObwhTkHBplTGUR1j2oljQKbqocsK`, confirmed `automatic_tax.enabled=true`, expired the session, and verified it remained unpaid with no smoke Customer left behind.
+- `npm run launch:go-live-check` passes Stripe approval, live Stripe secret/webhook/Customer Portal config, all 12 membership Price IDs, Stripe test-mode E2E confirmation, age verification, Stripe Tax, USPS provider, USPS Adult Signature, AWS restore drill, staging browser QA, and WAF/rate limiting.
 
 ## AWS Hardening Verification
 
@@ -212,6 +219,7 @@ Owner: infrastructure/security operator
 - Private Lambda egress: Lambda `ycyyy` runs in private subnets `subnet-06116a5414f29c8bb` and `subnet-067af6ad21ff85cc2`; NAT gateways `nat-0460beed74a121308` and `nat-06330ee4dd558e916` are available.
 - RDS restore drill: temporary restore `ycc-restore-drill-20260512-1640` reached `available` as encrypted PostgreSQL 18.3 and was deleted after verification.
 - SES: domain identities are verified and sending is enabled, but `ProductionAccessEnabled=false`; keep outbound customer email guarded until AWS approves production access.
+- SES production review on 2026-05-20: the actual need is production access for low-volume transactional support email, not a larger quota increase. The account remains denied under AWS case `177809591700724`; an API resubmission with `sesv2 put-account-details --production-access-enabled` returns `ConflictException`, so the next action is to reopen or appeal the existing case in AWS Support Center. Live trust pages `/privacy` and `/terms` now return HTTP `200` and are listed in the production sitemap.
 
 ## Incident Log Fields
 

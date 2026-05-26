@@ -17,10 +17,10 @@ const routes = [
   "/education",
   "/events",
   "/humidor",
-  "/account",
   "/cart",
-  "/checkout",
   "/about",
+  "/privacy",
+  "/terms",
 ];
 
 export default function sitemap(): MetadataRoute.Sitemap {

@@ -1,4 +1,5 @@
-import { draftToBodyMarkdown, type NewsroomDraft, type NewsroomDraftInput, type NewsStory } from "@/lib/newsroom";
+import { draftToBodyMarkdown, type NewsroomDraft, type NewsroomDraftInput, type NewsStory, type NewsStoryImage } from "@/lib/newsroom";
+import type { HumidorSensorDevice } from "@/lib/humidor-devices";
 
 export type LiveApiHeaders = Record<string, string>;
 
@@ -117,6 +118,95 @@ export type AdminAuditEntry = {
   orderId?: string | null;
   complianceHoldId?: string | null;
   createdAt: string;
+};
+
+export type AdminOrderCustomer = {
+  email?: string | null;
+  name?: string | null;
+  role?: string | null;
+  membershipTier?: string | null;
+  memberStatus?: string | null;
+};
+
+export type AdminOrder = {
+  id: string;
+  orderNumber?: string | null;
+  email?: string | null;
+  status: string;
+  fulfillmentStatus?: string | null;
+  complianceStatus?: string | null;
+  subtotal?: number;
+  tax?: number;
+  shipping?: number;
+  total?: number;
+  currency?: string;
+  itemCount?: number;
+  placedAt?: string;
+  updatedAt?: string | null;
+  customer?: AdminOrderCustomer;
+};
+
+export type AdminOrdersResponse = {
+  orders: AdminOrder[];
+  summary: {
+    total: number;
+    paid: number;
+    pending: number;
+    fulfilled: number;
+    needsAttention: number;
+  };
+  persistence: AdminPersistence;
+};
+
+export type AdminOrderUpdateInput = {
+  status?: string;
+  fulfillmentStatus?: string;
+  complianceStatus?: string;
+};
+
+export type AdminMember = {
+  id: string;
+  cognitoSub?: string | null;
+  email: string;
+  emailVerified?: boolean;
+  displayName?: string | null;
+  role: string;
+  membershipTier?: string | null;
+  memberStatus: string;
+  lastSeenAt?: string | null;
+  createdAt?: string;
+  updatedAt?: string | null;
+  subscriptionStatus?: string | null;
+  subscriptionTier?: string | null;
+  subscriptionPeriod?: string | null;
+  orderCount?: number;
+  totalSpend?: number;
+  humidorItemCount?: number;
+};
+
+export type AdminMembersResponse = {
+  members: AdminMember[];
+  summary: {
+    total: number;
+    admins: number;
+    operators: number;
+    members: number;
+    nonMembers: number;
+    banned: number;
+  };
+  persistence: AdminPersistence;
+};
+
+export type AdminMemberAccessUpdateInput = {
+  role?: string;
+  membershipTier?: string | null;
+  memberStatus?: string;
+};
+
+export type AdminMembersRequestOptions = {
+  limit?: number;
+  q?: string;
+  status?: string;
 };
 
 export type AdminComplianceHold = Record<string, unknown> & {
@@ -295,6 +385,7 @@ export type HumidorItem = {
   rating: number | null;
   purchaseDate: string | null;
   agingStartDate: string | null;
+  productionDate?: string | null;
   reorderReminder: string | null;
   humidorLocation: string;
   tray: string;
@@ -308,7 +399,8 @@ export type HumidorItem = {
 };
 
 export type HumidorCigarImage = {
-  dataUrl: string;
+  dataUrl?: string;
+  imageUrl?: string;
   mimeType: string;
   fileName: string;
   bytes: number;
@@ -328,11 +420,18 @@ export type HumidorPushSubscription = {
   };
 };
 
+export type HumidorLocationProfile = {
+  humidorName: string;
+  defaultLocation: string;
+};
+
 export type HumidorAlertPreferences = {
   pushEnabled: boolean;
   reorderRemindersEnabled: boolean;
   climateAlertsEnabled: boolean;
   pushSubscription: HumidorPushSubscription | null;
+  pairedDevices: HumidorSensorDevice[];
+  humidorProfile: HumidorLocationProfile;
 };
 
 export type HumidorAlertsResponse = {
@@ -351,6 +450,8 @@ export type HumidorAlertSettingsUpdate = {
   reorderRemindersEnabled: boolean;
   climateAlertsEnabled: boolean;
   pushSubscription: HumidorPushSubscription | null;
+  pairedDevices?: HumidorSensorDevice[];
+  humidorProfile?: HumidorLocationProfile;
 };
 
 export type HumidorItemInput = Partial<Omit<HumidorItem, "id" | "createdAt">> & {
@@ -417,6 +518,38 @@ export type CigarImageIdentifyResponse = {
   nextActions: string[];
 };
 
+export type HumidorEnrichmentField = "info" | "image" | "msrp";
+
+export type HumidorItemEnrichmentInput = {
+  fields?: HumidorEnrichmentField[];
+};
+
+export type HumidorItemEnrichmentResponse = {
+  item: HumidorItem;
+  enrichment: {
+    status: "updated" | "complete" | "needs_review";
+    requestedFields: HumidorEnrichmentField[];
+    missingFields: HumidorEnrichmentField[];
+    updatedFields: string[];
+    evidence: string[];
+    needsReview: string[];
+    confidence?: "high" | "medium" | "low";
+  };
+  ai: {
+    status: string;
+    modelId?: string;
+    agentId?: string;
+    agentAliasId?: string;
+    knowledgeBaseStatus?: string;
+    retrievedContextCount?: number;
+    stopReason?: string | null;
+  };
+  persistence: {
+    status: string;
+    table: string;
+  };
+};
+
 export type LivePageEdits = Record<string, string>;
 
 export type LivePageContentResponse = {
@@ -444,6 +577,8 @@ export type NewsStoryDraftInput = NewsroomDraftInput;
 
 export type NewsStoryPublishInput = Omit<Partial<NewsroomDraft>, "publishStatus"> & {
   bodyMarkdown?: string;
+  images?: NewsStoryImage[];
+  storyImages?: NewsStoryImage[];
   operatorApproved: boolean;
   publishStatus?: "draft" | "published";
   status?: "draft" | "published" | "archived";
@@ -493,6 +628,46 @@ export async function fetchAccountOrders(headers: LiveApiHeaders) {
 
 export async function fetchAdminComplianceHolds(headers: LiveApiHeaders) {
   return getLive<AdminComplianceHoldsResponse>("/admin/commerce/compliance-holds", headers);
+}
+
+export async function fetchAdminOrders(headers: LiveApiHeaders) {
+  return getLive<AdminOrdersResponse>("/admin/commerce/orders", headers);
+}
+
+export async function updateAdminOrder(orderId: string, input: AdminOrderUpdateInput, headers: LiveApiHeaders) {
+  return patchLive<{ order: AdminOrder; persistence: { status: string; table: "commerce_orders" } }>(
+    `/admin/commerce/orders/${encodeURIComponent(orderId)}`,
+    input,
+    headers
+  );
+}
+
+export async function fetchAdminMembers(headers: LiveApiHeaders, options: AdminMembersRequestOptions = {}) {
+  const params = new URLSearchParams();
+
+  if (options.limit) {
+    params.set("limit", String(options.limit));
+  }
+
+  if (options.status) {
+    params.set("status", options.status);
+  }
+
+  if (options.q) {
+    params.set("q", options.q);
+  }
+
+  const query = params.toString();
+
+  return getLive<AdminMembersResponse>(`/admin/members${query ? `?${query}` : ""}`, headers);
+}
+
+export async function updateAdminMemberAccess(memberId: string, input: AdminMemberAccessUpdateInput, headers: LiveApiHeaders) {
+  return patchLive<{ member: AdminMember; persistence: { status: string; table: "members" } }>(
+    `/admin/members/${encodeURIComponent(memberId)}/access`,
+    input,
+    headers
+  );
 }
 
 export async function fetchAdminWebhookEvents(headers: LiveApiHeaders) {
@@ -552,6 +727,10 @@ export async function createHumidorItem(input: HumidorItemInput, headers: LiveAp
   return postLive<{ item: HumidorItem; persistence: { status: string; table: string } }>("/humidor/items", input, headers);
 }
 
+export async function enrichHumidorItem(itemId: string, input: HumidorItemEnrichmentInput, headers: LiveApiHeaders) {
+  return patchLive<HumidorItemEnrichmentResponse>(`/humidor/items/${encodeURIComponent(itemId)}/enrich`, input, headers);
+}
+
 export async function identifyCigarFromImage(input: CigarImageIdentifyInput, headers: LiveApiHeaders) {
   return postLive<CigarImageIdentifyResponse>("/humidor/identify-cigar", input, headers);
 }
@@ -603,6 +782,10 @@ export function getLiveApiErrorMessage(error: unknown) {
     invalid_cigar_image: "The uploaded cigar image could not be decoded.",
     unsupported_cigar_image_type: "Upload a PNG, JPEG, GIF, or WebP cigar image.",
     cigar_image_too_large: "Upload a cigar image under 5 MB.",
+    database_writes_not_ready: "The live humidor database is not ready for updates yet.",
+    humidor_item_not_found: "That humidor cigar could not be found for this account.",
+    invalid_humidor_enrichment_fields: "Choose info, image, or MSRP for humidor enrichment.",
+    missing_humidor_item_id: "Open a saved cigar before asking the humidor agent to update it.",
     admin_agent_forbidden: "Only admins and concierge operators can use the admin agent.",
     news_agent_forbidden: "Only admins and concierge operators can use the weekly news agent.",
     news_agent_not_configured: "The weekly news agent is not configured for this environment yet.",
@@ -619,6 +802,7 @@ export function getLiveApiErrorMessage(error: unknown) {
     push_permission_denied: "Notification permission is required to enable push alerts.",
     push_update_failed: "We could not save your push alert preference right now.",
     unauthorized: "Your Cognito session expired. Please sign in again.",
+    forbidden: "Your Cognito account is not authorized for this live API action.",
   };
 
   return code ? messages[code] ?? fallback : fallback;
@@ -652,6 +836,14 @@ async function postLive<T>(path: string, body: unknown, headers: LiveApiHeaders)
   });
 }
 
+async function patchLive<T>(path: string, body: unknown, headers: LiveApiHeaders) {
+  return requestLive<T>(path, {
+    method: "PATCH",
+    headers: buildHeaders(headers, { "content-type": "application/json" }),
+    body: JSON.stringify(body),
+  });
+}
+
 async function requestLive<T>(path: string, init: RequestInit) {
   const apiBaseUrl = getLiveApiBaseUrl();
 
@@ -664,7 +856,8 @@ async function requestLive<T>(path: string, init: RequestInit) {
 
   if (!response.ok) {
     const errorPayload = payload && typeof payload === "object" ? (payload as ErrorPayload) : {};
-    throw createLiveApiError(errorPayload.error || "live_api_error", errorPayload.message || "Live API request failed.");
+    const statusCode = getLiveApiStatusErrorCode(response.status);
+    throw createLiveApiError(errorPayload.error || statusCode || "live_api_error", errorPayload.message || "Live API request failed.");
   }
 
   return payload as T;
@@ -699,6 +892,18 @@ function createLiveApiError(code: string, message: string) {
   const error = new Error(message);
   Object.assign(error, { code, error: code });
   return error;
+}
+
+function getLiveApiStatusErrorCode(status: number) {
+  if (status === 401) {
+    return "unauthorized";
+  }
+
+  if (status === 403) {
+    return "forbidden";
+  }
+
+  return "";
 }
 
 function isNetworkFetchError(error: unknown) {

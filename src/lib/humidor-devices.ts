@@ -1,9 +1,11 @@
+export type HumidorDeviceType = "HYGROMETER_THERMOMETER" | "HUMIDIFIER";
 export type HumidorDeviceConnection = "Bluetooth" | "WiFi";
 export type HumidorDeviceStatus = "Connected" | "Ready to sync";
 
 export type HumidorDeviceInput = {
   name: string;
   location: string;
+  deviceType?: HumidorDeviceType;
   connection: HumidorDeviceConnection;
   identifier: string;
   humidity: string;
@@ -15,6 +17,7 @@ export type HumidorSensorDevice = {
   id: string;
   name: string;
   location: string;
+  deviceType: HumidorDeviceType;
   connection: HumidorDeviceConnection;
   identifier: string;
   humidity: number;
@@ -53,6 +56,7 @@ export type AddHumidorDeviceResult = HumidorDeviceResult & {
 export const defaultHumidorDeviceForm: HumidorDeviceInput = {
   name: "",
   location: "",
+  deviceType: "HUMIDIFIER",
   connection: "Bluetooth",
   identifier: "",
   humidity: "",
@@ -60,9 +64,31 @@ export const defaultHumidorDeviceForm: HumidorDeviceInput = {
   syncInterval: "15",
 };
 
+export const humidorDeviceTypeLabels: Record<HumidorDeviceType, string> = {
+  HYGROMETER_THERMOMETER: "Hygrometer thermometer",
+  HUMIDIFIER: "HUMIDIFIER",
+};
+
+export const humidorClimateAlertTarget = {
+  maxHumidity: 72,
+  maxTemperature: 74,
+  minHumidity: 65,
+  minTemperature: 64,
+};
+
+export type HumidorDeviceClimateAlert = {
+  deviceId: string;
+  deviceName: string;
+  humidityOutOfRange: boolean;
+  location: string;
+  message: string;
+  temperatureOutOfRange: boolean;
+};
+
 export function createHumidorDevice(input: HumidorDeviceInput, nowLabel = "Just now"): HumidorDeviceResult {
   const name = input.name.trim();
   const location = input.location.trim();
+  const deviceType = normalizeDeviceType(input.deviceType) || "HYGROMETER_THERMOMETER";
   const identifier = input.identifier.trim();
   const humidity = Number(input.humidity);
   const temperature = Number(input.temperature);
@@ -81,9 +107,10 @@ export function createHumidorDevice(input: HumidorDeviceInput, nowLabel = "Just 
   }
 
   const device: HumidorSensorDevice = {
-    id: buildDeviceId(input.connection, name, location, identifier),
+    id: buildDeviceId(deviceType, input.connection, name, location, identifier),
     name,
     location,
+    deviceType,
     connection: input.connection,
     identifier,
     humidity,
@@ -103,7 +130,7 @@ export function createHumidorDevice(input: HumidorDeviceInput, nowLabel = "Just 
       temperature,
       source: "Device",
       recordedAt: nowLabel,
-      note: `${input.connection} hygrometer thermometer synced from ${name}.`,
+      note: `${input.connection} ${formatDeviceType(deviceType)} synced from ${name}.`,
     },
   };
 }
@@ -141,6 +168,7 @@ export function normalizeHumidorDevices(value: unknown): HumidorSensorDevice[] {
     }
 
     const record = item as Record<string, unknown>;
+    const deviceType = normalizeDeviceType(record.deviceType) || "HYGROMETER_THERMOMETER";
     const connection = normalizeConnection(record.connection);
     const name = normalizeText(record.name);
     const location = normalizeText(record.location);
@@ -158,9 +186,10 @@ export function normalizeHumidorDevices(value: unknown): HumidorSensorDevice[] {
 
     return [
       {
-        id: normalizeText(record.id) || buildDeviceId(connection, name, location, identifier),
+        id: normalizeText(record.id) || buildDeviceId(deviceType, connection, name, location, identifier),
         name,
         location,
+        deviceType,
         connection,
         identifier,
         humidity,
@@ -173,6 +202,58 @@ export function normalizeHumidorDevices(value: unknown): HumidorSensorDevice[] {
   });
 
   return devices;
+}
+
+export function getHumidorDeviceClimateAlerts(devices: HumidorSensorDevice[]): HumidorDeviceClimateAlert[] {
+  return devices.flatMap((device) => {
+    const alert = getHumidorDeviceClimateAlert(device);
+    return alert ? [alert] : [];
+  });
+}
+
+export function getHumidorDeviceClimateAlert(device: HumidorSensorDevice): HumidorDeviceClimateAlert | null {
+  const humidityOutOfRange = device.humidity < humidorClimateAlertTarget.minHumidity || device.humidity > humidorClimateAlertTarget.maxHumidity;
+  const temperatureOutOfRange =
+    device.temperature < humidorClimateAlertTarget.minTemperature || device.temperature > humidorClimateAlertTarget.maxTemperature;
+
+  if (!humidityOutOfRange && !temperatureOutOfRange) {
+    return null;
+  }
+
+  const issues = [];
+  if (humidityOutOfRange) {
+    issues.push(`humidity is ${device.humidity}% RH`);
+  }
+
+  if (temperatureOutOfRange) {
+    issues.push(`temperature is ${device.temperature} F`);
+  }
+
+  return {
+    deviceId: device.id,
+    deviceName: device.name,
+    humidityOutOfRange,
+    location: device.location,
+    message: `${device.name} at ${device.location}: ${issues.join(" and ")}.`,
+    temperatureOutOfRange,
+  };
+}
+
+function normalizeDeviceType(value: unknown): HumidorDeviceType | null {
+  if (value === "HUMIDIFIER" || value === "HYGROMETER_THERMOMETER") {
+    return value;
+  }
+
+  const normalized = normalizeText(value).toLowerCase().replace(/[\s-]+/g, "_");
+  if (normalized === "humidifier") {
+    return "HUMIDIFIER";
+  }
+
+  if (normalized === "hygrometer" || normalized === "hygrometer_thermometer") {
+    return "HYGROMETER_THERMOMETER";
+  }
+
+  return null;
 }
 
 function normalizeConnection(value: unknown): HumidorDeviceConnection | null {
@@ -191,8 +272,12 @@ function isValidClimate(humidity: number, temperature: number) {
   return Number.isFinite(humidity) && humidity >= 1 && humidity <= 100 && Number.isFinite(temperature) && temperature >= 40 && temperature <= 95;
 }
 
-function buildDeviceId(connection: HumidorDeviceConnection, name: string, location: string, identifier: string) {
-  return `device-${connection}-${name}-${location}-${identifier}`
+function formatDeviceType(deviceType: HumidorDeviceType) {
+  return humidorDeviceTypeLabels[deviceType].toLowerCase();
+}
+
+function buildDeviceId(deviceType: HumidorDeviceType, connection: HumidorDeviceConnection, name: string, location: string, identifier: string) {
+  return `device-${deviceType}-${connection}-${name}-${location}-${identifier}`
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");

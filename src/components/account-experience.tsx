@@ -809,13 +809,13 @@ type AccountDetailTileProps = {
 
 function AccountDetailTile({ icon: Icon, label, value, note }: AccountDetailTileProps) {
   return (
-    <div className="grid min-h-40 gap-4 border border-yuzu-line bg-yuzu-panel p-5">
+    <div className="grid min-h-40 min-w-0 gap-4 border border-yuzu-line bg-yuzu-panel p-5">
       <div className="flex items-start justify-between gap-3">
-        <p className="text-xs font-bold uppercase tracking-[0.18em] text-yuzu-gold">{label}</p>
+        <p className="min-w-0 text-xs font-bold uppercase tracking-[0.18em] text-yuzu-gold">{label}</p>
         <Icon className="size-5 shrink-0 text-yuzu-gold" />
       </div>
-      <div>
-        <p className="break-words font-heading text-2xl text-yuzu-cream">{value}</p>
+      <div className="min-w-0">
+        <p className="break-all font-heading text-2xl leading-snug text-yuzu-cream">{value}</p>
         <p className="mt-2 text-sm leading-6 text-yuzu-muted">{note}</p>
       </div>
     </div>

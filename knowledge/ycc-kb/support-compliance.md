@@ -13,9 +13,9 @@ Compliance stack:
 
 - Age gate before browsing.
 - AgeChecker.Net or Veratad checkout verification.
-- Adult-signature required shipping.
+- USPS delivery with Adult Signature Required for AR, CA, DE, FL, GA, MA, MN, ND, RI, SC, and WY.
 - State-level shipping rules.
-- Avalara Tobacco and Vape tax readiness.
+- Stripe Tax and tobacco excise readiness.
 - Compliance audit log per order.
 
 Support triage:

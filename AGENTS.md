@@ -9,3 +9,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 When creating an Amplify/static deploy zip for this project, build the app first with `npm run build`, then zip the contents of `out/` at the archive root. Do not zip the project source folder, `out/` as a parent folder, `.next`, `node_modules`, `output`, old zip files, or `.git`.
 
 Important: create the zip with POSIX forward-slash entry paths such as `assets/yuzu-logo.png` and `_next/static/...`. PowerShell `Compress-Archive` can store Windows backslash paths like `assets\yuzu-logo.png`, which makes Amplify serve `index.html` but 404 the CSS, JS, and image assets. Use a zip method that writes forward-slash paths, such as Python `zipfile` with `path.relative_to(out_dir).as_posix()`.
+
+## Codex worktree tracking memory
+
+Use `docs/codex-worktree-tracking.md` as the persistent worktree ledger for this project. For every meaningful update, fix, audit, verification pass, or newly discovered dirty/untracked area, update that tracking file in the same turn so future Codex sessions can continue from the current state.

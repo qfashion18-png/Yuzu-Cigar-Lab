@@ -1,7 +1,5 @@
 import type { HumidorItem } from "@/lib/live-api";
 
-const demoCigarImage = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
-
 export const demoHumidorItems: HumidorItem[] = [
   {
     id: "demo-padron-1964-anniversary",
@@ -16,6 +14,7 @@ export const demoHumidorItems: HumidorItem[] = [
     rating: 94,
     purchaseDate: "2025-01-18",
     agingStartDate: "2025-02-01",
+    productionDate: "2023-11-01",
     reorderReminder: "2026-06-15",
     humidorLocation: "Locker A",
     tray: "Drawer 2",
@@ -25,10 +24,10 @@ export const demoHumidorItems: HumidorItem[] = [
     estimatedValueCurrency: "USD",
     estimatedValueSource: "demo_entry_price_snapshot",
     cigarImage: {
-      dataUrl: demoCigarImage,
+      imageUrl: "/assets/product-padron.png",
       mimeType: "image/png",
-      fileName: "demo-padron-1964-anniversary.png",
-      bytes: 68,
+      fileName: "product-padron.png",
+      bytes: 56412,
       source: "demo_humidor",
     },
     createdAt: "2026-05-01T00:00:00.000Z",
@@ -46,6 +45,7 @@ export const demoHumidorItems: HumidorItem[] = [
     rating: 90,
     purchaseDate: "2025-07-05",
     agingStartDate: "2025-07-20",
+    productionDate: "2024-02-15",
     reorderReminder: null,
     humidorLocation: "Home Humidor",
     tray: "Top Tray",
@@ -55,10 +55,10 @@ export const demoHumidorItems: HumidorItem[] = [
     estimatedValueCurrency: "USD",
     estimatedValueSource: "demo_entry_price_snapshot",
     cigarImage: {
-      dataUrl: demoCigarImage,
+      imageUrl: "/assets/product-davidoff.png",
       mimeType: "image/png",
-      fileName: "demo-davidoff-signature-no-2.png",
-      bytes: 68,
+      fileName: "product-davidoff.png",
+      bytes: 60919,
       source: "demo_humidor",
     },
     createdAt: "2026-05-01T00:00:00.000Z",
@@ -76,6 +76,7 @@ export const demoHumidorItems: HumidorItem[] = [
     rating: 92,
     purchaseDate: "2025-10-10",
     agingStartDate: "2025-10-10",
+    productionDate: "2024-09-01",
     reorderReminder: "2026-05-30",
     humidorLocation: "Locker B",
     tray: "Drawer 1",
@@ -85,10 +86,10 @@ export const demoHumidorItems: HumidorItem[] = [
     estimatedValueCurrency: "USD",
     estimatedValueSource: "demo_entry_price_snapshot",
     cigarImage: {
-      dataUrl: demoCigarImage,
+      imageUrl: "/assets/product-liga.png",
       mimeType: "image/png",
-      fileName: "demo-liga-privada-t52.png",
-      bytes: 68,
+      fileName: "product-liga.png",
+      bytes: 52326,
       source: "demo_humidor",
     },
     createdAt: "2026-05-01T00:00:00.000Z",
@@ -106,6 +107,7 @@ export const demoHumidorItems: HumidorItem[] = [
     rating: null,
     purchaseDate: "2026-02-14",
     agingStartDate: null,
+    productionDate: "2025-08-01",
     reorderReminder: null,
     humidorLocation: "Travel Case",
     tray: "Slot 3",
@@ -115,10 +117,10 @@ export const demoHumidorItems: HumidorItem[] = [
     estimatedValueCurrency: "USD",
     estimatedValueSource: "demo_entry_price_snapshot",
     cigarImage: {
-      dataUrl: demoCigarImage,
+      imageUrl: "/assets/product-plasencia.png",
       mimeType: "image/png",
-      fileName: "demo-plasencia-alma-fuerte.png",
-      bytes: 68,
+      fileName: "product-plasencia.png",
+      bytes: 54099,
       source: "demo_humidor",
     },
     createdAt: "2026-05-01T00:00:00.000Z",

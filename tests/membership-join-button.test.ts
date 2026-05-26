@@ -14,3 +14,16 @@ test("membership checkout failures are visible instead of silent", () => {
     "status text should render only after a checkout error to avoid empty layout space"
   );
 });
+
+test("membership checkout requires an account email before opening Stripe", () => {
+  const membershipJoinButtonSource = readFileSync(membershipJoinButtonPath, "utf8");
+
+  assert.ok(
+    membershipJoinButtonSource.includes("auth.session?.email"),
+    "membership checkout should derive the Stripe customer email from the signed-in account"
+  );
+  assert.ok(
+    membershipJoinButtonSource.includes("Sign in with an email before membership checkout."),
+    "membership checkout should block when Stripe would receive an empty customer email"
+  );
+});

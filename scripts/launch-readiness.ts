@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,6 +27,8 @@ export type ArtifactCleanupPlan = {
   keepZip: ArtifactInfo | null;
   removePaths: string[];
 };
+
+type PlainObject = Record<string, unknown>;
 
 const requiredPublicKeys = [
   "NEXT_PUBLIC_BASE_URL",
@@ -76,6 +79,7 @@ const requiredLambdaZipEntries = [
   "migrations/0002_commerce_schema.sql",
   "migrations/0003_site_content_schema.sql",
   "migrations/0004_newsroom_schema.sql",
+  "migrations/0005_member_stripe_customer_link.sql",
 ];
 const disallowedLambdaZipEntryPatterns = [/\\/u, /^out\//u, /^\.next\//u, /^output\//u, /^\.git\//u, /^infra\//u, /^src\//u];
 
@@ -141,7 +145,8 @@ export function assessLaunchReadiness(env: EnvMap, options: LaunchReadinessOptio
   checks.push(booleanCheck("stripe-test-mode-e2e", "STRIPE_TEST_MODE_E2E_CONFIRMED", env.STRIPE_TEST_MODE_E2E_CONFIRMED, true, "Stripe test-mode Checkout and webhook replay must be verified before live cutover.", strictExternal));
   checks.push(booleanCheck("age-verification-provider", "AGE_VERIFICATION_PROVIDER_CONFIRMED", env.AGE_VERIFICATION_PROVIDER_CONFIRMED, true, "Age-verification provider credentials and server-side decision handling must be confirmed.", strictExternal));
   checks.push(booleanCheck("tax-provider", "TAX_PROVIDER_CONFIRMED", env.TAX_PROVIDER_CONFIRMED, true, "Tobacco tax/excise provider readiness must be confirmed.", strictExternal));
-  checks.push(booleanCheck("adult-signature-carrier", "ADULT_SIGNATURE_CARRIER_APPROVED", env.ADULT_SIGNATURE_CARRIER_APPROVED, true, "Adult-signature carrier approval must be confirmed before fulfillment release.", strictExternal));
+  checks.push(shippingProviderCheck(env.SHIPPING_PROVIDER, strictExternal));
+  checks.push(booleanCheck("adult-signature-carrier", "ADULT_SIGNATURE_CARRIER_APPROVED", env.ADULT_SIGNATURE_CARRIER_APPROVED, true, "USPS Adult Signature service setup must be confirmed before fulfillment release.", strictExternal));
   checks.push(booleanCheck("aws-restore-drill", "AWS_RESTORE_DRILL_COMPLETED", env.AWS_RESTORE_DRILL_COMPLETED, true, "A restore drill must be completed or explicitly accepted before production commerce.", strictExternal));
   checks.push(booleanCheck("staging-browser-qa", "STAGING_BROWSER_QA_PASSED", env.STAGING_BROWSER_QA_PASSED, true, "Staging browser smoke QA must pass before production promotion.", strictExternal));
   checks.push(booleanCheck("waf-or-rate-limiting", "WAF_OR_RATE_LIMITING_ACCEPTED", env.WAF_OR_RATE_LIMITING_ACCEPTED, true, "WAF/rate limiting must be closed or explicitly risk-accepted.", strictExternal));
@@ -175,6 +180,18 @@ export function planGeneratedArtifactCleanup(zipFiles: ArtifactInfo[], outputPat
   }
 
   return { keepZip, removePaths };
+}
+
+function shippingProviderCheck(value: string | undefined, strictExternal: boolean): ReadinessCheck {
+  const provider = String(value || "").trim().toUpperCase();
+  return {
+    id: "shipping-provider-usps",
+    status: provider === "USPS" ? "pass" : strictExternal ? "fail" : "warn",
+    message:
+      provider === "USPS"
+        ? "SHIPPING_PROVIDER is configured for USPS."
+        : "SHIPPING_PROVIDER must be USPS for production fulfillment.",
+  };
 }
 
 function requiredValueCheck(id: string, key: string, value: string | undefined, alwaysStrict = false): ReadinessCheck {
@@ -246,6 +263,179 @@ function loadEnvFile(path: string): Record<string, string> {
   return parseEnvSource(readFileSync(path, "utf8"));
 }
 
+function loadCommerceProviderSecretEnv(env: EnvMap): Record<string, string> {
+  const secretId = env.COMMERCE_PROVIDER_SECRET_ID || env.COMMERCE_PROVIDER_SECRET_ARN;
+  if (!secretId) {
+    return {};
+  }
+
+  const args = [
+    "secretsmanager",
+    "get-secret-value",
+    "--secret-id",
+    secretId,
+    "--query",
+    "SecretString",
+    "--output",
+    "text",
+  ];
+
+  const profile = env.AWS_PROFILE || env.AWS_DEFAULT_PROFILE;
+  if (profile) {
+    args.push("--profile", profile);
+  }
+
+  const region = env.AWS_REGION || env.AWS_DEFAULT_REGION;
+  if (region) {
+    args.push("--region", region);
+  }
+
+  try {
+    const secretSource = execFileSync("aws", args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+
+    if (!secretSource) {
+      return {};
+    }
+
+    return materializeCommerceSecretEnv(JSON.parse(secretSource));
+  } catch {
+    return {};
+  }
+}
+
+export function materializeCommerceSecretEnv(secret: unknown): Record<string, string> {
+  const source = asPlainObject(secret);
+  if (!source) {
+    return {};
+  }
+
+  const env: Record<string, string> = {};
+  const providers = asPlainObject(source.providers) || {};
+  const stripe = asPlainObject(firstDefined(source.stripe, providers.stripe)) || {};
+  const ageVerification = asPlainObject(firstDefined(source.ageVerification, source.age, providers.ageVerification, providers.age)) || {};
+  const tax = asPlainObject(firstDefined(source.tax, source.stripeTax, providers.tax, providers.stripeTax)) || {};
+  const shipping = asPlainObject(firstDefined(source.shipping, providers.shipping)) || {};
+  const adultSignature = asPlainObject(firstDefined(shipping.adultSignature, shipping.adult_signature)) || {};
+
+  putEnv(env, "STRIPE_SECRET_KEY", firstDefined(stripe.secretKey, stripe.secret_key, stripe.apiKey, stripe.api_key));
+  putEnv(env, "STRIPE_WEBHOOK_SECRET", firstDefined(stripe.webhookSecret, stripe.webhook_secret, stripe.signingSecret, stripe.signing_secret));
+  putEnv(env, "STRIPE_CUSTOMER_PORTAL_CONFIGURATION_ID", firstDefined(stripe.customerPortalConfigurationId, stripe.customer_portal_configuration_id, stripe.portalConfigurationId));
+  mergeStripePriceIds(env, firstDefined(stripe.priceIds, stripe.price_ids, stripe.prices, source.stripePriceIds, source.stripe_price_ids));
+
+  const stripeApprovalConfirmed = asBoolean(
+    firstDefined(
+      stripe.tobaccoApprovalConfirmed,
+      stripe.tobacco_approval_confirmed,
+      stripe.approvalConfirmed,
+      stripe.approval_confirmed,
+      source.stripeTobaccoApprovalConfirmed,
+      source.stripe_tobacco_approval_confirmed
+    )
+  );
+  if (stripeApprovalConfirmed !== undefined) {
+    env.STRIPE_TOBACCO_APPROVAL_CONFIRMED = String(stripeApprovalConfirmed);
+  }
+
+  const stripeReplayConfirmed = asBoolean(firstDefined(stripe.testModeE2eConfirmed, stripe.test_mode_e2e_confirmed, stripe.webhookReplayConfirmed, stripe.webhook_replay_confirmed));
+  if (stripeReplayConfirmed !== undefined) {
+    env.STRIPE_TEST_MODE_E2E_CONFIRMED = String(stripeReplayConfirmed);
+  }
+
+  const ageProviderReady = Boolean(
+    firstDefined(ageVerification.apiKey, ageVerification.api_key, ageVerification.clientId, ageVerification.client_id, ageVerification.signingSecret, ageVerification.signing_secret)
+  );
+  if (ageProviderReady) {
+    env.AGE_VERIFICATION_PROVIDER_CONFIRMED = "true";
+  }
+
+  const rawTaxStatus = firstDefined(tax.status, tax.ready, tax.featureStripeTax, source.featureStripeTax);
+  const taxStatus = rawTaxStatus === undefined ? "" : String(rawTaxStatus).trim().toLowerCase();
+  if (taxStatus === "ready" || taxStatus === "true" || taxStatus === "1") {
+    env.TAX_PROVIDER_CONFIRMED = "true";
+  } else if (taxStatus) {
+    env.TAX_PROVIDER_CONFIRMED = "false";
+  }
+
+  putEnv(env, "SHIPPING_PROVIDER", firstDefined(shipping.provider, source.shippingProvider));
+  const adultSignatureReady = asBoolean(
+    firstDefined(
+      shipping.adultSignatureCarrierApproved,
+      shipping.adult_signature_carrier_approved,
+      shipping.adultSignatureApproved,
+      shipping.adult_signature_approved,
+      adultSignature.carrierApproved,
+      adultSignature.carrier_approved,
+      adultSignature.accountConfigured,
+      adultSignature.account_configured,
+      adultSignature.approved,
+      adultSignature.ready
+    )
+  );
+  if (adultSignatureReady !== undefined) {
+    env.ADULT_SIGNATURE_CARRIER_APPROVED = String(adultSignatureReady);
+  } else if (firstDefined(shipping.adultSignatureAccountId, shipping.adult_signature_account_id, adultSignature.accountId, adultSignature.account_id)) {
+    env.ADULT_SIGNATURE_CARRIER_APPROVED = "true";
+  }
+
+  return env;
+}
+
+function asPlainObject(value: unknown): PlainObject | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as PlainObject) : null;
+}
+
+function firstDefined(...values: unknown[]) {
+  return values.find((value) => value !== undefined && value !== null && String(value).trim() !== "");
+}
+
+function putEnv(env: Record<string, string>, key: string, value: unknown) {
+  if (value !== undefined && value !== null && String(value).trim() !== "") {
+    env[key] = String(value).trim();
+  }
+}
+
+function asBoolean(value: unknown) {
+  if (value === undefined || value === null || String(value).trim() === "") {
+    return undefined;
+  }
+
+  const normalized = String(value).trim().toLowerCase();
+  if (["1", "true", "yes", "ready"].includes(normalized)) {
+    return true;
+  }
+
+  if (["0", "false", "no", "pending", "unavailable"].includes(normalized)) {
+    return false;
+  }
+
+  return undefined;
+}
+
+function mergeStripePriceIds(env: Record<string, string>, value: unknown) {
+  const priceIds = asPlainObject(value);
+  if (!priceIds) {
+    return;
+  }
+
+  for (const [tierKey, tierValue] of Object.entries(priceIds)) {
+    const tier = String(tierKey).replace(/-/g, "_").toUpperCase();
+    const prices = asPlainObject(tierValue);
+
+    if (!prices) {
+      putEnv(env, `STRIPE_PRICE_${tier}`, tierValue);
+      continue;
+    }
+
+    for (const [periodKey, priceId] of Object.entries(prices)) {
+      const period = String(periodKey).replace(/-/g, "_").toUpperCase();
+      putEnv(env, `STRIPE_PRICE_${tier}_${period}`, priceId);
+    }
+  }
+}
+
 function readZipEntryNames(path: string): string[] {
   const zip = readFileSync(path);
   const eocdSignature = 0x06054b50;
@@ -301,9 +491,13 @@ function formatChecks(checks: ReadinessCheck[]): string {
 }
 
 function printCliReport(workspace: string, strictExternal: boolean) {
-  const env = {
+  const baseEnv = {
     ...loadEnvFile(join(workspace, ".env.local")),
     ...process.env,
+  };
+  const env = {
+    ...baseEnv,
+    ...loadCommerceProviderSecretEnv(baseEnv),
   };
   const checks = assessLaunchReadiness(env, { strictExternal });
   const zipFiles = getRootZipFiles(workspace);

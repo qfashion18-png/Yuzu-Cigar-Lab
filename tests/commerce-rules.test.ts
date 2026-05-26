@@ -14,9 +14,19 @@ function loadRules() {
       errors: Array<{ code: string; message: string }>;
       holdReasons: string[];
       normalizedItems: Array<{ sku: string; quantity: number; unitAmountCents: number }>;
+      shipping: {
+        methodId: string;
+        submittedMethodId: string;
+        carrier: string;
+        adultSignatureRequired: boolean;
+        adultSignatureRequiredState: boolean;
+      };
     };
+    adultSignatureRequiredStates: Set<string>;
     adultSignatureShippingMethodIds: Set<string>;
+    requiredShippingCarrier: string;
     restrictedDestinationStates: Set<string>;
+    requiresAdultSignatureDelivery: (items: Array<{ adultSignatureRequired?: boolean }>, destination: { state?: string }) => boolean;
   };
 }
 
@@ -47,10 +57,28 @@ const launchCatalog = [
     stripeProductId: "prod_draft",
     stripePriceId: "price_draft",
   },
+  {
+    sku: "MEMBER-BOX",
+    slug: "member-box",
+    name: "Member Box",
+    price: 140,
+    publishStatus: "published",
+    inventoryPolicy: "track",
+    sourceQuantity: 5,
+    shippable: true,
+    memberOnly: true,
+    adultSignatureRequired: true,
+    stripeProductId: "prod_member",
+    stripePriceId: "price_member",
+  },
 ];
 
 const readyCheckout = {
   items: [{ sku: "APPROVED-BOX", quantity: 2, unitPrice: 120 }],
+  quote: {
+    subtotal: 240,
+    currency: "USD",
+  },
   catalog: launchCatalog,
   ageVerification: {
     status: "verified",
@@ -62,7 +90,7 @@ const readyCheckout = {
     state: "AZ",
     postalCode: "85225",
   },
-  shippingMethodId: "adult-signature-ground",
+  shippingMethodId: "usps-adult-signature-ground",
   tax: {
     status: "ready",
     provider: "stripe_tax",
@@ -79,15 +107,50 @@ test("checkout compliance accepts verified adults with publishable stock and adu
   assert.equal(result.normalizedItems[0].sku, "APPROVED-BOX");
   assert.equal(result.normalizedItems[0].quantity, 2);
   assert.equal(result.normalizedItems[0].unitAmountCents, 12000);
+  assert.deepEqual(result.shipping, {
+    methodId: "usps-adult-signature-ground",
+    submittedMethodId: "usps-adult-signature-ground",
+    carrier: "USPS",
+    adultSignatureRequired: true,
+    adultSignatureRequiredState: false,
+  });
+});
+
+test("checkout compliance uses USPS adult-signature states and rejects UPS methods", () => {
+  const {
+    adultSignatureRequiredStates,
+    adultSignatureShippingMethodIds,
+    requiredShippingCarrier,
+    requiresAdultSignatureDelivery,
+    validateCheckoutReadiness,
+  } = loadRules();
+
+  assert.equal(requiredShippingCarrier, "USPS");
+  assert.deepEqual([...adultSignatureRequiredStates], ["AR", "CA", "DE", "FL", "GA", "MA", "MN", "ND", "RI", "SC", "WY"]);
+  assert.equal(adultSignatureShippingMethodIds.has("usps-adult-signature-ground"), true);
+  assert.equal(adultSignatureShippingMethodIds.has("ups-adult-signature-ground"), false);
+  assert.equal(requiresAdultSignatureDelivery([{ adultSignatureRequired: false }], { state: "CA" }), true);
+  assert.equal(requiresAdultSignatureDelivery([{ adultSignatureRequired: false }], { state: "AZ" }), false);
+
+  const result = validateCheckoutReadiness({
+    ...readyCheckout,
+    shippingMethodId: "ups-adult-signature-ground",
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.errors.some((error) => error.code === "shipping_method_unavailable"), true);
+  assert.equal(result.holdReasons.includes("shipping_method_unavailable"), true);
 });
 
 test("checkout compliance rejects unknown, draft, stale-price, and over-quantity cart lines", () => {
   const { validateCheckoutReadiness } = loadRules();
   const result = validateCheckoutReadiness({
     ...readyCheckout,
+    quote: undefined,
     items: [
       { sku: "UNKNOWN", quantity: 1, unitPrice: 25 },
       { sku: "DRAFT-BOX", quantity: 1, unitPrice: 99 },
+      { sku: "APPROVED-BOX", quantity: 1 },
       { sku: "APPROVED-BOX", quantity: 1, unitPrice: 119 },
       { sku: "APPROVED-BOX", quantity: 8, unitPrice: 120 },
     ],
@@ -96,8 +159,45 @@ test("checkout compliance rejects unknown, draft, stale-price, and over-quantity
   assert.equal(result.ok, false);
   assert.deepEqual(
     result.errors.map((error) => error.code),
-    ["unknown_sku", "unpublished_sku", "stale_price", "insufficient_inventory"]
+    ["unknown_sku", "unpublished_sku", "price_snapshot_required", "stale_price", "insufficient_inventory"]
   );
+});
+
+test("checkout compliance blocks member-only catalog lines without trusted entitlement", () => {
+  const { validateCheckoutReadiness } = loadRules();
+  const blocked = validateCheckoutReadiness({
+    ...readyCheckout,
+    quote: { subtotal: 140, currency: "USD" },
+    items: [{ sku: "MEMBER-BOX", quantity: 1, unitPrice: 140 }],
+  });
+  const allowed = validateCheckoutReadiness({
+    ...readyCheckout,
+    quote: { subtotal: 140, currency: "USD" },
+    items: [{ sku: "MEMBER-BOX", quantity: 1, unitPrice: 140 }],
+    membership: {
+      status: "member",
+      trusted: true,
+      tiers: ["sensei"],
+    },
+  });
+
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.errors.some((error) => error.code === "membership_required"), true);
+  assert.equal(allowed.ok, true);
+});
+
+test("checkout compliance rejects quote subtotal drift", () => {
+  const { validateCheckoutReadiness } = loadRules();
+  const result = validateCheckoutReadiness({
+    ...readyCheckout,
+    quote: {
+      subtotal: 239,
+      currency: "USD",
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.errors.some((error) => error.code === "quote_mismatch"), true);
 });
 
 test("checkout compliance blocks unverified age, restricted destinations, missing adult signature, and unavailable tax", () => {
@@ -113,11 +213,18 @@ test("checkout compliance blocks unverified age, restricted destinations, missin
   assert.equal(result.ok, false);
   assert.deepEqual(
     result.errors.map((error) => error.code),
-    ["age_verification_required", "restricted_destination", "adult_signature_required", "tax_provider_unavailable"]
+    [
+      "age_verification_required",
+      "restricted_destination",
+      "shipping_method_unavailable",
+      "adult_signature_required",
+      "tax_provider_unavailable",
+    ]
   );
   assert.deepEqual(result.holdReasons, [
     "age_verification_required",
     "restricted_destination",
+    "shipping_method_unavailable",
     "adult_signature_required",
     "tax_provider_unavailable",
   ]);

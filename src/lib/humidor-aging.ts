@@ -6,6 +6,10 @@ export type AgingSnapshot = {
   readiness: CigarReadiness;
 };
 
+export type TotalAgeSnapshot = {
+  ageMonths: number;
+};
+
 export type AgingTrackedCigar = {
   id: string;
   name: string;
@@ -36,6 +40,18 @@ export function getAgingSnapshot(agingStartDate: string, now = new Date()): Agin
     ageMonths,
     progress: Math.min(100, Math.max(0, Math.round((ageMonths / readyAgingMonths) * 100))),
     readiness: ageMonths >= readyAgingMonths ? "Ready Now" : ageMonths >= restingAgingMonths ? "Aging Well" : "Too Young",
+  };
+}
+
+export function getTotalAgeSnapshot(productionDate: string | null | undefined, now = new Date()): TotalAgeSnapshot | null {
+  const normalizedProductionDate = typeof productionDate === "string" ? productionDate.trim() : "";
+
+  if (!normalizedProductionDate) {
+    return null;
+  }
+
+  return {
+    ageMonths: calculateAgeMonths(normalizedProductionDate, now),
   };
 }
 

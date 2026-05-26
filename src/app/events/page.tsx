@@ -1,13 +1,12 @@
 import type { Metadata } from "next";
 import Link from "@/components/static-link";
-import { ArrowRight, CalendarDays, MapPin, Users } from "lucide-react";
 
+import { AutoUpdatingEventGrid } from "@/components/auto-updating-event-grid";
 import { CuratedEventsExplorer } from "@/components/curated-events-explorer";
 import { ReferenceImage } from "@/components/reference-image";
 import { MemberViewBanner } from "@/components/member-view-banner";
 import { SectionHeading } from "@/components/section-heading";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { events } from "@/lib/data";
 
 export const metadata: Metadata = {
@@ -26,6 +25,8 @@ export const metadata: Metadata = {
 };
 
 export default function EventsPage() {
+  const initialNowIso = new Date().toISOString();
+
   return (
     <div className="mx-auto max-w-[1520px] px-5 py-8 lg:px-10">
       <section className="luxury-card grid overflow-hidden lg:grid-cols-[0.9fr_1.1fr]">
@@ -52,48 +53,7 @@ export default function EventsPage() {
             copy="Private Yuzu tastings, education nights, allocation releases, and member-first gatherings."
           />
         </div>
-        <div className="grid gap-5 lg:grid-cols-3">
-          {events.map((event) => (
-            <Link
-              key={event.slug}
-              href={`/events/${event.slug}/`}
-              data-event-card={event.slug}
-              className="group block h-full focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-yuzu-gold/60"
-            >
-              <Card className="luxury-card h-full py-0 transition duration-300 group-hover:-translate-y-0.5 group-hover:border-yuzu-gold/80 group-hover:shadow-[0_24px_70px_rgba(0,0,0,0.35)]">
-                <ReferenceImage
-                  src={event.image}
-                  alt={`${event.title} event preview`}
-                  className="min-h-56 border-b border-yuzu-line"
-                  imageClassName="transition duration-500 group-hover:scale-105"
-                  objectPosition={event.imagePosition}
-                />
-                <CardContent className="flex flex-1 flex-col gap-5 p-6">
-                  <div className="flex items-center justify-between gap-4">
-                    <CalendarDays className="text-yuzu-gold" />
-                    <span className="text-xs font-bold uppercase tracking-[0.2em] text-yuzu-gold">{event.access}</span>
-                  </div>
-                  <div>
-                    <h2 className="font-heading text-3xl text-yuzu-cream">{event.title}</h2>
-                    <p className="mt-2 text-yuzu-gold">{event.date}</p>
-                  </div>
-                  <p className="text-sm leading-6 text-yuzu-muted">{event.deck}</p>
-                  <div className="mt-auto grid gap-3 text-sm text-yuzu-muted">
-                    <p className="flex items-center gap-2">
-                      <MapPin className="text-yuzu-gold" /> {event.location}
-                    </p>
-                    <p className="flex items-center gap-2">
-                      <Users className="text-yuzu-gold" /> {event.capacity}
-                    </p>
-                    <p className="inline-flex items-center gap-2 pt-2 text-xs font-bold uppercase tracking-[0.2em] text-yuzu-gold">
-                      View Details <ArrowRight className="size-4 transition group-hover:translate-x-1" />
-                    </p>
-                  </div>
-                </CardContent>
-              </Card>
-            </Link>
-          ))}
-        </div>
+        <AutoUpdatingEventGrid events={events} initialNowIso={initialNowIso} />
       </section>
 
       <CuratedEventsExplorer />

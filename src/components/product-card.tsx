@@ -3,6 +3,7 @@ import type { LucideIcon } from "lucide-react";
 import { Cigarette, Flame, Gauge, Ruler, ShieldCheck, Star } from "lucide-react";
 
 import { AddToCartButton } from "@/components/add-to-cart-button";
+import { HoverLift } from "@/components/motion-primitives";
 import { ProductPrice } from "@/components/product-price";
 import { ReferenceImage } from "@/components/reference-image";
 import { SavedProductButton } from "@/components/saved-product-button";
@@ -66,7 +67,8 @@ export function ProductCard({ product, compact = false }: ProductCardProps) {
   ].filter((spec) => spec.value);
 
   return (
-    <Card className="luxury-card group p-0 transition duration-300 hover:-translate-y-0.5 hover:border-yuzu-gold/75 hover:shadow-[0_24px_70px_rgba(0,0,0,0.34)]">
+    <HoverLift className="group/product h-full" role="article" aria-label={product.name}>
+      <Card className="luxury-card h-full p-0 transition-colors duration-300 group-hover/product:border-yuzu-gold/75 group-hover/product:shadow-[0_24px_70px_rgba(0,0,0,0.34)]">
       <div className="relative">
         <Link href={productHref} className="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yuzu-gold">
           <ReferenceImage
@@ -74,6 +76,7 @@ export function ProductCard({ product, compact = false }: ProductCardProps) {
             alt={`${product.name} product image`}
             objectPosition={product.imagePosition}
             className={cn("h-52 border-b border-yuzu-line/75", compact && "h-40")}
+            imageClassName="transition duration-700 group-hover/product:scale-[1.04]"
           />
           <span className="sr-only">View details for {product.name}</span>
         </Link>
@@ -132,7 +135,8 @@ export function ProductCard({ product, compact = false }: ProductCardProps) {
         <ShieldCheck />
         Adult signature and age verification required
       </div>
-    </Card>
+      </Card>
+    </HoverLift>
   );
 }
 

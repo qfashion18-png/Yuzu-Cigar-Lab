@@ -56,6 +56,17 @@ export function SiteFooter() {
               ))}
             </ul>
           </div>
+          <div>
+            <h3 className="footer-title">Policy</h3>
+            <div className="mt-4 flex flex-col gap-2">
+              <Link href="/privacy" className="footer-link">
+                Privacy Policy
+              </Link>
+              <Link href="/terms" className="footer-link">
+                Terms of Service
+              </Link>
+            </div>
+          </div>
         </div>
       </div>
       <div className="border-t border-yuzu-line/55 px-5 py-5 text-center text-xs uppercase tracking-[0.16em] text-yuzu-muted">

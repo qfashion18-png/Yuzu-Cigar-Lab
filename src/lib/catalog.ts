@@ -5,11 +5,24 @@ import { calculateCatalogPricing, formatCatalogPrice, isCatalogPricingPublishabl
 
 const sunsetImageBaseUrl = "https://swwest.com/Images/SunsetItems";
 const lighterImageCategory = "Lighters / Torch";
+const butaneFluidCategory = "Butane / Fluid";
+const humidorCategory = "Humidors";
+const samplePacksCategory = "Sample Packs";
 const budgetCategory = "Budget Cigars (Under $50)";
 const midRangeCategory = "Mid-Range Cigars ($50-$150)";
 const premiumCategory = "Premium Cigars ($150-$300)";
 const luxuryCategory = "Luxury Cigars ($300+)";
 const priceTierCategories = new Set([budgetCategory, midRangeCategory, premiumCategory, luxuryCategory]);
+const genericCigarAttributeCategories = new Set([
+  "Belicoso / Torpedo",
+  "Connecticut & Shade Grown",
+  "Connecticut Wrapper",
+  "Corojo Wrapper",
+  "Gordo",
+  "Habano Wrapper",
+  "Maduro Wrapper",
+  "Natural Wrapper",
+]);
 const catalogMissingImageFallback = "/assets/gift-box.png";
 const importedMarketPriceLookup: Partial<Record<string, number>> = importedMarketPricesBySku;
 
@@ -184,10 +197,56 @@ const retiredLighterSkus = new Set([
   "28548", // VECTOR (THRONE/08) RED MATTE QUAD JET FLAME
 ]);
 
+const publishedSwwestLighterSkus = new Set([
+  "85318",
+  "85321",
+  "76078",
+  "46853",
+  "81274",
+  "69496",
+  "85319",
+  "69493",
+  "69494",
+  "77086",
+  "31120",
+  "31119",
+]);
+
+const localLighterImageSkus = new Set([
+  ...publishedSwwestLighterSkus,
+  "20740",
+  "81248",
+  "31601",
+  "31682",
+  "31683",
+  "41866",
+  "41867",
+  "28551",
+]);
+
 const catalogImageOverrides: Record<string, string> = {
+  "41205": `${sunsetImageBaseUrl}/41205/0.jpg`,
   "48443": catalogMissingImageFallback,
-  "572590": catalogMissingImageFallback,
+  "572590": "/assets/inventory/cigars/my-father-la-antiguedad-super-toro-20-bx.jpg",
   "572576": catalogMissingImageFallback,
+  "777146": "/assets/inventory/cigars/my-father-blue-petit-robusto-20-bx.jpg",
+  "777147": "/assets/inventory/cigars/my-father-blue-robusto-20-bx.jpg",
+  "777148": "/assets/inventory/cigars/my-father-blue-toro-20-bx.jpg",
+  "777149": "/assets/inventory/cigars/my-father-blue-toro-gordo-20-bx.jpg",
+  "113887": "/assets/inventory/cigars/flor-de-las-antillas-toro-20-bx.jpg",
+  "113886": "/assets/inventory/cigars/flor-de-las-antillas-robusto-20-bx.jpg",
+  "MISSING-SKU-NICA-RUSTICA-GORDO": "/assets/inventory/cigars/nica-rustica-gordo-25-bx.jpg",
+  "MISSING-SKU-UNDERCROWN-SHADE-GORDITO": "/assets/inventory/cigars/undercrown-shade-gordito.jpg",
+  "572429": "/assets/inventory/cigars/undercrown-maduro-robusto.jpg",
+  "MISSING-SKU-UNDERCROWN-MADURO-TORO": "/assets/inventory/cigars/undercrown-maduro-toro.jpg",
+  "572749": "/assets/inventory/cigars/deadwood-dia-de-los-muertos-20-bx.jpg",
+  "572753": "/assets/inventory/cigars/deadwood-girl-with-no-name-lonsdale-20-bx.jpg",
+  "777229": "/assets/inventory/cigars/aging-room-nicaragua-sonata-maestro-10-bx.jpg",
+  "777230": "/assets/inventory/cigars/aging-room-nicaragua-concerto-maestro-10-bx.jpg",
+  "777242": "/assets/inventory/cigars/cao-flathead-speed-shop-v554-24-bx.jpg",
+  "777243": "/assets/inventory/cigars/cao-flathead-speed-shop-v660-24-bx.jpg",
+  "572744": "/assets/inventory/cigars/liga-privada-h99-papas-fritas-10-bx.jpg",
+  "572745": "/assets/inventory/cigars/liga-privada-h99-papas-fritas-10-bx.jpg",
   "2754": "/assets/inventory/acid-1400cc-open-box.jpg",
   "18821": "/assets/inventory/acid-20-toro-maduro-open-box.jpg",
   "39919": "/assets/inventory/acid-20-twenty-year-open-box.jpg",
@@ -216,6 +275,13 @@ const brandPrefixes: Array<[prefix: string, label: string]> = [
   ["ARTURO FUENTE", "Arturo Fuente"],
   ["ALEC BRADLEY", "Alec Bradley"],
   ["AGING ROOM", "Aging Room"],
+  ["DEADWOOD", "Deadwood"],
+  ["NICA RUSTICA", "Nica Rustica"],
+  ["FONSECA", "Fonseca"],
+  ["LIGA UNDERCROWN", "Liga Undercrown"],
+  ["LIGA PRIVADA", "Liga Privada"],
+  ["UNDERCROWN", "Undercrown"],
+  ["CAO", "CAO"],
   ["LA AROMA", "La Aroma"],
   ["LA FLOR", "La Flor"],
   ["MY FATHER", "My Father"],
@@ -275,6 +341,7 @@ export type CatalogProduct = {
   filler?: string;
   binder?: string;
   expertReview?: CatalogExpertReview;
+  reviewProfile?: CatalogReviewProfile;
   reviewSearchUrl: string;
 };
 
@@ -291,9 +358,30 @@ export type CatalogExpertReview = {
   }>;
 };
 
+export type CatalogReviewProfile = {
+  searchQuery: string;
+  summary: string;
+  sources: Array<{
+    sourceName: string;
+    sourceUrl: string;
+    rating: string;
+    keyDetails: string[];
+  }>;
+};
+
+export type CatalogReviewAudit = {
+  searchPrompt: string;
+  summary: string;
+  sourceUrl: string;
+  details: Array<{
+    label: string;
+    value: string;
+  }>;
+};
+
 type CatalogProductEnrichment = Pick<
   CatalogProduct,
-  "origin" | "wrapper" | "vitola" | "length" | "gauge" | "strength" | "filler" | "binder" | "expertReview"
+  "origin" | "wrapper" | "vitola" | "length" | "gauge" | "strength" | "filler" | "binder" | "expertReview" | "reviewProfile"
 >;
 
 export type CatalogProductDetails = {
@@ -361,6 +449,42 @@ const researchedCatalogEnrichment: Record<string, Partial<CatalogProductEnrichme
     strength: "Medium",
     filler: "Nicaragua",
     binder: "Indonesia",
+    reviewProfile: {
+      searchQuery: "Ratings & Reviews: ACID 20 TWENTY YEAR 24/BX:",
+      summary:
+        "ACID 20 community and retailer ratings skew positive, while scored review coverage frames it as a strong infused-cigar pick with sweetness, mocha, licorice, earth, and white pepper rather than a high-complexity traditional profile.",
+      sources: [
+        {
+          sourceName: "Cigar World",
+          sourceUrl: "https://www.cigarworld.com/cigars/acid/acid-20/",
+          rating: "4.63 community rating",
+          keyDetails: [
+            "Lists the blend as medium-bodied and box-pressed with a sweet-tipped Mexican San Andres wrapper, Indonesian binder, and Nicaraguan fillers.",
+            "Tasting-note tags call out earthy, spice, and herbal, with Robusto BP and Toro shown as available sizes.",
+            "Recent visible reviews include 5-star, 4-star, and 5-star customer ratings across 2022-2025.",
+          ],
+        },
+        {
+          sourceName: "CIGAR.com",
+          sourceUrl: "https://www.cigar.com/product/acid-cigars-by-drew-estate-acid-20/AID-PM.html",
+          rating: "4.5/5 from 21 customer ratings",
+          keyDetails: [
+            "Profiles ACID 20 in Robusto and Toro shapes with San Andres wrapper, Nicaraguan origin, Indonesian binder, and Nicaraguan fillers.",
+            "Marks the profile as medium and sweet, matching the shopper expectation for an infused ACID anniversary release.",
+          ],
+        },
+        {
+          sourceName: "Cigar Coop",
+          sourceUrl: "https://cigar-coop.com/2021/03/cigar-review-acid-20-robusto-by-drew-estate.html",
+          rating: "88 Robusto / 87 Toro",
+          keyDetails: [
+            "Scored the Robusto at 88 and the later Toro assessment at 87, both with a Buy One value call.",
+            "Key flavors across the assessments include mocha, licorice, earth, white pepper, and artificial-sweetener sweetness from the cap.",
+            "The Toro review notes mild-to-medium strength and medium body, with the Robusto getting the edge on burn performance.",
+          ],
+        },
+      ],
+    },
   },
   "acid-atom-maduro-24-bx": {
     origin: "Nicaragua",
@@ -748,7 +872,7 @@ export function getCatalogImageUrl(sku: string, category?: string) {
     return "/assets/gift-box.png";
   }
 
-  if (category?.trim() === lighterImageCategory) {
+  if (category?.trim() === lighterImageCategory && localLighterImageSkus.has(normalizedSku)) {
     return `/assets/inventory/lighters/${normalizedSku}-single-lighter.jpg`;
   }
 
@@ -863,16 +987,44 @@ function getPriceTierCategory(price: number) {
   return budgetCategory;
 }
 
+function isSamplerProduct(productName: string) {
+  return /\b(SAMPLER|SAMPLE\s+PACK|FRESH\s*PACK)\b/i.test(productName);
+}
+
+function isHumidorProduct(productName: string) {
+  return /\bHUMIDOR\b/i.test(productName);
+}
+
+function isFuelProduct(productName: string) {
+  return /\b(BOOK\s+MATCHES|BUTANE|LIGHTER\s+FLUID|FLUID|GAS|REFILL)\b/i.test(productName);
+}
+
+function isLighterProduct(productName: string) {
+  return /\b(LIGHTER|TORCH)\b/i.test(productName);
+}
+
 function getCatalogCategory(item: ImportedInventoryItem) {
-  if (/^BOOK MATCHES\b/i.test(item.product)) {
-    return "Butane / Fluid";
+  if (isSamplerProduct(item.product)) {
+    return samplePacksCategory;
   }
 
-  if (priceTierCategories.has(item.category)) {
+  if (isHumidorProduct(item.product)) {
+    return humidorCategory;
+  }
+
+  if (isFuelProduct(item.product)) {
+    return butaneFluidCategory;
+  }
+
+  if (isLighterProduct(item.product)) {
+    return lighterImageCategory;
+  }
+
+  if (priceTierCategories.has(item.category) || genericCigarAttributeCategories.has(item.category)) {
     return getPriceTierCategory(item.price);
   }
 
-  return item.category;
+  return item.category.trim() || getPriceTierCategory(item.price);
 }
 
 function getTags(item: ImportedInventoryItem, availability: CatalogProduct["availability"], category = getCatalogCategory(item)) {
@@ -894,11 +1046,15 @@ function isPublishableImportedInventoryItem(item: ImportedInventoryItem) {
     return false;
   }
 
-  if (retiredLighterSkus.has(item.sku)) {
+  if (retiredLighterSkus.has(item.sku) && !publishedSwwestLighterSkus.has(item.sku)) {
     return false;
   }
 
   if (item.price <= 0) {
+    return false;
+  }
+
+  if (!Number.isFinite(Number(importedMarketPriceLookup[item.sku])) || Number(importedMarketPriceLookup[item.sku]) <= 0) {
     return false;
   }
 
@@ -940,6 +1096,54 @@ function getReviewSearchUrl(productName: string) {
   const search = new URLSearchParams({ q: stripPackageFromName(productName) });
 
   return `${cigarAficionadoSearchBaseUrl}?${search.toString()}`;
+}
+
+export function getCatalogReviewSearchPrompt(product: Pick<CatalogProduct, "name">) {
+  return `Ratings & Reviews: ${product.name}:`;
+}
+
+export function isCigarCatalogProduct(product: Pick<CatalogProduct, "category" | "name">) {
+  const nonCigarPattern = /lighter|torch|fluid|butane|humidor|membership|accessor|ashtray|cutter|punch|display|book matches/i;
+
+  return !nonCigarPattern.test(product.category) && !nonCigarPattern.test(product.name);
+}
+
+export function getCatalogReviewAudit(product: CatalogProduct): CatalogReviewAudit | null {
+  if (!isCigarCatalogProduct(product)) {
+    return null;
+  }
+
+  const details = [
+    { label: "Review status", value: "No sourced rating attached yet" },
+    {
+      label: "Search focus",
+      value: "Find publication, community, or customer review signals for this exact catalog item before adding a score.",
+    },
+    {
+      label: "Source priority",
+      value: "Check Cigar Aficionado first, then reputable cigar publications, retailer review pages, and active cigar communities.",
+    },
+    {
+      label: "Match rule",
+      value: "Only attach a rating when the reviewed blend and vitola clearly match this item; otherwise keep it as a related signal.",
+    },
+    {
+      label: "Capture fields",
+      value: "Record the score or rating, source name, issue/date, reviewed vitola, tasting notes, and source URL.",
+    },
+    {
+      label: "Quality gate",
+      value: "Do not add aggregate rating schema or score badges until a source URL supports the rating.",
+    },
+  ];
+
+  return {
+    searchPrompt: getCatalogReviewSearchPrompt(product),
+    summary:
+      "This cigar is queued for sourced ratings review. Use the research prompt to find review-specific evidence before attaching customer, community, or publication scores.",
+    sourceUrl: product.reviewSearchUrl,
+    details,
+  };
 }
 
 function extractLabeledValue(text: string, label: string) {
@@ -2374,9 +2578,38 @@ function getAsylumResearch(productName: string) {
   );
 }
 
+function getAgingRoomResearch(productName: string) {
+  if (!/^AGING ROOM\b/.test(productName)) {
+    return undefined;
+  }
+
+  if (/QUATTRO|NICARAGUA/.test(productName)) {
+    return combineResearchDetails(
+      researchedBlend("Nicaragua", "Nicaraguan", "Nicaraguan", "Nicaraguan", "Medium-Full"),
+      researchedSizeFromMap(productName, [
+        [/SONATA MAESTRO/, "Maestro Torpedo", '5"', "52"],
+        [/CONCERTO MAESTRO/, "Maestro Torpedo", '6"', "52"],
+        [/MAESTRO/, "Maestro Torpedo", '5"', "56"],
+      ])
+    );
+  }
+
+  return undefined;
+}
+
 function getCaoResearch(productName: string) {
   if (!/^CAO\b/.test(productName)) {
     return undefined;
+  }
+
+  if (/FLATHEAD SPEED SHOP/.test(productName)) {
+    return combineResearchDetails(
+      researchedBlend("Nicaragua", "Connecticut Broadleaf", "Ecuadorian Connecticut", "Nicaragua, Dominican Republic", "Full"),
+      researchedSizeFromMap(productName, [
+        [/V554/, "V554", '6.5"', "50"],
+        [/V660/, "V660", '6"', "60"],
+      ])
+    );
   }
 
   if (/FLATHEAD/.test(productName)) {
@@ -2499,6 +2732,7 @@ function getDeadwoodResearch(productName: string) {
       researchedSizeFromMap(productName, [
         [/ROBUSTO|NOCHES/, "Robusto", '5"', "54"],
         [/TORO/, "Toro", '6"', "50"],
+        [/GORDO/, "Gordo", '6"', "60"],
       ])
     );
   }
@@ -2509,6 +2743,8 @@ function getDeadwoodResearch(productName: string) {
       [/FAT BOTTOM BETTY GORDITO/, "Gordito", '6"', "60"],
       [/FAT BOTTOM BETTY TORO/, "Toro", '6"', "50"],
       [/FAT BOTTOM BETTY/, "Robusto", '5"', "54"],
+      [/DIA DE LOS MUERTOS/, "Toro", '6"', "52"],
+      [/GIRL WITH NO NAME/, "Lonsdale", '7"', "44"],
       [/LEATHER ROSE/, "Torpedo", '5"', "54"],
       [/TINS SWEET JANE/, "Tin", '4"', "32"],
       [/SWEET JANE/, "Corona", '5"', "46"],
@@ -2517,7 +2753,7 @@ function getDeadwoodResearch(productName: string) {
 }
 
 function getMyFatherFamilyResearch(productName: string) {
-  if (!/^MY FATHER\b|^LA ANTIQUEDAD\b|^FLOR DE LAS ANTILLAS\b|^JAIME GARCIA\b/.test(productName)) {
+  if (!/^MY FATHER\b|^LA ANTI(?:GU|QU)EDAD\b|^FLOR DE LAS ANTILLAS\b|^JAIME GARCIA\b/.test(productName)) {
     return undefined;
   }
 
@@ -2525,10 +2761,24 @@ function getMyFatherFamilyResearch(productName: string) {
     return assortedResearchDetails();
   }
 
-  if (/LA ANTIQUEDAD/.test(productName)) {
+  if (/BLUE/.test(productName)) {
+    return combineResearchDetails(
+      researchedBlend("Nicaragua", "Nicaraguan Corojo", "Nicaraguan", "Nicaraguan", "Medium-Full"),
+      researchedSizeFromMap(productName, [
+        [/PETIT ROBUSTO/, "Petit Robusto", '4.5"', "50"],
+        [/TORO GORDO/, "Toro Gordo", '6"', "60"],
+        [/ROBUSTO/, "Robusto", '5.25"', "52"],
+        [/TORO/, "Toro", '6"', "54"],
+      ])
+    );
+  }
+
+  if (/LA ANTI(?:GU|QU)EDAD/.test(productName)) {
     return combineResearchDetails(
       researchedBlend("Nicaragua", "Ecuadorian Habano Rosado Oscuro", "Nicaraguan Corojo and Criollo", "Nicaragua", "Medium-Full"),
       researchedSizeFromMap(productName, [
+        [/SUPER TORO/, "Super Toro", '7"', "56"],
+        [/TORO GORDO/, "Toro Gordo", '6"', "60"],
         [/CORONA GRANDE/, "Corona Grande", '6.375"', "47"],
         [/ROBUSTO/, "Robusto", '5.25"', "52"],
         [/TORO/, "Toro", '5.625"', "55"],
@@ -2995,7 +3245,7 @@ function getKarenBergerResearch(productName: string) {
 }
 
 function getMyFatherRemainingResearch(productName: string) {
-  if (!/^MY FATHER\b|^LA DUENA\b|^EL CENTURION\b/.test(productName)) {
+  if (!/^MY FATHER\b|^LA DUENA\b|^EL CENTURION\b|^FONSECA\b/.test(productName)) {
     return undefined;
   }
 
@@ -3005,8 +3255,10 @@ function getMyFatherRemainingResearch(productName: string) {
 
   if (/FONSECA/.test(productName)) {
     return combineResearchDetails(
-      researchedBlend("Nicaragua", "Corojo 99", "Nicaragua", "Nicaragua", "Medium"),
+      researchedBlend("Nicaragua", /MX EDITION/.test(productName) ? "Mexican San Andres" : "Corojo 99", "Nicaragua", "Nicaragua", "Medium"),
       researchedSizeFromMap(productName, [
+        [/ROBUSTO/, "Robusto", '5"', "50"],
+        [/TORO/, "Toro", '6.25"', "52"],
         [/CEDROS/, "Cedros", '6.25"', "52"],
       ])
     );
@@ -3017,6 +3269,7 @@ function getMyFatherRemainingResearch(productName: string) {
       researchedBlend("Nicaragua", "Sumatra Oscuro", "Corojo Criollo", "Nicaragua", "Full"),
       researchedSizeFromMap(productName, [
         [/CORONA GORDA/, "Corona Gorda", '5.625"', "46"],
+        [/TORO/, "Box-Pressed Toro", '6"', "56"],
       ])
     );
   }
@@ -3438,7 +3691,7 @@ function getAvoResearch(productName: string) {
 }
 
 function getUndercrownRemainingResearch(productName: string) {
-  if (!/^UNDERCROWN\b/.test(productName)) {
+  if (!/^LIGA UNDERCROWN\b|^LIGA PRIVADA\b|^UNDERCROWN\b/.test(productName)) {
     return undefined;
   }
 
@@ -3446,17 +3699,32 @@ function getUndercrownRemainingResearch(productName: string) {
     return assortedResearchDetails();
   }
 
+  if (/H99.*PAPAS FRITAS/.test(productName)) {
+    return combineResearchDetails(
+      researchedBlend("Nicaragua", "Connecticut Corojo", "Mexican San Andres", "Nicaragua, Honduras", "Medium-Full"),
+      researchedSize("Papas Fritas", '4.5"', "44")
+    );
+  }
+
   if (/SHADE/.test(productName)) {
     return combineResearchDetails(
       researchedBlend("Nicaragua", "Ecuadorian Connecticut", "Sumatra", "Dominican Republic, Nicaragua", "Medium"),
-      researchedSize("Assorted", "Assorted", "Assorted")
+      researchedSizeFromMap(productName, [
+        [/GORDITO/, "Gordito", '6"', "60"],
+        [/GRAN TORO/, "Gran Toro", '6"', "52"],
+        [/ROBUSTO/, "Robusto", '5"', "54"],
+        [/TORO/, "Toro", '6"', "52"],
+      ])
     );
   }
 
   if (/MADURO/.test(productName)) {
     return combineResearchDetails(
       researchedBlend("Nicaragua", "Mexican San Andres Maduro", "Connecticut River Valley Stalk-Cut Habano", "Brazilian Mata Fina, Nicaragua", "Medium-Full"),
-      researchedSize("Assorted", "Assorted", "Assorted")
+      researchedSizeFromMap(productName, [
+        [/ROBUSTO/, "Robusto", '5"', "50"],
+        [/TORO/, "Toro", '6"', "52"],
+      ])
     );
   }
 
@@ -3482,6 +3750,7 @@ function getNicaRusticaResearch(productName: string) {
     return combineResearchDetails(
       researchedBlend("Nicaragua", "Ecuadorian Connecticut", "Mexican San Andres", "Nicaraguan", "Medium"),
       researchedSizeFromMap(productName, [
+        [/SHORT ROBUSTO/, "Short Robusto", '4.5"', "50"],
         [/GORDO/, "Gordo", '6"', "60"],
         [/TORO/, "Toro", '6"', "50"],
       ])
@@ -3491,7 +3760,11 @@ function getNicaRusticaResearch(productName: string) {
   if (/ADOBE/.test(productName)) {
     return combineResearchDetails(
       researchedBlend("Nicaragua", "Ecuadorian Habano", "Brazilian", "Nicaragua", "Medium-Full"),
-      researchedSize("Robusto", '5"', "52")
+      researchedSizeFromMap(productName, [
+        [/GORDO/, "Gordo", '6"', "60"],
+        [/TORO/, "Toro", '6"', "52"],
+        [/ROBUSTO/, "Robusto", '5"', "52"],
+      ])
     );
   }
 
@@ -3499,6 +3772,8 @@ function getNicaRusticaResearch(productName: string) {
     researchedBlend("Nicaragua", "Connecticut Broadleaf", "Mexican San Andres", "Nicaragua", "Medium-Full"),
     researchedSizeFromMap(productName, [
       [/SHORT ROBUSTO/, "Short Robusto", '4.5"', "50"],
+      [/GORDO/, "Gordo", '6"', "60"],
+      [/TORO/, "Toro", '6"', "52"],
     ])
   );
 }
@@ -3982,6 +4257,7 @@ function getResearchedLineEnrichment(item: ImportedInventoryItem) {
     getCamachoResearch(productName),
     getNubResearch(productName),
     getAsylumResearch(productName),
+    getAgingRoomResearch(productName),
     getCaoResearch(productName),
     getPartagasResearch(productName),
     getFactoryThrowoutsResearch(productName),
@@ -4184,7 +4460,11 @@ export function getCatalogProductDetails(product: CatalogProduct): CatalogProduc
   ].filter(Boolean) as string[];
   const reviewSignal = product.expertReview
     ? [`${product.expertReview.score}-point ${product.expertReview.sourceName} review`]
-    : [];
+    : product.reviewProfile
+      ? ["Review details researched"]
+      : isCigarCatalogProduct(product)
+        ? ["Review audit queued"]
+        : [];
 
   return {
     summary: getCatalogProductDescription(product),

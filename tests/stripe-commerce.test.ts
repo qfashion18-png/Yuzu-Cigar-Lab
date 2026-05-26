@@ -43,7 +43,9 @@ test("Stripe product checkout sessions use hosted Checkout with server-computed 
         },
       ],
       shipping: {
-        methodId: "adult-signature-ground",
+        methodId: "usps-adult-signature-ground",
+        carrier: "USPS",
+        adultSignatureRequired: true,
         address: {
           address1: "123 Yuzu Way",
           address2: "Suite 5",
@@ -54,6 +56,7 @@ test("Stripe product checkout sessions use hosted Checkout with server-computed 
         },
       },
       compliance: { ageVerificationId: "age_txn_123", policyVersion: "2026-05-07" },
+      statusToken: "chkst_unit_test_123456789012345678901234567890",
     },
     env
   );
@@ -65,14 +68,16 @@ test("Stripe product checkout sessions use hosted Checkout with server-computed 
   assert.deepEqual(params.shipping_address_collection, { allowed_countries: ["US"] });
   assert.deepEqual(params.line_items, [{ price: "price_approved", quantity: 2 }]);
   assert.deepEqual(params.automatic_tax, { enabled: true });
-  assert.match(String(params.success_url), /\/checkout\/success\?session_id=\{CHECKOUT_SESSION_ID\}/);
+  assert.match(String(params.success_url), /\/checkout\/success\?session_id=\{CHECKOUT_SESSION_ID\}&status_token=chkst_unit_test_/);
   assert.match(String(params.cancel_url), /\/checkout\/cancel/);
   assert.deepEqual(params.metadata, {
     order_kind: "product",
     cart_id: "cart_123",
     age_verification_id: "age_txn_123",
     compliance_policy_version: "2026-05-07",
-    shipping_method_id: "adult-signature-ground",
+    shipping_method_id: "usps-adult-signature-ground",
+    shipping_carrier: "USPS",
+    adult_signature_required: "true",
     order_id: "",
     shipping_name: "",
     shipping_address1: "123 Yuzu Way",
@@ -81,6 +86,7 @@ test("Stripe product checkout sessions use hosted Checkout with server-computed 
     shipping_state: "AZ",
     shipping_postal_code: "85225",
     shipping_country: "US",
+    checkout_status_token: "chkst_unit_test_123456789012345678901234567890",
   });
 });
 
@@ -91,6 +97,7 @@ test("Stripe membership checkout sessions use subscription mode and recurring pr
       tierKey: "sensei",
       billingPeriod: "monthly",
       stripePriceId: "price_sensei_monthly",
+      statusToken: "chkst_member_test_123456789012345678901234567890",
       customer: { email: "member@example.com" },
     },
     env
@@ -100,7 +107,11 @@ test("Stripe membership checkout sessions use subscription mode and recurring pr
   assert.equal(params.customer_email, "member@example.com");
   assert.deepEqual(params.line_items, [{ price: "price_sensei_monthly", quantity: 1 }]);
   assert.equal((params.metadata as Record<string, string>).order_kind, "membership");
+  assert.equal((params.metadata as Record<string, string>).customer_email, "member@example.com");
+  assert.equal((params.metadata as Record<string, string>).checkout_status_token, "chkst_member_test_123456789012345678901234567890");
+  assert.match(String(params.success_url), /status_token=chkst_member_test_/);
   assert.equal((params.subscription_data as { metadata: Record<string, string> }).metadata.tier_key, "sensei");
+  assert.equal((params.subscription_data as { metadata: Record<string, string> }).metadata.customer_email, "member@example.com");
 });
 
 test("Stripe customer portal sessions keep subscription management inside Stripe", () => {

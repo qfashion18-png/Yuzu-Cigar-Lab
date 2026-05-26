@@ -14,6 +14,8 @@ const publicPageMetadataSources = [
   ["shop", readFileSync(new URL("../src/app/shop/page.tsx", import.meta.url), "utf8")],
   ["membership", readFileSync(new URL("../src/app/membership/page.tsx", import.meta.url), "utf8")],
   ["events", readFileSync(new URL("../src/app/events/page.tsx", import.meta.url), "utf8")],
+  ["privacy", readFileSync(new URL("../src/app/privacy/page.tsx", import.meta.url), "utf8")],
+  ["terms", readFileSync(new URL("../src/app/terms/page.tsx", import.meta.url), "utf8")],
 ] as const;
 
 test("sitemap includes public products and event detail URLs with static-export-safe metadata", () => {
@@ -57,11 +59,16 @@ test("public listing pages own their canonical metadata instead of inheriting ho
 
 test("robots allows public catalog indexing while excluding internal operations pages", () => {
   const value = robots();
+  const urls = sitemap().map((entry) => entry.url);
   const rules = Array.isArray(value.rules) ? value.rules : [value.rules];
   const publicRule = rules.find((rule) => rule.userAgent === "*");
 
   assert.ok(publicRule);
   assert.deepEqual(publicRule.allow, "/");
   assert.deepEqual(publicRule.disallow, ["/admin/", "/account/", "/checkout/"]);
+  assert.equal(urls.includes(`${siteUrl}/account/`), false, "sitemap should not list account pages blocked by robots");
+  assert.equal(urls.includes(`${siteUrl}/checkout/`), false, "sitemap should not list checkout pages blocked by robots");
+  assert.ok(urls.includes(`${siteUrl}/privacy`), "sitemap should list the privacy policy for production trust review");
+  assert.ok(urls.includes(`${siteUrl}/terms`), "sitemap should list the terms page for production trust review");
   assert.equal(value.sitemap, `${siteUrl}/sitemap.xml`);
 });

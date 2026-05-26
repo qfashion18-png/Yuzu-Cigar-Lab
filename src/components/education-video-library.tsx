@@ -86,22 +86,26 @@ const videoAudioVersion = "2026-05-11-audio-redo";
 
 export function EducationVideoLibrary() {
   return (
-    <section id="hyperframes-videos" className="relative mx-auto max-w-[1520px] scroll-mt-24 px-5 pt-8 lg:px-10">
-      <div className="border border-yuzu-line/80 bg-yuzu-night/78 p-5 shadow-[0_24px_70px_rgba(0,0,0,0.28)] sm:p-6 lg:p-8">
+    <section
+      id="hyperframes-videos"
+      data-education-video-library="compact"
+      className="relative mx-auto max-w-[1320px] scroll-mt-24 px-5 pt-8 lg:px-10"
+    >
+      <div className="border border-yuzu-line/80 bg-yuzu-night/78 p-4 shadow-[0_18px_54px_rgba(0,0,0,0.24)] sm:p-5 lg:p-6">
         <SectionHeading
           kicker="Yuzu Video Library"
           title="Watch the Yuzu story in short cuts."
           copy="A clean shelf of Yuzu promos, explainers, and feature videos."
-          className="max-w-4xl"
+          className="max-w-3xl"
         />
 
-        <div className="mt-7 grid items-start gap-5 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="mt-6 grid items-start gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
           {educationVideos.map((video) => (
             <article
               key={video.title}
-              className="overflow-hidden border border-yuzu-line/75 bg-yuzu-panel/78 shadow-[0_18px_48px_rgba(0,0,0,0.24)]"
+              className="overflow-hidden border border-yuzu-line/75 bg-yuzu-panel/78 shadow-[0_12px_34px_rgba(0,0,0,0.2)]"
             >
-              <div className="aspect-video border-b border-yuzu-line/70 bg-black">
+              <div className="aspect-video max-h-44 border-b border-yuzu-line/70 bg-black">
                 <video
                   className="h-full w-full object-contain"
                   src={`${video.videoSrc}?v=${videoAudioVersion}`}
@@ -112,9 +116,9 @@ export function EducationVideoLibrary() {
                   aria-label={video.title}
                 />
               </div>
-              <div className="p-5">
-                <h3 className="font-heading text-2xl leading-tight text-yuzu-cream sm:text-3xl">{video.title}</h3>
-                <p className="mt-3 text-sm leading-6 text-yuzu-muted">{video.description}</p>
+              <div className="p-4">
+                <h3 className="font-heading text-lg leading-snug text-yuzu-cream sm:text-xl">{video.title}</h3>
+                <p className="mt-2 line-clamp-2 text-xs leading-5 text-yuzu-muted">{video.description}</p>
               </div>
             </article>
           ))}

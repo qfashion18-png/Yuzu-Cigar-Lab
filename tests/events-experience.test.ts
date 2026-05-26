@@ -7,16 +7,43 @@ import { renderToStaticMarkup } from "react-dom/server";
 import EventsPage from "../src/app/events/page";
 import { searchCuratedArea } from "../src/lib/curated-event-search";
 import { curatedCigarMarkets, events } from "../src/lib/data";
+import { getAutoUpdatedEvents, getFeaturedEvent } from "../src/lib/event-schedule";
 
-test("events page links every event card to a static detail screen", () => {
+test("events detail routes are generated for every configured event", async () => {
   const html = renderToStaticMarkup(createElement(EventsPage));
+  const eventDetailModule = await import("../src/app/events/[slug]/page");
 
+  assert.ok(html.includes("AutoUpdatingEventGrid") || html.includes('data-events-section="yuzu"'), "events page must keep the Yuzu events surface");
+  assert.deepEqual(
+    eventDetailModule.generateStaticParams(),
+    events.map((event) => ({ slug: event.slug }))
+  );
   for (const event of events) {
-    const slug = event.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    const detailHtml = renderToStaticMarkup(
+      await eventDetailModule.default({
+        params: Promise.resolve({ slug: event.slug }),
+      })
+    );
 
-    assert.ok(html.includes(`href="/events/${slug}"`), `missing detail link for ${event.title}`);
-    assert.ok(html.includes(`data-event-card="${slug}"`), `missing clickable event card marker for ${event.title}`);
+    assert.ok(detailHtml.includes(event.title), `missing static detail screen for ${event.title}`);
   }
+});
+
+test("event schedule automatically drops past events and promotes events going on now", () => {
+  const may22EventTime = new Date("2026-05-22T19:30:00-07:00");
+  const currentEvents = getAutoUpdatedEvents(events, may22EventTime);
+
+  assert.equal(currentEvents[0]?.slug, "founder-reserve-tasting");
+  assert.equal(getFeaturedEvent(events, may22EventTime)?.slug, "founder-reserve-tasting");
+  assert.equal(currentEvents.some((event) => event.slug === "aire-by-puro-open-event"), false);
+
+  const afterAgingWorkshop = new Date("2026-06-07T12:00:00-07:00");
+  const laterEvents = getAutoUpdatedEvents(events, afterAgingWorkshop);
+
+  assert.deepEqual(
+    laterEvents.map((event) => event.slug),
+    ["opus-x-allocation-night"]
+  );
 });
 
 test("events page separates Yuzu events from location-based curated picks", () => {
@@ -81,10 +108,14 @@ test("event detail route renders the selected event as a full detail screen", as
 });
 
 test("home page includes an image-led upcoming events promo", () => {
-  const source = readFileSync(new URL("../src/app/page.tsx", import.meta.url), "utf8");
+  const source = [
+    readFileSync(new URL("../src/app/page.tsx", import.meta.url), "utf8"),
+    readFileSync(new URL("../src/components/home-event-feature.tsx", import.meta.url), "utf8"),
+  ].join("\n");
 
   assert.ok(source.includes('data-home-events="featured"'), "missing home events promo marker");
-  assert.ok(source.includes("src={featuredEvent.image}"), "missing featured event image binding on home page");
+  assert.ok(source.includes("HomeEventFeature"), "home page must use the auto-updating event feature");
+  assert.equal(source.includes("const featuredEvent = events[0]"), false, "home page must not pin the oldest hard-coded event");
   assert.ok(source.includes("Upcoming Events"));
   assert.ok(source.includes('href="/events"'));
 });

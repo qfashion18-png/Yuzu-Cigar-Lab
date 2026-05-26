@@ -90,6 +90,28 @@ function createSignedAgeVerificationToken(secret = "age-secret", vendorTransacti
   return `${signedMessage}.${signature}`;
 }
 
+function createSignedMembershipEntitlementToken(secret = "membership-secret", email = "member@example.com") {
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const payload = {
+    sub: "member-123",
+    email,
+    status: "member",
+    tiers: ["sensei"],
+    iat: nowSeconds,
+    exp: nowSeconds + 15 * 60,
+  };
+  const payloadSegment = encodeBase64Url(JSON.stringify(payload));
+  const signedMessage = `yccmem1.${payloadSegment}`;
+  const signature = crypto
+    .createHmac("sha256", secret)
+    .update(signedMessage)
+    .digest("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+  return `${signedMessage}.${signature}`;
+}
+
 function installPersistenceMocks(
   options: {
     agentReply?: string;
@@ -99,15 +121,25 @@ function installPersistenceMocks(
     retrieveText?: string;
     transcribeTranscript?: string;
     dispatchRows?: Array<Record<string, unknown>>;
+    climateRows?: Array<Record<string, unknown>>;
+    humidorItemRows?: Array<Record<string, unknown>>;
+    adminOrderRows?: Array<Record<string, unknown>>;
+    adminMemberRows?: Array<Record<string, unknown>>;
+    memberStripeCustomerId?: string | null;
+    memberSubscriptionRows?: Array<Record<string, unknown>>;
+    memberUpsertEmailConflict?: boolean;
+    commerceSecret?: Record<string, unknown>;
+    s3Objects?: Record<string, unknown>;
     webPushOutcomes?: Record<string, "ok" | "gone" | "not_found">;
   } = {}
 ) {
   const clients: Array<{
-    queries: Array<{ sql: string; params: unknown[] }>;
-    config: Record<string, unknown>;
-    connected: boolean;
-    ended: boolean;
+      queries: Array<{ sql: string; params: unknown[] }>;
+      config: Record<string, unknown>;
+      connected: boolean;
+      ended: boolean;
   }> = [];
+  let memberUpsertAttempts = 0;
 
   class RecordingPgClient {
     queries: Array<{ sql: string; params: unknown[] }> = [];
@@ -168,10 +200,53 @@ function installPersistenceMocks(
         };
       }
 
+      if (
+        normalized.includes("select stripe_customer_id") &&
+        normalized.includes("from public.members") &&
+        normalized.includes("where id = $1")
+      ) {
+        return {
+          rows:
+            options.memberStripeCustomerId === undefined
+              ? []
+              : [{ stripe_customer_id: options.memberStripeCustomerId }],
+          rowCount: options.memberStripeCustomerId === undefined ? 0 : 1,
+        };
+      }
+
       if (normalized.includes("select stripe_customer_id") && normalized.includes("from public.member_subscriptions")) {
         return {
           rows: [{ stripe_customer_id: "cus_member_123" }],
           rowCount: 1,
+        };
+      }
+
+      if (
+        normalized.includes("from public.member_subscriptions") &&
+        normalized.includes("stripe_subscription_id") &&
+        normalized.includes("tier_key") &&
+        normalized.includes("billing_period") &&
+        normalized.includes("limit 1")
+      ) {
+        const rows = options.memberSubscriptionRows || [
+          {
+            id: "33333333-3333-4333-8333-333333333333",
+            email: actorClaims.email,
+            stripe_customer_id: "cus_member_123",
+            stripe_subscription_id: "sub_member_123",
+            stripe_price_id: "price_sensei_monthly",
+            stripe_checkout_session_id: "cs_member_123",
+            tier_key: "sensei",
+            billing_period: "monthly",
+            status: "active",
+            current_period_end: "2026-06-20T00:00:00.000Z",
+            created_at: "2026-05-20T00:00:00.000Z",
+            updated_at: "2026-05-20T00:00:00.000Z",
+          },
+        ];
+        return {
+          rows,
+          rowCount: rows.length,
         };
       }
 
@@ -228,6 +303,30 @@ function installPersistenceMocks(
         };
       }
 
+      if (normalized.includes("insert into public.member_subscriptions")) {
+        return {
+          rows: [{ id: "33333333-3333-4333-8333-333333333333", status: params[8] || "active" }],
+          rowCount: 1,
+        };
+      }
+
+      if (
+        normalized.includes("update public.members") &&
+        normalized.includes("stripe_customer_id = coalesce") &&
+        normalized.includes("where id = $1") &&
+        normalized.includes("other.stripe_customer_id")
+      ) {
+        return {
+          rows: [
+            {
+              id: params[0],
+              stripe_customer_id: params[1],
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+
       if (normalized.includes("insert into public.commerce_audit_log")) {
         return {
           rows: [{ id: "99999999-9999-4999-8999-999999999999" }],
@@ -235,7 +334,153 @@ function installPersistenceMocks(
         };
       }
 
+      if (normalized.includes("admin_orders_summary")) {
+        return {
+          rows: [
+            {
+              orders_total: 1,
+              orders_paid: 1,
+              orders_pending: 0,
+              orders_fulfilled: 0,
+              orders_needs_attention: 1,
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+
+      if (normalized.includes("admin_orders_list")) {
+        return {
+          rows: options.adminOrderRows || [
+            {
+              id: "88888888-8888-4888-8888-888888888888",
+              stripe_checkout_session_id: "cs_test_admin",
+              email: "member@example.com",
+              status: "paid",
+              fulfillment_status: "not_started",
+              compliance_status: "verified",
+              subtotal_cents: 12000,
+              tax_cents: 792,
+              shipping_cents: 0,
+              total_cents: 12792,
+              currency: "usd",
+              item_count: 2,
+              customer_name: "Yuzu Member",
+              member_role: "customer",
+              membership_tier: "sensei",
+              member_status: "active",
+              created_at: "2026-05-12T10:00:00.000Z",
+              updated_at: "2026-05-12T10:05:00.000Z",
+            },
+          ],
+          rowCount: options.adminOrderRows?.length || 1,
+        };
+      }
+
+      if (normalized.includes("admin_order_update")) {
+        return {
+          rows: [
+            {
+              id: params[0],
+              stripe_checkout_session_id: "cs_test_admin",
+              email: "member@example.com",
+              status: params[1] || "paid",
+              fulfillment_status: params[2] || "not_started",
+              compliance_status: params[3] || "verified",
+              subtotal_cents: 12000,
+              tax_cents: 792,
+              shipping_cents: 0,
+              total_cents: 12792,
+              currency: "usd",
+              item_count: 2,
+              customer_name: "Yuzu Member",
+              member_role: "customer",
+              membership_tier: "sensei",
+              member_status: "active",
+              created_at: "2026-05-12T10:00:00.000Z",
+              updated_at: "2026-05-12T10:10:00.000Z",
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+
+      if (normalized.includes("admin_members_summary")) {
+        return {
+          rows: [
+            {
+              members_total: 1,
+              members_admins: 0,
+              members_operators: 0,
+              members_active: 1,
+              members_non_member: 0,
+              members_banned: 0,
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+
+      if (normalized.includes("admin_members_list")) {
+        return {
+          rows: options.adminMemberRows || [
+            {
+              id: "11111111-1111-4111-8111-111111111111",
+              cognito_sub: "member-123",
+              email: "member@example.com",
+              email_verified: true,
+              display_name: "Yuzu Member",
+              role: "customer",
+              membership_tier: "sensei",
+              member_status: "active",
+              last_seen_at: "2026-05-12T09:00:00.000Z",
+              created_at: "2026-05-06T09:00:00.000Z",
+              updated_at: "2026-05-12T09:10:00.000Z",
+              subscription_status: "active",
+              subscription_tier: "sensei",
+              subscription_period: "monthly",
+              order_count: 1,
+              total_spend_cents: 12792,
+              humidor_item_count: 3,
+            },
+          ],
+          rowCount: options.adminMemberRows?.length || 1,
+        };
+      }
+
+      if (normalized.includes("admin_member_access_update")) {
+        return {
+          rows: [
+            {
+              id: params[0],
+              cognito_sub: "member-123",
+              email: "member@example.com",
+              email_verified: true,
+              display_name: "Yuzu Member",
+              role: params[1] || "customer",
+              membership_tier: params[2],
+              member_status: params[4] || "active",
+              last_seen_at: "2026-05-12T09:00:00.000Z",
+              created_at: "2026-05-06T09:00:00.000Z",
+              updated_at: "2026-05-12T10:15:00.000Z",
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+
       if (normalized.includes("insert into public.members")) {
+        memberUpsertAttempts += 1;
+        if (options.memberUpsertEmailConflict && memberUpsertAttempts === 1) {
+          const error = new Error("duplicate key value violates unique constraint \"members_email_lower_uidx\"") as Error & {
+            code?: string;
+            constraint?: string;
+          };
+          error.code = "23505";
+          error.constraint = "members_email_lower_uidx";
+          throw error;
+        }
+
         return {
           rows: [
             {
@@ -252,6 +497,23 @@ function installPersistenceMocks(
         };
       }
 
+      if (normalized.includes("update public.members") && normalized.includes("where lower(email) = lower($1)")) {
+        return {
+          rows: [
+            {
+              id: "11111111-1111-4111-8111-111111111111",
+              cognito_sub: params[1],
+              email: params[0],
+              display_name: params[3],
+              role: params[4],
+              membership_tier: params[5],
+              member_status: params[6],
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+
       if (normalized.includes("select preferences") && normalized.includes("from public.member_profiles")) {
         return {
           rows: [
@@ -260,6 +522,10 @@ function installPersistenceMocks(
                 pushEnabled: true,
                 reorderRemindersEnabled: true,
                 climateAlertsEnabled: false,
+                humidorProfile: {
+                  humidorName: "Home cabinet",
+                  defaultLocation: "Walk-in Humidor",
+                },
                 pushSubscription: {
                   endpoint: "https://example.com/endpoint",
                   keys: {
@@ -282,6 +548,10 @@ function installPersistenceMocks(
                 pushEnabled: true,
                 reorderRemindersEnabled: true,
                 climateAlertsEnabled: false,
+                humidorProfile: {
+                  humidorName: "Home cabinet",
+                  defaultLocation: "Walk-in Humidor",
+                },
                 pushSubscription: {
                   endpoint: "https://example.com/endpoint",
                   keys: {
@@ -358,6 +628,17 @@ function installPersistenceMocks(
                 },
               ],
               official_sources: ["https://www.rockypatel.com/cigar-news/sixty-release/"],
+              metadata: {
+                images: [
+                  {
+                    label: "Rocky Patel Sixty",
+                    image: "https://www.rockypatel.com/wp-content/uploads/2026/05/rocky-patel-sixty.jpg",
+                    imagePosition: "50% 45%",
+                    alt: "Rocky Patel Sixty story image",
+                    sourceUrl: "https://www.rockypatel.com/cigar-news/sixty-release/",
+                  },
+                ],
+              },
               status: "published",
               published_at: "2026-05-11T19:00:00.000Z",
               updated_at: "2026-05-11T19:00:00.000Z",
@@ -379,6 +660,7 @@ function installPersistenceMocks(
               body_markdown: params[4],
               source_notes: JSON.parse(String(params[5] || "[]")),
               official_sources: JSON.parse(String(params[6] || "[]")),
+              metadata: JSON.parse(String(params[9] || "{}")),
               status: params[7],
               published_at: "2026-05-11T19:00:00.000Z",
               updated_at: "2026-05-11T19:00:00.000Z",
@@ -395,6 +677,47 @@ function installPersistenceMocks(
         };
       }
 
+      if (normalized.includes("humidor_item_enrichment_lookup")) {
+        return {
+          rows: options.humidorItemRows || [],
+          rowCount: options.humidorItemRows?.length || 0,
+        };
+      }
+
+      if (
+        normalized.includes("select") &&
+        normalized.includes("from public.humidor_items") &&
+        normalized.includes("where member_id = $1") &&
+        normalized.includes("archived_at is null")
+      ) {
+        return {
+          rows: options.humidorItemRows || [],
+          rowCount: options.humidorItemRows?.length || 0,
+        };
+      }
+
+      if (normalized.includes("humidor_item_enrichment_update")) {
+        const existing = options.humidorItemRows?.[0] || {};
+        return {
+          rows: [
+            {
+              ...existing,
+              id: params[0],
+              brand: params[2],
+              line: params[3],
+              vitola: params[4],
+              wrapper: params[5],
+              origin: params[6],
+              strength: params[7],
+              tasting_notes: params[8],
+              metadata: JSON.parse(String(params[9] || "{}")),
+              created_at: existing.created_at || "2026-05-06T09:00:00.000Z",
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+
       if (
         normalized.includes("from public.members m") &&
         normalized.includes("join public.member_profiles mp") &&
@@ -403,6 +726,17 @@ function installPersistenceMocks(
         return {
           rows: options.dispatchRows || [],
           rowCount: options.dispatchRows?.length || 0,
+        };
+      }
+
+      if (
+        normalized.includes("from public.members m") &&
+        normalized.includes("join public.member_profiles mp") &&
+        normalized.includes("climatealertsenabled")
+      ) {
+        return {
+          rows: options.climateRows || [],
+          rowCount: options.climateRows?.length || 0,
         };
       }
 
@@ -450,6 +784,7 @@ function installPersistenceMocks(
   const knowledgeBaseRetrievals: Array<Record<string, unknown>> = [];
   const pollyInvocations: Array<Record<string, unknown>> = [];
   const s3Invocations: Array<Record<string, unknown>> = [];
+  const secretsManagerInvocations: Array<Record<string, unknown>> = [];
   const sesInvocations: Array<Record<string, unknown>> = [];
   const transcribeInvocations: Array<Record<string, unknown>> = [];
   type WebPushSetVapidDetails = (vapidSubject: string, vapidPublicKey: string, vapidPrivateKey: string) => void;
@@ -611,6 +946,17 @@ function installPersistenceMocks(
       }
 
       const key = String(command.input.Key || "");
+      if (Object.prototype.hasOwnProperty.call(options.s3Objects || {}, key)) {
+        const value = options.s3Objects?.[key];
+        return {
+          Body: {
+            async transformToString() {
+              return typeof value === "string" ? value : JSON.stringify(value);
+            },
+          },
+        };
+      }
+
       if (key.endsWith(".json")) {
         return {
           Body: {
@@ -753,7 +1099,15 @@ function installPersistenceMocks(
   }
 
   class SecretsManagerClient {
-    async send() {
+    async send(command: GetSecretValueCommand) {
+      secretsManagerInvocations.push(command.input);
+      const secretId = String(command.input.SecretId || "");
+      if (secretId.includes("/commerce") || secretId.includes(":secret:ycc/commerce/")) {
+        return {
+          SecretString: JSON.stringify(options.commerceSecret || {}),
+        };
+      }
+
       return {
         SecretString: JSON.stringify({ username: "postgres", password: "secret" }),
       };
@@ -832,6 +1186,20 @@ function installPersistenceMocks(
     BEDROCK_AGENT_YCCNEWSAGENT_ALIAS_ID: process.env.BEDROCK_AGENT_YCCNEWSAGENT_ALIAS_ID,
     RDS_SSLMODE: process.env.RDS_SSLMODE,
     RDS_SSLROOTCERT: process.env.RDS_SSLROOTCERT,
+    COMMERCE_PROVIDER_SECRET_ARN: process.env.COMMERCE_PROVIDER_SECRET_ARN,
+    COMMERCE_PROVIDER_SECRET_ID: process.env.COMMERCE_PROVIDER_SECRET_ID,
+    YCC_COMMERCE_SECRET_ARN: process.env.YCC_COMMERCE_SECRET_ARN,
+    YCC_COMMERCE_SECRET_ID: process.env.YCC_COMMERCE_SECRET_ID,
+    STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY,
+    STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET,
+    STRIPE_LAUNCH_CATALOG_READY: process.env.STRIPE_LAUNCH_CATALOG_READY,
+    STRIPE_LAUNCH_CATALOG_JSON: process.env.STRIPE_LAUNCH_CATALOG_JSON,
+    FEATURE_STRIPE_TAX: process.env.FEATURE_STRIPE_TAX,
+    STRIPE_PRICE_SENSEI_MONTHLY: process.env.STRIPE_PRICE_SENSEI_MONTHLY,
+    PUBLIC_SITE_URL: process.env.PUBLIC_SITE_URL,
+    AGE_VERIFICATION_SIGNING_SECRET: process.env.AGE_VERIFICATION_SIGNING_SECRET,
+    MEMBERSHIP_ENTITLEMENT_SIGNING_SECRET: process.env.MEMBERSHIP_ENTITLEMENT_SIGNING_SECRET,
+    ALLOW_LEGACY_AGE_VERIFICATION_TOKEN: process.env.ALLOW_LEGACY_AGE_VERIFICATION_TOKEN,
   };
 
   process.env.DB_PROXY_ENDPOINT = "proxy.test.local";
@@ -871,6 +1239,7 @@ function installPersistenceMocks(
     knowledgeBaseRetrievals,
     pollyInvocations,
     s3Invocations,
+    secretsManagerInvocations,
     sesInvocations,
     transcribeInvocations,
     webPushInvocations,
@@ -900,6 +1269,7 @@ function installStripeMock(
     createSession?: Record<string, unknown>;
     portalSession?: Record<string, unknown>;
     retrieveSession?: Record<string, unknown>;
+    retrieveError?: unknown;
     webhookEvent?: Record<string, unknown>;
   } = {}
 ) {
@@ -908,12 +1278,20 @@ function installStripeMock(
   const billingPortalSessionsCreated: Record<string, unknown>[] = [];
   const previousModuleLoad = Module._load;
   const previousEnv = {
+    COMMERCE_PROVIDER_SECRET_ARN: process.env.COMMERCE_PROVIDER_SECRET_ARN,
+    COMMERCE_PROVIDER_SECRET_ID: process.env.COMMERCE_PROVIDER_SECRET_ID,
+    YCC_COMMERCE_SECRET_ARN: process.env.YCC_COMMERCE_SECRET_ARN,
+    YCC_COMMERCE_SECRET_ID: process.env.YCC_COMMERCE_SECRET_ID,
     STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY,
+    STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET,
     STRIPE_LAUNCH_CATALOG_READY: process.env.STRIPE_LAUNCH_CATALOG_READY,
     STRIPE_LAUNCH_CATALOG_JSON: process.env.STRIPE_LAUNCH_CATALOG_JSON,
     FEATURE_STRIPE_TAX: process.env.FEATURE_STRIPE_TAX,
     STRIPE_PRICE_SENSEI_MONTHLY: process.env.STRIPE_PRICE_SENSEI_MONTHLY,
     PUBLIC_SITE_URL: process.env.PUBLIC_SITE_URL,
+    AGE_VERIFICATION_SIGNING_SECRET: process.env.AGE_VERIFICATION_SIGNING_SECRET,
+    MEMBERSHIP_ENTITLEMENT_SIGNING_SECRET: process.env.MEMBERSHIP_ENTITLEMENT_SIGNING_SECRET,
+    ALLOW_LEGACY_AGE_VERIFICATION_TOKEN: process.env.ALLOW_LEGACY_AGE_VERIFICATION_TOKEN,
   };
 
   class Stripe {
@@ -925,6 +1303,9 @@ function installStripeMock(
         },
         retrieve: async (sessionId: string) => {
           checkoutSessionsRetrieved.push(sessionId);
+          if (options.retrieveError) {
+            throw options.retrieveError;
+          }
           return options.retrieveSession || { id: sessionId, payment_status: "paid", status: "complete", metadata: { order_id: "order_123" } };
         },
       },
@@ -971,7 +1352,7 @@ function installStripeMock(
               },
               metadata: {
                 age_verification_id: "age_txn_12345678",
-                shipping_method_id: "adult-signature-ground",
+                shipping_method_id: "usps-adult-signature-ground",
               },
             },
           },
@@ -1095,13 +1476,226 @@ test("commerce checkout route is registered as a public pre-auth route", async (
     body: JSON.stringify({
       items: [{ sku: "APPROVED-BOX", quantity: 1 }],
       customer: { email: "member@example.com" },
-      shippingMethodId: "adult-signature-ground",
+      shippingMethodId: "usps-adult-signature-ground",
     }),
     requestContext: { requestId: "req-commerce-checkout", http: { method: "POST" } },
   });
 
   assert.notEqual(response.statusCode, 401);
   assert.notEqual(response.statusCode, 404);
+});
+
+test("commerce age verification route exchanges an accepted AgeChecker UUID for a signed checkout token", async () => {
+  const previousApiKey = process.env.AGE_VERIFICATION_API_KEY;
+  const previousApiSecret = process.env.AGE_VERIFICATION_API_SECRET;
+  const previousSigningSecret = process.env.AGE_VERIFICATION_SIGNING_SECRET;
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+
+  try {
+    process.env.AGE_VERIFICATION_API_KEY = "agechecker-domain-api-key";
+    process.env.AGE_VERIFICATION_API_SECRET = "agechecker-account-secret";
+    process.env.AGE_VERIFICATION_SIGNING_SECRET = "age-secret";
+    globalThis.fetch = async (url, init) => {
+      calls.push({ url: String(url), init });
+      return new Response(JSON.stringify({ status: "accepted", uuid: "12345678901234567890123456789012" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+
+    const response = await handler({
+      routeKey: "POST /commerce/age-verification-token",
+      rawPath: "/commerce/age-verification-token",
+      body: JSON.stringify({ vendorTransactionId: "12345678901234567890123456789012" }),
+      requestContext: { requestId: "req-commerce-age-token", http: { method: "POST" } },
+    });
+
+    const body = JSON.parse(response.body);
+    assert.equal(response.statusCode, 200);
+    assert.match(body.ageVerificationToken, /^yccav1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+    assert.equal(body.vendorTransactionId, "age_txn_12345678901234567890123456789012");
+    assert.equal(calls[0].url, "https://api.agechecker.net/v1/status/12345678901234567890123456789012");
+    assert.equal(calls[0].init?.method, "GET");
+    assert.equal(new Headers(calls[0].init?.headers).get("X-AgeChecker-Secret"), "agechecker-account-secret");
+    assert.equal(calls[0].init?.body, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousApiKey === undefined) {
+      delete process.env.AGE_VERIFICATION_API_KEY;
+    } else {
+      process.env.AGE_VERIFICATION_API_KEY = previousApiKey;
+    }
+
+    if (previousApiSecret === undefined) {
+      delete process.env.AGE_VERIFICATION_API_SECRET;
+    } else {
+      process.env.AGE_VERIFICATION_API_SECRET = previousApiSecret;
+    }
+
+    if (previousSigningSecret === undefined) {
+      delete process.env.AGE_VERIFICATION_SIGNING_SECRET;
+    } else {
+      process.env.AGE_VERIFICATION_SIGNING_SECRET = previousSigningSecret;
+    }
+  }
+});
+
+test("commerce age verification route requires an AgeChecker account secret for status lookups", async () => {
+  const previousApiKey = process.env.AGE_VERIFICATION_API_KEY;
+  const previousApiSecret = process.env.AGE_VERIFICATION_API_SECRET;
+  const previousAccountSecret = process.env.AGE_VERIFICATION_ACCOUNT_SECRET;
+  const previousSigningSecret = process.env.AGE_VERIFICATION_SIGNING_SECRET;
+  const originalFetch = globalThis.fetch;
+  let fetchCalled = false;
+
+  try {
+    process.env.AGE_VERIFICATION_API_KEY = "agechecker-domain-api-key";
+    delete process.env.AGE_VERIFICATION_API_SECRET;
+    delete process.env.AGE_VERIFICATION_ACCOUNT_SECRET;
+    process.env.AGE_VERIFICATION_SIGNING_SECRET = "age-secret";
+    globalThis.fetch = async () => {
+      fetchCalled = true;
+      return new Response(JSON.stringify({ status: "accepted" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+
+    const response = await handler({
+      routeKey: "POST /commerce/age-verification-token",
+      rawPath: "/commerce/age-verification-token",
+      body: JSON.stringify({ vendorTransactionId: "12345678901234567890123456789012" }),
+      requestContext: { requestId: "req-commerce-age-token-missing-secret", http: { method: "POST" } },
+    });
+
+    const body = JSON.parse(response.body);
+    assert.equal(response.statusCode, 409);
+    assert.equal(body.error, "age_verification_not_configured");
+    assert.equal(fetchCalled, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousApiKey === undefined) {
+      delete process.env.AGE_VERIFICATION_API_KEY;
+    } else {
+      process.env.AGE_VERIFICATION_API_KEY = previousApiKey;
+    }
+
+    if (previousApiSecret === undefined) {
+      delete process.env.AGE_VERIFICATION_API_SECRET;
+    } else {
+      process.env.AGE_VERIFICATION_API_SECRET = previousApiSecret;
+    }
+
+    if (previousAccountSecret === undefined) {
+      delete process.env.AGE_VERIFICATION_ACCOUNT_SECRET;
+    } else {
+      process.env.AGE_VERIFICATION_ACCOUNT_SECRET = previousAccountSecret;
+    }
+
+    if (previousSigningSecret === undefined) {
+      delete process.env.AGE_VERIFICATION_SIGNING_SECRET;
+    } else {
+      process.env.AGE_VERIFICATION_SIGNING_SECRET = previousSigningSecret;
+    }
+  }
+});
+
+test("commerce age verification route rejects pending AgeChecker verifications", async () => {
+  const previousApiKey = process.env.AGE_VERIFICATION_API_KEY;
+  const previousApiSecret = process.env.AGE_VERIFICATION_API_SECRET;
+  const previousSigningSecret = process.env.AGE_VERIFICATION_SIGNING_SECRET;
+  const originalFetch = globalThis.fetch;
+
+  try {
+    process.env.AGE_VERIFICATION_API_KEY = "agechecker-domain-api-key";
+    process.env.AGE_VERIFICATION_API_SECRET = "agechecker-account-secret";
+    process.env.AGE_VERIFICATION_SIGNING_SECRET = "age-secret";
+    globalThis.fetch = async () =>
+      new Response(JSON.stringify({ status: "photo_id", uuid: "12345678901234567890123456789012" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+
+    const response = await handler({
+      routeKey: "POST /commerce/age-verification-token",
+      rawPath: "/commerce/age-verification-token",
+      body: JSON.stringify({ vendorTransactionId: "12345678901234567890123456789012" }),
+      requestContext: { requestId: "req-commerce-age-token-pending", http: { method: "POST" } },
+    });
+
+    const body = JSON.parse(response.body);
+    assert.equal(response.statusCode, 409);
+    assert.equal(body.error, "age_verification_pending");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousApiKey === undefined) {
+      delete process.env.AGE_VERIFICATION_API_KEY;
+    } else {
+      process.env.AGE_VERIFICATION_API_KEY = previousApiKey;
+    }
+
+    if (previousApiSecret === undefined) {
+      delete process.env.AGE_VERIFICATION_API_SECRET;
+    } else {
+      process.env.AGE_VERIFICATION_API_SECRET = previousApiSecret;
+    }
+
+    if (previousSigningSecret === undefined) {
+      delete process.env.AGE_VERIFICATION_SIGNING_SECRET;
+    } else {
+      process.env.AGE_VERIFICATION_SIGNING_SECRET = previousSigningSecret;
+    }
+  }
+});
+
+test("commerce age verification route maps AgeChecker status misses to a controlled failure", async () => {
+  const previousApiKey = process.env.AGE_VERIFICATION_API_KEY;
+  const previousApiSecret = process.env.AGE_VERIFICATION_API_SECRET;
+  const previousSigningSecret = process.env.AGE_VERIFICATION_SIGNING_SECRET;
+  const originalFetch = globalThis.fetch;
+
+  try {
+    process.env.AGE_VERIFICATION_API_KEY = "agechecker-domain-api-key";
+    process.env.AGE_VERIFICATION_API_SECRET = "agechecker-account-secret";
+    process.env.AGE_VERIFICATION_SIGNING_SECRET = "age-secret";
+    globalThis.fetch = async () =>
+      new Response(JSON.stringify({ status: "not_created" }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      });
+
+    const response = await handler({
+      routeKey: "POST /commerce/age-verification-token",
+      rawPath: "/commerce/age-verification-token",
+      body: JSON.stringify({ vendorTransactionId: "12345678901234567890123456789012" }),
+      requestContext: { requestId: "req-commerce-age-token-missing", http: { method: "POST" } },
+    });
+
+    const body = JSON.parse(response.body);
+    assert.equal(response.statusCode, 400);
+    assert.equal(body.error, "age_verification_failed");
+    assert.equal(body.status, "not_created");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousApiKey === undefined) {
+      delete process.env.AGE_VERIFICATION_API_KEY;
+    } else {
+      process.env.AGE_VERIFICATION_API_KEY = previousApiKey;
+    }
+
+    if (previousApiSecret === undefined) {
+      delete process.env.AGE_VERIFICATION_API_SECRET;
+    } else {
+      process.env.AGE_VERIFICATION_API_SECRET = previousApiSecret;
+    }
+
+    if (previousSigningSecret === undefined) {
+      delete process.env.AGE_VERIFICATION_SIGNING_SECRET;
+    } else {
+      process.env.AGE_VERIFICATION_SIGNING_SECRET = previousSigningSecret;
+    }
+  }
 });
 
 test("commerce checkout loads approved catalog from server configuration before creating Stripe sessions", async () => {
@@ -1132,7 +1726,7 @@ test("commerce checkout loads approved catalog from server configuration before 
       routeKey: "POST /commerce/checkout-session",
       rawPath: "/commerce/checkout-session",
       body: JSON.stringify({
-        items: [{ sku: "APPROVED-BOX", quantity: 1 }],
+        items: [{ sku: "APPROVED-BOX", quantity: 1, unitPrice: 120 }],
         customer: { email: "member@example.com" },
         shippingAddress: {
           address1: "123 Yuzu Way",
@@ -1141,7 +1735,7 @@ test("commerce checkout loads approved catalog from server configuration before 
           state: "AZ",
           postalCode: "85225",
         },
-        shippingMethodId: "adult-signature-ground",
+        shippingMethodId: "usps-adult-signature-ground",
         compliance: { ageVerificationToken: createSignedAgeVerificationToken("age-secret") },
       }),
       requestContext: { requestId: "req-commerce-checkout-ready", http: { method: "POST" } },
@@ -1151,8 +1745,289 @@ test("commerce checkout loads approved catalog from server configuration before 
     assert.equal(JSON.parse(response.body).url, "https://checkout.stripe.com/c/pay/cs_test_123");
     assert.deepEqual(mock.checkoutSessionsCreated[0].line_items, [{ price: "price_approved", quantity: 1 }]);
     assert.deepEqual(mock.checkoutSessionsCreated[0].shipping_address_collection, { allowed_countries: ["US"] });
+    assert.equal((mock.checkoutSessionsCreated[0].metadata as Record<string, string>).shipping_method_id, "usps-adult-signature-ground");
+    assert.equal((mock.checkoutSessionsCreated[0].metadata as Record<string, string>).shipping_carrier, "USPS");
+    assert.equal((mock.checkoutSessionsCreated[0].metadata as Record<string, string>).adult_signature_required, "true");
     assert.equal((mock.checkoutSessionsCreated[0].metadata as Record<string, string>).shipping_state, "AZ");
     assert.equal((mock.checkoutSessionsCreated[0].metadata as Record<string, string>).shipping_postal_code, "85225");
+    assert.match((mock.checkoutSessionsCreated[0].metadata as Record<string, string>).checkout_status_token, /^chkst_[A-Za-z0-9_-]{32,}$/);
+    assert.ok(
+      String(mock.checkoutSessionsCreated[0].success_url).includes("status_token=chkst_"),
+      "Stripe success URL should carry the status token for the post-payment poller"
+    );
+  } finally {
+    mock.restore();
+  }
+});
+
+test("commerce checkout loads Stripe and compliance settings from Secrets Manager", async () => {
+  const secretArn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:ycc/commerce/test";
+  const persistenceMock = installPersistenceMocks({
+    commerceSecret: {
+      stripe: {
+        secretKey: "sk_test_secret_manager",
+        launchCatalogReady: true,
+        launchCatalog: [
+          {
+            sku: "APPROVED-BOX",
+            slug: "approved-box",
+            name: "Approved Box",
+            price: 120,
+            publishStatus: "published",
+            inventoryPolicy: "track",
+            sourceQuantity: 5,
+            shippable: true,
+            adultSignatureRequired: true,
+            stripePriceId: "price_secret_box",
+          },
+        ],
+      },
+      ageVerification: {
+        vendor: "AgeChecker.Net",
+        signingSecret: "age-secret-from-secrets-manager",
+      },
+      tax: {
+        provider: "Stripe Tax",
+        ready: true,
+      },
+      shipping: {
+        provider: "USPS",
+      },
+      membership: {
+        entitlementSigningSecret: "membership-secret-from-secrets-manager",
+      },
+    },
+  });
+  const stripeMock = installStripeMock();
+
+  try {
+    process.env.COMMERCE_PROVIDER_SECRET_ARN = secretArn;
+    process.env.PUBLIC_SITE_URL = "https://www.yuzucigarclub.com";
+    delete process.env.STRIPE_SECRET_KEY;
+    delete process.env.STRIPE_LAUNCH_CATALOG_READY;
+    delete process.env.STRIPE_LAUNCH_CATALOG_JSON;
+    delete process.env.FEATURE_STRIPE_TAX;
+    delete process.env.AGE_VERIFICATION_SIGNING_SECRET;
+    delete process.env.MEMBERSHIP_ENTITLEMENT_SIGNING_SECRET;
+
+    const response = await handler({
+      routeKey: "POST /commerce/checkout-session",
+      rawPath: "/commerce/checkout-session",
+      body: JSON.stringify({
+        items: [{ sku: "APPROVED-BOX", quantity: 1, unitPrice: 120 }],
+        customer: { email: "member@example.com" },
+        shippingAddress: {
+          address1: "123 Yuzu Way",
+          city: "Chandler",
+          country: "US",
+          state: "AZ",
+          postalCode: "85225",
+        },
+        shippingMethodId: "usps-adult-signature-ground",
+        compliance: { ageVerificationToken: createSignedAgeVerificationToken("age-secret-from-secrets-manager") },
+      }),
+      requestContext: { requestId: "req-commerce-checkout-secret", http: { method: "POST" } },
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(stripeMock.checkoutSessionsCreated[0].line_items, [{ price: "price_secret_box", quantity: 1 }]);
+    assert.ok(
+      persistenceMock.secretsManagerInvocations.some((input) => input.SecretId === secretArn),
+      "commerce checkout should read the configured commerce provider secret"
+    );
+  } finally {
+    stripeMock.restore();
+    persistenceMock.restore();
+  }
+});
+
+test("commerce checkout can load a large launch catalog from S3 when the commerce secret points to it", async () => {
+  const secretArn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:ycc/commerce/s3-test";
+  const catalogKey = "ycc/commerce/stripe-launch-catalog-test.json";
+  const persistenceMock = installPersistenceMocks({
+    commerceSecret: {
+      stripe: {
+        secretKey: "sk_test_secret_manager",
+        launchCatalogReady: true,
+        launchCatalogS3Uri: `s3://classroom2/${catalogKey}`,
+      },
+      ageVerification: {
+        signingSecret: "age-secret-from-s3-secret",
+      },
+      tax: {
+        ready: true,
+      },
+      shipping: {
+        provider: "USPS",
+      },
+    },
+    s3Objects: {
+      [catalogKey]: [
+        {
+          sku: "S3-BOX",
+          name: "S3 Box",
+          price: 88,
+          publishStatus: "published",
+          inventoryPolicy: "manual",
+          shippable: true,
+          adultSignatureRequired: true,
+          stripePriceId: "price_s3_box",
+        },
+      ],
+    },
+  });
+  const stripeMock = installStripeMock();
+
+  try {
+    process.env.COMMERCE_PROVIDER_SECRET_ARN = secretArn;
+    process.env.PUBLIC_SITE_URL = "https://www.yuzucigarclub.com";
+    delete process.env.STRIPE_SECRET_KEY;
+    delete process.env.STRIPE_LAUNCH_CATALOG_JSON;
+    delete process.env.AGE_VERIFICATION_SIGNING_SECRET;
+
+    const response = await handler({
+      routeKey: "POST /commerce/checkout-session",
+      rawPath: "/commerce/checkout-session",
+      body: JSON.stringify({
+        items: [{ sku: "S3-BOX", quantity: 1, unitPrice: 88 }],
+        customer: { email: "member@example.com" },
+        shippingAddress: {
+          address1: "123 Yuzu Way",
+          city: "Chandler",
+          country: "US",
+          state: "AZ",
+          postalCode: "85225",
+        },
+        shippingMethodId: "usps-adult-signature-ground",
+        compliance: { ageVerificationToken: createSignedAgeVerificationToken("age-secret-from-s3-secret") },
+      }),
+      requestContext: { requestId: "req-commerce-checkout-s3-catalog", http: { method: "POST" } },
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(stripeMock.checkoutSessionsCreated[0].line_items, [{ price: "price_s3_box", quantity: 1 }]);
+    assert.ok(
+      persistenceMock.s3Invocations.some((input) => input.Bucket === "classroom2" && input.Key === catalogKey),
+      "commerce checkout should read the launch catalog from S3"
+    );
+  } finally {
+    stripeMock.restore();
+    persistenceMock.restore();
+  }
+});
+
+test("commerce checkout rejects cart lines without client price snapshots", async () => {
+  const mock = installStripeMock();
+  try {
+    process.env.STRIPE_SECRET_KEY = "sk_test_123";
+    process.env.STRIPE_LAUNCH_CATALOG_READY = "true";
+    process.env.FEATURE_STRIPE_TAX = "ready";
+    process.env.PUBLIC_SITE_URL = "https://www.yuzucigarclub.com";
+    process.env.AGE_VERIFICATION_SIGNING_SECRET = "age-secret";
+    process.env.STRIPE_LAUNCH_CATALOG_JSON = JSON.stringify([
+      {
+        sku: "APPROVED-BOX",
+        slug: "approved-box",
+        name: "Approved Box",
+        price: 120,
+        publishStatus: "published",
+        inventoryPolicy: "track",
+        sourceQuantity: 5,
+        shippable: true,
+        adultSignatureRequired: true,
+        stripePriceId: "price_approved",
+      },
+    ]);
+
+    const response = await handler({
+      routeKey: "POST /commerce/checkout-session",
+      rawPath: "/commerce/checkout-session",
+      body: JSON.stringify({
+        items: [{ sku: "APPROVED-BOX", quantity: 1 }],
+        customer: { email: "member@example.com" },
+        shippingAddress: {
+          address1: "123 Yuzu Way",
+          city: "Chandler",
+          country: "US",
+          state: "AZ",
+          postalCode: "85225",
+        },
+        shippingMethodId: "usps-adult-signature-ground",
+        compliance: { ageVerificationToken: createSignedAgeVerificationToken("age-secret") },
+      }),
+      requestContext: { requestId: "req-commerce-checkout-missing-price", http: { method: "POST" } },
+    });
+
+    assert.equal(response.statusCode, 400);
+    assert.equal(JSON.parse(response.body).errors[0].code, "price_snapshot_required");
+    assert.equal(mock.checkoutSessionsCreated.length, 0);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("commerce checkout blocks member-only SKUs unless a signed membership entitlement is supplied", async () => {
+  const mock = installStripeMock();
+  const requestBody = {
+    items: [{ sku: "MEMBER-BOX", quantity: 1, unitPrice: 140 }],
+    customer: { email: "member@example.com" },
+    shippingAddress: {
+      address1: "123 Yuzu Way",
+      city: "Chandler",
+      country: "US",
+      state: "AZ",
+      postalCode: "85225",
+    },
+    shippingMethodId: "usps-adult-signature-ground",
+    compliance: { ageVerificationToken: createSignedAgeVerificationToken("age-secret") },
+  };
+
+  try {
+    process.env.STRIPE_SECRET_KEY = "sk_test_123";
+    process.env.STRIPE_LAUNCH_CATALOG_READY = "true";
+    process.env.FEATURE_STRIPE_TAX = "ready";
+    process.env.PUBLIC_SITE_URL = "https://www.yuzucigarclub.com";
+    process.env.AGE_VERIFICATION_SIGNING_SECRET = "age-secret";
+    process.env.MEMBERSHIP_ENTITLEMENT_SIGNING_SECRET = "membership-secret";
+    process.env.STRIPE_LAUNCH_CATALOG_JSON = JSON.stringify([
+      {
+        sku: "MEMBER-BOX",
+        slug: "member-box",
+        name: "Member Box",
+        price: 140,
+        publishStatus: "published",
+        inventoryPolicy: "track",
+        sourceQuantity: 5,
+        shippable: true,
+        memberOnly: true,
+        adultSignatureRequired: true,
+        stripePriceId: "price_member",
+      },
+    ]);
+
+    const blockedResponse = await handler({
+      routeKey: "POST /commerce/checkout-session",
+      rawPath: "/commerce/checkout-session",
+      body: JSON.stringify(requestBody),
+      requestContext: { requestId: "req-commerce-checkout-member-blocked", http: { method: "POST" } },
+    });
+
+    const allowedResponse = await handler({
+      routeKey: "POST /commerce/checkout-session",
+      rawPath: "/commerce/checkout-session",
+      body: JSON.stringify({
+        ...requestBody,
+        membership: {
+          entitlementToken: createSignedMembershipEntitlementToken("membership-secret", "member@example.com"),
+        },
+      }),
+      requestContext: { requestId: "req-commerce-checkout-member-allowed", http: { method: "POST" } },
+    });
+
+    assert.equal(blockedResponse.statusCode, 400);
+    assert.equal(JSON.parse(blockedResponse.body).errors[0].code, "membership_required");
+    assert.equal(allowedResponse.statusCode, 200);
+    assert.equal(mock.checkoutSessionsCreated.length, 1);
   } finally {
     mock.restore();
   }
@@ -1186,7 +2061,7 @@ test("commerce checkout rejects unsigned age verification tokens", async () => {
       routeKey: "POST /commerce/checkout-session",
       rawPath: "/commerce/checkout-session",
       body: JSON.stringify({
-        items: [{ sku: "APPROVED-BOX", quantity: 1 }],
+        items: [{ sku: "APPROVED-BOX", quantity: 1, unitPrice: 120 }],
         customer: { email: "member@example.com" },
         shippingAddress: {
           address1: "123 Yuzu Way",
@@ -1195,7 +2070,7 @@ test("commerce checkout rejects unsigned age verification tokens", async () => {
           state: "AZ",
           postalCode: "85225",
         },
-        shippingMethodId: "adult-signature-ground",
+        shippingMethodId: "usps-adult-signature-ground",
         compliance: { ageVerificationToken: "age_txn_12345678" },
       }),
       requestContext: { requestId: "req-commerce-checkout-invalid-age-token", http: { method: "POST" } },
@@ -1268,13 +2143,40 @@ test("customer portal sessions are bound to the authenticated member customer id
   }
 });
 
+test("customer portal sessions prefer the linked member Stripe customer id", async () => {
+  const persistenceMock = installPersistenceMocks({
+    memberStripeCustomerId: "cus_profile_456",
+  });
+  const stripeMock = installStripeMock();
+
+  try {
+    process.env.STRIPE_SECRET_KEY = "sk_test_123";
+    process.env.FEATURE_DB_WRITES = "schema_ready";
+
+    const response = await handler(createAuthenticatedEvent("POST /commerce/customer-portal-session", {}));
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(stripeMock.billingPortalSessionsCreated.length, 1);
+    assert.equal(stripeMock.billingPortalSessionsCreated[0].customer, "cus_profile_456");
+
+    const queries = persistenceMock.clients.flatMap((client) => client.queries.map((query) => query.sql));
+    assert.ok(
+      queries.some((sql) => sql.includes("select stripe_customer_id") && sql.includes("from public.members")),
+      "portal lookup should read the linked Stripe customer id from members first"
+    );
+  } finally {
+    stripeMock.restore();
+    persistenceMock.restore();
+  }
+});
+
 test("checkout session status reads Stripe before reporting paid orders as recorded", async () => {
   const mock = installStripeMock({
     retrieveSession: {
       id: "cs_paid_123",
       payment_status: "paid",
       status: "complete",
-      metadata: { order_id: "order_123" },
+      metadata: { order_id: "order_123", checkout_status_token: "chkst_status_123456789012345678901234567890" },
     },
   });
   try {
@@ -1283,6 +2185,7 @@ test("checkout session status reads Stripe before reporting paid orders as recor
     const response = await handler({
       routeKey: "GET /commerce/checkout-session/{id}",
       rawPath: "/commerce/checkout-session/cs_paid_123",
+      queryStringParameters: { status_token: "chkst_status_123456789012345678901234567890" },
       requestContext: { requestId: "req-checkout-status", http: { method: "GET" } },
     });
 
@@ -1304,7 +2207,7 @@ test("checkout session status reads persisted order records when Stripe metadata
       id: "cs_paid_without_metadata_order",
       payment_status: "paid",
       status: "complete",
-      metadata: {},
+      metadata: { checkout_status_token: "chkst_status_123456789012345678901234567890" },
     },
   });
   try {
@@ -1314,6 +2217,7 @@ test("checkout session status reads persisted order records when Stripe metadata
     const response = await handler({
       routeKey: "GET /commerce/checkout-session/{id}",
       rawPath: "/commerce/checkout-session/cs_paid_without_metadata_order",
+      queryStringParameters: { status_token: "chkst_status_123456789012345678901234567890" },
       requestContext: { requestId: "req-checkout-status-db-order", http: { method: "GET" } },
     });
 
@@ -1332,6 +2236,80 @@ test("checkout session status reads persisted order records when Stripe metadata
   } finally {
     stripeMock.restore();
     persistenceMock.restore();
+  }
+});
+
+test("checkout session status rejects requests without the Stripe success status token", async () => {
+  const mock = installStripeMock({
+    retrieveSession: {
+      id: "cs_paid_123",
+      payment_status: "paid",
+      status: "complete",
+      metadata: { order_id: "order_123", checkout_status_token: "chkst_status_123456789012345678901234567890" },
+    },
+  });
+  try {
+    process.env.STRIPE_SECRET_KEY = "sk_test_123";
+
+    const response = await handler({
+      routeKey: "GET /commerce/checkout-session/{id}",
+      rawPath: "/commerce/checkout-session/cs_paid_123",
+      requestContext: { requestId: "req-checkout-status-no-token", http: { method: "GET" } },
+    });
+
+    assert.equal(response.statusCode, 403);
+    assert.equal(JSON.parse(response.body).error, "checkout_status_forbidden");
+    assert.deepEqual(mock.checkoutSessionsRetrieved, ["cs_paid_123"]);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("checkout session status returns not found when Stripe cannot find the session", async () => {
+  const stripeError = Object.assign(new Error("No such checkout.session"), {
+    code: "resource_missing",
+    type: "StripeInvalidRequestError",
+    statusCode: 404,
+  });
+  const mock = installStripeMock({ retrieveError: stripeError });
+  try {
+    process.env.STRIPE_SECRET_KEY = "sk_test_123";
+
+    const response = await handler({
+      routeKey: "GET /commerce/checkout-session/{id}",
+      rawPath: "/commerce/checkout-session/cs_test_missing",
+      requestContext: { requestId: "req-checkout-status-missing", http: { method: "GET" } },
+    });
+
+    assert.equal(response.statusCode, 404);
+    assert.equal(JSON.parse(response.body).error, "checkout_session_not_found");
+    assert.deepEqual(mock.checkoutSessionsRetrieved, ["cs_test_missing"]);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("checkout session status returns a controlled error for malformed path escapes", async () => {
+  const stripeError = Object.assign(new Error("Invalid checkout.session id"), {
+    type: "StripeInvalidRequestError",
+    statusCode: 400,
+  });
+
+  const mock = installStripeMock({ retrieveError: stripeError });
+  try {
+    process.env.STRIPE_SECRET_KEY = "sk_test_123";
+
+    const response = await handler({
+      routeKey: "GET /commerce/checkout-session/{id}",
+      rawPath: "/commerce/checkout-session/%E0%A4%A",
+      requestContext: { requestId: "req-checkout-status-malformed-path", http: { method: "GET" } },
+    });
+
+    assert.equal(response.statusCode, 400);
+    assert.equal(JSON.parse(response.body).error, "invalid_checkout_session");
+    assert.deepEqual(mock.checkoutSessionsRetrieved, ["%E0%A4%A"]);
+  } finally {
+    mock.restore();
   }
 });
 
@@ -1382,7 +2360,7 @@ test("Stripe webhook persists signed checkout events into commerce order records
           },
           metadata: {
             age_verification_id: "age_txn_12345678",
-            shipping_method_id: "adult-signature-ground",
+            shipping_method_id: "usps-adult-signature-ground",
           },
         },
       },
@@ -1412,7 +2390,81 @@ test("Stripe webhook persists signed checkout events into commerce order records
     const queries = persistenceMock.clients.flatMap((client) => client.queries.map((query) => query.sql));
     assert.ok(queries.some((sql) => sql.includes("insert into public.stripe_events")), "stripe events should be persisted");
     assert.ok(queries.some((sql) => sql.includes("insert into public.commerce_orders")), "commerce orders should be upserted");
+    assert.ok(
+      queries.some((sql) => sql.includes("update public.members") && sql.includes("stripe_customer_id")),
+      "checkout webhook should link the matched member row to the Stripe customer"
+    );
     assert.ok(queries.some((sql) => sql.includes("insert into public.commerce_audit_log")), "commerce audit log should be written");
+  } finally {
+    stripeMock.restore();
+    persistenceMock.restore();
+  }
+});
+
+test("Stripe subscription webhooks create member subscription records", async () => {
+  const persistenceMock = installPersistenceMocks();
+  const stripeMock = installStripeMock({
+    webhookEvent: {
+      id: "evt_subscription_created_123",
+      type: "customer.subscription.created",
+      data: {
+        object: {
+          id: "sub_member_123",
+          customer: "cus_member_123",
+          current_period_end: 1771459200,
+          metadata: {
+            customer_email: "member@example.com",
+            tier_key: "sensei",
+            billing_period: "monthly",
+            checkout_session_id: "cs_member_123",
+          },
+          items: {
+            data: [
+              {
+                price: {
+                  id: "price_sensei_monthly",
+                  recurring: { interval: "month" },
+                },
+              },
+            ],
+          },
+        },
+      },
+    },
+  });
+  try {
+    process.env.STRIPE_SECRET_KEY = "sk_test_123";
+    process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_123";
+    process.env.FEATURE_DB_WRITES = "schema_ready";
+
+    const response = await handler({
+      routeKey: "POST /commerce/webhook/stripe",
+      rawPath: "/commerce/webhook/stripe",
+      body: JSON.stringify({ id: "evt_subscription_created_123" }),
+      headers: {
+        "stripe-signature": "t=123,v1=sig",
+      },
+      requestContext: { requestId: "req-commerce-subscription-webhook", http: { method: "POST" } },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.processing.duplicate, false);
+    assert.equal(body.processing.eventStored, true);
+
+    const queries = persistenceMock.clients.flatMap((client) => client.queries);
+    assert.ok(
+      queries.some((query) => query.sql.includes("insert into public.member_subscriptions")),
+      "subscription webhook should insert or update the member subscription row"
+    );
+    assert.ok(
+      queries.some((query) => query.sql.includes("on conflict (stripe_subscription_id)")),
+      "subscription webhook should be idempotent by Stripe subscription id"
+    );
+    assert.ok(
+      queries.some((query) => query.sql.includes("update public.members") && query.sql.includes("stripe_customer_id")),
+      "subscription webhook should link the matched member row to the Stripe customer"
+    );
   } finally {
     stripeMock.restore();
     persistenceMock.restore();
@@ -1585,6 +2637,155 @@ test("admin routes accept API Gateway bracketed Cognito group claims", async () 
   assert.deepEqual(body.holds, []);
 });
 
+test("admin order backend routes list and update customer orders", async () => {
+  const forbiddenResponse = await handler(createAuthenticatedEvent("GET /admin/commerce/orders"));
+  assert.equal(forbiddenResponse.statusCode, 403);
+  assert.equal(JSON.parse(forbiddenResponse.body).error, "admin_forbidden");
+
+  const mock = installPersistenceMocks();
+  try {
+    const listResponse = await handler(createAuthenticatedEvent("GET /admin/commerce/orders", undefined, adminClaims));
+
+    assert.equal(listResponse.statusCode, 200);
+    const listBody = JSON.parse(listResponse.body);
+    assert.equal(listBody.summary.total, 1);
+    assert.equal(listBody.summary.needsAttention, 1);
+    assert.equal(listBody.orders[0].orderNumber, "cs_test_admin");
+    assert.equal(listBody.orders[0].customer.email, "member@example.com");
+    assert.equal(listBody.orders[0].total, 127.92);
+
+    const updateEvent = {
+      ...createAuthenticatedEvent(
+        "PATCH /admin/commerce/orders/{id}",
+        {
+          fulfillmentStatus: "packed",
+          complianceStatus: "verified",
+        },
+        adminClaims
+      ),
+      rawPath: "/admin/commerce/orders/88888888-8888-4888-8888-888888888888",
+      pathParameters: {
+        id: "88888888-8888-4888-8888-888888888888",
+      },
+    };
+    const updateResponse = await handler(updateEvent);
+
+    assert.equal(updateResponse.statusCode, 200);
+    const updateBody = JSON.parse(updateResponse.body);
+    assert.equal(updateBody.order.fulfillmentStatus, "packed");
+    assert.equal(updateBody.persistence.table, "commerce_orders");
+
+    const queries = mock.clients.flatMap((client) => client.queries);
+    assert.ok(queries.some((query) => query.sql.includes("admin_orders_list")), "orders list query should be executed");
+    assert.ok(queries.some((query) => query.sql.includes("admin_order_update")), "order update query should be executed");
+    assert.ok(queries.some((query) => query.sql.includes("insert into public.commerce_audit_log")), "order update should be audited");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("admin member access backend routes list and update users", async () => {
+  const forbiddenResponse = await handler(createAuthenticatedEvent("GET /admin/members"));
+  assert.equal(forbiddenResponse.statusCode, 403);
+  assert.equal(JSON.parse(forbiddenResponse.body).error, "admin_forbidden");
+
+  const mock = installPersistenceMocks();
+  try {
+    const listResponse = await handler(createAuthenticatedEvent("GET /admin/members", undefined, adminClaims));
+
+    assert.equal(listResponse.statusCode, 200);
+    const listBody = JSON.parse(listResponse.body);
+    assert.equal(listBody.summary.members, 1);
+    assert.equal(listBody.members[0].email, "member@example.com");
+    assert.equal(listBody.members[0].orderCount, 1);
+    assert.equal(listBody.members[0].humidorItemCount, 3);
+
+    const updateEvent = {
+      ...createAuthenticatedEvent(
+        "PATCH /admin/members/{id}/access",
+        {
+          role: "operator",
+          membershipTier: "daimyo",
+          memberStatus: "active",
+        },
+        adminClaims
+      ),
+      rawPath: "/admin/members/11111111-1111-4111-8111-111111111111/access",
+      pathParameters: {
+        id: "11111111-1111-4111-8111-111111111111",
+      },
+    };
+    const updateResponse = await handler(updateEvent);
+
+    assert.equal(updateResponse.statusCode, 200);
+    const updateBody = JSON.parse(updateResponse.body);
+    assert.equal(updateBody.member.role, "operator");
+    assert.equal(updateBody.member.membershipTier, "daimyo");
+    assert.equal(updateBody.persistence.table, "members");
+
+    const queries = mock.clients.flatMap((client) => client.queries);
+    assert.ok(queries.some((query) => query.sql.includes("admin_members_list")), "members list query should be executed");
+    assert.ok(queries.some((query) => query.sql.includes("admin_member_access_update")), "member access update query should be executed");
+    assert.ok(queries.some((query) => query.sql.includes("insert into public.audit_log")), "member access update should be audited");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("admin Stripe sync snapshot does not require approval after provider confirmation", async () => {
+  const previousEnv = {
+    COMMERCE_PROVIDER_SECRET_ARN: process.env.COMMERCE_PROVIDER_SECRET_ARN,
+    COMMERCE_PROVIDER_SECRET_ID: process.env.COMMERCE_PROVIDER_SECRET_ID,
+    YCC_COMMERCE_SECRET_ARN: process.env.YCC_COMMERCE_SECRET_ARN,
+    YCC_COMMERCE_SECRET_ID: process.env.YCC_COMMERCE_SECRET_ID,
+    STRIPE_TOBACCO_APPROVAL_CONFIRMED: process.env.STRIPE_TOBACCO_APPROVAL_CONFIRMED,
+    STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY,
+    STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET,
+    STRIPE_LAUNCH_CATALOG_READY: process.env.STRIPE_LAUNCH_CATALOG_READY,
+    STRIPE_LAUNCH_CATALOG_JSON: process.env.STRIPE_LAUNCH_CATALOG_JSON,
+    STRIPE_PRICE_SENSEI_MONTHLY: process.env.STRIPE_PRICE_SENSEI_MONTHLY,
+    FEATURE_STRIPE_TAX: process.env.FEATURE_STRIPE_TAX,
+  };
+
+  delete process.env.COMMERCE_PROVIDER_SECRET_ARN;
+  delete process.env.COMMERCE_PROVIDER_SECRET_ID;
+  delete process.env.YCC_COMMERCE_SECRET_ARN;
+  delete process.env.YCC_COMMERCE_SECRET_ID;
+  process.env.STRIPE_TOBACCO_APPROVAL_CONFIRMED = "true";
+  process.env.STRIPE_SECRET_KEY = "sk_live_123";
+  process.env.STRIPE_WEBHOOK_SECRET = "whsec_123";
+  process.env.STRIPE_LAUNCH_CATALOG_READY = "1";
+  process.env.STRIPE_LAUNCH_CATALOG_JSON = JSON.stringify([
+    {
+      sku: "APPROVED-BOX",
+      name: "Approved Box",
+      price: 120,
+      publishStatus: "published",
+      stripePriceId: "price_approved",
+    },
+  ]);
+  process.env.STRIPE_PRICE_SENSEI_MONTHLY = "price_sensei_monthly";
+  process.env.FEATURE_STRIPE_TAX = "pending";
+
+  try {
+    const response = await handler(createAuthenticatedEvent("POST /admin/commerce/stripe-sync-products", {}, adminClaims));
+
+    assert.equal(response.statusCode, 202);
+    const body = JSON.parse(response.body);
+    assert.equal(body.sync.liveApprovalRequired, false);
+    assert.equal(body.sync.catalogReady, true);
+    assert.equal(body.sync.configuredProductCount, 1);
+  } finally {
+    for (const [key, value] of Object.entries(previousEnv)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+});
+
 test("account route upserts the authenticated member when schema writes are ready", async () => {
   const mock = installPersistenceMocks();
   try {
@@ -1601,6 +2802,145 @@ test("account route upserts the authenticated member when schema writes are read
       mock.clients[0].queries.some((query) => query.sql.includes("insert into public.members")),
       "member upsert query should be executed"
     );
+  } finally {
+    mock.restore();
+  }
+});
+
+test("membership route reads persisted subscription state and mints checkout entitlement", async () => {
+  const mock = installPersistenceMocks();
+  try {
+    process.env.FEATURE_DB_WRITES = "schema_ready";
+    process.env.MEMBERSHIP_ENTITLEMENT_SIGNING_SECRET = "membership-secret";
+
+    const response = await handler(createAuthenticatedEvent("GET /commerce/membership"));
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.source, "postgres");
+    assert.equal(body.membership.tier, "sensei");
+    assert.equal(body.membership.status, "active");
+    assert.equal(body.subscription.status, "active");
+    assert.equal(body.subscription.stripeCustomerId, "cus_member_123");
+    assert.match(body.membershipEntitlementToken, /^yccmem1\./);
+
+    const queries = mock.clients.flatMap((client) => client.queries.map((query) => query.sql));
+    assert.ok(
+      queries.some((sql) => sql.includes("from public.member_subscriptions") && sql.includes("stripe_subscription_id")),
+      "membership route should read the persisted subscription row"
+    );
+  } finally {
+    mock.restore();
+  }
+});
+
+test("humidor item reads recover when an existing member email has a new Cognito sub", async () => {
+  const rotatedClaims = {
+    ...actorClaims,
+    sub: "member-rotated-sub",
+  };
+  const mock = installPersistenceMocks({
+    memberUpsertEmailConflict: true,
+    humidorItemRows: [
+      {
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        name: "Padron 1964 Anniversary Toro",
+        brand: "Padron",
+        line: "1964 Anniversary",
+        vitola: "Toro",
+        wrapper: "Nicaraguan",
+        origin: "Nicaragua",
+        strength: "Full",
+        quantity: 2,
+        rating: 94,
+        purchase_date: "2026-03-12",
+        aging_start_date: "2026-03-12",
+        reorder_reminder: "2026-06-15",
+        humidor_location: "Locker A",
+        tray: "Drawer 2",
+        tasting_notes: "Cocoa and cedar.",
+        source: "member_humidor",
+        metadata: {
+          estimatedValue: 18.5,
+          estimatedValueCurrency: "USD",
+          estimatedValueSource: "member_estimate",
+        },
+        created_at: "2026-05-08T10:00:00.000Z",
+      },
+    ],
+  });
+
+  try {
+    const response = await handler(createAuthenticatedEvent("GET /humidor/items", undefined, rotatedClaims));
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.items.length, 1);
+    assert.equal(body.items[0].name, "Padron 1964 Anniversary Toro");
+    assert.equal(body.items[0].estimatedValue, 18.5);
+
+    const queries = mock.clients.flatMap((client) => client.queries);
+    assert.ok(
+      queries.some((query) => query.sql.includes("update public.members") && query.sql.includes("where lower(email) = lower($1)")),
+      "member upsert should repair an email-unique conflict caused by a rotated Cognito subject"
+    );
+    assert.ok(
+      queries.some((query) => query.sql.includes("from public.humidor_items")),
+      "humidor items should still be read after the member identity is repaired"
+    );
+  } finally {
+    mock.restore();
+  }
+});
+
+test("humidor item reads summarize stored cigar images without inline data URLs", async () => {
+  const imageBase64 = Buffer.from("stored-cigar-image").toString("base64");
+  const mock = installPersistenceMocks({
+    humidorItemRows: [
+      {
+        id: "abababab-abab-4bab-8bab-abababababab",
+        name: "Padron 1964 Anniversary Toro",
+        brand: "Padron",
+        line: "1964 Anniversary",
+        vitola: "Toro",
+        wrapper: "Nicaraguan",
+        origin: "Nicaragua",
+        strength: "Full",
+        quantity: 2,
+        rating: 94,
+        purchase_date: "2026-03-12",
+        aging_start_date: "2026-03-12",
+        reorder_reminder: "2026-06-15",
+        humidor_location: "Locker A",
+        tray: "Drawer 2",
+        tasting_notes: "Cocoa and cedar.",
+        source: "member_humidor",
+        metadata: {
+          cigarImage: {
+            dataUrl: `data:image/jpeg;base64,${imageBase64}`,
+            mimeType: "image/jpeg",
+            fileName: "padron-band.jpg",
+            bytes: 18,
+            source: "member_upload",
+          },
+        },
+        created_at: "2026-05-08T10:00:00.000Z",
+      },
+    ],
+  });
+
+  try {
+    const response = await handler(createAuthenticatedEvent("GET /humidor/items"));
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.items.length, 1);
+    assert.equal(body.items[0].cigarImage.mimeType, "image/jpeg");
+    assert.equal(body.items[0].cigarImage.fileName, "padron-band.jpg");
+    assert.equal(body.items[0].cigarImage.bytes, 18);
+    assert.equal(body.items[0].cigarImage.dataUrl, "");
+    assert.equal(response.body.includes(imageBase64), false);
+    assert.equal(response.body.includes("data:image/jpeg;base64"), false);
   } finally {
     mock.restore();
   }
@@ -1912,6 +3252,82 @@ test("admin agent requires an admin or concierge operator group", async () => {
   assert.equal(adminBody.agent, "YCCAdminAgent");
 });
 
+test("admin agent lists live user access records for roster prompts", async () => {
+  const mock = installPersistenceMocks({
+    adminMemberRows: [
+      {
+        id: "11111111-1111-4111-8111-111111111111",
+        cognito_sub: "member-123",
+        email: "member@example.com",
+        email_verified: true,
+        display_name: "Yuzu Member",
+        role: "customer",
+        membership_tier: "sensei",
+        member_status: "active",
+        last_seen_at: "2026-05-12T09:00:00.000Z",
+        created_at: "2026-05-06T09:00:00.000Z",
+        updated_at: "2026-05-12T09:10:00.000Z",
+        subscription_status: "active",
+        subscription_tier: "sensei",
+        subscription_period: "monthly",
+        order_count: 1,
+        total_spend_cents: 12792,
+        humidor_item_count: 3,
+      },
+      {
+        id: "22222222-2222-4222-8222-222222222222",
+        cognito_sub: "operator-456",
+        email: "operator@example.com",
+        email_verified: true,
+        display_name: "Yuzu Operator",
+        role: "operator",
+        membership_tier: "daimyo",
+        member_status: "active",
+        last_seen_at: "2026-05-12T10:00:00.000Z",
+        created_at: "2026-05-07T09:00:00.000Z",
+        updated_at: "2026-05-12T10:10:00.000Z",
+        subscription_status: "active",
+        subscription_tier: "daimyo",
+        subscription_period: "annual",
+        order_count: 2,
+        total_spend_cents: 24000,
+        humidor_item_count: 0,
+      },
+    ],
+  });
+
+  try {
+    const response = await handler(
+      createAuthenticatedEvent(
+        "POST /concierge/chat",
+        {
+          message: "list all users",
+          agent: "admin",
+        },
+        adminClaims
+      )
+    );
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.agent, "YCCAdminAgent");
+    assert.equal(body.ai.status, "admin_user_list");
+    assert.match(body.reply, /User access roster/i);
+    assert.match(body.reply, /member@example\.com/);
+    assert.match(body.reply, /operator@example\.com/);
+    assert.equal(body.reply.includes("support queue health"), false);
+    assert.equal(mock.agentInvocations.length, 0);
+
+    const memberListQuery = mock.clients
+      .flatMap((client) => client.queries)
+      .find((query) => query.sql.includes("admin_members_list"));
+    assert.ok(memberListQuery, "admin agent should read the persisted member roster");
+    assert.equal(memberListQuery.params[2], 250);
+  } finally {
+    mock.restore();
+  }
+});
+
 test("weekly cigar news agent requires an admin or concierge operator group", async () => {
   const mock = installPersistenceMocks();
   try {
@@ -2191,6 +3607,87 @@ test("news story draft route requires an operator and returns structured source-
   }
 });
 
+test("news story draft route falls back to direct Bedrock JSON when the agent reply is not usable", async () => {
+  const mock = installPersistenceMocks({
+    agentReply: "The newsroom agent is ready to draft source-safe copy for review.",
+    bedrockReply: JSON.stringify({
+      title: "Rocky Patel Updates Its Release Calendar",
+      dek: "A concise official-source update for adult cigar readers.",
+      category: "Industry News",
+      bodyMarkdown: [
+        "## Release timing",
+        "Rocky Patel shared release timing details through its official news channel, giving operators a source-backed starting point for review.",
+        "",
+        "## Availability outlook",
+        "The draft keeps the claims tied to the official brand page and leaves publication approval with a human operator.",
+      ].join("\n"),
+      sourceNotes: [
+        {
+          label: "Rocky Patel",
+          url: "https://www.rockypatel.com/cigar-news/sixty-release/",
+          note: "Official brand page.",
+        },
+      ],
+    }),
+  });
+
+  try {
+    const response = await handler(
+      createAuthenticatedEvent(
+        "POST /news/story-drafts",
+        {
+          angle: "Rocky Patel official release update",
+          timeframe: "this week",
+          sourceUrls: ["https://www.rockypatel.com/cigar-news/sixty-release/"],
+          sourceNotes: ["Official Rocky Patel page confirms release timing."],
+        },
+        adminClaims
+      )
+    );
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.draft.title, "Rocky Patel Updates Its Release Calendar");
+    assert.equal(body.draft.sections[0].heading, "Release timing");
+    assert.equal(body.ai.status, "bedrock_runtime_news_draft");
+    assert.equal(mock.agentInvocations.length, 2);
+    assert.equal(mock.bedrockInvocations.length, 1);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("news story draft route refuses to return scaffold copy when generation is unusable", async () => {
+  const mock = installPersistenceMocks({
+    agentReply: "The newsroom agent is ready to draft source-safe copy for review.",
+    bedrockReply: "Bedrock also failed to return JSON.",
+  });
+
+  try {
+    const response = await handler(
+      createAuthenticatedEvent(
+        "POST /news/story-drafts",
+        {
+          angle: "Rocky Patel official release update",
+          timeframe: "this week",
+          sourceUrls: ["https://www.rockypatel.com/cigar-news/sixty-release/"],
+          sourceNotes: ["Official Rocky Patel page confirms release timing."],
+        },
+        adminClaims
+      )
+    );
+
+    assert.equal(response.statusCode, 502);
+    const body = JSON.parse(response.body);
+    assert.equal(body.error, "news_story_generation_failed");
+    assert.equal(body.ai.status, "bedrock_runtime_news_draft");
+    assert.equal(mock.agentInvocations.length, 2);
+    assert.equal(mock.bedrockInvocations.length, 1);
+  } finally {
+    mock.restore();
+  }
+});
+
 test("news story publish route stores approved story and audit row", async () => {
   const mock = installPersistenceMocks();
 
@@ -2232,6 +3729,63 @@ test("news story publish route stores approved story and audit row", async () =>
     const queries = mock.clients.flatMap((client) => client.queries.map((query) => query.sql));
     assert.ok(queries.some((sql) => sql.includes("insert into public.news_stories")), "news story should be inserted");
     assert.ok(queries.some((sql) => sql.includes("insert into public.audit_log")), "audit row should be inserted");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("news story publish route stores actual story image metadata", async () => {
+  const mock = installPersistenceMocks();
+  const storyImages = [
+    {
+      label: "Rocky Patel Sixty",
+      image: "https://www.rockypatel.com/wp-content/uploads/2026/05/rocky-patel-sixty.jpg",
+      imagePosition: "50% 45%",
+      alt: "Rocky Patel Sixty story image",
+      sourceUrl: "https://www.rockypatel.com/cigar-news/sixty-release/",
+    },
+  ];
+
+  try {
+    const response = await handler(
+      createAuthenticatedEvent(
+        "POST /news/stories",
+        {
+          title: "Rocky Patel Official Release Update",
+          dek: "A short official-source update for adult cigar readers.",
+          category: "Industry News",
+          publishStatus: "published",
+          sections: [
+            {
+              heading: "Release image",
+              body: "Rocky Patel posted official release details with its product image.",
+            },
+          ],
+          images: storyImages,
+          sourceNotes: [
+            {
+              label: "Rocky Patel",
+              url: "https://www.rockypatel.com/cigar-news/sixty-release/",
+              note: "Official brand page.",
+              sourceType: "official",
+            },
+          ],
+          operatorApproved: true,
+        },
+        adminClaims
+      )
+    );
+
+    assert.equal(response.statusCode, 201);
+    const body = JSON.parse(response.body);
+    assert.deepEqual(body.story.images, storyImages);
+
+    const insertQuery = mock.clients
+      .flatMap((client) => client.queries)
+      .find((query) => query.sql.includes("insert into public.news_stories"));
+    assert.ok(insertQuery, "news story should be inserted");
+    const metadata = JSON.parse(String(insertQuery.params[9] || "{}"));
+    assert.deepEqual(metadata.images, storyImages);
   } finally {
     mock.restore();
   }
@@ -2281,6 +3835,52 @@ test("news story publish route rejects placeholder scaffold copy", async () => {
   }
 });
 
+test("news story publish route allows placeholder legacy stories to be demoted to draft", async () => {
+  const mock = installPersistenceMocks();
+
+  try {
+    const response = await handler(
+      createAuthenticatedEvent(
+        "POST /news/stories",
+        {
+          title: "Daily Cigar Flow Update - May 12 brief",
+          slug: "daily-cigar-flow-update-may-12-brief",
+          dek: "A human-reviewed Yuzu Cigar Club news draft built from primary source notes.",
+          category: "Industry News",
+          publishStatus: "draft",
+          status: "draft",
+          bodyMarkdown: [
+            "## What changed",
+            "Yuzu is tracking daily cigar flow based on the official source notes supplied for today. Keep this section factual and concise until an operator verifies each detail against the source URLs.",
+            "",
+            "## Why adult members may care",
+            "Frame the update around release timing, availability, craftsmanship, events, or education value. Avoid sales pressure and do not make health, cessation, medical, therapeutic, disease, or safety claims.",
+            "",
+            "## Operator review notes",
+            "Verify every product name, date, quote, MSRP, distributor note, and availability claim before publication. Attribute the company announcement and link to the primary source.",
+          ].join("\n"),
+          sourceNotes: [
+            {
+              label: "Drew Estate",
+              url: "https://drewestate.com/",
+              note: "Official brand page.",
+              sourceType: "official",
+            },
+          ],
+          operatorApproved: true,
+        },
+        adminClaims
+      )
+    );
+
+    assert.equal(response.statusCode, 201);
+    const body = JSON.parse(response.body);
+    assert.equal(body.story.status, "draft");
+  } finally {
+    mock.restore();
+  }
+});
+
 test("public news stories route returns published stories without Cognito", async () => {
   const mock = installPersistenceMocks();
 
@@ -2295,6 +3895,8 @@ test("public news stories route returns published stories without Cognito", asyn
     const body = JSON.parse(response.body);
     assert.equal(body.stories[0].slug, "rocky-patel-official-release-update");
     assert.equal(body.stories[0].sourceNotes[0].sourceType, "official");
+    assert.equal(body.stories[0].images[0].image, "https://www.rockypatel.com/wp-content/uploads/2026/05/rocky-patel-sixty.jpg");
+    assert.equal(body.stories[0].images[0].sourceUrl, "https://www.rockypatel.com/cigar-news/sixty-release/");
     assert.equal(body.persistence, "stored");
   } finally {
     mock.restore();
@@ -2445,6 +4047,7 @@ test("humidor item route normalizes a cigar item contract", async () => {
       rating: 94,
       purchaseDate: "2026-03-12",
       agingStartDate: "2026-03-12",
+      productionDate: "2022-05-01",
       reorderReminder: "2026-06-15",
     }),
     requestContext: {
@@ -2459,6 +4062,7 @@ test("humidor item route normalizes a cigar item contract", async () => {
   assert.equal(body.item.name, "Padron 1964 Anniversary");
   assert.equal(body.item.purchaseDate, "2026-03-12");
   assert.equal(body.item.agingStartDate, "2026-03-12");
+  assert.equal(body.item.productionDate, "2022-05-01");
   assert.equal(body.item.reorderReminder, "2026-06-15");
   assert.equal(body.persistence.status, "schema_ready_write_pending");
 });
@@ -2620,7 +4224,10 @@ test("humidor alerts GET endpoint returns stored preferences from the member pro
     assert.equal(body.preferences.pushEnabled, true);
     assert.equal(body.preferences.reorderRemindersEnabled, true);
     assert.equal(body.preferences.climateAlertsEnabled, false);
+    assert.equal(body.preferences.humidorProfile.humidorName, "Home cabinet");
+    assert.equal(body.preferences.humidorProfile.defaultLocation, "Walk-in Humidor");
     assert.equal(body.preferences.pushSubscription?.endpoint, "https://example.com/endpoint");
+    assert.deepEqual(body.preferences.pairedDevices, []);
 
     const queries = mock.clients.flatMap((client) => client.queries);
     assert.ok(queries.some((query) => query.sql.includes("select preferences from public.member_profiles")), "alert preferences should be read from member_profiles");
@@ -2645,6 +4252,25 @@ test("humidor alerts update endpoint stores member profile preferences", async (
             auth: "auth-key-2",
           },
         },
+        pairedDevices: [
+          {
+            id: "device-humidifier-walk-in",
+            name: "Smart Cabinet Humidifier",
+            location: "Walk-in Humidor",
+            deviceType: "HUMIDIFIER",
+            connection: "WiFi",
+            identifier: "HUM-192-168-1-88",
+            humidity: 61,
+            temperature: 70,
+            syncIntervalMinutes: 20,
+            status: "Connected",
+            lastSyncedAt: "May 13, 2026 9:45 AM",
+          },
+        ],
+        humidorProfile: {
+          humidorName: "Aging locker",
+          defaultLocation: "Locker A / Drawer 2",
+        },
       })
     );
 
@@ -2653,9 +4279,17 @@ test("humidor alerts update endpoint stores member profile preferences", async (
     assert.equal(body.persistence, "stored");
     assert.equal(body.preferences.pushEnabled, true);
     assert.equal(body.preferences.climateAlertsEnabled, true);
+    assert.equal(body.preferences.humidorProfile.defaultLocation, "Locker A / Drawer 2");
     assert.equal(body.preferences.pushSubscription.endpoint, "https://example.com/endpoint");
+    assert.equal(body.preferences.pairedDevices[0].name, "Smart Cabinet Humidifier");
+    assert.equal(body.preferences.pairedDevices[0].humidity, 61);
 
     const queries = mock.clients.flatMap((client) => client.queries);
+    const preferenceUpsert = queries.find((query) => query.sql.includes("insert into public.member_profiles"));
+    const savedPreferences = preferenceUpsert ? JSON.parse(String(preferenceUpsert.params[1])) : {};
+
+    assert.equal(savedPreferences.humidorProfile.humidorName, "Aging locker");
+    assert.equal(savedPreferences.humidorProfile.defaultLocation, "Locker A / Drawer 2");
     assert.ok(queries.some((query) => query.sql.includes("insert into public.member_profiles")), "alert preferences should be upserted in member_profiles");
     assert.ok(queries.some((query) => query.sql.includes("insert into public.audit_log")), "alert preferences update should be audited");
   } finally {
@@ -2723,6 +4357,83 @@ test("humidor alert dispatch reports no due items when none are eligible", async
     assert.equal(body.summary.dueItems, 0);
     assert.equal(body.summary.sentNotifications, 0);
     assert.equal(mock.webPushInvocations.length, 1);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("humidor alert dispatch sends climate pushes from paired device readings", async () => {
+  const mock = installPersistenceMocks({
+    dispatchRows: [],
+    climateRows: [
+      {
+        member_id: "11111111-1111-4111-8111-111111111111",
+        member_sub: "member-111111111111",
+        preferences: {
+          pushEnabled: true,
+          reorderRemindersEnabled: true,
+          climateAlertsEnabled: true,
+          pushSubscription: {
+            endpoint: "https://example.com/endpoints/member-climate",
+            keys: { p256dh: "p256dh-climate", auth: "auth-climate" },
+          },
+          pairedDevices: [
+            {
+              id: "device-humidifier-walk-in",
+              name: "Smart Cabinet Humidifier",
+              location: "Walk-in Humidor",
+              deviceType: "HUMIDIFIER",
+              connection: "WiFi",
+              identifier: "HUM-192-168-1-88",
+              humidity: 61,
+              temperature: 70,
+              syncIntervalMinutes: 20,
+              status: "Connected",
+              lastSyncedAt: "May 13, 2026 9:45 AM",
+            },
+          ],
+        },
+      },
+    ],
+  });
+
+  try {
+    const response = await handler({
+      routeKey: "POST /humidor/alerts/dispatch",
+      rawPath: "/humidor/alerts/dispatch",
+      headers: {
+        "x-humidor-alert-dispatch-secret": "humidor-dispatch-secret",
+      },
+      requestContext: {
+        requestId: "req-humidor-dispatch-climate",
+        http: { method: "POST" },
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.status, "dispatched");
+    assert.equal(body.summary.dueItems, 0);
+    assert.equal(body.summary.climateDevices, 1);
+    assert.equal(body.summary.sentClimateNotifications, 1);
+
+    const sendInvocations = mock.webPushInvocations.filter((invocation) => invocation.payload !== "");
+    assert.equal(sendInvocations.length, 1);
+    const subscription = sendInvocations[0].subscription as { endpoint?: string };
+    assert.equal(subscription.endpoint, "https://example.com/endpoints/member-climate");
+
+    const payload = JSON.parse(sendInvocations[0].payload);
+    assert.equal(payload.title, "Humidor climate alert");
+    assert.match(payload.body, /Smart Cabinet Humidifier/i);
+    assert.match(payload.body, /61% RH/i);
+    assert.equal(payload.data.tag, "digital-humidor-alert");
+    assert.equal(payload.data.url, "/humidor?section=alerts");
+
+    const queries = mock.clients.flatMap((client) => client.queries);
+    assert.ok(
+      queries.some((query) => query.sql.includes("insert into public.audit_log")),
+      "climate alert dispatch should be audited"
+    );
   } finally {
     mock.restore();
   }
@@ -2906,6 +4617,7 @@ test("humidor item route persists the item and audit row", async () => {
         rating: 94,
         purchaseDate: "2026-03-12",
         agingStartDate: "2026-03-12",
+        productionDate: "2022-05-01",
         reorderReminder: "2026-06-15",
       })
     );
@@ -2925,8 +4637,13 @@ test("humidor item route persists the item and audit row", async () => {
     assert.match(humidorInsert.sql, /reorder_reminder/);
     assert.ok(humidorInsert.params.includes("2026-03-12"), "purchase and aging dates should be persisted");
     assert.ok(humidorInsert.params.includes("2026-06-15"), "reorder reminder should be persisted");
+    assert.ok(
+      humidorInsert.params.some((param) => typeof param === "string" && param.includes('"productionDate":"2022-05-01"')),
+      "production date should be persisted as humidor item metadata",
+    );
     assert.equal(body.item.purchaseDate, "2026-03-12");
     assert.equal(body.item.agingStartDate, "2026-03-12");
+    assert.equal(body.item.productionDate, "2022-05-01");
     assert.equal(body.item.reorderReminder, "2026-06-15");
     const querySql = queries.map((query) => query.sql);
     assert.ok(querySql.some((sql) => sql.includes("insert into public.audit_log")), "audit row should be inserted");
@@ -2964,7 +4681,8 @@ test("humidor item route stores collection value and uploaded cigar image metada
     assert.equal(body.item.estimatedValueSource, "ai_identification_msrp");
     assert.equal(body.item.cigarImage.mimeType, "image/jpeg");
     assert.equal(body.item.cigarImage.fileName, "padron-band.jpg");
-    assert.match(body.item.cigarImage.dataUrl, /^data:image\/jpeg;base64,/);
+    assert.equal(body.item.cigarImage.dataUrl, "");
+    assert.equal(response.body.includes(imageBase64), false);
 
     const queries = mock.clients.flatMap((client) => client.queries);
     const humidorInsert = queries.find((query) => query.sql.includes("insert into public.humidor_items"));
@@ -2976,6 +4694,96 @@ test("humidor item route stores collection value and uploaded cigar image metada
     assert.equal(metadata.cigarImage.mimeType, "image/jpeg");
     assert.equal(metadata.cigarImage.fileName, "padron-band.jpg");
     assert.match(metadata.cigarImage.dataUrl, /^data:image\/jpeg;base64,/);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("humidor item enrichment route fills missing info image and MSRP without overwriting member data", async () => {
+  const itemId = "abababab-abab-4bab-8bab-abababababab";
+  const mock = installPersistenceMocks({
+    humidorItemRows: [
+      {
+        id: itemId,
+        name: "Padron Anniversary Toro",
+        brand: "Padron",
+        line: "",
+        vitola: "",
+        wrapper: "",
+        origin: "",
+        strength: "",
+        quantity: 2,
+        rating: null,
+        purchase_date: "2026-03-12",
+        aging_start_date: "2026-03-12",
+        reorder_reminder: null,
+        humidor_location: "Locker A",
+        tray: "Drawer 2",
+        tasting_notes: "Member note stays.",
+        source: "member_humidor",
+        metadata: {},
+        created_at: "2026-05-08T10:00:00.000Z",
+      },
+    ],
+    bedrockReply: JSON.stringify({
+      brand: "Padron",
+      line: "1964 Anniversary",
+      vitola: "Toro",
+      wrapper: "Nicaraguan",
+      origin: "Nicaragua",
+      strength: "Full",
+      estimatedValue: "$18.50",
+      estimatedValueCurrency: "USD",
+      estimatedValueSource: "ai_humidor_enrichment_msrp",
+      cigarImage: {
+        imageUrl: "https://example.com/padron-1964-toro.jpg",
+        mimeType: "image/jpeg",
+        fileName: "padron-1964-toro.jpg",
+        source: "agent_reference",
+      },
+      confidence: "medium",
+      evidence: ["Matched Padron Anniversary Toro against reference details."],
+      needsReview: ["Confirm exact 1964 vitola before relying on MSRP."],
+    }),
+  });
+
+  try {
+    const response = await handler({
+      ...createAuthenticatedEvent("PATCH /humidor/items/{id}/enrich", {
+        fields: ["info", "image", "msrp"],
+      }),
+      rawPath: `/humidor/items/${itemId}/enrich`,
+      pathParameters: { id: itemId },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.item.id, itemId);
+    assert.equal(body.item.brand, "Padron");
+    assert.equal(body.item.line, "1964 Anniversary");
+    assert.equal(body.item.vitola, "Toro");
+    assert.equal(body.item.wrapper, "Nicaraguan");
+    assert.equal(body.item.origin, "Nicaragua");
+    assert.equal(body.item.strength, "Full");
+    assert.equal(body.item.humidorLocation, "Locker A");
+    assert.equal(body.item.tastingNotes, "Member note stays.");
+    assert.equal(body.item.estimatedValue, 18.5);
+    assert.equal(body.item.estimatedValueCurrency, "USD");
+    assert.equal(body.item.estimatedValueSource, "ai_humidor_enrichment_msrp");
+    assert.equal(body.item.cigarImage.imageUrl, "https://example.com/padron-1964-toro.jpg");
+    assert.equal(body.enrichment.status, "updated");
+    assert.deepEqual(body.enrichment.requestedFields, ["info", "image", "msrp"]);
+    assert.ok(body.enrichment.updatedFields.includes("line"));
+    assert.ok(body.enrichment.updatedFields.includes("cigarImage"));
+    assert.ok(body.enrichment.updatedFields.includes("estimatedValue"));
+    assert.equal(mock.bedrockInvocations.length, 1);
+
+    const queries = mock.clients.flatMap((client) => client.queries);
+    assert.ok(
+      queries.some((query) => query.sql.includes("humidor_item_enrichment_update") && query.sql.includes("update public.humidor_items")),
+      "enrichment should update the stored humidor row"
+    );
+    assert.ok(queries.some((query) => query.sql.includes("insert into public.audit_log")), "enrichment should be audited");
   } finally {
     mock.restore();
   }

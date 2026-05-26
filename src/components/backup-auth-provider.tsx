@@ -26,11 +26,14 @@ import {
   updateBackupAccountProfile,
 } from "@/lib/backup-auth";
 import {
+  buildCognitoAuthorizeUrl,
   buildCognitoLogoutUrl,
   buildCognitoTokenRequestBody,
   buildCognitoRefreshRequestBody,
   clearPendingCognitoLogin,
   clearStoredCognitoSession,
+  createPkceChallenge,
+  createRandomOAuthValue,
   createCognitoApiHeaders,
   isCognitoSessionExpired,
   hydrateCognitoSessionFromProfile,
@@ -45,6 +48,7 @@ import {
   getCognitoTokenResponse,
   writeStoredCognitoProfile,
   updateCognitoSessionProfile,
+  writePendingCognitoLogin,
   writeStoredCognitoSession,
   type CognitoAuthConfig,
   type CognitoAuthSession,
@@ -56,6 +60,11 @@ type CognitoCallbackResult = {
   status: "signed_in" | "error";
   message: string;
   redirectPath?: string;
+};
+
+type CognitoLoginStartResult = {
+  status: "redirecting" | "error";
+  message: string;
 };
 
 type BackupAuthContextValue = {
@@ -78,6 +87,7 @@ type BackupAuthContextValue = {
   completeFirstLoginPassword: (input: FirstLoginPasswordInput) => BackupAuthResult;
   signUpWithSocial: (input: SocialSignupInput) => BackupAuthResult;
   signInWithCognitoPassword: (input: CognitoPasswordSignInInput) => Promise<CognitoPasswordSignInResult>;
+  startCognitoLogin: (input?: { redirectPath?: string }) => Promise<CognitoLoginStartResult>;
   completeCognitoCallback: (url?: string) => Promise<CognitoCallbackResult>;
   updateAccountProfile: (input: AccountProfileInput) => AccountProfileUpdateResult;
   clearCognitoSession: () => void;
@@ -259,6 +269,45 @@ export function BackupAuthProvider({ children }: { children: React.ReactNode }) 
 
       setAuthError(result.message);
       return result;
+    },
+    [cognitoConfig]
+  );
+
+  const startCognitoLogin = useCallback(
+    async (input: { redirectPath?: string } = {}): Promise<CognitoLoginStartResult> => {
+      if (!cognitoConfig) {
+        const result = {
+          status: "error",
+          message: "Cognito sign-in is not configured for this deployment.",
+        } satisfies CognitoLoginStartResult;
+
+        setAuthError(result.message);
+        return result;
+      }
+
+      const state = createRandomOAuthValue();
+      const codeVerifier = createRandomOAuthValue(64);
+      const codeChallenge = await createPkceChallenge(codeVerifier);
+      const origin = window.location.origin;
+
+      writePendingCognitoLogin(window.sessionStorage, {
+        state,
+        codeVerifier,
+        redirectPath: input.redirectPath || `${window.location.pathname}${window.location.search}` || "/account",
+        origin,
+        createdAt: new Date().toISOString(),
+      });
+
+      window.location.href = buildCognitoAuthorizeUrl(cognitoConfig, {
+        origin,
+        state,
+        codeChallenge,
+      });
+
+      return {
+        status: "redirecting",
+        message: "Opening hosted Cognito sign-in.",
+      };
     },
     [cognitoConfig]
   );
@@ -456,6 +505,7 @@ export function BackupAuthProvider({ children }: { children: React.ReactNode }) 
       completeFirstLoginPassword,
       signUpWithSocial,
       signInWithCognitoPassword,
+      startCognitoLogin,
       completeCognitoCallback,
       updateAccountProfile,
       clearCognitoSession,
@@ -478,6 +528,7 @@ export function BackupAuthProvider({ children }: { children: React.ReactNode }) 
       signIn,
       signInWithCognitoPassword,
       signOut,
+      startCognitoLogin,
       signUpWithSocial,
       updateAccountProfile,
       userView,

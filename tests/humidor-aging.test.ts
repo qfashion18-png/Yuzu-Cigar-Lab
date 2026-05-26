@@ -35,6 +35,26 @@ test("derives aging readiness and progress from the aging start date", () => {
   });
 });
 
+test("derives total cigar age separately from the user humidor aging clock", async () => {
+  const agingModule = await import("../src/lib/humidor-aging");
+  const getTotalAgeSnapshot = (
+    agingModule as typeof agingModule & {
+      getTotalAgeSnapshot?: (productionDate: string | null | undefined, now?: Date) => { ageMonths: number } | null;
+    }
+  ).getTotalAgeSnapshot;
+
+  assert.equal(typeof getTotalAgeSnapshot, "function");
+  assert.deepEqual(getAgingSnapshot("May 5, 2026", reviewDate), {
+    ageMonths: 0,
+    progress: 0,
+    readiness: "Too Young",
+  });
+  assert.deepEqual(getTotalAgeSnapshot?.("May 1, 2022", reviewDate), {
+    ageMonths: 48,
+  });
+  assert.equal(getTotalAgeSnapshot?.("", reviewDate), null);
+});
+
 test("normalizes stored humidor items by recalculating aging status", () => {
   const storedItems: StoredHumidorFixture[] = [
     {

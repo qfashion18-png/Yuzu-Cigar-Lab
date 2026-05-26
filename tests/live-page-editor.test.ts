@@ -6,6 +6,7 @@ import {
   fetchHumidorDashboardBootstrap,
   fetchLivePageContent,
   fetchPublishedNewsStories,
+  getLiveApiErrorMessage,
   identifyCigarFromImage,
   publishNewsStory,
   saveLivePageContent,
@@ -551,6 +552,35 @@ test("live API client keeps humidor inventory when alert preferences fail", asyn
     assert.equal(calls[1].url, "https://api.yuzucigarclub.test/humidor/alerts");
     assert.equal((calls[0].init?.headers as Record<string, string>).Authorization, "Bearer member-token");
     assert.equal((calls[1].init?.headers as Record<string, string>).Authorization, "Bearer member-token");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousApiBase === undefined) {
+      delete process.env.NEXT_PUBLIC_YCC_API_BASE_URL;
+    } else {
+      process.env.NEXT_PUBLIC_YCC_API_BASE_URL = previousApiBase;
+    }
+  }
+});
+
+test("live API client maps empty API Gateway 401 responses to Cognito session recovery", async () => {
+  const originalFetch = globalThis.fetch;
+  const previousApiBase = process.env.NEXT_PUBLIC_YCC_API_BASE_URL;
+
+  process.env.NEXT_PUBLIC_YCC_API_BASE_URL = "https://api.yuzucigarclub.test/";
+  globalThis.fetch = async () =>
+    new Response("", {
+      status: 401,
+      headers: { "content-type": "application/json" },
+    });
+
+  try {
+    await assert.rejects(
+      () => fetchHumidorDashboardBootstrap({ Authorization: "Bearer expired-token" }),
+      (error) => {
+        assert.equal(getLiveApiErrorMessage(error), "Your Cognito session expired. Please sign in again.");
+        return true;
+      },
+    );
   } finally {
     globalThis.fetch = originalFetch;
     if (previousApiBase === undefined) {

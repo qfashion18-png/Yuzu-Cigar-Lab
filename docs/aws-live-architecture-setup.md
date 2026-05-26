@@ -38,7 +38,7 @@ Working pieces:
 - RDS Proxy `proxy-1778040454500-database-1ycc` is available and its target health is `AVAILABLE`.
 - PostgreSQL database `postgresycc` has the Phase 3 app schema applied, including `newsletter_subscribers` and `site_page_content`.
 - Protected API routes persist authenticated member, concierge, support draft, live page content, and humidor writes into the Phase 3 tables when `FEATURE_DB_WRITES=schema_ready`; the public newsletter route stores opt-ins and monthly membership interest.
-- Repo-local Phase 3-12 commerce work now adds `0002_commerce_schema.sql`, Lambda commerce route scaffolding, Stripe helper modules, compliance validation, and frontend Stripe Checkout clients. These updates still need Lambda packaging/deployment and provider credentials before they are live.
+- Repo-local Phase 3-12 commerce work now adds `0002_commerce_schema.sql`, `0005_member_stripe_customer_link.sql`, Lambda commerce routes, Stripe helper modules, compliance validation, frontend Stripe Checkout clients, DB member-to-Stripe Customer linking, live Stripe secret/catalog wiring, active Stripe Tax registration/defaults, and USPS Adult Signature readiness.
 - Phase 4.5 Bedrock Agent Runtime is enabled for `POST /concierge/chat` through Lambda with YCC persona routing, Knowledge Base retrieval, Lambda action groups, guardrail version `8` for Lambda fallback and the News Agent, and fallback behavior if agent invocation is unavailable.
 - Bedrock Guardrail `YCCConciergeGuardrail` is versioned and associated with the Lambda runtime path and Bedrock Agents.
 - Bedrock Agents exist and have prepared `prod` aliases for `YCCConcierge`, `YCCCigarGuide`, `YCCSupportAgent`, `YCCHumidorAgent`, `YCCAdminAgent`, and `YCCNewsAgent`; the five pre-existing agents route to version `6`, and the News Agent routes to version `5`.
@@ -71,12 +71,12 @@ Gaps:
 - RDS Proxy now requires TLS and Lambda verifies the RDS Proxy certificate with the bundled AWS RDS CA file.
 - RDS deletion protection is enabled and backup retention is set to 7 days.
 - The default RDS security group was removed; the narrow Lambda-to-proxy-to-DB security group path remains attached.
-- Cognito app client IaC now includes `ALLOW_USER_PASSWORD_AUTH` for the storefront's inline password sign-in flow, but the matching live app client update is still pending because the AWS write operation was rejected by the current execution layer.
-- The database and Lambda remain in the default VPC, but Lambda has moved out of default public subnets into dedicated private egress subnets with NAT and endpoint routes. A named production VPC remains a future improvement rather than a launch blocker.
-- SES production access is denied under AWS case `177809591700724`, so live outbound customer support sends remain guarded by `FEATURE_SES=pending_production_access`.
+- Cognito app client IaC includes `ALLOW_USER_PASSWORD_AUTH`, and the live `ycc-storefront` app client was verified on 2026-05-13 with `ALLOW_USER_PASSWORD_AUTH`, `ALLOW_USER_SRP_AUTH`, and `ALLOW_REFRESH_TOKEN_AUTH` while preserving OAuth code flow settings.
+- The database and Lambda remain in the default VPC, but Lambda has moved out of default public subnets into dedicated private egress subnets with NAT and endpoint routes. Lambda security group `sg-00c3d67ac62d92ae7` now allows TCP/443 egress through NAT for Stripe API calls. A named production VPC remains a future improvement rather than a launch blocker.
+- SES production access is denied under AWS case `177809591700724`, so live outbound customer support sends remain guarded by `FEATURE_SES=pending_production_access`. Recheck on 2026-05-20 confirmed the need is production access for low-volume transactional support mail only; `sesv2 put-account-details --production-access-enabled` returns `ConflictException`, so the next path is a Support Center appeal or case reopen.
 - The production `support@yuzucigarclub.com` mailbox currently routes through Microsoft 365. To ingest real support mail through SES without changing root MX, configure Microsoft 365 forwarding or a mail-flow rule from `support@yuzucigarclub.com` to `support@ses-support.yuzucigarclub.com`.
 - Direct operator CLI retrieval against the Knowledge Base is not currently allowed by the scoped operator role. The live agents can retrieve through their Bedrock runtime role.
-- Stripe approval, live/test Stripe keys, Stripe webhook secret, Stripe Price IDs, age-verification credentials, tax-provider readiness, adult-signature shipping approval, and provider-backed commerce verification are still pending for production commerce launch.
+- Live Stripe API key, webhook signing secret, Customer Portal configuration, tobacco approval confirmation, membership Price IDs, age-verification settings, Stripe Tax registration/defaults, USPS Adult Signature readiness, and internal signing secrets are stored in Secrets Manager secret `ycc/commerce/prod` and exposed to Lambda through `COMMERCE_PROVIDER_SECRET_ARN`. The full 923-item published catalog is loaded into Stripe and the SKU-to-Price mapping is stored at `s3://classroom2/ycc/commerce/stripe-launch-catalog.json`. Stripe Support confirmed on 2026-05-25 that Company Q meets the Stripe Services Agreement; the secret records that approval. Direct live Stripe checks on 2026-05-26 show charges enabled, no currently due or past-due account requirements, the commerce webhook enabled, active products/prices present, no first-page disputes/subscriptions, no Stripe Customers to backfill, Stripe Tax active with Gilbert, AZ head office and active AZ registration `taxreg_1TbQiD0r0rWXiDV5IKP7bReS`, and Stripe payouts not enabled.
 
 ## Production Launch Hardening Ownership
 
@@ -87,16 +87,16 @@ These items must be closed before production commerce launch. Owners are functio
 | RDS Proxy `RequireTLS=false` | Infrastructure operator | Closed 2026-05-07 | `proxy-1778040454500-database-1ycc` now has `RequireTLS=true`; Lambda uses `RDS_SSLMODE=verify-full` with the bundled RDS CA file. |
 | RDS deletion protection disabled | Infrastructure operator | Closed 2026-05-07 | `database-1ycc` deletion protection is enabled with 7-day backup retention. |
 | Default RDS security group still attached | Infrastructure operator | Closed 2026-05-07 | Default DB security group was removed; the database keeps the validated Lambda-to-proxy-to-DB security group path. |
-| Cognito inline password auth flow missing on live app client | Identity operator | Open | Add `ALLOW_USER_PASSWORD_AUTH` to app client `2i2nvtt41l94n0mivc4tu4f9ms` while preserving the current OAuth code flow, callback URLs, logout URLs, token validity, token revocation, and user-existence error settings. |
+| Cognito inline password auth flow missing on live app client | Identity operator | Closed 2026-05-13 | App client `2i2nvtt41l94n0mivc4tu4f9ms` now has `ALLOW_USER_PASSWORD_AUTH` with OAuth code flow, callback URLs, logout URLs, token validity, token revocation, and user-existence error settings preserved. |
 | Default public subnet Lambda egress | Infrastructure operator | Closed 2026-05-12 | Lambda `ycyyy` now runs in dedicated private egress subnets `subnet-06116a5414f29c8bb` and `subnet-067af6ad21ff85cc2` with NAT gateways `nat-0460beed74a121308` and `nat-06330ee4dd558e916`. A named production VPC remains a future hardening item. |
 | SES production access pending | Support/email operator | External blocked | SES production access remains denied in AWS case `177809591700724`; keep `FEATURE_SES=pending_production_access` until AWS approves sending, then smoke test and set `FEATURE_SES=ready`. |
 | WAF/rate limiting missing from public edge/API | Security operator | Closed 2026-05-12 | Amplify is associated with CloudFront-scope WAF web ACL `ycc-amplify-edge`; API Gateway detailed metrics and route throttles remain enabled. |
 | CloudWatch alarms incomplete | Operations operator | Baseline closed 2026-05-07 | Baseline alarms now cover Lambda errors/throttles, API 4xx/5xx, RDS CPU/storage/connections, and RDS Proxy client connections. Add vendor-specific alarms after Stripe, age, and shipping integrations go live. |
 | Backup retention/restore drill not launch-approved | Infrastructure operator | Closed 2026-05-12 | Backup retention is set to 7 days; point-in-time restore drill `ycc-restore-drill-20260512-1640` reached `available` as encrypted PostgreSQL 18.3 and was deleted after verification. |
 | `YCCNewsAgent` Bedrock IDs pending | AI operations operator | Closed 2026-05-07 | Created `YCCNewsAgent` `TUVBTVKNXG`, prepared `prod` alias `G25GBEUUMG`, attached Knowledge Base `48GFMCLSTG`, attached action group `YCCOperations`, tuned guardrail/prompt, and configured Lambda env/defaults. |
-| Stripe/tobacco commerce approval not attached | Commerce operator | Open | Obtain written Stripe approval for cigar/tobacco commerce before live payments. |
-| Stripe/age/tax/shipping secrets not stored for commerce routes | Backend operator | Open | Store Stripe keys, webhook secret, membership Price IDs, age-verification, tax, and shipping credentials in Secrets Manager and expose only server-side Lambda env references. |
-| Adult-signature carrier agreement not verified | Fulfillment operator | Open | Confirm UPS/adult-signature tobacco shipping approval before fulfillment release. |
+| Stripe/tobacco commerce approval not attached | Commerce operator | Closed 2026-05-26 | Stripe Support email received 2026-05-25 confirmed Company Q meets the Stripe Services Agreement and no further account action is needed. `ycc/commerce/prod` now carries `stripe.tobaccoApprovalConfirmed=true`, and `npm run launch:go-live-check` passes `stripe-approval`. |
+| Stripe/age/tax/shipping secrets not stored for commerce routes | Backend operator | Closed 2026-05-26 | Secret `ycc/commerce/prod` now stores the live Stripe key, webhook secret, Customer Portal configuration, 12 membership recurring Price IDs, generated internal signing secrets, age-verification settings, Stripe approval confirmation, USPS Adult Signature readiness, Stripe Tax head-office state, active AZ registration `taxreg_1TbQiD0r0rWXiDV5IKP7bReS`, default tax code `txcd_99999999`, default tax behavior `exclusive`, and an S3 pointer for the full launch catalog. Stripe has 923 active catalog Products and 923 active catalog Prices. Lambda `ycyyy` reads the secret through `COMMERCE_PROVIDER_SECRET_ARN` and the catalog from `s3://classroom2/ycc/commerce/stripe-launch-catalog.json`. |
+| USPS adult-signature setup not verified | Fulfillment operator | Closed 2026-05-26 | Fulfillment confirmed USPS Adult Signature is ready. `ycc/commerce/prod` now records `shipping.provider=USPS`, `shipping.adultSignatureCarrierApproved=true`, and nested `shipping.adultSignature.ready=true`; `npm run launch:go-live-check` passes `adult-signature-carrier`. |
 
 ## Phase 1 Live Outputs
 
@@ -402,9 +402,10 @@ Planned commerce routes:
 Repo implementation status:
 
 - `infra/database/migrations/0002_commerce_schema.sql` defines Stripe events, commerce orders, order items, member subscriptions, compliance holds, and commerce audit log tables.
+- `infra/database/migrations/0005_member_stripe_customer_link.sql` adds `members.stripe_customer_id`, backfills it from subscription/order Stripe Customer IDs, and protects it with a partial unique index.
 - `infra/lambda/ycc-api/commerce-rules.js` contains the server-side launch compliance validator.
 - `infra/lambda/ycc-api/stripe-commerce.js` contains Stripe Checkout, Billing, Customer Portal, webhook verification, and event-action helpers.
-- `infra/lambda/ycc-api/index.js` now registers the commerce route contract but intentionally returns `stripe_not_ready`/`commerce_not_configured` until Stripe secrets and launch catalog readiness flags are configured.
+- `infra/lambda/ycc-api/index.js` now registers the commerce route contract, reads live commerce settings from Secrets Manager, and intentionally rejects product checkout when compliance providers such as Stripe Tax or adult-signature shipping are not ready. Current live secret state marks Stripe Tax and USPS Adult Signature ready.
 - Static frontend checkout calls `NEXT_PUBLIC_YCC_API_BASE_URL` and redirects only to backend-created Stripe Checkout URLs.
 
 ## Setup Phases
@@ -530,7 +531,9 @@ Current Phase 5 status:
 
 - SES domain identity `yuzucigarclub.com` is verified in `us-east-1`.
 - Route 53 hosted zone `Z03644703S5ZEDRBYROZW` hosts the SES Easy DKIM CNAME records for `yuzucigarclub.com`.
-- SES production-access request was submitted on 2026-05-06, but `ProductionAccessEnabled=false` at last check.
+- SES production-access request was submitted on 2026-05-06 and later denied under case `177809591700724`; `ProductionAccessEnabled=false` was rechecked on 2026-05-20.
+- API resubmission on 2026-05-20 returned `ConflictException`, so do not expect another CLI/API submission to flip the account while the denied review state remains. Use AWS Support Center to appeal or reopen the case.
+- Public trust pages `https://www.yuzucigarclub.com/privacy/` and `https://www.yuzucigarclub.com/terms/` return HTTP `200`, and both are included in the production sitemap for the next SES review.
 - Root MX for `yuzucigarclub.com` still points to Microsoft 365 and was intentionally left unchanged.
 - SES inbound subdomain `ses-support.yuzucigarclub.com` is configured with:
   - DKIM CNAME records for the SES identity `ses-support.yuzucigarclub.com`
@@ -606,6 +609,16 @@ Verification:
 - Direct Lambda invoke `verify_site_content_schema` returns `status=verified`, `tableCount=1`, `indexCount=2`, `missingTables=[]`, and migration row `0003`.
 - Staging `/`, `/membership`, and `/education` returned HTTP `200` after deployment.
 
+### 2026-05-26 Member Stripe Customer Link
+
+- Lambda package artifact: `output/ycc-api-lambda-member-stripe-customer-link-20260526.zip`.
+- Lambda code hash: `1XVby3Y9TTUf3I8hF5DHhHQJhRG/DE4ZHzMaY9QgoEE=`.
+- Deployed to Lambda `ycyyy` at `2026-05-26T19:23:53Z`.
+- Guarded migration `0005_member_stripe_customer_link` applied to `postgresycc` at `2026-05-26T19:24:56.130Z`.
+- Verification invoke `verify_member_stripe_customer_link_schema` returned `missingColumns=[]`, `indexCount=1`, `linkedMemberCount=0`, and migration row `0005`. The linked count is zero because the live Stripe account currently has no Customers.
+- Direct Lambda `GET /health?deep=1` after deployment returned HTTP `200`, `status=ok`, `databaseWrites=schema_ready`, and `db.proxyReachable=true`.
+- Webhook processing now links matched member rows to Stripe Customer IDs from Checkout/subscription events, and Customer Portal sessions prefer `members.stripe_customer_id` before falling back to subscription/order history.
+
 ### Phase 6: Production Hardening
 
 Make these changes before public launch:
@@ -619,7 +632,7 @@ Make these changes before public launch:
 
 Phase 1 through Phase 5 are now live for authenticated API, public newsletter signup intake, persistence, Bedrock Agent Runtime concierge replies, Knowledge Base retrieval, Lambda action groups, guardrails, prepared Bedrock Agent aliases, SES-verified domain identity, non-disruptive SES inbound support-email plumbing, SES feedback notifications, WAF-protected Amplify hosting, API access logs, private Lambda egress, and verified RDS restore capability.
 
-The remaining launch gates are external/provider gates: AWS must approve SES production sending before `FEATURE_SES=ready`, Microsoft 365 forwarding is still needed for production support ingestion, and production commerce still needs Stripe approval/live secrets, age verification, tobacco tax/excise readiness, adult-signature carrier approval, and provider-backed end-to-end checkout verification.
+The remaining launch gates are external/operator gates: AWS must approve SES production sending before `FEATURE_SES=ready`, Microsoft 365 forwarding is still needed for production support ingestion, and Stripe payout/legal Dashboard status needs operator review. Stripe Tax registration and provider-backed backend Checkout smoke are complete.
 
 Do not connect Bedrock or email directly to the frontend; keep agent actions behind the authenticated API boundary.
 

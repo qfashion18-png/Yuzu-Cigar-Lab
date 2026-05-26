@@ -29,7 +29,7 @@ import { ProductCard } from "@/components/product-card";
 import { ReferenceImage } from "@/components/reference-image";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { getCatalogProductDetails, getStorefrontProductBySlug, storefrontProducts } from "@/lib/catalog";
+import { getCatalogProductDetails, getCatalogReviewAudit, getStorefrontProductBySlug, storefrontProducts } from "@/lib/catalog";
 import { siteUrl } from "@/lib/site";
 
 type ProductPageProps = {
@@ -84,6 +84,7 @@ export default async function ProductDetailPage({ params }: ProductPageProps) {
     .filter((candidate) => candidate.category === product.category || candidate.brand === product.brand)
     .slice(0, 3);
   const hasCigarSpecs = Boolean(product.vitola || product.length || product.gauge || product.strength || product.wrapper || product.filler || product.binder);
+  const reviewAudit = getCatalogReviewAudit(product);
   const productJsonLd = toJsonLd({
     type: "Product",
     name: product.name,
@@ -278,30 +279,13 @@ export default async function ProductDetailPage({ params }: ProductPageProps) {
           </DetailPanel>
 
           <DetailPanel title="Ratings & Reviews" icon={Star}>
-            {product.expertReview ? (
-              <div className="grid gap-4">
-                <div className="flex items-start justify-between gap-4 border border-yuzu-line bg-yuzu-night p-4">
-                  <div>
-                    <p className="text-xs font-bold uppercase tracking-[0.18em] text-yuzu-muted">{product.expertReview.sourceName}</p>
-                    <p className="mt-1 font-heading text-5xl text-yuzu-gold">{product.expertReview.score}</p>
-                  </div>
-                  <a
-                    href={product.expertReview.sourceUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex min-h-10 items-center gap-2 border border-yuzu-gold px-3 text-xs font-bold uppercase tracking-[0.14em] text-yuzu-gold transition hover:bg-yuzu-gold hover:text-yuzu-ink"
-                  >
-                    Source
-                    <ExternalLink className="size-4" />
-                  </a>
-                </div>
-                <p className="text-sm leading-7 text-yuzu-muted">{product.expertReview.tastingSummary}</p>
-                <dl className="grid gap-4 text-sm">
-                  <DataRow label="Issue" value={product.expertReview.issue} />
-                  <DataRow label="Other reviews" value={formatOtherReviews(product.expertReview.otherReviews)} />
-                </dl>
-              </div>
-            ) : (
+            {product.expertReview && <ExpertReviewPanel product={product} />}
+
+            {product.reviewProfile && <ReviewProfilePanel profile={product.reviewProfile} />}
+
+            {!product.expertReview && !product.reviewProfile && reviewAudit && <ReviewAuditPanel audit={reviewAudit} />}
+
+            {!product.expertReview && !product.reviewProfile && !reviewAudit && (
               <div className="grid gap-4 text-sm leading-7 text-yuzu-muted">
                 <p>No matched Cigar Aficionado review is attached to this inventory item yet.</p>
                 <a
@@ -406,6 +390,114 @@ function formatOtherReviews(reviews: Array<{ score: number; issue: string }>) {
   }
 
   return reviews.map((review) => `${review.score} (${review.issue})`).join("; ");
+}
+
+function ExpertReviewPanel({ product }: { product: NonNullable<ReturnType<typeof getProduct>> }) {
+  if (!product.expertReview) {
+    return null;
+  }
+
+  return (
+    <div className="grid gap-4">
+      <div className="flex items-start justify-between gap-4 border border-yuzu-line bg-yuzu-night p-4">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-[0.18em] text-yuzu-muted">{product.expertReview.sourceName}</p>
+          <p className="mt-1 font-heading text-5xl text-yuzu-gold">{product.expertReview.score}</p>
+        </div>
+        <a
+          href={product.expertReview.sourceUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex min-h-10 items-center gap-2 border border-yuzu-gold px-3 text-xs font-bold uppercase tracking-[0.14em] text-yuzu-gold transition hover:bg-yuzu-gold hover:text-yuzu-ink"
+        >
+          Source
+          <ExternalLink className="size-4" />
+        </a>
+      </div>
+      <p className="text-sm leading-7 text-yuzu-muted">{product.expertReview.tastingSummary}</p>
+      <dl className="grid gap-4 text-sm">
+        <DataRow label="Issue" value={product.expertReview.issue} />
+        <DataRow label="Other reviews" value={formatOtherReviews(product.expertReview.otherReviews)} />
+      </dl>
+    </div>
+  );
+}
+
+function ReviewProfilePanel({ profile }: { profile: NonNullable<ReturnType<typeof getProduct>>["reviewProfile"] }) {
+  if (!profile) {
+    return null;
+  }
+
+  return (
+    <div className="grid gap-4 text-sm leading-7 text-yuzu-muted">
+      <p>{profile.summary}</p>
+      <ReviewQueryRow value={profile.searchQuery} />
+      <ul className="grid gap-4">
+        {profile.sources.map((source) => (
+          <li key={source.sourceName} className="border-t border-yuzu-line/60 pt-4 first:border-t-0 first:pt-0">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.16em] text-yuzu-gold">{source.sourceName}</p>
+                <p className="mt-1 font-heading text-lg text-yuzu-cream">{source.rating}</p>
+              </div>
+              <a
+                href={source.sourceUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex min-h-10 items-center gap-2 border border-yuzu-gold px-3 text-xs font-bold uppercase tracking-[0.14em] text-yuzu-gold transition hover:bg-yuzu-gold hover:text-yuzu-ink"
+              >
+                Source
+                <ExternalLink className="size-4" />
+              </a>
+            </div>
+            <ul className="mt-3 grid gap-2">
+              {source.keyDetails.map((detail) => (
+                <li key={detail} className="flex gap-3">
+                  <span className="mt-3 size-1.5 shrink-0 bg-yuzu-gold" />
+                  <span>{detail}</span>
+                </li>
+              ))}
+            </ul>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function ReviewQueryRow({ value }: { value: string }) {
+  return (
+    <div className="grid gap-2 border-b border-yuzu-line/60 pb-3 text-sm sm:grid-cols-[8rem_1fr]">
+      <dt className="text-yuzu-muted">Research query</dt>
+      <dd className="min-w-0 break-words font-heading text-base leading-6 text-yuzu-cream sm:text-right">{value}</dd>
+    </div>
+  );
+}
+
+function ReviewAuditPanel({ audit }: { audit: NonNullable<ReturnType<typeof getCatalogReviewAudit>> }) {
+  return (
+    <div className="grid gap-4 text-sm leading-7 text-yuzu-muted">
+      <p>{audit.summary}</p>
+      <ReviewQueryRow value={audit.searchPrompt} />
+      <dl className="grid gap-3">
+        {audit.details.map((detail) => (
+          <div key={detail.label} className="grid gap-1 border-b border-yuzu-line/50 pb-3 last:border-b-0 last:pb-0 sm:grid-cols-[7rem_1fr]">
+            <dt className="text-yuzu-muted">{detail.label}</dt>
+            <dd className="min-w-0 break-words font-heading text-base leading-6 text-yuzu-cream sm:text-right">{detail.value}</dd>
+          </div>
+        ))}
+      </dl>
+      <a
+        href={audit.sourceUrl}
+        target="_blank"
+        rel="noreferrer"
+        className="inline-flex min-h-10 w-fit items-center gap-2 border border-yuzu-gold px-3 text-xs font-bold uppercase tracking-[0.14em] text-yuzu-gold transition hover:bg-yuzu-gold hover:text-yuzu-ink"
+      >
+        Search Ratings
+        <ExternalLink className="size-4" />
+      </a>
+    </div>
+  );
 }
 
 function DetailPanel({ title, icon: Icon, children }: { title: string; icon: LucideIcon; children: React.ReactNode }) {

@@ -17,6 +17,21 @@ function canCache(response) {
   return response && response.status === 200 && response.type !== "opaque";
 }
 
+function getSafeNotificationTargetUrl(value) {
+  const fallback = "/humidor?section=alerts";
+
+  try {
+    const target = new URL(value || fallback, self.location.origin);
+    if (target.origin !== self.location.origin) {
+      return fallback;
+    }
+
+    return `${target.pathname}${target.search}${target.hash}` || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 function cacheResponse(request, response) {
   if (!canCache(response)) {
     return Promise.resolve();
@@ -100,13 +115,16 @@ self.addEventListener("push", (event) => {
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const targetUrl = event.notification.data?.url || "/humidor?section=alerts";
+  const targetUrl = getSafeNotificationTargetUrl(event.notification.data?.url);
 
   event.waitUntil(
     self.clients
       .matchAll({ includeUncontrolled: true, type: "window" })
       .then((clients) => {
-        const existing = clients.find((client) => client.url.includes(targetUrl) && "focus" in client);
+        const existing = clients.find((client) => {
+          const clientUrl = new URL(client.url);
+          return clientUrl.origin === self.location.origin && `${clientUrl.pathname}${clientUrl.search}${clientUrl.hash}` === targetUrl && "focus" in client;
+        });
 
         if (existing) {
           return existing.focus();

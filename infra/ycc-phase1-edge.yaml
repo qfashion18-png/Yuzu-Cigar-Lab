@@ -263,6 +263,7 @@ Resources:
         AllowMethods:
           - GET
           - POST
+          - PATCH
           - OPTIONS
         AllowOrigins:
           - https://yuzucigarclub.com
@@ -436,6 +437,14 @@ Resources:
       AuthorizationType: NONE
       Target: !Sub integrations/${LambdaIntegration}
 
+  CommerceAgeVerificationTokenRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /commerce/age-verification-token
+      AuthorizationType: NONE
+      Target: !Sub integrations/${LambdaIntegration}
+
   CommerceMembershipSessionRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
@@ -496,6 +505,24 @@ Resources:
       AuthorizerId: !Ref JwtAuthorizer
       Target: !Sub integrations/${LambdaIntegration}
 
+  AdminCommerceOrdersRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /admin/commerce/orders
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${LambdaIntegration}
+
+  AdminCommerceOrderUpdateRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: "PATCH /admin/commerce/orders/{id}"
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${LambdaIntegration}
+
   AdminCommerceStripeSyncProductsRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
@@ -519,6 +546,24 @@ Resources:
     Properties:
       ApiId: !Ref HttpApi
       RouteKey: GET /admin/commerce/compliance-holds
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${LambdaIntegration}
+
+  AdminMembersRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /admin/members
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${LambdaIntegration}
+
+  AdminMemberAccessUpdateRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: "PATCH /admin/members/{id}/access"
       AuthorizationType: JWT
       AuthorizerId: !Ref JwtAuthorizer
       Target: !Sub integrations/${LambdaIntegration}
@@ -582,6 +627,15 @@ Resources:
     Properties:
       ApiId: !Ref HttpApi
       RouteKey: GET /humidor/items
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${LambdaIntegration}
+
+  HumidorItemEnrichmentRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: "PATCH /humidor/items/{id}/enrich"
       AuthorizationType: JWT
       AuthorizerId: !Ref JwtAuthorizer
       Target: !Sub integrations/${LambdaIntegration}

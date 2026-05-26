@@ -1,3 +1,5 @@
+import { officialCigarNewsSources, type NewsStory, type NewsStoryImage } from "@/lib/newsroom";
+
 export type CigarFlowSource = {
   name: string;
   publisher: string;
@@ -87,11 +89,77 @@ export const cigarFlowAutomation: CigarFlowAutomation = {
   outputTargets: ["Cigar Flow feed", "Education weekly article", "Newsletter draft"],
   updateScope: [
     "Research the preceding day's cigar and cigar-adjacent news from verified sources.",
+    "Monitor every configured manufacturer URL in officialCigarNewsSources for brand-direct updates.",
     "Refresh the first ten Cigar Flow cards in src/lib/cigar-flow.ts with current source links, images, and compact reader snippets.",
     "Keep member smoke-log cards distinct from RSS and manufacturer cards.",
     "Run project validation before reporting the update.",
   ],
 };
+
+const cigarFlowUpdateStoryImages: NewsStoryImage[] = [
+  {
+    label: "Matilde Limited Exposure No. 3",
+    image: "https://halfwheel.com/wp-content/uploads/2026/05/Matilde-Limited-Exposure-No.-3-Robusto-2-768x512.jpg",
+    imagePosition: "50% 52%",
+    alt: "Matilde Limited Exposure No. 3 Robusto story image",
+    sourceUrl: "https://halfwheel.com/matilde-limited-exposure-no-3-robusto/470765/",
+  },
+  {
+    label: "Rocky Patel Thirtieth Anniversary",
+    image: "https://halfwheel.com/wp-content/uploads/2026/04/Rocky-Patel-Thirtieth-Anniversary-Limited-Edition-2-768x512.jpg",
+    imagePosition: "50% 45%",
+    alt: "Rocky Patel Thirtieth Anniversary Limited Edition story image",
+    sourceUrl: "https://halfwheel.com/rocky-patel-thirtieth-anniversary-limited-edition/470748/",
+  },
+  {
+    label: "Camacho Factory Unleashed 3",
+    image: "https://halfwheel.com/wp-content/uploads/2026/05/Camacho-Factory-Unleashed-3-768x512.jpg",
+    imagePosition: "55% 50%",
+    alt: "Camacho Factory Unleashed 3 story image",
+    sourceUrl: "https://halfwheel.com/redux-camacho-factory-unleashed-3-3/470682/",
+  },
+];
+
+export const cigarFlowNewsStories: NewsStory[] = [
+  {
+    id: "cigar-flow-update-2026-05-14",
+    slug: "cigar-flow-update-may-14-edition",
+    title: "Cigar Flow Update: May 14 Edition",
+    dek:
+      "A visual Cigar Flow brief with the actual story images from the current feed cards, ready for operator review before live publication.",
+    category: "Cigar Industry News",
+    bodyMarkdown:
+      "## Feed signals\nYuzu is featuring Matilde Limited Exposure No. 3, Rocky Patel Thirtieth Anniversary Limited Edition, and Camacho Factory Unleashed 3 in the May 14 Cigar Flow update. The brief is built to keep member attention on release timing, availability language, event notes, and the actual feed imagery attached to each story.\n\n## Why adult members may care\nManufacturer updates help members decide which boxes deserve allocation watch, humidor space, or a later follow-up from the Yuzu team. The flow keeps these notes beside RSS coverage and member smoke logs instead of burying them on a separate page.\n\n## Flow note\nThe public card uses the story image set from the Cigar Flow feed and keeps source notes behind the editorial workflow, so the story reads like news while preserving the review trail for operators.",
+    images: cigarFlowUpdateStoryImages,
+    sourceNotes: [
+      {
+        label: "Drew Estate",
+        url: "https://drewestate.com/",
+        note: "Official brand website.",
+        sourceType: "official",
+        domain: "drewestate.com",
+      },
+      {
+        label: "Rocky Patel",
+        url: "https://www.rockypatel.com/cigar-news/",
+        note: "Official brand news page.",
+        sourceType: "official",
+        domain: "rockypatel.com",
+      },
+      {
+        label: "J.C. Newman",
+        url: "https://www.jcnewman.com/",
+        note: "Official brand website.",
+        sourceType: "official",
+        domain: "jcnewman.com",
+      },
+    ],
+    officialSources: ["https://drewestate.com/", "https://www.rockypatel.com/cigar-news/", "https://www.jcnewman.com/"],
+    status: "published",
+    publishedAt: "2026-05-14T12:00:00.000Z",
+    updatedAt: "2026-05-14T12:00:00.000Z",
+  },
+];
 
 export const cigarFlowItems: CigarFlowItem[] = [
   {
@@ -272,6 +340,7 @@ export const cigarFlowItems: CigarFlowItem[] = [
 
 export const cigarFlowStats = [
   { label: "Sources", value: `${cigarFlowSources.length}`, detail: "Feeds and news monitors" },
+  { label: "Makers", value: `${officialCigarNewsSources.length}`, detail: "Official manufacturer pages" },
   { label: "Flow cards", value: `${cigarFlowItems.length}`, detail: "News and member posts" },
   {
     label: "Member posts",
