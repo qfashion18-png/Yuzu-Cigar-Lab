@@ -35,6 +35,7 @@ Project memory: `AGENTS.md` now requires Codex to use this file as the persisten
   - The operator role can publish Lambda versions but cannot `lambda:UpdateAlias`; root credentials from the local CSV were used only for the alias promotion step and were not printed. Rotate the root access key after this launch-hardening sequence.
   - Re-applied both Bedrock endpoint policies with `scripts/apply-ycc-bedrock-vpce-policies.ps1`; Runtime endpoint `vpce-08ceae2011933db0e` and Agent Runtime endpoint `vpce-0eaf893d65f8ec9f5` both returned `Return=true`.
   - Amplify `staging` branch deployment used the project deploy skill and deployment role; job `124` reached `SUCCEED`. Amplify branch readback shows `branchName=staging`, `stage=PRODUCTION`, and `activeJobId=0000000124`.
+  - Follow-up user-requested static redeploy used the project deploy skill with a fresh `npm run build` and `--skip-build` upload path after the helper could not resolve `npm` from Python on Windows; Amplify job `125` reached `SUCCEED`, and branch readback shows `activeJobId=0000000125`.
 - Live verification:
   - Lambda `ycyyy:live` readback: version `5`, code hash `eAJUbNeihSMM7GQSKnArl87L4rEEJmeBagXwR8Gqacg=`, `BEDROCK_ENABLE_GUARDRAILS=1`, `FEATURE_DB_WRITES=schema_ready`.
   - API Gateway readback shows both `GET /account/me` and `PATCH /account/me` are JWT routes on authorizer `n93hk9`, target `integrations/aercs6j`.
@@ -43,6 +44,7 @@ Project memory: `AGENTS.md` now requires Codex to use this file as the persisten
   - Bedrock readback confirmed all six `prod` aliases are `PREPARED`, route to version `7`, use guardrail `xczjnv3f1wzs` version `8`, and have enabled `YCCOperations` action groups whose executors are `arn:aws:lambda:us-east-1:374587466106:function:ycyyy:live`.
   - Lambda policy readback confirmed Bedrock principal statements are on `ycyyy:live`; the unqualified function policy contains API Gateway and SES statements, not Bedrock.
   - Amplify staging smoke returned `homeStatus=200` and `assetStatus=200` for `/_next/static/chunks/01q3wdy26cy12.css`.
+  - Follow-up job `125` smoke also returned `homeStatus=200` and `assetStatus=200` for `/_next/static/chunks/01q3wdy26cy12.css`.
   - SESv2 `get-account` still reports `ProductionAccessEnabled=false`, `SendingEnabled=true`, `EnforcementStatus=HEALTHY`, suppression enabled for `BOUNCE` and `COMPLAINT`, and review case `177809591700724` with status `DENIED`.
   - Attempted to submit an updated transactional production-access request with verified website/privacy/terms, custom MAIL FROM, DKIM, bounce/complaint suppression, no purchased lists, opt-in newsletter handling, and low launch volume details; SES returned `ConflictException`, which matches the denied review state blocking API resubmission.
   - Attempted AWS Support API case lookup for the SES case; AWS returned `SubscriptionRequiredException`, so a human appeal now requires the AWS Support Center/SES console path or a support-plan change before Support API automation is available.
@@ -60,7 +62,7 @@ Project memory: `AGENTS.md` now requires Codex to use this file as the persisten
   - `git diff --check` - no whitespace errors.
   - `npm run launch:go-live-check` - passed in strict mode with all checks PASS and no generated-artifact warning after cleanup.
 - Cleanup:
-  - Removed generated `output/` after Lambda deployment and removed the temporary Amplify deploy zip after job `124` succeeded.
+  - Removed generated `output/` after Lambda deployment and removed the temporary Amplify deploy zips after jobs `124` and `125` succeeded.
 
 ## 2026-05-27 SES Production Appeal Resubmission Retry
 
