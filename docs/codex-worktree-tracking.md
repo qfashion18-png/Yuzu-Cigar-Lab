@@ -62,6 +62,17 @@ Project memory: `AGENTS.md` now requires Codex to use this file as the persisten
 - Cleanup:
   - Removed generated `output/` after Lambda deployment and removed the temporary Amplify deploy zip after job `124` succeeded.
 
+## 2026-05-27 SES Production Appeal Resubmission Retry
+
+- Goal: retry SES production-access appeal/resubmission after the user confirmed root credentials may be used.
+- Live AWS result:
+  - Used `C:\Users\qfash\Downloads\rootkey.csv` without printing access keys; `sts get-caller-identity` confirmed `arn:aws:iam::374587466106:root`.
+  - Submitted an updated `sesv2 put-account-details` transactional production-access request for `https://www.yuzucigarclub.com` with privacy/terms URLs, verified domain/custom MAIL FROM/DKIM, bounce/complaint suppression, no purchased lists, opt-in-only newsletter handling, authenticated operator controls, audit logging, and low launch volume details.
+  - AWS SES returned `ConflictException` and did not accept the resubmission.
+  - SESv2 readback remains `ProductionAccessEnabled=false`, `SendingEnabled=true`, `EnforcementStatus=HEALTHY`, suppression enabled for `BOUNCE` and `COMPLAINT`, and `ReviewDetails.Status=DENIED` for case `177809591700724`.
+- Current blocker:
+  - The account is denied and the SES API is refusing to replace the denied review details. The remaining path is an AWS Support Center/SES console appeal or enabling a support plan that permits Support API automation.
+
 ## 2026-05-27 Cart Checkout Account Gap Remediation
 
 - Goal: fix all Cart, Checkout, and Account gaps found in the E2E audit and follow-up workflow/logic review.
