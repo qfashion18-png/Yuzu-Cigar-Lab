@@ -162,6 +162,7 @@ const DEFAULT_HUMIDOR_ALERT_PREFERENCES = Object.freeze({
   humidorProfile: {
     humidorName: "",
     defaultLocation: "",
+    locations: [],
   },
 });
 const HUMIDOR_CLIMATE_ALERT_TARGET = Object.freeze({
@@ -3528,11 +3529,31 @@ async function handleHumidorItemUpdate(event, actor, requestId) {
     return body.error;
   }
 
+  const hasHumidorLocationUpdate =
+    Object.prototype.hasOwnProperty.call(body.value, "humidorLocation") ||
+    Object.prototype.hasOwnProperty.call(body.value, "location");
+  const hasAgingStartDateUpdate = Object.prototype.hasOwnProperty.call(body.value, "agingStartDate");
   const humidorLocation = sanitizeText(body.value.humidorLocation || body.value.location, MAX_FIELD_LENGTH);
-  if (!humidorLocation) {
+  const agingStartDate = hasAgingStartDateUpdate ? normalizeDateOnly(body.value.agingStartDate) : undefined;
+
+  if (!hasHumidorLocationUpdate && !hasAgingStartDateUpdate) {
+    return json(400, requestId, {
+      error: "missing_humidor_item_update",
+      message: "Send a humidor location or aging start date before updating this saved cigar.",
+    });
+  }
+
+  if (hasHumidorLocationUpdate && !humidorLocation) {
     return json(400, requestId, {
       error: "missing_humidor_location",
       message: "Send a humidor location before updating this saved cigar.",
+    });
+  }
+
+  if (hasAgingStartDateUpdate && !agingStartDate) {
+    return json(400, requestId, {
+      error: "invalid_aging_start_date",
+      message: "Send a valid aging start date before updating this saved cigar.",
     });
   }
 
@@ -3557,6 +3578,7 @@ async function handleHumidorItemUpdate(event, actor, requestId) {
 
     const currentItem = mapHumidorItemRow(currentRow);
     const updatedRow = await updateHumidorItemLocation(client, {
+      agingStartDate,
       actor,
       humidorLocation,
       itemId,
@@ -3566,13 +3588,20 @@ async function handleHumidorItemUpdate(event, actor, requestId) {
     const updatedItem = mapHumidorItemRow(updatedRow);
 
     await insertAuditLog(client, event, {
-      action: "humidor_item.location_updated",
+      action:
+        hasHumidorLocationUpdate && hasAgingStartDateUpdate
+          ? "humidor_item.updated"
+          : hasAgingStartDateUpdate
+            ? "humidor_item.aging_start_updated"
+            : "humidor_item.location_updated",
       actor,
       afterData: {
+        agingStartDate: updatedItem.agingStartDate,
         humidorLocation: updatedItem.humidorLocation,
         itemId,
       },
       beforeData: {
+        agingStartDate: currentItem.agingStartDate,
         humidorLocation: currentItem.humidorLocation,
       },
       memberId: member.id,
@@ -4227,8 +4256,19 @@ async function maybeIdentifyCigarFromImage(actor, image, notes) {
 
 async function maybeEnrichHumidorItem(item, requestedFields, actor, requestId) {
   const conversationId = `humidor_enrich_${item.id}_${requestId}`;
+  const knowledgeBaseRetrieval =
+    process.env.FEATURE_BEDROCK === "runtime_ready"
+      ? await maybeRetrieveKnowledgeBaseContext(
+          process.env.BEDROCK_KNOWLEDGE_BASE_ID || null,
+          buildHumidorEnrichmentRetrievalQuery(item, requestedFields)
+        )
+      : null;
   const prompt = buildHumidorEnrichmentPrompt(item, requestedFields);
-  const bedrock = await maybeBuildBedrockReply("YCCHumidorAgent", actor, prompt, conversationId);
+  const bedrock = await maybeBuildBedrockReply("YCCHumidorAgent", actor, prompt, conversationId, {
+    knowledgeBaseRetrieval,
+    maxTokens: 1400,
+    temperature: 0.2,
+  });
 
   return {
     ...bedrock,
@@ -4236,12 +4276,31 @@ async function maybeEnrichHumidorItem(item, requestedFields, actor, requestId) {
   };
 }
 
+function buildHumidorEnrichmentRetrievalQuery(item, requestedFields) {
+  const identity = [
+    item.name,
+    item.brand && item.brand !== item.name ? item.brand : "",
+    item.line && item.line !== item.name ? item.line : "",
+    item.vitola,
+  ]
+    .map((value) => sanitizeText(value, MAX_FIELD_LENGTH))
+    .filter(Boolean)
+    .join(" ");
+
+  return [
+    "YCC humidor cigar reference lookup for missing member inventory fields.",
+    `Cigar identity: ${identity || sanitizeText(item.name, MAX_FIELD_LENGTH) || "unknown cigar"}`,
+    `Requested missing groups: ${requestedFields.join(", ")}`,
+    "Retrieve product reference facts for brand, line, vitola, wrapper, origin, strength, tasting notes, MSRP or retail price, and stable product image URLs.",
+  ].join("\n");
+}
+
 function buildHumidorEnrichmentPrompt(item, requestedFields) {
   return [
     "Locate missing reference data for this member humidor cigar and return only strict JSON.",
     "Do not overwrite member-entered values. Fill only the requested missing groups: info, image, and/or MSRP.",
     "Use this top-level schema exactly: brand, line, vitola, wrapper, origin, strength, tastingNotes, estimatedValue, estimatedValueCurrency, estimatedValueSource, cigarImage, confidence, evidence, needsReview, details.",
-    "cigarImage must be an object with imageUrl, mimeType, fileName, and source. Use only stable HTTPS product/reference image URLs; leave imageUrl empty if no reliable image is known.",
+    "cigarImage must be an object with imageUrl, mimeType, fileName, and source. Use stable HTTPS product/reference image URLs or first-party /assets/... product image paths; leave imageUrl empty if no reliable image is known.",
     "details must be an object with this schema exactly: manufacturer, country, region, factory, size, length, ringGauge, shape, wrapper, binder, filler, blend, flavorProfile, body, finish, msrp, releaseStatus, packaging, sourceSummary, imageObservations.",
     "Set estimatedValue to the best per-cigar retail/MSRP number when known, otherwise null. Set estimatedValueCurrency to USD unless another currency is explicit.",
     "Evidence and needsReview must be arrays of short strings. Avoid health, cessation, medical, safety, or underage tobacco claims.",
@@ -5872,9 +5931,10 @@ async function updateHumidorItemLocation(client, details) {
     `
       /* humidor_item_location_update */
       update public.humidor_items
-      set humidor_location = $3,
-          actor_id = $4,
-          request_id = $5,
+      set humidor_location = coalesce($3, humidor_location),
+          aging_start_date = coalesce($4::date, aging_start_date),
+          actor_id = $5,
+          request_id = $6,
           updated_at = now()
       where id = $1 and member_id = $2 and archived_at is null
       returning
@@ -5902,6 +5962,7 @@ async function updateHumidorItemLocation(client, details) {
       details.itemId,
       details.memberId,
       nullable(details.humidorLocation),
+      nullable(details.agingStartDate),
       details.actor.sub,
       details.requestId,
     ]
@@ -8695,7 +8756,32 @@ function normalizeHumidorLocationProfile(value) {
   return {
     humidorName: sanitizeText(raw.humidorName || raw.name, 120),
     defaultLocation: sanitizeText(raw.defaultLocation || raw.location || raw.defaultHumidorLocation, 120),
+    locations: normalizeHumidorProfileLocations(raw.locations || raw.savedLocations || raw.locationOptions),
   };
+}
+
+function normalizeHumidorProfileLocations(value) {
+  const rawLocations = Array.isArray(value)
+    ? value
+    : typeof value === "string" && value.trim()
+      ? value.split(/\r?\n|,/)
+      : [];
+  const locations = [];
+  const seen = new Set();
+
+  for (const rawLocation of rawLocations) {
+    const location = sanitizeText(String(rawLocation || ""), 120);
+    const key = location.toLowerCase();
+
+    if (!location || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    locations.push(location);
+  }
+
+  return locations;
 }
 
 function normalizeHumidorPushSubscription(value) {
@@ -8879,12 +8965,13 @@ function toIsoString(value) {
   return String(value);
 }
 
-async function maybeBuildBedrockReply(agent, actor, message, conversationId) {
+async function maybeBuildBedrockReply(agent, actor, message, conversationId, options = {}) {
   const modelId = process.env.BEDROCK_MODEL_ID || DEFAULT_BEDROCK_MODEL_ID;
   const guardrailsEnabled = process.env.BEDROCK_ENABLE_GUARDRAILS === "1";
   const guardrailId = guardrailsEnabled ? process.env.BEDROCK_GUARDRAIL_ID || null : null;
   const guardrailVersion = guardrailsEnabled ? process.env.BEDROCK_GUARDRAIL_VERSION || null : null;
   const knowledgeBaseId = process.env.BEDROCK_KNOWLEDGE_BASE_ID || null;
+  const prefetchedKnowledgeBaseRetrieval = options.knowledgeBaseRetrieval || null;
 
   if (process.env.FEATURE_BEDROCK !== "runtime_ready") {
     return {
@@ -8907,7 +8994,7 @@ async function maybeBuildBedrockReply(agent, actor, message, conversationId) {
         agentId: agentTarget.agentId,
         agentAliasId: agentTarget.agentAliasId,
         sessionId: agentSessionId,
-        inputText: buildBedrockAgentInputText(message),
+        inputText: buildBedrockAgentInputText(message, prefetchedKnowledgeBaseRetrieval?.context),
         enableTrace: process.env.BEDROCK_AGENT_ENABLE_TRACE === "1",
         sessionState: {
           sessionAttributes: buildAgentSessionAttributes(agent, actor, conversationId),
@@ -8931,6 +9018,8 @@ async function maybeBuildBedrockReply(agent, actor, message, conversationId) {
           agentAliasId: agentTarget.agentAliasId,
           agentSessionId,
           knowledgeBaseId,
+          knowledgeBaseStatus: prefetchedKnowledgeBaseRetrieval?.status,
+          retrievedContextCount: prefetchedKnowledgeBaseRetrieval?.count,
           guardrailId,
           guardrailVersion,
           reply,
@@ -8951,7 +9040,7 @@ async function maybeBuildBedrockReply(agent, actor, message, conversationId) {
     }
   }
 
-  const knowledgeBaseRetrieval = await maybeRetrieveKnowledgeBaseContext(knowledgeBaseId, message);
+  const knowledgeBaseRetrieval = prefetchedKnowledgeBaseRetrieval || (await maybeRetrieveKnowledgeBaseContext(knowledgeBaseId, message));
 
   try {
     const { BedrockRuntimeClient, ConverseCommand } = require("@aws-sdk/client-bedrock-runtime");
@@ -8966,9 +9055,9 @@ async function maybeBuildBedrockReply(agent, actor, message, conversationId) {
       ],
       system: [{ text: buildAgentSystemPrompt(agent, actor, knowledgeBaseRetrieval.context) }],
       inferenceConfig: {
-        maxTokens: 700,
-        temperature: 0.4,
-        topP: 0.9,
+        maxTokens: options.maxTokens || 700,
+        temperature: options.temperature ?? 0.4,
+        topP: options.topP ?? 0.9,
       },
       ...(guardrailId && guardrailVersion
         ? {
@@ -9536,8 +9625,13 @@ function compactStringMap(values) {
   );
 }
 
-function buildBedrockAgentInputText(message) {
-  return `Response style: ${CONCIERGE_RESPONSE_STYLE_INSTRUCTION}\n\nMember message: ${message}`;
+function buildBedrockAgentInputText(message, retrievedContext = "") {
+  const knowledgeContext = sanitizeMultilineText(retrievedContext, 4500);
+  const contextBlock = knowledgeContext
+    ? `\n\nRetrieved YCC knowledge base context:\n${knowledgeContext}\n\nUse this context when it is relevant. If the retrieved context is insufficient, say what needs operator review instead of inventing facts.`
+    : "";
+
+  return `Response style: ${CONCIERGE_RESPONSE_STYLE_INSTRUCTION}${contextBlock}\n\nMember message: ${message}`;
 }
 
 function buildAgentSystemPrompt(agent, actor, retrievedContext = "") {

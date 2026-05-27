@@ -72,6 +72,8 @@ test("API Gateway CORS allows Stripe webhook signatures", () => {
 test("API Gateway CORS allows the deployed storefront origins", () => {
   assert.match(templateSource, /AllowOrigins:[\s\S]*https:\/\/yuzucigarclub\.com/);
   assert.match(templateSource, /AllowOrigins:[\s\S]*https:\/\/www\.yuzucigarclub\.com/);
+  assert.match(templateSource, /AdminAppOrigin:[\s\S]*Default: https:\/\/admin\.yuzucigarclub\.com/);
+  assert.match(templateSource, /AllowOrigins:[\s\S]*!Ref AdminAppOrigin/);
   assert.match(templateSource, /AmplifyStagingOrigin:[\s\S]*Default: https:\/\/staging\.d2yxcklt245wh0\.amplifyapp\.com/);
   assert.match(templateSource, /AllowOrigins:[\s\S]*!Ref AmplifyStagingOrigin/);
 });
@@ -81,4 +83,18 @@ test("local callback, logout, and CORS overrides are restricted to non-productio
   assert.match(templateSource, /HasLocalCallbackUrl:\s*!And[\s\S]*!Condition IsNonProdEnvironment/);
   assert.match(templateSource, /HasLocalLogoutUrl:\s*!And[\s\S]*!Condition IsNonProdEnvironment/);
   assert.match(templateSource, /HasLocalCorsOrigin:\s*!And[\s\S]*!Condition IsNonProdEnvironment/);
+});
+
+test("Cognito OAuth redirects include admin and deployed storefront origins", () => {
+  assert.match(templateSource, /AdminCallbackUrl:[\s\S]*Default: https:\/\/admin\.yuzucigarclub\.com\/auth\/callback/);
+  assert.match(templateSource, /AdminLogoutUrl:[\s\S]*Default: https:\/\/admin\.yuzucigarclub\.com\/auth\/logout/);
+  assert.match(templateSource, /CallbackURLs:[\s\S]*!Ref AdminCallbackUrl/);
+  assert.match(templateSource, /LogoutURLs:[\s\S]*!Ref AdminLogoutUrl/);
+});
+
+test("API Gateway integration invokes the live Lambda alias", () => {
+  assert.match(templateSource, /ExistingLambdaLiveAliasArn:[\s\S]*Default: arn:aws:lambda:us-east-1:374587466106:function:ycyyy:live/);
+  assert.match(templateSource, /IntegrationUri:\s*!Ref ExistingLambdaLiveAliasArn/);
+  assert.match(templateSource, /ApiInvokePermission:[\s\S]*FunctionName:\s*!Ref ExistingLambdaLiveAliasArn/);
+  assert.match(templateSource, /BedrockYccConciergeInvokePermission:[\s\S]*FunctionName:\s*!Ref ExistingLambdaName/);
 });

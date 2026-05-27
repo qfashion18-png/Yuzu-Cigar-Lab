@@ -12,6 +12,9 @@ Parameters:
   ExistingLambdaArn:
     Type: String
     Default: arn:aws:lambda:us-east-1:374587466106:function:ycyyy
+  ExistingLambdaLiveAliasArn:
+    Type: String
+    Default: arn:aws:lambda:us-east-1:374587466106:function:ycyyy:live
   CognitoDomainPrefix:
     Type: String
     Default: ycc-members-374587466106
@@ -25,6 +28,9 @@ Parameters:
   AmplifyStagingCallbackUrl:
     Type: String
     Default: https://staging.d2yxcklt245wh0.amplifyapp.com/auth/callback
+  AdminCallbackUrl:
+    Type: String
+    Default: https://admin.yuzucigarclub.com/auth/callback
   LocalCallbackUrl:
     Type: String
     Default: ""
@@ -37,9 +43,15 @@ Parameters:
   AmplifyStagingLogoutUrl:
     Type: String
     Default: https://staging.d2yxcklt245wh0.amplifyapp.com/auth/logout
+  AdminLogoutUrl:
+    Type: String
+    Default: https://admin.yuzucigarclub.com/auth/logout
   AmplifyStagingOrigin:
     Type: String
     Default: https://staging.d2yxcklt245wh0.amplifyapp.com
+  AdminAppOrigin:
+    Type: String
+    Default: https://admin.yuzucigarclub.com
   LocalLogoutUrl:
     Type: String
     Default: ""
@@ -183,11 +195,13 @@ Resources:
         - !Ref AmplifyCallbackUrl
         - !Ref AmplifyWwwCallbackUrl
         - !Ref AmplifyStagingCallbackUrl
+        - !Ref AdminCallbackUrl
         - !If [HasLocalCallbackUrl, !Ref LocalCallbackUrl, !Ref AWS::NoValue]
       LogoutURLs:
         - !Ref AmplifyLogoutUrl
         - !Ref AmplifyWwwLogoutUrl
         - !Ref AmplifyStagingLogoutUrl
+        - !Ref AdminLogoutUrl
         - !If [HasLocalLogoutUrl, !Ref LocalLogoutUrl, !Ref AWS::NoValue]
 
   UserPoolDomain:
@@ -268,6 +282,7 @@ Resources:
         AllowOrigins:
           - https://yuzucigarclub.com
           - https://www.yuzucigarclub.com
+          - !Ref AdminAppOrigin
           - !Ref AmplifyStagingOrigin
           - !If [HasLocalCorsOrigin, !Ref LocalCorsOrigin, !Ref AWS::NoValue]
         ExposeHeaders:
@@ -297,7 +312,7 @@ Resources:
       ApiId: !Ref HttpApi
       Description: YCC API Lambda proxy integration.
       IntegrationType: AWS_PROXY
-      IntegrationUri: !Ref ExistingLambdaArn
+      IntegrationUri: !Ref ExistingLambdaLiveAliasArn
       PayloadFormatVersion: "2.0"
       TimeoutInMillis: 29000
 
@@ -305,7 +320,7 @@ Resources:
     Type: AWS::Lambda::Permission
     Properties:
       Action: lambda:InvokeFunction
-      FunctionName: !Ref ExistingLambdaName
+      FunctionName: !Ref ExistingLambdaLiveAliasArn
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*/*
 

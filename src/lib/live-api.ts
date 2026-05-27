@@ -423,6 +423,7 @@ export type HumidorPushSubscription = {
 export type HumidorLocationProfile = {
   humidorName: string;
   defaultLocation: string;
+  locations: string[];
 };
 
 export type HumidorAlertPreferences = {
@@ -459,7 +460,8 @@ export type HumidorItemInput = Partial<Omit<HumidorItem, "id" | "createdAt">> & 
 };
 
 export type HumidorItemUpdateInput = {
-  humidorLocation: string;
+  agingStartDate?: string;
+  humidorLocation?: string;
 };
 
 export type CigarImageIdentifyInput = {

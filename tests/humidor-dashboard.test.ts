@@ -52,7 +52,7 @@ test("add cigars tab owns the humidor AI cigar adder and manual add form", () =>
   assert.ok(source.includes("auth.createApiHeaders()"), "AI adder requests must use Cognito headers");
 });
 
-test("add locations tab sits below add cigars and reuses the humidor location profile", () => {
+test("add locations tab saves, displays, and edits member humidor locations", () => {
   const source = readFileSync(new URL("../src/components/humidor-dashboard.tsx", import.meta.url), "utf8");
   const addCigarsNav = source.indexOf('{ id: "tools", label: "Add Cigars"');
   const addLocationsNav = source.indexOf('{ id: "locations", label: "Add Locations"');
@@ -73,6 +73,17 @@ test("add locations tab sits below add cigars and reuses the humidor location pr
   assert.ok(settingsSection.includes("renderHumidorLocationProfile()"), "settings should reuse the same saved profile form");
   assert.ok(profileSection.includes("Humidor Location Profile"), "shared profile form should keep the saved humidor/location fields");
   assert.ok(profileSection.includes("handleSaveHumidorLocationProfile"), "shared profile form should save through the existing profile handler");
+  assert.ok(source.includes("locations: []"), "humidor profiles should keep saved member-added locations");
+  assert.ok(source.includes("function normalizeHumidorProfileLocations"), "saved locations should be normalized before storing");
+  assert.ok(source.includes("handleAddHumidorProfileLocation"), "Add Locations should add a saved profile location");
+  assert.ok(source.includes("handleEditHumidorProfileLocation"), "saved profile locations should be editable");
+  assert.ok(source.includes("handleRemoveHumidorProfileLocation"), "saved profile locations should be removable");
+  assert.ok(profileSection.includes("Saved Locations"), "saved locations should be visible in the Add Locations profile form");
+  assert.ok(profileSection.includes('aria-label="New humidor location"'), "Add Locations should expose a new-location input");
+  assert.ok(profileSection.includes("humidorLocationProfile.locations.map"), "saved locations should render from persisted profile state");
+  assert.ok(profileSection.includes('aria-label={`Edit saved location ${index + 1}`}'), "saved locations should be editable from the list");
+  assert.ok(profileSection.includes('aria-label={`Remove saved location ${index + 1}`}'), "saved locations should have a remove control");
+  assert.ok(profileSection.includes("No saved locations yet"), "Add Locations should explain the empty saved-location state");
 });
 
 test("add cigars tab gates bulk import to full membership tiers", () => {
@@ -156,6 +167,7 @@ test("overview stat cards show humidity and temperature from the connected devic
 test("aging records separate user humidor aging from optional production age", () => {
   const source = readFileSync(new URL("../src/components/humidor-dashboard.tsx", import.meta.url), "utf8");
   const agingSection = getFunctionBlock(source, "renderAging", "renderAlerts");
+  const trackerItem = source.slice(source.indexOf("function AgingTrackerItem"), source.indexOf("function HumidorTable"));
   const detailCard = source.slice(source.indexOf("function HumidorDetailCard"), source.indexOf("function EmptyLiveState"));
   const agingHelper = source.slice(source.indexOf("function getAgingSnapshotForItem"), source.indexOf("function formatItemDetails"));
 
@@ -163,7 +175,8 @@ test("aging records separate user humidor aging from optional production age", (
   assert.ok(source.includes("Box / production date"), "manual and AI forms should expose the production date field");
   assert.ok(agingHelper.includes("item.agingStartDate || item.purchaseDate || item.createdAt"), "readiness should use the member-controlled aging start before added date fallback");
   assert.ok(source.includes("getTotalAgeSnapshot(item.productionDate"), "production date should calculate total cigar age separately");
-  assert.ok(agingSection.includes("months in your humidor"), "aging list should label member-controlled humidor time");
+  assert.ok(agingSection.includes("AgingTrackerItem"), "aging list should render tracked aging rows");
+  assert.ok(trackerItem.includes("months in your humidor"), "aging list should label member-controlled humidor time");
   assert.ok(detailCard.includes("total age"), "detail card should show total cigar age when production date exists");
   assert.ok(detailCard.includes("Box / Production Date"), "detail card should expose production provenance");
 });
@@ -181,6 +194,22 @@ test("add cigar forms offer exact and approximate aging start options", () => {
   assert.ok(toolsSection.includes('aria-label="Manual aging start option"'), "manual add form should expose the aging start option menu");
   assert.ok(toolsSection.includes('aria-label="AI aging start option"'), "AI review form should expose the aging start option menu");
   assert.ok(toolsSection.includes("agingStartPresetOptions.map"), "aging start menus should render every shared preset option");
+});
+
+test("aging tracker can adjust a saved cigar start date by exact date or month scheme", () => {
+  const source = readFileSync(new URL("../src/components/humidor-dashboard.tsx", import.meta.url), "utf8");
+  const agingSection = getFunctionBlock(source, "renderAging", "renderAlerts");
+  const trackerItem = source.slice(source.indexOf("function AgingTrackerItem"), source.indexOf("function HumidorTable"));
+
+  assert.ok(source.includes("function AgingTrackerItem"), "aging tracker should render an editable row component");
+  assert.ok(agingSection.includes("AgingTrackerItem"), "aging tracker should use the editable row component");
+  assert.ok(agingSection.includes("onUpdate={isAnonymousDemo ? undefined : handleUpdateHumidorItem}"), "aging tracker should save through the existing item update path");
+  assert.ok(trackerItem.includes("agingStartPresetOptions.map"), "aging tracker should expose the same month-scheme options as add forms");
+  assert.ok(trackerItem.includes("resolveAgingStartPresetDate"), "aging tracker presets should resolve into stored start dates");
+  assert.ok(trackerItem.includes('aria-label={`${item.name} aging start option`}'), "aging tracker preset select should be item-specific");
+  assert.ok(trackerItem.includes('aria-label={`${item.name} aging start exact date`}'), "aging tracker exact date input should be item-specific");
+  assert.ok(trackerItem.includes("Update Start Date"), "aging tracker should expose a start-date update action");
+  assert.ok(trackerItem.includes("onUpdate?.(item, { agingStartDate: agingStartDateDraft })"), "aging tracker should save the adjusted aging start date");
 });
 
 test("my cigars rows open a detailed cigar info card", () => {
@@ -270,6 +299,7 @@ test("my cigars detail card chooses storage location from entered locations", ()
   const detailCard = source.slice(source.indexOf("function HumidorDetailCard"), source.indexOf("function EmptyLiveState"));
 
   assert.ok(source.includes("getHumidorStorageLocationOptions"), "dashboard should derive dropdown choices from entered humidor locations");
+  assert.ok(source.includes("[profile.defaultLocation, ...profile.locations, ...items.map((item) => item.humidorLocation)]"), "storage choices should include saved Add Locations entries");
   assert.ok(source.includes("const storageLocationOptions = useMemo"), "dashboard should memoize available humidor locations for detail cards");
   assert.ok(cigarSection.includes("storageLocationOptions={storageLocationOptions}"), "detail cards should receive the available storage locations");
   assert.ok(detailCard.includes("storageLocationOptions"), "detail card should accept storage location options");

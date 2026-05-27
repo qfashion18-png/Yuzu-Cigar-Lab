@@ -1,10 +1,81 @@
 # Codex Worktree Tracking
 
-Last updated: 2026-05-26
+Last updated: 2026-05-27
 
 Purpose: track the dirty worktree I encounter while expanding and verifying the Yuzu admin/backend. This file is Codex-owned working notes, so future passes have a stable place to record what was changed, verified, and still needs audit.
 
 Project memory: `AGENTS.md` now requires Codex to use this file as the persistent worktree ledger. Every meaningful update, fix, audit, verification pass, or newly discovered dirty/untracked area should be recorded here in the same turn.
+
+## 2026-05-27 Humidor Aging Tracker Start-Date Adjustment
+
+- Goal: in the Aging Tracker, let a member adjust a saved cigar's aging start date by choosing either an exact date or the existing month-scheme presets.
+- Local Next.js 16.2.6 docs checked before editing:
+  - `node_modules/next/dist/docs/01-app/01-getting-started/05-server-and-client-components.md`
+  - `node_modules/next/dist/docs/01-app/02-guides/forms.md`
+- Patched:
+  - `src/components/humidor-dashboard.tsx`
+  - `src/lib/live-api.ts`
+  - `infra/lambda/ycc-api/index.js`
+  - `tests/humidor-dashboard.test.ts`
+  - `tests/lambda-ycc-api.test.ts`
+  - `docs/codex-worktree-tracking.md`
+- Behavior:
+  - Added editable Aging Tracker rows with an exact-date input and shared aging start preset menu (`Exact date`, `1 month+`, `3 months+`, `6 months+`, `1 year+`).
+  - Tracker updates reuse the existing saved humidor item update path and send `agingStartDate` through the live API client.
+  - `PATCH /humidor/items/{id}` now accepts `agingStartDate` as an update field in addition to later location updates, persists it to `aging_start_date`, and audits the update.
+- Red tests before implementation:
+  - `node --import tsx --test --test-name-pattern "aging tracker can adjust|adjusts a saved cigar aging start date" tests\humidor-dashboard.test.ts tests\lambda-ycc-api.test.ts` failed on the missing editable tracker row and API `400` for date-only updates.
+- Green verification:
+  - Focused red/green test above passed.
+  - `node --import tsx --test tests\humidor-aging.test.ts tests\humidor-dashboard.test.ts tests\lambda-ycc-api.test.ts` - 121 tests passing.
+  - `npx eslint src\components\humidor-dashboard.tsx src\lib\live-api.ts infra\lambda\ycc-api\index.js tests\humidor-dashboard.test.ts tests\lambda-ycc-api.test.ts`
+  - `npx tsc --noEmit --pretty false`
+  - `npm test` - 397 tests passing.
+  - First `npm run build` attempt hit the 120s tool timeout; rerun with a longer timeout passed with Next.js 16.2.6 and generated 953 static pages.
+- Browser QA:
+  - Static preview served `out/` at `http://127.0.0.1:3067/humidor/`.
+  - In-app Browser opened the humidor page, clicked `Aging`, and verified the page title, nonblank Aging Tracker, absence of framework overlays, and 0 browser console warnings/errors.
+  - Desktop DOM showed 4 aging start option controls, each with exact-date plus all month-scheme options; anonymous demo controls remain disabled because live saved-item updates require member sign-in.
+  - Mobile viewport `390x844` also rendered the Aging Tracker and 4 start-date controls without console warnings/errors.
+  - Screenshot evidence saved outside the repo at `C:\Users\qfash\AppData\Local\Temp\humidor-aging-tracker-desktop.png` and `C:\Users\qfash\AppData\Local\Temp\humidor-aging-tracker-mobile.png`.
+  - Temporary static preview processes `13696` and `32204` were stopped.
+- Dirty worktree note:
+  - Pre-existing dirty/untracked areas still observed outside this task include `infra/ycc-phase1-edge.yaml`, `tests/api-gateway-contract.test.ts`, and `docs/lambda-audit-2026-05-26.md`; left untouched.
+
+## 2026-05-26 Lambda Audit
+
+- Goal: perform a full Lambda/API Gateway audit against live AWS configuration, local Lambda source, and official AWS documentation.
+- Skills used:
+  - `using-superpowers`
+  - `aws`
+- Official AWS documentation reviewed:
+  - Lambda best practices, Secrets Manager in Lambda, Lambda versions/aliases, API Gateway HTTP API CORS/JWT authorizers, VPC endpoint policies, CloudWatch Logs retention, and Lambda JSON/Text logging.
+- Live read-only audit:
+  - Audited Lambda `ycyyy`, HTTP API `ycc-api` (`13710cp67l`), API routes/authorizer/integration, Lambda resource policy, execution role, VPC endpoints, Lambda security group, RDS Proxy, log groups, alarms, secrets metadata, S3 public/encryption posture, recent CloudWatch metrics, and deep health.
+  - Confirmed deep health returned HTTP `200`, `status=ok`, `environment=prod`, `db.proxyReachable=true`, `bedrock=runtime_ready`, and `ses=pending_production_access`.
+  - Confirmed live CORS allows `http://localhost:3000` and `https://admin.yuzucigarclub.com`, while an unknown origin receives no allow-origin header.
+- Report written:
+  - `docs/lambda-audit-2026-05-26.md`
+- Key findings recorded in the report:
+  - Production CORS drift allows localhost.
+  - API Gateway invokes unqualified Lambda `$LATEST` with no production alias.
+  - Commerce/RDS secrets have no rotation enabled.
+  - DB secret lookup and several AWS SDK clients are created in hot paths instead of cached/reused.
+  - Several VPC endpoint policies are still broad.
+  - Lambda log group has no retention policy and Lambda logging config is `Text`.
+  - JWT routes do not use route-level authorization scopes.
+  - Reserved concurrency is not configured.
+  - `audit_log.before_data` is present in schema and supplied by callers but not inserted by `insertAuditLog`.
+  - `npm audit --omit=dev` reports one moderate `qs@6.15.1` advisory.
+- Verification:
+  - `npm test` passed with 397/397 tests.
+  - `npm run lint` passed.
+  - `npx tsc --noEmit --pretty false` passed.
+  - `npm audit --omit=dev` failed with one moderate `qs` advisory.
+- Dirty worktree note:
+  - This pass intentionally added `docs/lambda-audit-2026-05-26.md` and updated this ledger only.
+  - Existing dirty work in `infra/lambda/ycc-api/index.js`, `src/components/humidor-dashboard.tsx`, `src/lib/live-api.ts`, `tests/humidor-dashboard.test.ts`, and `tests/lambda-ycc-api.test.ts` was not reverted or overwritten.
+  - Final status also showed dirty `infra/ycc-phase1-edge.yaml` and `tests/api-gateway-contract.test.ts` with six inserted lines total. They were not edited by this audit pass and were left in place.
 
 ## 2026-05-26 Cleanup And Commit Prep
 
@@ -1504,6 +1575,212 @@ Use this order for follow-up cleanup and fixes:
 - Confirmed `https://www.yuzucigarclub.com/privacy/`, `https://www.yuzucigarclub.com/terms/`, and `https://www.yuzucigarclub.com/sitemap.xml` return HTTP `200`.
 - Rechecked SES `us-east-1`: `ProductionAccessEnabled=false`, review status `DENIED`, case `177809591700724`, quota `200/day` and `1/sec`, sent last 24 hours `0`.
 - Attempted SES production-access resubmission with `sesv2 put-account-details --production-access-enabled`; AWS returned `ConflictException`, so the next step is a Support Center appeal or case reopen rather than another API submission.
+
+## 2026-05-26 Humidor Agent Knowledge Retrieval For Enrichment
+
+- Goal: fix the My Cigars enrichment review where `Ecuador Hand Made` returned `needs_review` with no saveable Info, Image, or MSRP updates because `YCCHumidorAgent` did not get enough reference context.
+- Patched:
+  - `infra/lambda/ycc-api/index.js`
+  - `tests/lambda-ycc-api.test.ts`
+- Fix:
+  - `maybeEnrichHumidorItem` now performs a focused Bedrock Knowledge Base retrieval using the cigar identity and requested missing groups before calling `YCCHumidorAgent`.
+  - Prefetched Knowledge Base context is passed into Bedrock Agent Runtime input text when a Humidor Agent alias is configured, and reused for direct Bedrock Runtime fallback instead of performing a second broad retrieval.
+  - Humidor enrichment direct-runtime calls now use a larger JSON budget and lower temperature for stricter, less truncated field extraction.
+  - The enrichment prompt now allows first-party `/assets/...` product image paths in addition to stable HTTPS reference image URLs, matching the backend image sanitizer.
+  - The enrichment AI summary now exposes `knowledgeBaseStatus` and `retrievedContextCount` for alias-backed runs so the UI/API response can prove whether retrieval happened.
+  - While verifying adjacent dirty Add Locations/aging work, the saved-cigar PATCH route was extended to accept either `humidorLocation` or `agingStartDate`, preserving the existing location update behavior and allowing aging-date-only updates.
+- Regression coverage:
+  - Added a Lambda regression for the live-style Humidor Agent alias path. The test verifies the endpoint retrieves KB context for `Ecuador Hand Made`, passes that context into the agent input, produces pending member approval with Info/Image/MSRP fields, and reports `knowledgeBaseStatus="retrieved"`.
+  - The existing/new Lambda coverage now includes saved humidor location lists and aging start date updates.
+- Verification:
+  - `node --import tsx --test tests/lambda-ycc-api.test.ts` passed with 91 tests.
+  - `npm run lint` passed.
+  - `npx tsc --noEmit` passed.
+- Dirty worktree note:
+  - `src/components/humidor-dashboard.tsx`, `src/lib/live-api.ts`, and `tests/humidor-dashboard.test.ts` are dirty alongside this fix. They appear to belong to the saved Add Locations / aging UI work and were left in place.
+
+## 2026-05-26 Humidor Saved Add Locations
+
+- Goal: make member-added humidor locations save through the Add Locations profile, remain visible there, and be editable/removable from that tab.
+- Local Next.js 16.2.6 docs checked before editing:
+  - `node_modules/next/dist/docs/01-app/01-getting-started/05-server-and-client-components.md`
+  - `node_modules/next/dist/docs/01-app/02-guides/forms.md`
+  - `node_modules/next/dist/docs/01-app/02-guides/static-exports.md`
+- Patched:
+  - `src/components/humidor-dashboard.tsx`
+  - `src/lib/live-api.ts`
+  - `infra/lambda/ycc-api/index.js`
+  - `tests/humidor-dashboard.test.ts`
+  - `tests/lambda-ycc-api.test.ts`
+  - `docs/codex-worktree-tracking.md`
+- Behavior:
+  - Added `humidorProfile.locations` as a normalized, de-duplicated saved-location array in the client and Lambda preferences contract.
+  - The Add Locations tab now shows saved locations, supports adding a new location, inline editing saved locations, and removing them.
+  - The first added saved location becomes the default when no default exists; edited/removed saved defaults keep the default field synchronized.
+  - Storage-location dropdown options now include saved Add Locations entries in addition to the default location and existing item locations.
+- Red tests before implementation:
+  - `node --import tsx --test --test-name-pattern "add locations tab|storage location from entered locations" tests\humidor-dashboard.test.ts` failed on missing saved-location profile/UI support.
+  - `node --import tsx --test --test-name-pattern "humidor alerts (GET|update) endpoint" tests\lambda-ycc-api.test.ts` failed because profile locations were dropped.
+- Green verification:
+  - `node --import tsx --test --test-name-pattern "add locations tab|storage location from entered locations" tests\humidor-dashboard.test.ts`
+  - `node --import tsx --test --test-name-pattern "humidor alerts (GET|update) endpoint" tests\lambda-ycc-api.test.ts`
+  - `npx eslint src\components\humidor-dashboard.tsx src\lib\live-api.ts infra\lambda\ycc-api\index.js tests\humidor-dashboard.test.ts tests\lambda-ycc-api.test.ts`
+  - `npx tsc --noEmit --pretty false`
+  - `npm run lint`
+  - `npm test` passed with 398/398 tests after the concurrent aging/API updates settled.
+  - `npm run build` passed with Next.js 16.2.6 and generated 953 static pages.
+- Browser QA:
+  - Static preview QA at `http://127.0.0.1:3065/humidor/` used a local same-origin QA auth bootstrap with a non-live token, avoiding live Cognito credentials or live data mutation.
+  - In-app Browser opened Add Locations, added `QA Locker A`, edited it to `QA Locker A / Top Shelf`, clicked `Save Humidor Profile`, and verified the saved row, default field, edit field, remove control, and pending-persistence status were visible.
+  - Browser console warnings/errors were empty.
+- Verification note:
+  - An intermediate full `tests\humidor-dashboard.test.ts tests\lambda-ycc-api.test.ts` run failed two non-location aging-start assertions while concurrent aging work was still in progress. After that concurrent work landed, a fresh `node --import tsx --test tests\humidor-dashboard.test.ts tests\lambda-ycc-api.test.ts` passed with 116/116 tests.
+- Post-validation dirty-area note:
+  - Final status also showed dirty/concurrent paths outside this saved-location fix: `infra/ycc-phase1-edge.yaml`, `package-lock.json`, `tests/api-gateway-contract.test.ts`, and untracked `docs/lambda-audit-2026-05-26.md`.
+  - These paths were not edited for the Add Locations work and were left in place.
+
+## 2026-05-26 Live Launch Service Audit
+
+- Goal: audit AWS, Stripe, AgeChecker, checkout compliance, static export, and other launch-critical services before live launch.
+- Local Next.js 16.2.6 docs checked before infrastructure/code edits:
+  - `node_modules/next/dist/docs/01-app/02-guides/static-exports.md`
+  - `node_modules/next/dist/docs/01-app/02-guides/environment-variables.md`
+  - `node_modules/next/dist/docs/02-pages/02-building-your-application/10-deploying/production-checklist.md`
+  - `node_modules/next/dist/docs/01-app/01-getting-started/17-deploying.md`
+- Patched:
+  - `infra/ycc-phase1-edge.yaml`
+  - `tests/api-gateway-contract.test.ts`
+  - `package-lock.json`
+  - `docs/codex-worktree-tracking.md`
+- Fixes:
+  - Added production admin origin support to the API Gateway CORS template and kept localhost CORS restricted to non-production stacks.
+  - Added production admin Cognito callback/logout parameters to the infrastructure template and kept localhost redirects restricted to non-production stacks.
+  - Updated the live API Gateway CORS policy to allow only `https://yuzucigarclub.com`, `https://www.yuzucigarclub.com`, `https://admin.yuzucigarclub.com`, and `https://staging.d2yxcklt245wh0.amplifyapp.com`.
+  - Updated the live Cognito app client callback/logout URLs to remove localhost and include production, admin, and staging URLs.
+  - Ran `npm audit fix`; lockfile now resolves `qs@6.15.2`, clearing the prior moderate `qs` advisory from production dependency audit.
+- Live AWS checks:
+  - `https://api.yuzucigarclub.com/health?deep=1` returned `status=ok`, `environment=prod`, RDS proxy reachable, database writes `schema_ready`, Bedrock `runtime_ready`, and SES `pending_production_access`.
+  - Lambda `ycyyy` is `Active`, runtime `nodejs22.x`, last update `Successful`, VPC-attached with 2 subnets and 1 security group.
+  - API Gateway CORS verified live: production and admin origins return matching `Access-Control-Allow-Origin`; `http://localhost:3000` returns no allow-origin header.
+  - Cognito `YCCMembers` has MFA optional, deletion protection active, email auto-verification, and a 12-character mixed password policy. The app client has no localhost callback/logout URLs and uses code flow with openid/email/profile scopes.
+  - RDS Proxy `proxy-1778040454500-database-1ycc` is `available` with `RequireTLS=true`.
+  - Amplify staging app `d2yxcklt245wh0` last five jobs (`118` through `122`) all succeeded; latest job `122` completed on `2026-05-26T16:44:08.168000-07:00`.
+  - Bedrock agents `YCCAdminAgent`, `YCCCigarGuide`, `YCCConcierge`, `YCCHumidorAgent`, `YCCNewsAgent`, and `YCCSupportAgent` are `PREPARED`; knowledge bases `YCCKnowledgeBaseV2` and `YCCKnowledgeBase` are `ACTIVE`.
+  - Regional WAF `phantom-prod-backend-web-acl` exists.
+  - Commerce secret `ycc/commerce/prod` is current and accessible, but rotation is not enabled.
+  - Lambda log group `/aws/lambda/ycyyy` exists, but retention is not set.
+- Stripe checks:
+  - `npm run launch:go-live-check` passed strict Stripe checks for live secret, webhook secret, customer portal config, tobacco approval confirmation, test-mode E2E confirmation, and all membership price variables.
+  - Read-only Stripe SDK audit using the live secret from Secrets Manager passed: charges are enabled, account details are submitted, all 12 configured membership prices resolve as active recurring USD prices, the customer portal configuration is active, and one enabled `/commerce/webhook/stripe` endpoint exists.
+  - Stripe follow-up: payouts are not enabled on the account, and the customer portal business profile is missing privacy-policy and terms-of-service URLs.
+- AgeChecker and compliance checks:
+  - `npm run launch:go-live-check` passed strict AgeChecker provider, tax provider, USPS shipping provider, and adult-signature carrier readiness checks.
+  - Live AgeChecker exchange route probe with a random nonexistent UUID returned HTTP `400`, `error=age_verification_failed`, `providerStatus=not_created`, and no checkout token. This confirms live provider-backed failure handling without creating or approving a real verification.
+  - Local coverage verifies accepted AgeChecker UUIDs exchange for signed checkout tokens, pending statuses fail closed, missing AgeChecker secrets fail closed, unsigned Stripe webhooks are rejected, checkout requires trusted age verification, USPS adult-signature shipping, tax readiness, valid catalog lines, and member entitlement checks.
+- Verification:
+  - `npm run launch:check` passed: lint, TypeScript, 398/398 tests, Next.js 16.2.6 static build with 953 generated pages, and `npm audit --omit=dev` found 0 vulnerabilities.
+  - `npm run e2e:runtime-audit` passed: static build, 49 routes checked, 23 internal links followed, 78 runtime assets checked, 404 probe passed, 0 warnings.
+  - `npm run launch:go-live-check` passed all strict go-live readiness checks.
+  - Production smoke checks returned HTTP `200` for `/`, `/shop/`, `/checkout/`, `/humidor/`, `/sitemap.xml`, and `https://api.yuzucigarclub.com/health`.
+- Remaining launch caveats:
+  - SES still has `ProductionAccessEnabled=false`; support/newsletter/customer email should remain guarded until AWS grants production access.
+  - Stripe payouts are disabled; live charges can be accepted, but payout readiness needs owner/account follow-up before sales proceeds can settle.
+  - Stripe customer portal should be updated with privacy-policy and terms-of-service URLs before customer self-service launch polish.
+  - Commerce secret rotation and Lambda log retention should be configured as ops hardening.
+  - Lambda is still serving `$LATEST`; consider publishing a version/alias for rollback control before final cutover.
+- Dirty worktree note:
+  - Pre-existing dirty humidor/API files remain: `infra/lambda/ycc-api/index.js`, `src/components/humidor-dashboard.tsx`, `src/lib/live-api.ts`, `tests/humidor-dashboard.test.ts`, and `tests/lambda-ycc-api.test.ts`.
+  - Untracked `docs/lambda-audit-2026-05-26.md` was discovered during the launch audit and left in place.
+
+## 2026-05-26 Live Launch Hardening Follow-Up
+
+- Goal: follow up on live-launch caveats by setting SES production access if possible, configuring Stripe portal policy URLs, and hardening remaining AWS runtime settings.
+- Skills used:
+  - `aws`
+  - `stripe:stripe-best-practices`
+- Local Next.js 16.2.6 docs checked before repo edits:
+  - `node_modules/next/dist/docs/01-app/02-guides/production-checklist.md`
+  - `node_modules/next/dist/docs/01-app/01-getting-started/17-deploying.md`
+  - `node_modules/next/dist/docs/01-app/02-guides/static-exports.md`
+  - `node_modules/next/dist/docs/01-app/02-guides/environment-variables.md`
+- Live Stripe changes:
+  - Updated the active live Stripe Customer Portal configuration from the commerce secret to set:
+    - privacy policy: `https://www.yuzucigarclub.com/privacy/`
+    - terms of service: `https://www.yuzucigarclub.com/terms/`
+  - Verified the portal remains active and returns both policy URLs.
+- Live AWS changes:
+  - Set CloudWatch retention to 90 days for `/aws/lambda/ycyyy`.
+  - Set CloudWatch retention to 90 days for `/aws/apigateway/ycc-api-access`.
+  - Updated Lambda `ycyyy` logging config to JSON with application log level `INFO` and system log level `WARN`.
+  - Published Lambda version `3` as a rollback artifact with description `Live launch hardened baseline 2026-05-27`.
+- Live AWS changes attempted but blocked by IAM:
+  - `lambda:PutFunctionConcurrency` is not allowed for `CodexMcpYccOperatorRole`, so reserved concurrency could not be set.
+  - `lambda:CreateAlias` and `lambda:UpdateAlias` are not allowed for `CodexMcpYccOperatorRole`, so the `live` alias could not be created/updated.
+  - A temporary API Gateway integration update to `arn:aws:lambda:us-east-1:374587466106:function:ycyyy:live` caused API health to return HTTP `500` because the alias did not exist. The integration was immediately rolled back to `arn:aws:lambda:us-east-1:374587466106:function:ycyyy`, and deep health returned `status=ok`.
+  - Follow-up with root credentials later created/updated the Lambda `live` alias and pinned API Gateway to it successfully; see `2026-05-26 SES Denial Posture Remediation`.
+- SES production access:
+  - `sesv2 put-account-details --production-access-enabled` still returns `ConflictException` because SES review status is `DENIED`.
+  - Current SES status: `ProductionAccessEnabled=false`, `SendingEnabled=true`, `EnforcementStatus=HEALTHY`, review case `177809591700724`.
+  - AWS Support CLI cannot read or append to the case from this account because `support:DescribeCases` returns `SubscriptionRequiredException` for missing Premium Support API access.
+  - SES domain identities `yuzucigarclub.com` and `ses-support.yuzucigarclub.com` are verified for sending and DKIM status is `SUCCESS`. Failed standalone email-address identities still exist for `support@`, `concierge@`, and `no-reply@`, but the verified domain identities are the important sending identities.
+- Verification:
+  - `https://api.yuzucigarclub.com/health?deep=1` returned `status=ok`, `environment=prod`, and SES capability `pending_production_access`.
+  - API Gateway integration is back on `arn:aws:lambda:us-east-1:374587466106:function:ycyyy`.
+  - Lambda config verifies `LogFormat=JSON`, `ApplicationLogLevel=INFO`, `SystemLogLevel=WARN`, and no reserved concurrency.
+  - CloudWatch retention verifies 90 days on the Lambda and API Gateway log groups.
+  - Stripe SDK read-back verifies the active portal configuration has the privacy and terms URLs.
+  - `npm run launch:go-live-check` passed all strict readiness checks.
+  - `https://www.yuzucigarclub.com/privacy/`, `https://www.yuzucigarclub.com/terms/`, `https://www.yuzucigarclub.com/`, and `https://api.yuzucigarclub.com/health` returned HTTP `200`.
+- Remaining hardening blockers:
+  - SES production access requires AWS Support Center appeal/reopen of case `177809591700724`; the SES API cannot flip it while review status is `DENIED`.
+  - Reserved concurrency requires Lambda account concurrency quota approval before it can be set.
+  - Commerce secret automatic rotation still needs a provider-aware rotation plan; the secret contains multiple third-party provider credentials, so enabling generic automatic rotation without a rotation Lambda would be unsafe.
+
+## 2026-05-26 SES Denial Posture Remediation
+
+- Goal: research why SES production access was denied, identify remediable account posture gaps, and fix them before another Trust & Safety appeal.
+- Official sources checked:
+  - AWS SES production access guide: AWS requires a verified sending identity, explicit opt-in acknowledgement, and bounce/complaint handling before sandbox removal.
+  - AWS re:Post SES production access FAQ: AWS does not disclose exact denial reasons; appeals must go through the support case and are handled by AWS Trust & Safety.
+  - AWS SES custom MAIL FROM guide: custom MAIL FROM requires exactly one MX record pointing to `feedback-smtp.<region>.amazonses.com` plus an SPF TXT record including `amazonses.com`.
+  - AWS Support CLI docs: Support API case reads/writes require Business, Enterprise On-Ramp, Enterprise, or Unified Operations support; this account returns `SubscriptionRequiredException`.
+- Inferred likely denial factors from visible account posture:
+  - SES contained failed standalone Yuzu sender identities and one unrelated failed domain identity.
+  - `yuzucigarclub.com` had DKIM success but no custom MAIL FROM domain for SES/SPF alignment.
+  - The original appeal evidence likely did not spell out all compliance controls: verified domain, custom MAIL FROM/SPF, SNS bounce/complaint events, explicit opt-in, age-gated tobacco compliance, and low launch volume.
+- Live remediation:
+  - Added Route 53 records for `bounce.yuzucigarclub.com`:
+    - MX `10 feedback-smtp.us-east-1.amazonses.com`
+    - TXT `v=spf1 include:amazonses.com ~all`
+  - Configured `yuzucigarclub.com` SES custom MAIL FROM to `bounce.yuzucigarclub.com` with `BehaviorOnMxFailure=REJECT_MESSAGE`.
+  - Removed failed SES identities: `support@yuzucigarclub.com`, `concierge@yuzucigarclub.com`, `no-reply@yuzucigarclub.com`, and `slimharpo.com`.
+  - Confirmed remaining SES identities are only verified Yuzu domains: `yuzucigarclub.com` and `ses-support.yuzucigarclub.com`.
+  - Confirmed `ycc-support-email-events` has enabled SNS events for `BOUNCE`, `COMPLAINT`, `DELIVERY_DELAY`, and `REJECT`.
+  - Updated `docs/ses-production-access-appeal-2026-05-27.md` with the corrected appeal evidence and likely denial remediation.
+- Verification:
+  - Route 53 change `/change/C0166208XI5KJJA7RCQ8` reached `INSYNC`.
+  - Public DNS resolves `bounce.yuzucigarclub.com` MX and TXT to the SES-required values.
+  - SES reports `MailFromDomain=bounce.yuzucigarclub.com`, `MailFromStatus=SUCCESS`, and `BehaviorOnMxFailure=REJECT_MESSAGE`.
+  - AWS SES sent the US East (N. Virginia) confirmation email that it detected the required MX record for `bounce.yuzucigarclub.com`.
+  - `npm run launch:check` passed after the SES and alias changes: lint, TypeScript, 399/399 tests, Next.js static build with 953 generated pages, and `npm audit --omit=dev` found 0 vulnerabilities.
+  - Deployed the static export to Amplify production branch `staging`; job `123` succeeded from `2026-05-26T21:16:27.979000-07:00` to `2026-05-26T21:16:43.194000-07:00`.
+  - The deploy script verified the live home page and a referenced `_next/static` asset returned HTTP `200`.
+  - Post-deploy smoke checks returned HTTP `200` for `https://www.yuzucigarclub.com/`, `/privacy/`, `/terms/`, and `https://api.yuzucigarclub.com/health`.
+  - Generated deploy zip `yuzu-cigar-club-amplify-deploy-launch-hardening-2026-05-27-2026-05-26-211415.zip` was removed after successful deployment.
+- Remaining blocker:
+  - `sesv2 put-account-details --production-access-enabled` still returns `ConflictException` because review status is `DENIED`. Root credentials do not bypass this. The corrected appeal must be posted through the existing AWS Trust & Safety case or console flow.
+  - Lambda concurrency quota increase request `448833ab82aa402090ada571aa7afe4dlXO75ihK` is pending for quota `L-B99A9384` with desired value `1001`; reserved concurrency cannot be set until AWS approves more than the current account concurrency limit of `10`.
+
+## 2026-05-26 Final Launch Verification Before Commit
+
+- Trigger: user forwarded the AWS SES custom MAIL FROM success email for `bounce.yuzucigarclub.com` in US East (N. Virginia).
+- Documentation updates:
+  - Added the AWS SES success-email confirmation to `docs/ses-production-access-appeal-2026-05-27.md`.
+  - Added the same evidence to this tracking ledger.
+- Verification:
+  - `npm run launch:check` passed: ESLint, TypeScript, 399/399 Node tests, Next.js static export build with 953 generated pages, and `npm audit --omit=dev` found 0 vulnerabilities.
+  - `npm run launch:go-live-check` passed all strict readiness checks.
+  - `git diff --check` reported only line-ending normalization warnings and no whitespace errors.
 
 ## Working Rules
 

@@ -181,6 +181,7 @@ const blankHumidorForm: HumidorForm = {
 const defaultHumidorLocationProfile: HumidorLocationProfile = {
   humidorName: "",
   defaultLocation: "",
+  locations: [],
 };
 
 const defaultHumidorAlerts: HumidorAlertPreferences = {
@@ -192,10 +193,35 @@ const defaultHumidorAlerts: HumidorAlertPreferences = {
   humidorProfile: defaultHumidorLocationProfile,
 };
 
+function normalizeHumidorProfileLocations(value: unknown): string[] {
+  const rawLocations = Array.isArray(value)
+    ? value
+    : typeof value === "string" && value.trim()
+      ? value.split(/\r?\n|,/)
+      : [];
+  const locations: string[] = [];
+  const seen = new Set<string>();
+
+  for (const rawLocation of rawLocations) {
+    const location = String(rawLocation ?? "").trim();
+    const key = location.toLowerCase();
+
+    if (!location || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    locations.push(location);
+  }
+
+  return locations;
+}
+
 function normalizeHumidorLocationProfile(profile: Partial<HumidorLocationProfile> | null | undefined): HumidorLocationProfile {
   return {
     humidorName: profile?.humidorName?.trim() ?? "",
     defaultLocation: profile?.defaultLocation?.trim() ?? "",
+    locations: normalizeHumidorProfileLocations(profile?.locations),
   };
 }
 
@@ -231,7 +257,7 @@ function getHumidorStorageLocationOptions(profile: HumidorLocationProfile, items
   const options: string[] = [];
   const seen = new Set<string>();
 
-  for (const rawLocation of [profile.defaultLocation, ...items.map((item) => item.humidorLocation)]) {
+  for (const rawLocation of [profile.defaultLocation, ...profile.locations, ...items.map((item) => item.humidorLocation)]) {
     const location = rawLocation.trim();
     const key = location.toLowerCase();
 
@@ -280,6 +306,7 @@ export function HumidorDashboard() {
   const [selectedHumidorItem, setSelectedHumidorItem] = useState<HumidorItem | null>(null);
   const [updatingHumidorItemId, setUpdatingHumidorItemId] = useState("");
   const [humidorItemUpdateStatus, setHumidorItemUpdateStatus] = useState("");
+  const [humidorItemUpdateStatusItemId, setHumidorItemUpdateStatusItemId] = useState("");
   const [enrichingHumidorItemId, setEnrichingHumidorItemId] = useState("");
   const [humidorEnrichmentStatus, setHumidorEnrichmentStatus] = useState("");
   const [pendingHumidorEnrichmentApproval, setPendingHumidorEnrichmentApproval] = useState<PendingHumidorEnrichmentApproval | null>(null);
@@ -288,6 +315,7 @@ export function HumidorDashboard() {
   const [humidorDeviceStatus, setHumidorDeviceStatus] = useState("");
   const [isSearchingHumidorDevices, setIsSearchingHumidorDevices] = useState(false);
   const [humidorLocationProfile, setHumidorLocationProfile] = useState<HumidorLocationProfile>(defaultHumidorLocationProfile);
+  const [newHumidorLocationDraft, setNewHumidorLocationDraft] = useState("");
   const [humidorLocationProfileStatus, setHumidorLocationProfileStatus] = useState("");
   const [humidorAlerts, setHumidorAlerts] = useState<HumidorAlertPreferences>(defaultHumidorAlerts);
   const [humidorAlertsStatus, setHumidorAlertsStatus] = useState("");
@@ -313,6 +341,7 @@ export function HumidorDashboard() {
     });
     setHumidorDevices(pairedDevices);
     setHumidorLocationProfile(profile);
+    setNewHumidorLocationDraft("");
     setItemForm((current) => applyDefaultHumidorLocationToForm(current, profile));
     setHumidorDeviceForm((current) => applyDefaultHumidorLocationToDeviceForm(current, profile));
     setAiIdentifiedForm((current) => (current ? applyDefaultHumidorLocationToForm(current, profile) : current));
@@ -331,6 +360,7 @@ export function HumidorDashboard() {
         setHumidorAlerts(defaultHumidorAlerts);
         setHumidorDevices([]);
         setHumidorLocationProfile(defaultHumidorLocationProfile);
+        setNewHumidorLocationDraft("");
         setHumidorLocationProfileStatus("");
       });
 
@@ -382,6 +412,7 @@ export function HumidorDashboard() {
           setHumidorAlerts(defaultHumidorAlerts);
           setHumidorDevices([]);
           setHumidorLocationProfile(defaultHumidorLocationProfile);
+          setNewHumidorLocationDraft("");
           setHumidorLocationProfileStatus("");
         }
         setHumidorAlertsStatus(bootstrap.alertsError || "");
@@ -394,6 +425,7 @@ export function HumidorDashboard() {
         setHumidorAlerts(defaultHumidorAlerts);
         setHumidorDevices([]);
         setHumidorLocationProfile(defaultHumidorLocationProfile);
+        setNewHumidorLocationDraft("");
         setHumidorLocationProfileStatus(errorMessage);
         setHumidorAlertsStatus(errorMessage);
         setLiveState({
@@ -470,12 +502,69 @@ export function HumidorDashboard() {
     updateForm("agingStartDate", value);
   }
 
-  function updateHumidorLocationProfile(field: keyof HumidorLocationProfile, value: string) {
+  function getNormalizedHumidorProfileLocations(locations = humidorLocationProfile.locations) {
+    return normalizeHumidorProfileLocations(locations);
+  }
+
+  function updateHumidorLocationProfile(field: "humidorName" | "defaultLocation", value: string) {
     setHumidorLocationProfile((current) => ({
       ...current,
       [field]: value,
     }));
     setHumidorLocationProfileStatus("");
+  }
+
+  function handleAddHumidorProfileLocation() {
+    const location = newHumidorLocationDraft.trim();
+
+    if (!location) {
+      setHumidorLocationProfileStatus("Enter a location before adding it.");
+      return;
+    }
+
+    setHumidorLocationProfile((current) => {
+      const nextLocations = normalizeHumidorProfileLocations([...current.locations, location]);
+
+      return {
+        ...current,
+        defaultLocation: current.defaultLocation.trim() || location,
+        locations: nextLocations,
+      };
+    });
+    setNewHumidorLocationDraft("");
+    setHumidorLocationProfileStatus("Location added. Save Humidor Profile to persist it.");
+  }
+
+  function handleEditHumidorProfileLocation(index: number, value: string) {
+    setHumidorLocationProfile((current) => {
+      const previousLocation = current.locations[index] ?? "";
+      const updates = current.locations.map((location, locationIndex) => (locationIndex === index ? value : location));
+
+      return {
+        ...current,
+        defaultLocation:
+          previousLocation.trim() && current.defaultLocation.trim().toLowerCase() === previousLocation.trim().toLowerCase()
+            ? value
+            : current.defaultLocation,
+        locations: updates,
+      };
+    });
+    setHumidorLocationProfileStatus("");
+  }
+
+  function handleRemoveHumidorProfileLocation(index: number) {
+    setHumidorLocationProfile((current) => {
+      const removedLocation = current.locations[index] ?? "";
+      const locations = current.locations.filter((_, locationIndex) => locationIndex !== index);
+      const removedDefault = removedLocation.trim() && current.defaultLocation.trim().toLowerCase() === removedLocation.trim().toLowerCase();
+
+      return {
+        ...current,
+        defaultLocation: removedDefault ? locations[0]?.trim() ?? "" : current.defaultLocation,
+        locations,
+      };
+    });
+    setHumidorLocationProfileStatus("Location removed. Save Humidor Profile to persist it.");
   }
 
   function updateDeviceForm(field: keyof HumidorDeviceInput, value: string) {
@@ -986,10 +1075,25 @@ export function HumidorDashboard() {
   }
 
   async function handleUpdateHumidorItem(item: HumidorItem, input: HumidorItemUpdateInput) {
-    const humidorLocation = input.humidorLocation.trim();
+    const updatePayload: HumidorItemUpdateInput = {};
+    const hasHumidorLocationUpdate = input.humidorLocation !== undefined;
+    const hasAgingStartDateUpdate = input.agingStartDate !== undefined;
+    const humidorLocation = input.humidorLocation?.trim() ?? "";
+    const agingStartDate = input.agingStartDate?.trim() ?? "";
+    setHumidorItemUpdateStatusItemId(item.id);
 
-    if (!humidorLocation) {
+    if (hasHumidorLocationUpdate && !humidorLocation) {
       setHumidorItemUpdateStatus("Enter a humidor location before updating this cigar.");
+      return;
+    }
+
+    if (hasAgingStartDateUpdate && !agingStartDate) {
+      setHumidorItemUpdateStatus("Choose an aging start date before updating this cigar.");
+      return;
+    }
+
+    if (!hasHumidorLocationUpdate && !hasAgingStartDateUpdate) {
+      setHumidorItemUpdateStatus("Choose a saved cigar field to update.");
       return;
     }
 
@@ -998,12 +1102,20 @@ export function HumidorDashboard() {
       return;
     }
 
+    if (hasHumidorLocationUpdate) {
+      updatePayload.humidorLocation = humidorLocation;
+    }
+
+    if (hasAgingStartDateUpdate) {
+      updatePayload.agingStartDate = agingStartDate;
+    }
+
     setUpdatingHumidorItemId(item.id);
     setHumidorItemUpdateStatus("");
 
     try {
       const headers = await auth.createApiHeaders();
-      const response = await updateHumidorItem(item.id, { humidorLocation }, headers);
+      const response = await updateHumidorItem(item.id, updatePayload, headers);
 
       setLiveState((current) => ({
         loading: false,
@@ -1012,9 +1124,13 @@ export function HumidorDashboard() {
         error: "",
       }));
       setSelectedHumidorItem(response.item);
+      const updatedFieldLabel = [
+        hasHumidorLocationUpdate ? "Humidor location" : "",
+        hasAgingStartDateUpdate ? "Aging start date" : "",
+      ].filter(Boolean).join(" and ");
       setHumidorItemUpdateStatus(
         response.persistence.status === "stored"
-          ? "Humidor location updated."
+          ? `${updatedFieldLabel} updated.`
           : "The live API accepted this update, but database persistence is not enabled.",
       );
     } catch (error) {
@@ -1194,20 +1310,31 @@ export function HumidorDashboard() {
       return;
     }
 
-    const profilePreferences = {
-      ...humidorAlerts,
-      humidorProfile: humidorLocationProfile,
-    };
     const previousProfile = normalizeHumidorLocationProfileForm(humidorAlerts.humidorProfile);
-    const nextProfile = normalizeHumidorLocationProfileForm(profilePreferences.humidorProfile);
+    let nextProfile = normalizeHumidorLocationProfileForm({
+      ...humidorLocationProfile,
+      locations: getNormalizedHumidorProfileLocations(),
+    });
 
-    if (!nextProfile.defaultLocation) {
-      setHumidorLocationProfileStatus("Enter a default humidor location before saving.");
+    if (!nextProfile.defaultLocation && nextProfile.locations.length) {
+      nextProfile = {
+        ...nextProfile,
+        defaultLocation: nextProfile.locations[0],
+      };
+    }
+
+    if (!nextProfile.defaultLocation && !nextProfile.locations.length) {
+      setHumidorLocationProfileStatus("Add at least one humidor location before saving.");
       return;
     }
 
-    profilePreferences.humidorProfile = nextProfile;
+    const profilePreferences = {
+      ...humidorAlerts,
+      humidorProfile: nextProfile,
+    };
+
     setHumidorLocationProfile(nextProfile);
+    setNewHumidorLocationDraft("");
 
     const saved = await saveHumidorAlertPreferences(profilePreferences);
     setItemForm((current) => getFormWithDefaultHumidorLocation(current, nextProfile, previousProfile.defaultLocation));
@@ -1316,6 +1443,7 @@ export function HumidorDashboard() {
           setHumidorAlerts(defaultHumidorAlerts);
           setHumidorDevices([]);
           setHumidorLocationProfile(defaultHumidorLocationProfile);
+          setNewHumidorLocationDraft("");
         }
         setHumidorAlertsStatus(bootstrap.alertsError || "");
       } catch (error) {
@@ -1323,6 +1451,7 @@ export function HumidorDashboard() {
         setHumidorAlerts(defaultHumidorAlerts);
         setHumidorDevices([]);
         setHumidorLocationProfile(defaultHumidorLocationProfile);
+        setNewHumidorLocationDraft("");
         setHumidorLocationProfileStatus(errorMessage);
         setHumidorAlertsStatus(errorMessage);
         setLiveState({
@@ -1998,7 +2127,7 @@ export function HumidorDashboard() {
             item={selectedHumidorItem}
             agingNow={agingNow}
             enrichmentStatus={humidorEnrichmentStatus}
-            itemUpdateStatus={humidorItemUpdateStatus}
+            itemUpdateStatus={humidorItemUpdateStatusItemId === selectedHumidorItem.id ? humidorItemUpdateStatus : ""}
             isDemo={isAnonymousDemo}
             isEnriching={enrichingHumidorItemId === selectedHumidorItem.id}
             isUpdating={updatingHumidorItemId === selectedHumidorItem.id}
@@ -2023,28 +2152,17 @@ export function HumidorDashboard() {
         </CardHeader>
         <CardContent className="grid gap-4">
           {agingItems.length ? (
-            agingItems.map(({ item, snapshot }) => {
-              const totalAgeSnapshot = getTotalAgeSnapshot(item.productionDate, agingNow);
-
-              return (
-                <div key={item.id} className="grid gap-3 border border-yuzu-line bg-yuzu-night/60 p-4">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <p className="font-heading text-2xl text-yuzu-cream">{item.name}</p>
-                      <p className="text-sm text-yuzu-muted">{formatItemDetails(item) || "Aging date recorded in live API"}</p>
-                    </div>
-                    <ReadinessBadge readiness={snapshot.readiness} />
-                  </div>
-                  <Progress className="[&_[data-slot=progress-indicator]]:bg-yuzu-gold" value={snapshot.progress} />
-                  <div className="grid gap-2 text-sm text-yuzu-muted sm:grid-cols-4">
-                    <span>{snapshot.ageMonths} months in your humidor</span>
-                    <span>Started {formatDate(getAgingStartDateForItem(item))}</span>
-                    <span>{totalAgeSnapshot ? `${totalAgeSnapshot.ageMonths} months total age` : "Production date not recorded"}</span>
-                    <span>{item.quantity} on hand</span>
-                  </div>
-                </div>
-              );
-            })
+            agingItems.map(({ item, snapshot }) => (
+              <AgingTrackerItem
+                key={`${item.id}-${getAgingStartDateForItem(item) ?? ""}`}
+                item={item}
+                agingNow={agingNow}
+                itemUpdateStatus={humidorItemUpdateStatusItemId === item.id ? humidorItemUpdateStatus : ""}
+                isUpdating={updatingHumidorItemId === item.id}
+                snapshot={snapshot}
+                onUpdate={isAnonymousDemo ? undefined : handleUpdateHumidorItem}
+              />
+            ))
           ) : (
             <p className="text-sm leading-6 text-yuzu-muted">No live items have purchase or aging dates yet. Add dates to the item form to enable aging status.</p>
           )}
@@ -2407,6 +2525,9 @@ export function HumidorDashboard() {
   }
 
   function renderHumidorLocationProfile() {
+    const savedLocations = getNormalizedHumidorProfileLocations();
+    const canSaveHumidorProfile = Boolean(humidorLocationProfile.defaultLocation.trim() || savedLocations.length);
+
     return (
       <div className="grid gap-4 border border-yuzu-line bg-yuzu-night/60 p-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -2428,8 +2549,61 @@ export function HumidorDashboard() {
               <Input value={humidorLocationProfile.defaultLocation} onChange={(event: ChangeEvent<HTMLInputElement>) => updateHumidorLocationProfile("defaultLocation", event.currentTarget.value)} />
             </Field>
           </div>
+          <div className="grid gap-3 border border-yuzu-line/70 bg-yuzu-ink/35 p-3">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-xs uppercase tracking-[0.16em] text-yuzu-gold">Saved Locations</p>
+              <Badge className="w-fit border-yuzu-line text-yuzu-muted" variant="outline">
+                {savedLocations.length ? `${savedLocations.length} saved` : "None saved"}
+              </Badge>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
+              <Input
+                aria-label="New humidor location"
+                value={newHumidorLocationDraft}
+                onChange={(event: ChangeEvent<HTMLInputElement>) => {
+                  setNewHumidorLocationDraft(event.currentTarget.value);
+                  setHumidorLocationProfileStatus("");
+                }}
+              />
+              <Button
+                className="h-11 border-yuzu-line text-yuzu-cream"
+                disabled={!newHumidorLocationDraft.trim()}
+                type="button"
+                variant="outline"
+                onClick={handleAddHumidorProfileLocation}
+              >
+                <Plus data-icon="inline-start" />
+                Add Location
+              </Button>
+            </div>
+            {humidorLocationProfile.locations.length ? (
+              <div className="grid gap-2">
+                {humidorLocationProfile.locations.map((location, index) => (
+                  <div key={`saved-location-${index}`} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                    <Input
+                      aria-label={`Edit saved location ${index + 1}`}
+                      value={location}
+                      onChange={(event: ChangeEvent<HTMLInputElement>) => handleEditHumidorProfileLocation(index, event.currentTarget.value)}
+                    />
+                    <Button
+                      aria-label={`Remove saved location ${index + 1}`}
+                      className="h-11 border-yuzu-line text-yuzu-cream"
+                      type="button"
+                      variant="outline"
+                      onClick={() => handleRemoveHumidorProfileLocation(index)}
+                    >
+                      <X data-icon="inline-start" />
+                      Remove
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm leading-6 text-yuzu-muted">No saved locations yet.</p>
+            )}
+          </div>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <Button className="h-11 bg-yuzu-gold text-yuzu-ink hover:bg-yuzu-gold-light" disabled={isHumidorAlertsSaving || !humidorLocationProfile.defaultLocation.trim()} type="submit">
+            <Button className="h-11 bg-yuzu-gold text-yuzu-ink hover:bg-yuzu-gold-light" disabled={isHumidorAlertsSaving || !canSaveHumidorProfile} type="submit">
               {isHumidorAlertsSaving ? <LoaderCircle className="animate-spin" data-icon="inline-start" /> : <MapPin data-icon="inline-start" />}
               Save Humidor Profile
             </Button>
@@ -2828,6 +3002,104 @@ function formatHumidorEnrichmentPreviewLabel(field: string) {
     .replace(/([A-Z])/g, " $1")
     .replace(/^./, (letter) => letter.toUpperCase())
     .trim();
+}
+
+function AgingTrackerItem({
+  item,
+  agingNow,
+  itemUpdateStatus,
+  isUpdating,
+  snapshot,
+  onUpdate,
+}: {
+  item: HumidorItem;
+  agingNow: Date;
+  itemUpdateStatus: string;
+  isUpdating: boolean;
+  snapshot: AgingSnapshot;
+  onUpdate?: (item: HumidorItem, input: HumidorItemUpdateInput) => void;
+}) {
+  const totalAgeSnapshot = getTotalAgeSnapshot(item.productionDate, agingNow);
+  const [agingStartPreset, setAgingStartPreset] = useState<AgingStartPreset>("exact");
+  const [agingStartDateDraft, setAgingStartDateDraft] = useState(formatDateInputValue(getAgingStartDateForItem(item)));
+
+  function updateAgingStartPreset(value: string) {
+    const preset = normalizeAgingStartPreset(value);
+    setAgingStartPreset(preset);
+
+    if (preset !== "exact") {
+      setAgingStartDateDraft(resolveAgingStartPresetDate(preset));
+    }
+  }
+
+  function updateAgingStartDate(value: string) {
+    setAgingStartPreset("exact");
+    setAgingStartDateDraft(value);
+  }
+
+  return (
+    <div className="grid gap-3 border border-yuzu-line bg-yuzu-night/60 p-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="font-heading text-2xl text-yuzu-cream">{item.name}</p>
+          <p className="text-sm text-yuzu-muted">{formatItemDetails(item) || "Aging date recorded in live API"}</p>
+        </div>
+        <ReadinessBadge readiness={snapshot.readiness} />
+      </div>
+      <Progress className="[&_[data-slot=progress-indicator]]:bg-yuzu-gold" value={snapshot.progress} />
+      <div className="grid gap-2 text-sm text-yuzu-muted sm:grid-cols-4">
+        <span>{snapshot.ageMonths} months in your humidor</span>
+        <span>Started {formatDate(getAgingStartDateForItem(item))}</span>
+        <span>{totalAgeSnapshot ? `${totalAgeSnapshot.ageMonths} months total age` : "Production date not recorded"}</span>
+        <span>{item.quantity} on hand</span>
+      </div>
+      <form
+        className="grid gap-3 border border-yuzu-line/70 bg-yuzu-ink/35 p-3"
+        onSubmit={(event: FormEvent<HTMLFormElement>) => {
+          event.preventDefault();
+          onUpdate?.(item, { agingStartDate: agingStartDateDraft });
+        }}
+      >
+        <p className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-yuzu-gold">
+          <Clock />
+          Adjust Aging Start
+        </p>
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_auto]">
+          <select
+            aria-label={`${item.name} aging start option`}
+            className="h-11 w-full rounded-sm border border-yuzu-line bg-yuzu-night px-3 text-sm text-yuzu-cream outline-none focus:border-yuzu-gold disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={!onUpdate || isUpdating}
+            value={agingStartPreset}
+            onChange={(event: ChangeEvent<HTMLSelectElement>) => updateAgingStartPreset(event.currentTarget.value)}
+          >
+            {agingStartPresetOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <Input
+            aria-label={`${item.name} aging start exact date`}
+            disabled={!onUpdate || isUpdating || agingStartPreset !== "exact"}
+            type="date"
+            value={agingStartDateDraft}
+            onChange={(event: ChangeEvent<HTMLInputElement>) => updateAgingStartDate(event.target.value)}
+          />
+          <Button
+            className="h-11 bg-yuzu-gold text-yuzu-ink hover:bg-yuzu-gold-light"
+            disabled={!onUpdate || isUpdating || !agingStartDateDraft.trim()}
+            type="submit"
+          >
+            {isUpdating ? <LoaderCircle className="animate-spin" data-icon="inline-start" /> : <Clock data-icon="inline-start" />}
+            {isUpdating ? "Updating Start" : "Update Start Date"}
+          </Button>
+        </div>
+        <p className="min-h-5 text-sm text-yuzu-gold" aria-live="polite">
+          {itemUpdateStatus}
+        </p>
+      </form>
+    </div>
+  );
 }
 
 function HumidorTable({
@@ -3523,6 +3795,25 @@ function formatDate(value: string | null | undefined) {
     day: "numeric",
     year: "numeric",
   }).format(date);
+}
+
+function formatDateInputValue(value: string | null | undefined) {
+  const text = value?.trim() ?? "";
+  if (!text) {
+    return "";
+  }
+
+  const dateOnly = text.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (dateOnly) {
+    return dateOnly[1];
+  }
+
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return date.toISOString().slice(0, 10);
 }
 
 function formatDeviceClimateValue(value: number) {

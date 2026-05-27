@@ -525,6 +525,7 @@ function installPersistenceMocks(
                 humidorProfile: {
                   humidorName: "Home cabinet",
                   defaultLocation: "Walk-in Humidor",
+                  locations: ["Walk-in Humidor", "Locker B"],
                 },
                 pushSubscription: {
                   endpoint: "https://example.com/endpoint",
@@ -551,6 +552,7 @@ function installPersistenceMocks(
                 humidorProfile: {
                   humidorName: "Home cabinet",
                   defaultLocation: "Walk-in Humidor",
+                  locations: ["Walk-in Humidor", "Locker B"],
                 },
                 pushSubscription: {
                   endpoint: "https://example.com/endpoint",
@@ -725,7 +727,8 @@ function installPersistenceMocks(
             {
               ...existing,
               id: params[0],
-              humidor_location: params[2],
+              aging_start_date: params[3] || existing.aging_start_date,
+              humidor_location: params[2] || existing.humidor_location,
               created_at: existing.created_at || "2026-05-06T09:00:00.000Z",
             },
           ],
@@ -1197,6 +1200,8 @@ function installPersistenceMocks(
     BEDROCK_AGENT_YCCCIGARGUIDE_ALIAS_ID: process.env.BEDROCK_AGENT_YCCCIGARGUIDE_ALIAS_ID,
     BEDROCK_AGENT_YCCSUPPORTAGENT_ID: process.env.BEDROCK_AGENT_YCCSUPPORTAGENT_ID,
     BEDROCK_AGENT_YCCSUPPORTAGENT_ALIAS_ID: process.env.BEDROCK_AGENT_YCCSUPPORTAGENT_ALIAS_ID,
+    BEDROCK_AGENT_YCCHUMIDORAGENT_ID: process.env.BEDROCK_AGENT_YCCHUMIDORAGENT_ID,
+    BEDROCK_AGENT_YCCHUMIDORAGENT_ALIAS_ID: process.env.BEDROCK_AGENT_YCCHUMIDORAGENT_ALIAS_ID,
     BEDROCK_AGENT_YCCNEWSAGENT_ID: process.env.BEDROCK_AGENT_YCCNEWSAGENT_ID,
     BEDROCK_AGENT_YCCNEWSAGENT_ALIAS_ID: process.env.BEDROCK_AGENT_YCCNEWSAGENT_ALIAS_ID,
     RDS_SSLMODE: process.env.RDS_SSLMODE,
@@ -4241,6 +4246,7 @@ test("humidor alerts GET endpoint returns stored preferences from the member pro
     assert.equal(body.preferences.climateAlertsEnabled, false);
     assert.equal(body.preferences.humidorProfile.humidorName, "Home cabinet");
     assert.equal(body.preferences.humidorProfile.defaultLocation, "Walk-in Humidor");
+    assert.deepEqual(body.preferences.humidorProfile.locations, ["Walk-in Humidor", "Locker B"]);
     assert.equal(body.preferences.pushSubscription?.endpoint, "https://example.com/endpoint");
     assert.deepEqual(body.preferences.pairedDevices, []);
 
@@ -4285,6 +4291,7 @@ test("humidor alerts update endpoint stores member profile preferences", async (
         humidorProfile: {
           humidorName: "Aging locker",
           defaultLocation: "Locker A / Drawer 2",
+          locations: ["Locker A / Drawer 2", " Travel Case ", "locker a / drawer 2", "", "Garage Cabinet"],
         },
       })
     );
@@ -4295,6 +4302,7 @@ test("humidor alerts update endpoint stores member profile preferences", async (
     assert.equal(body.preferences.pushEnabled, true);
     assert.equal(body.preferences.climateAlertsEnabled, true);
     assert.equal(body.preferences.humidorProfile.defaultLocation, "Locker A / Drawer 2");
+    assert.deepEqual(body.preferences.humidorProfile.locations, ["Locker A / Drawer 2", "Travel Case", "Garage Cabinet"]);
     assert.equal(body.preferences.pushSubscription.endpoint, "https://example.com/endpoint");
     assert.equal(body.preferences.pairedDevices[0].name, "Smart Cabinet Humidifier");
     assert.equal(body.preferences.pairedDevices[0].humidity, 61);
@@ -4305,6 +4313,7 @@ test("humidor alerts update endpoint stores member profile preferences", async (
 
     assert.equal(savedPreferences.humidorProfile.humidorName, "Aging locker");
     assert.equal(savedPreferences.humidorProfile.defaultLocation, "Locker A / Drawer 2");
+    assert.deepEqual(savedPreferences.humidorProfile.locations, ["Locker A / Drawer 2", "Travel Case", "Garage Cabinet"]);
     assert.ok(queries.some((query) => query.sql.includes("insert into public.member_profiles")), "alert preferences should be upserted in member_profiles");
     assert.ok(queries.some((query) => query.sql.includes("insert into public.audit_log")), "alert preferences update should be audited");
   } finally {
@@ -4769,6 +4778,61 @@ test("humidor item update route stores a later humidor location", async () => {
   }
 });
 
+test("humidor item update route adjusts a saved cigar aging start date", async () => {
+  const itemId = "abababab-abab-4bab-8bab-abababababab";
+  const mock = installPersistenceMocks({
+    humidorItemRows: [
+      {
+        id: itemId,
+        name: "Ecuador Hand Made",
+        brand: "El Z",
+        line: "Ecuador Hand Made",
+        vitola: "Corona",
+        wrapper: "",
+        origin: "",
+        strength: "",
+        quantity: 3,
+        rating: null,
+        purchase_date: null,
+        aging_start_date: "2026-04-12",
+        reorder_reminder: null,
+        humidor_location: "Locker A",
+        tray: "",
+        tasting_notes: "",
+        source: "member_humidor",
+        metadata: {},
+        created_at: "2026-05-13T10:00:00.000Z",
+      },
+    ],
+  });
+
+  try {
+    const response = await handler({
+      ...createAuthenticatedEvent("PATCH /humidor/items/{id}", {
+        agingStartDate: "2026-02-06",
+      }),
+      rawPath: `/humidor/items/${itemId}`,
+      pathParameters: { id: itemId },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.item.id, itemId);
+    assert.equal(body.item.agingStartDate, "2026-02-06");
+    assert.equal(body.item.humidorLocation, "Locker A");
+    assert.equal(body.persistence.status, "stored");
+
+    const queries = mock.clients.flatMap((client) => client.queries);
+    assert.ok(
+      queries.some((query) => query.sql.includes("humidor_item_location_update") && query.sql.includes("aging_start_date")),
+      "aging start update should update the stored humidor row",
+    );
+    assert.ok(queries.some((query) => query.sql.includes("insert into public.audit_log")), "aging start update should be audited");
+  } finally {
+    mock.restore();
+  }
+});
+
 test("humidor item enrichment route fills missing info image and MSRP without overwriting member data", async () => {
   const itemId = "abababab-abab-4bab-8bab-abababababab";
   const mock = installPersistenceMocks({
@@ -4938,6 +5002,90 @@ test("humidor item enrichment route previews updates until member approval", asy
       "preview should not update the stored humidor row"
     );
     assert.equal(queries.some((query) => query.sql.includes("insert into public.audit_log")), false, "preview should not write an enrichment audit log");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("humidor item enrichment route retrieves knowledge base context before invoking the Humidor Agent alias", async () => {
+  const itemId = "abababab-abab-4bab-8bab-abababababab";
+  const mock = installPersistenceMocks({
+    retrieveText:
+      "Ecuador Hand Made reference: El Z Corona has an Ecuadorian Habano wrapper, Nicaragua origin, medium strength, MSRP $9.25, and image https://example.com/el-z-ecuador-hand-made-corona.jpg.",
+    agentReply: JSON.stringify({
+      brand: "El Z",
+      line: "Ecuador Hand Made",
+      vitola: "Corona",
+      wrapper: "Ecuadorian Habano",
+      origin: "Nicaragua",
+      strength: "Medium",
+      tastingNotes: "Cedar, cocoa, and gentle pepper.",
+      estimatedValue: "$9.25",
+      estimatedValueCurrency: "USD",
+      estimatedValueSource: "ai_humidor_enrichment_msrp",
+      cigarImage: {
+        imageUrl: "https://example.com/el-z-ecuador-hand-made-corona.jpg",
+        mimeType: "image/jpeg",
+        fileName: "el-z-ecuador-hand-made-corona.jpg",
+        source: "agent_reference",
+      },
+      confidence: "medium",
+      evidence: ["Matched Ecuador Hand Made against retrieved YCC reference context."],
+      needsReview: ["Confirm the exact El Z production line before relying on MSRP."],
+    }),
+    humidorItemRows: [
+      {
+        id: itemId,
+        name: "Ecuador Hand Made",
+        brand: "El Z",
+        line: "Ecuador Hand Made",
+        vitola: "Corona",
+        wrapper: "",
+        origin: "",
+        strength: "",
+        quantity: 3,
+        rating: null,
+        purchase_date: null,
+        aging_start_date: null,
+        reorder_reminder: null,
+        humidor_location: "",
+        tray: "",
+        tasting_notes: "",
+        source: "member_humidor",
+        metadata: {},
+        created_at: "2026-05-13T10:00:00.000Z",
+      },
+    ],
+  });
+
+  process.env.BEDROCK_AGENT_YCCHUMIDORAGENT_ID = "AGENTHUMIDOR1";
+  process.env.BEDROCK_AGENT_YCCHUMIDORAGENT_ALIAS_ID = "ALIASHUMIDOR";
+
+  try {
+    const response = await handler({
+      ...createAuthenticatedEvent("PATCH /humidor/items/{id}/enrich", {
+        fields: ["info", "image", "msrp"],
+        approved: false,
+      }),
+      rawPath: `/humidor/items/${itemId}/enrich`,
+      pathParameters: { id: itemId },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.enrichment.status, "pending_approval");
+    assert.equal(body.previewItem.wrapper, "Ecuadorian Habano");
+    assert.equal(body.previewItem.estimatedValue, 9.25);
+    assert.equal(body.previewItem.cigarImage.imageUrl, "https://example.com/el-z-ecuador-hand-made-corona.jpg");
+    assert.equal(body.ai.status, "bedrock_agent_runtime");
+    assert.equal(body.ai.knowledgeBaseStatus, "retrieved");
+    assert.equal(body.ai.retrievedContextCount, 1);
+    assert.equal(mock.knowledgeBaseRetrievals.length, 1);
+    assert.match(JSON.stringify(mock.knowledgeBaseRetrievals[0].retrievalQuery), /Ecuador Hand Made/);
+    assert.equal(mock.agentInvocations.length, 1);
+    assert.equal(mock.bedrockInvocations.length, 0);
+    assert.match(String(mock.agentInvocations[0].inputText), /Retrieved YCC knowledge base context/);
+    assert.match(String(mock.agentInvocations[0].inputText), /Ecuador Hand Made reference/);
   } finally {
     mock.restore();
   }
