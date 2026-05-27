@@ -233,6 +233,9 @@ test("Amplify custom headers include production browser security headers", () =>
   assert.match(customHeaders, /frame-ancestors 'none'/u);
   assert.match(customHeaders, /object-src 'none'/u);
   assert.match(customHeaders, /connect-src 'self' https:\/\/api\.yuzucigarclub\.com/u);
+  assert.match(customHeaders, /script-src[^"]*https:\/\/www\.googletagmanager\.com/u);
+  assert.match(customHeaders, /img-src[^"]*https:\/\/www\.google-analytics\.com/u);
+  assert.match(customHeaders, /connect-src[^"]*https:\/\/www\.google-analytics\.com/u);
 });
 
 test("Lambda deploy zip validation requires runtime files, CA bundle, and migrations", () => {
@@ -280,4 +283,10 @@ test("artifact cleanup plan preserves the newest deploy zip and removes generate
     plan.removePaths,
     ["C:/repo/old.zip", "C:/repo/output"],
   );
+});
+
+test("local browser automation evidence artifacts stay out of commits", () => {
+  const gitignore = readFileSync(".gitignore", "utf8");
+
+  assert.match(gitignore, /^\.playwright-cli\/$/m);
 });

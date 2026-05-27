@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const accountExperienceSource = readFileSync(new URL("../src/components/account-experience.tsx", import.meta.url), "utf8");
+const accountPageSource = readFileSync(new URL("../src/app/account/page.tsx", import.meta.url), "utf8");
 const backupAuthPanelSource = readFileSync(new URL("../src/components/backup-auth-panel.tsx", import.meta.url), "utf8");
 const backupAuthProviderSource = readFileSync(new URL("../src/components/backup-auth-provider.tsx", import.meta.url), "utf8");
 const cognitoTemplateSource = readFileSync(new URL("../infra/ycc-phase1-edge.yaml", import.meta.url), "utf8");
@@ -11,6 +12,11 @@ test("account experience only loads live account data with a Cognito API session
   assert.ok(accountExperienceSource.includes('auth.authSource !== "cognito"'), "backup sessions must not call live account APIs");
   assert.ok(accountExperienceSource.includes("Live API Session Required"), "backup sessions need a clear live-auth boundary state");
   assert.ok(accountExperienceSource.includes("BackupAuthPanel"), "account access should keep a visible sign-in path");
+});
+
+test("account route owns its page identity metadata", () => {
+  assert.ok(accountPageSource.includes("export const metadata"), "account page should not inherit the generic site title");
+  assert.ok(accountPageSource.includes('title: "Account | Yuzu Cigar Club"'), "account page should expose an account-specific title");
 });
 
 test("account Cognito sign-in is inline instead of an automatic redirect loop", () => {
@@ -41,7 +47,13 @@ test("account overview tiles wrap long identity values inside the card grid", ()
 test("account profile saves a shipping address for checkout reuse", () => {
   assert.ok(accountExperienceSource.includes("Shipping Address"), "account profile should expose saved shipping fields");
   assert.ok(accountExperienceSource.includes("shippingAddress"), "account profile should submit a saved shipping address");
+  assert.ok(accountExperienceSource.includes("summary?.profile?.phone"), "live account summary should hydrate the saved phone");
+  assert.ok(accountExperienceSource.includes("summary?.profile?.shippingAddress"), "live account summary should hydrate the saved shipping address");
+  assert.ok(accountExperienceSource.includes("updateLiveAccountProfile"), "Cognito profile saves should call the live account profile API");
+  assert.ok(accountExperienceSource.includes('auth.authSource === "cognito"'), "profile saves should branch on live Cognito sessions");
+  assert.ok(accountExperienceSource.includes("await auth.createApiHeaders()"), "live profile saves must include Cognito API headers");
   assert.ok(accountExperienceSource.includes("auth.updateAccountProfile({ name, phone, shippingAddress })"), "profile save should persist address with account details");
+  assert.ok(accountExperienceSource.includes("Live account profile saved."), "successful live profile saves should be visible to the member");
 });
 
 test("account page exposes the authenticated concierge chat surface", () => {

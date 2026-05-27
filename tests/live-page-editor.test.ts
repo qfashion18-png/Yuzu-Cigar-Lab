@@ -13,7 +13,9 @@ import {
   sendConciergeChat,
   sendConciergeVoiceMessage,
   draftNewsStory,
+  updateLiveAccountProfile,
   updateHumidorItem,
+  type AccountProfileUpdateResponse,
   type CigarImageIdentifyResponse,
   type ConciergeChatResponse,
   type ConciergeVoiceResponse,
@@ -75,7 +77,11 @@ test("public chrome owns the always-on concierge and its voice controls", () => 
   const sheetSource = readFileSync(new URL("../src/components/ui/sheet.tsx", import.meta.url), "utf8");
 
   assert.ok(siteChromeSource.includes("FloatingConcierge"), "site chrome should mount the sitewide concierge widget");
-  assert.ok(floatingConciergeSource.includes("fixed bottom-4 right-4"), "concierge should stay fixed in the lower-right corner");
+  assert.ok(floatingConciergeSource.includes('"fixed right-4 z-[45]"'), "concierge should stay fixed in the lower-right corner");
+  assert.ok(floatingConciergeSource.includes(' : "bottom-4"'), "non-cart pages should keep the normal lower-right concierge position");
+  assert.ok(floatingConciergeSource.includes('pathname.startsWith("/cart")'), "cart routes should offset the concierge above the mobile checkout bar");
+  assert.ok(floatingConciergeSource.includes("bottom-[calc(6.25rem+env(safe-area-inset-bottom))]"), "mobile cart checkout controls should not be covered by the concierge launcher");
+  assert.ok(floatingConciergeSource.includes("lg:bottom-4"), "desktop pages should keep the normal lower-right concierge position");
   assert.ok(floatingConciergeSource.includes("z-[45]"), "concierge should sit above ordinary page chrome");
   assert.ok(sheetSource.includes("fixed z-50"), "active sheets should render above the floating concierge");
   assert.equal(floatingConciergeSource.includes("z-[90]"), false, "concierge should not overlay active navigation sheets");
@@ -216,6 +222,78 @@ test("live API client sends authenticated concierge chat requests", async () => 
       message: "What wrapper pairs well with a morning cigar?",
       agent: "cigar_guide",
       conversationId: "conv-live",
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousApiBase === undefined) {
+      delete process.env.NEXT_PUBLIC_YCC_API_BASE_URL;
+    } else {
+      process.env.NEXT_PUBLIC_YCC_API_BASE_URL = previousApiBase;
+    }
+  }
+});
+
+test("live API client patches authenticated account profile updates", async () => {
+  const originalFetch = globalThis.fetch;
+  const previousApiBase = process.env.NEXT_PUBLIC_YCC_API_BASE_URL;
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const shippingAddress = {
+    address1: "111 W Boston St",
+    address2: "Suite 5",
+    city: "Chandler",
+    state: "AZ",
+    postalCode: "85225",
+    country: "US",
+  };
+
+  process.env.NEXT_PUBLIC_YCC_API_BASE_URL = "https://api.yuzucigarclub.test/";
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+
+    const payload = {
+      account: {
+        email: "member@yuzucigarclub.example",
+        name: "Member Two",
+        groups: ["member", "sensei"],
+      },
+      profile: {
+        phone: "4805552121",
+        shippingAddress,
+      },
+      source: "cognito-jwt",
+      database: {
+        persisted: true,
+        persistence: "stored",
+        table: "member_profiles",
+        memberId: "11111111-1111-4111-8111-111111111111",
+      },
+    } satisfies AccountProfileUpdateResponse;
+
+    return new Response(JSON.stringify(payload), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  try {
+    const response = await updateLiveAccountProfile(
+      {
+        name: "Member Two",
+        phone: "4805552121",
+        shippingAddress,
+      },
+      { Authorization: "Bearer member-token" }
+    );
+
+    assert.equal(response.account.name, "Member Two");
+    assert.equal(response.profile.shippingAddress.postalCode, "85225");
+    assert.equal(calls[0].url, "https://api.yuzucigarclub.test/account/me");
+    assert.equal(calls[0].init?.method, "PATCH");
+    assert.equal((calls[0].init?.headers as Record<string, string>).Authorization, "Bearer member-token");
+    assert.deepEqual(JSON.parse(String(calls[0].init?.body)), {
+      name: "Member Two",
+      phone: "4805552121",
+      shippingAddress,
     });
   } finally {
     globalThis.fetch = originalFetch;

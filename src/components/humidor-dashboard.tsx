@@ -156,6 +156,12 @@ const navItems: Array<{ id: SectionId; label: string; icon: IconComponent }> = [
   { id: "settings", label: "Settings", icon: Settings },
 ];
 
+function resolveHumidorDeepLinkSection(value: string | null): SectionId | null {
+  const normalized = value?.replace(/^#/, "").trim().toLowerCase();
+
+  return navItems.some((item) => item.id === normalized) ? (normalized as SectionId) : null;
+}
+
 const blankHumidorForm: HumidorForm = {
   name: "",
   brand: "",
@@ -291,6 +297,7 @@ export function HumidorDashboard() {
   const [itemAgingStartPreset, setItemAgingStartPreset] = useState<AgingStartPreset>("exact");
   const [formStatus, setFormStatus] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [cigarFlowIntent, setCigarFlowIntent] = useState(false);
   const [aiAdderInput, setAiAdderInput] = useState("");
   const [aiImagePayload, setAiImagePayload] = useState<{ imageBase64: string; mimeType: string; fileName: string } | null>(null);
   const [aiImagePreview, setAiImagePreview] = useState("");
@@ -473,6 +480,24 @@ export function HumidorDashboard() {
   const readyCount = agingItems.filter(({ snapshot }) => snapshot.readiness === "Ready Now").length;
   const reorderCount = items.filter((item) => Boolean(item.reorderReminder)).length;
   const liveApiConfigured = Boolean(process.env.NEXT_PUBLIC_YCC_API_BASE_URL);
+
+  useEffect(() => {
+    const searchParams = new URLSearchParams(window.location.search);
+    const requestedSection = resolveHumidorDeepLinkSection(searchParams.get("section") || window.location.hash);
+    const hasCigarFlowIntent = searchParams.get("intent") === "cigar-flow";
+
+    window.queueMicrotask(() => {
+      if (hasCigarFlowIntent) {
+        setCigarFlowIntent(true);
+        setActiveSection("tools");
+        return;
+      }
+
+      if (requestedSection) {
+        setActiveSection(requestedSection);
+      }
+    });
+  }, []);
 
   function updateForm(field: keyof HumidorForm, value: string) {
     setItemForm((current) => ({
@@ -1310,10 +1335,11 @@ export function HumidorDashboard() {
       return;
     }
 
+    const pendingLocation = newHumidorLocationDraft.trim();
     const previousProfile = normalizeHumidorLocationProfileForm(humidorAlerts.humidorProfile);
     let nextProfile = normalizeHumidorLocationProfileForm({
       ...humidorLocationProfile,
-      locations: getNormalizedHumidorProfileLocations(),
+      locations: normalizeHumidorProfileLocations([...humidorLocationProfile.locations, pendingLocation]),
     });
 
     if (!nextProfile.defaultLocation && nextProfile.locations.length) {
@@ -1547,6 +1573,24 @@ export function HumidorDashboard() {
             icon={Bell}
           />
         </div>
+
+        {cigarFlowIntent ? (
+          <Card className="luxury-card">
+            <CardContent className="grid gap-4 p-5 md:grid-cols-[1fr_auto] md:items-center">
+              <div>
+                <p className="fine-label">Cigar Flow smoke note prep</p>
+                <h2 className="mt-3 font-heading text-3xl text-yuzu-cream">Build the note from your humidor record.</h2>
+                <p className="mt-3 max-w-2xl text-sm leading-6 text-yuzu-muted">
+                  Shareable notes start in your live humidor: save the cigar, capture rating and tasting notes, then ask Concierge to review the context before publication.
+                </p>
+              </div>
+              <Button className="h-11 bg-yuzu-gold px-5 text-yuzu-ink hover:bg-yuzu-gold-light" type="button" onClick={() => setActiveSection("tools")}>
+                <Plus data-icon="inline-start" />
+                Add Smoke Note
+              </Button>
+            </CardContent>
+          </Card>
+        ) : null}
 
         <div className="grid gap-4 lg:grid-cols-[260px_1fr]">
           <Card className="luxury-card h-fit">
@@ -2526,7 +2570,7 @@ export function HumidorDashboard() {
 
   function renderHumidorLocationProfile() {
     const savedLocations = getNormalizedHumidorProfileLocations();
-    const canSaveHumidorProfile = Boolean(humidorLocationProfile.defaultLocation.trim() || savedLocations.length);
+    const canSaveHumidorProfile = Boolean(humidorLocationProfile.defaultLocation.trim() || savedLocations.length || newHumidorLocationDraft.trim());
 
     return (
       <div className="grid gap-4 border border-yuzu-line bg-yuzu-night/60 p-4">

@@ -34,13 +34,19 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { emptyAccountShippingAddress, type AccountShippingAddress, type BackupAuthSession } from "@/lib/backup-auth";
+import {
+  emptyAccountShippingAddress,
+  normalizeAccountShippingAddress,
+  type AccountShippingAddress,
+  type BackupAuthSession,
+} from "@/lib/backup-auth";
 import { shouldShowInlineCognitoSignIn } from "@/lib/cognito-auth";
 import {
   fetchAccountOrders,
   fetchAccountSummary,
   getLiveApiErrorMessage,
   sendConciergeChat,
+  updateLiveAccountProfile,
   type AccountOrder,
   type AccountSummary,
   type ConciergeAgentMode,
@@ -170,7 +176,7 @@ export function AccountExperience({ featuredProducts }: AccountExperienceProps) 
           <div>
             <p className="fine-label">Member Account</p>
             <h1 className="mt-3 font-heading text-5xl text-yuzu-cream">
-              {auth.session?.name ?? summary?.account.name ?? "Yuzu Member"}
+              {summary?.account.name ?? auth.session?.name ?? "Yuzu Member"}
             </h1>
             <p className="mt-3 text-sm leading-6 text-yuzu-muted">
               Live account source: {summary?.source ?? "Yuzu API"} / persistence: {summary?.database.persistence ?? "loading"}
@@ -191,7 +197,7 @@ export function AccountExperience({ featuredProducts }: AccountExperienceProps) 
 
         <AccountOverviewPanel summary={summary} orders={orders} session={auth.session} isLoading={isLoading} />
 
-        <AccountProfileCard />
+        <AccountProfileCard summary={summary} />
 
         <ConciergeChatPanel />
 
@@ -340,7 +346,7 @@ function AccountOverviewPanel({
     {
       icon: Phone,
       label: "Phone",
-      value: session?.phone || "Add phone",
+      value: summary?.profile?.phone || session?.phone || "Add phone",
       note: "Used for concierge and delivery follow-up.",
     },
     {
@@ -378,7 +384,7 @@ function AccountReadinessPanel({
   const readinessItems = [
     {
       label: "Contact Profile",
-      value: session?.phone ? "Name, email, and phone available" : "Add a phone number for delivery follow-up",
+      value: summary?.profile?.phone || session?.phone ? "Name, email, and phone available" : "Add a phone number for delivery follow-up",
     },
     {
       label: "Member Record",
@@ -612,7 +618,7 @@ function ConciergeChatPanel() {
   );
 }
 
-function AccountProfileCard() {
+function AccountProfileCard({ summary }: { summary: AccountSummary | null }) {
   const auth = useBackupAuth();
   const session = auth.session;
 
@@ -620,23 +626,65 @@ function AccountProfileCard() {
     return null;
   }
 
-  return <AccountProfileForm key={session.userId} session={session} />;
+  const profileName = summary?.account.name ?? session.name;
+  const profilePhone = summary?.profile?.phone ?? session.phone;
+  const profileShippingAddress = normalizeAccountShippingAddress(summary?.profile?.shippingAddress ?? session.shippingAddress);
+
+  return (
+    <AccountProfileForm
+      key={`${session.userId}-${summary?.database.memberId ?? "local"}-${profileName}-${profilePhone}`}
+      session={session}
+      initialProfile={{
+        name: profileName,
+        phone: profilePhone,
+        shippingAddress: profileShippingAddress,
+      }}
+    />
+  );
 }
 
-function AccountProfileForm({ session }: { session: BackupAuthSession }) {
+function AccountProfileForm({
+  session,
+  initialProfile,
+}: {
+  session: BackupAuthSession;
+  initialProfile: {
+    name: string;
+    phone: string;
+    shippingAddress?: AccountShippingAddress | null;
+  };
+}) {
   const auth = useBackupAuth();
-  const [name, setName] = useState(session.name);
-  const [phone, setPhone] = useState(session.phone);
+  const [name, setName] = useState(initialProfile.name);
+  const [phone, setPhone] = useState(initialProfile.phone);
   const [shippingAddress, setShippingAddress] = useState<AccountShippingAddress>({
     ...emptyAccountShippingAddress,
-    ...session.shippingAddress,
+    ...(initialProfile.shippingAddress ?? {}),
   });
   const [statusMessage, setStatusMessage] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const result = auth.updateAccountProfile({ name, phone, shippingAddress });
+    const nextProfile = { name, phone, shippingAddress };
 
+    if (auth.authSource === "cognito") {
+      setIsSaving(true);
+      setStatusMessage("");
+      try {
+        const headers = await auth.createApiHeaders();
+        await updateLiveAccountProfile(nextProfile, headers);
+        auth.updateAccountProfile({ name, phone, shippingAddress });
+        setStatusMessage("Live account profile saved.");
+      } catch (error) {
+        setStatusMessage(getLiveApiErrorMessage(error));
+      } finally {
+        setIsSaving(false);
+      }
+      return;
+    }
+
+    const result = auth.updateAccountProfile({ name, phone, shippingAddress });
     setStatusMessage(result.message);
   }
 
@@ -743,9 +791,9 @@ function AccountProfileForm({ session }: { session: BackupAuthSession }) {
             </div>
           </div>
           <div className="grid content-end gap-2 md:col-span-2">
-            <Button type="submit" className="h-11 bg-yuzu-gold text-yuzu-ink hover:bg-yuzu-gold-light">
-              <Save data-icon="inline-start" />
-              Save Account
+            <Button type="submit" className="h-11 bg-yuzu-gold text-yuzu-ink hover:bg-yuzu-gold-light" disabled={isSaving}>
+              {isSaving ? <LoaderCircle className="animate-spin" data-icon="inline-start" /> : <Save data-icon="inline-start" />}
+              {isSaving ? "Saving" : "Save Account"}
             </Button>
             <p className="min-h-5 text-sm text-yuzu-gold" aria-live="polite">
               {statusMessage}

@@ -1,0 +1,29 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowYccLambdaRuntimeModelInvocations",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::374587466106:role/service-role/ycyyy-1778040454500"
+      },
+      "Action": [
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-micro-v1:0",
+        "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-lite-v1:0"
+      ]
+    },
+    {
+      "Sid": "AllowYccLambdaGuardrailApplication",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::374587466106:role/service-role/ycyyy-1778040454500"
+      },
+      "Action": "bedrock:ApplyGuardrail",
+      "Resource": "arn:aws:bedrock:us-east-1:374587466106:guardrail/xczjnv3f1wzs"
+    }
+  ]
+}

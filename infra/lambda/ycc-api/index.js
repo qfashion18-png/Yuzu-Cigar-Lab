@@ -308,6 +308,8 @@ exports.handler = async function handler(event = {}, context = {}) {
     let response;
     if (routeKey === "GET /account/me") {
       response = await handleAccountMe(event, actor, requestId);
+    } else if (routeKey === "PATCH /account/me") {
+      response = await handleAccountProfileUpdate(event, actor, requestId);
     } else if (routeKey === "POST /commerce/customer-portal-session") {
       response = await handleCustomerPortalSession(event, actor, requestId);
     } else if (routeKey === "GET /commerce/membership") {
@@ -2836,11 +2838,19 @@ async function handleNewsStoryPublish(event, actor, requestId) {
 }
 
 async function handleAccountMe(event, actor, requestId) {
-  const member = await maybePersistMember(event, actor, requestId);
+  const accountRecord = await maybePersistAccount(event, actor, requestId);
+  const member = accountRecord?.member || null;
   const membership = getMembershipSnapshot(actor, member);
 
   return json(200, requestId, {
-    account: actor,
+    account: {
+      ...actor,
+      name: member?.displayName || actor.name,
+    },
+    profile: accountRecord?.profile || {
+      phone: "",
+      shippingAddress: null,
+    },
     source: "cognito-jwt",
     membership,
     database: member
@@ -2854,6 +2864,56 @@ async function handleAccountMe(event, actor, requestId) {
           persisted: false,
           persistence: getDatabasePersistenceStatus(),
         },
+  });
+}
+
+async function handleAccountProfileUpdate(event, actor, requestId) {
+  const body = parseJsonBody(event);
+  if (body.error) {
+    return body.error;
+  }
+
+  if (!shouldPersistDatabaseWrites()) {
+    return json(503, requestId, {
+      error: "database_writes_not_ready",
+      message: "Live account profile persistence is not ready yet.",
+      persistence: getDatabasePersistenceStatus(),
+    });
+  }
+
+  const name = sanitizeText(body.value.name, 160);
+  if (!name) {
+    return json(400, requestId, {
+      error: "invalid_profile",
+      message: "Enter a display name before saving the account profile.",
+    });
+  }
+
+  const phone = sanitizeText(body.value.phone, 40);
+  const shippingAddress = normalizeCheckoutShippingAddress(body.value.shippingAddress || {});
+  const updatedActor = {
+    ...actor,
+    name,
+  };
+  const saved = await persistAccountProfileUpdate(event, updatedActor, requestId, {
+    phone,
+    shippingAddress,
+  });
+
+  return json(200, requestId, {
+    account: {
+      ...actor,
+      name: saved.member.displayName || name,
+    },
+    profile: saved.profile,
+    source: "cognito-jwt",
+    membership: getMembershipSnapshot(updatedActor, saved.member),
+    database: {
+      persisted: true,
+      persistence: "stored",
+      table: "member_profiles",
+      memberId: saved.member.id,
+    },
   });
 }
 
@@ -5556,13 +5616,163 @@ function getCommerceTables() {
   ];
 }
 
-async function maybePersistMember(event, actor, requestId) {
+async function maybePersistAccount(event, actor, requestId) {
   if (!shouldPersistDatabaseWrites()) {
-    return null;
+    return {
+      member: null,
+      profile: null,
+    };
   }
 
   return withDatabaseClient("ycc-api-account", async (client) => {
-    return upsertMember(client, actor, requestId);
+    const member = await upsertMember(client, actor, requestId);
+    const profile = await fetchMemberProfile(client, member.id);
+
+    return {
+      member,
+      profile,
+    };
+  });
+}
+
+async function fetchMemberProfile(client, memberId) {
+  const result = await client.query(
+    `
+      select phone, shipping_profile
+      from public.member_profiles
+      where member_id = $1
+      limit 1
+    `,
+    [memberId]
+  );
+
+  return mapMemberProfileRow(result.rows[0]);
+}
+
+function mapMemberProfileRow(row) {
+  if (!row) {
+    return null;
+  }
+
+  return {
+    phone: sanitizeText(row.phone, 40),
+    shippingAddress: normalizeAccountShippingProfile(row.shipping_profile),
+  };
+}
+
+function normalizeAccountShippingProfile(value) {
+  const address = normalizeCheckoutShippingAddress(value || {});
+  const hasShippingDetails = Boolean(address.address1 || address.address2 || address.city || address.state || address.postalCode);
+
+  return hasShippingDetails ? address : null;
+}
+
+async function persistAccountProfileUpdate(event, actor, requestId, profile) {
+  return withDatabaseTransaction("ycc-api-account-profile", async (client) => {
+    await upsertMember(client, actor, requestId);
+    const normalized = normalizeActorForMember(actor);
+    const metadata = JSON.stringify({
+      cognitoGroups: actor.groups,
+      cognitoUsername: actor.username,
+      emailMissingInToken: !actor.email,
+      source: "cognito-jwt",
+      profileUpdate: true,
+    });
+    const memberResult = await client.query(
+      `
+        update public.members
+        set cognito_sub = $2,
+            email_verified = $3,
+            display_name = coalesce($4, public.members.display_name),
+            role = $5,
+            membership_tier = $6,
+            member_status = $7,
+            stripe_customer_id = coalesce($8, public.members.stripe_customer_id),
+            last_seen_at = now(),
+            metadata = coalesce(public.members.metadata, '{}'::jsonb) || $9::jsonb,
+            actor_id = $10,
+            request_id = $11,
+            updated_at = now()
+        where lower(email) = lower($1)
+        returning id, cognito_sub, email, display_name, role, membership_tier, member_status, stripe_customer_id
+      `,
+      [
+        normalized.email,
+        actor.sub,
+        actor.emailVerified,
+        nullable(actor.name),
+        normalized.role,
+        normalized.membershipTier,
+        normalized.memberStatus,
+        normalized.stripeCustomerId,
+        metadata,
+        actor.sub,
+        requestId,
+      ]
+    );
+    const memberRow = memberResult.rows[0];
+    if (!memberRow) {
+      throw new Error("Member profile update did not return a member row.");
+    }
+    const member = {
+      id: memberRow.id,
+      cognitoSub: memberRow.cognito_sub,
+      displayName: memberRow.display_name,
+      email: memberRow.email,
+      memberStatus: memberRow.member_status,
+      membershipTier: memberRow.membership_tier,
+      role: memberRow.role,
+      stripeCustomerId: memberRow.stripe_customer_id || null,
+    };
+
+    const profileResult = await client.query(
+      `
+        insert into public.member_profiles (
+          member_id,
+          phone,
+          shipping_profile,
+          actor_id,
+          request_id
+        )
+        values ($1, $2, $3::jsonb, $4, $5)
+        on conflict (member_id) do update
+        set phone = $2,
+            shipping_profile = $3::jsonb,
+            actor_id = excluded.actor_id,
+            request_id = excluded.request_id,
+            updated_at = now()
+        returning id, phone, shipping_profile
+      `,
+      [member.id, nullable(profile.phone), JSON.stringify(profile.shippingAddress), actor.sub, requestId]
+    );
+    const profileRow = profileResult.rows[0];
+    const savedProfile = profileRow && ("phone" in profileRow || "shipping_profile" in profileRow) ? mapMemberProfileRow(profileRow) : null;
+    const responseProfile = savedProfile || {
+      phone: profile.phone,
+      shippingAddress: profile.shippingAddress,
+    };
+
+    await insertAuditLog(client, event, {
+      action: "account.profile.updated",
+      actor,
+      afterData: {
+        name: actor.name,
+        phone: profile.phone,
+        shippingAddress: profile.shippingAddress,
+      },
+      memberId: member.id,
+      requestId,
+      resourceId: profileResult.rows[0]?.id || member.id,
+      resourceType: "member_profile",
+    });
+
+    return {
+      member,
+      profile: {
+        phone: responseProfile.phone,
+        shippingAddress: responseProfile.shippingAddress || profile.shippingAddress,
+      },
+    };
   });
 }
 
@@ -6226,7 +6436,7 @@ async function upsertMember(client, actor, requestId) {
         on conflict (cognito_sub) do update
         set email = excluded.email,
             email_verified = excluded.email_verified,
-            display_name = coalesce(excluded.display_name, public.members.display_name),
+            display_name = coalesce(public.members.display_name, excluded.display_name),
             role = excluded.role,
             membership_tier = excluded.membership_tier,
             member_status = excluded.member_status,
@@ -6259,7 +6469,7 @@ async function upsertMember(client, actor, requestId) {
         update public.members
         set cognito_sub = $2,
             email_verified = $3,
-            display_name = coalesce($4, public.members.display_name),
+            display_name = coalesce(public.members.display_name, $4),
             role = $5,
             membership_tier = $6,
             member_status = $7,

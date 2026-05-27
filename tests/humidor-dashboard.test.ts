@@ -52,6 +52,17 @@ test("add cigars tab owns the humidor AI cigar adder and manual add form", () =>
   assert.ok(source.includes("auth.createApiHeaders()"), "AI adder requests must use Cognito headers");
 });
 
+test("humidor accepts Cigar Flow deep links for smoke-note prep", () => {
+  const source = readFileSync(new URL("../src/components/humidor-dashboard.tsx", import.meta.url), "utf8");
+
+  assert.ok(source.includes("resolveHumidorDeepLinkSection"), "humidor should normalize section query params");
+  assert.ok(source.includes("new URLSearchParams(window.location.search)"), "humidor should read static-export query params on the client");
+  assert.ok(source.includes('searchParams.get("intent") === "cigar-flow"'), "humidor should detect the Cigar Flow intent");
+  assert.ok(source.includes('setActiveSection("tools")'), "Cigar Flow intent should open the Add Cigars smoke-note prep area");
+  assert.ok(source.includes("Cigar Flow smoke note prep"), "humidor should show a concrete Cigar Flow handoff state");
+  assert.ok(source.includes("Shareable notes start in your live humidor"), "handoff copy should explain the real member workflow");
+});
+
 test("add locations tab saves, displays, and edits member humidor locations", () => {
   const source = readFileSync(new URL("../src/components/humidor-dashboard.tsx", import.meta.url), "utf8");
   const addCigarsNav = source.indexOf('{ id: "tools", label: "Add Cigars"');
@@ -84,6 +95,23 @@ test("add locations tab saves, displays, and edits member humidor locations", ()
   assert.ok(profileSection.includes('aria-label={`Edit saved location ${index + 1}`}'), "saved locations should be editable from the list");
   assert.ok(profileSection.includes('aria-label={`Remove saved location ${index + 1}`}'), "saved locations should have a remove control");
   assert.ok(profileSection.includes("No saved locations yet"), "Add Locations should explain the empty saved-location state");
+});
+
+test("add locations save includes the typed draft location", () => {
+  const source = readFileSync(new URL("../src/components/humidor-dashboard.tsx", import.meta.url), "utf8");
+  const saveHandler = source.slice(source.indexOf("async function handleSaveHumidorLocationProfile"), source.indexOf("async function handleEnableHumidorPushAlerts"));
+  const profileSection = source.slice(source.indexOf("function renderHumidorLocationProfile()"), source.indexOf("\n  return (\n    <main", source.indexOf("function renderHumidorLocationProfile()")));
+
+  assert.ok(saveHandler.includes("newHumidorLocationDraft.trim()"), "saving should read the currently typed Add Locations draft");
+  assert.ok(
+    saveHandler.includes("normalizeHumidorProfileLocations([...humidorLocationProfile.locations, pendingLocation])"),
+    "saving should merge the unsaved draft into the profile locations before persistence",
+  );
+  assert.ok(
+    profileSection.includes("humidorLocationProfile.defaultLocation.trim() || savedLocations.length || newHumidorLocationDraft.trim()"),
+    "Save Humidor Profile should be enabled when only the new-location draft has text",
+  );
+  assert.ok(saveHandler.includes('setNewHumidorLocationDraft("")'), "successful save should clear the consumed draft location");
 });
 
 test("add cigars tab gates bulk import to full membership tiers", () => {

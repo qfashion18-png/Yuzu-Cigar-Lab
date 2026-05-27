@@ -9,6 +9,8 @@ import {
   useState,
 } from "react";
 
+import { useOptionalBackupAuth } from "@/components/backup-auth-provider";
+import { repriceCartForAccount } from "@/lib/cart-price-reconciliation";
 import {
   addCartItem,
   applyPromotionCode,
@@ -17,6 +19,8 @@ import {
   checkoutPaymentMethods,
   defaultDeliveryMethods,
   defaultPaymentMethods,
+  getDeliveryMethodsForState,
+  isAdultSignatureRequiredState,
   removeCartItem,
   updateCartItemQuantity,
   type CartTotals,
@@ -44,6 +48,7 @@ type CartContextValue = {
 const CartContext = createContext<CartContextValue | null>(null);
 
 export function CartProvider({ children }: { children: React.ReactNode }) {
+  const auth = useOptionalBackupAuth();
   const [cart, setCart] = useState(() => createEmptyShoppingCart());
   const [hydrated, setHydrated] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
@@ -69,6 +74,27 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
     window.localStorage.setItem(cartStorageKey, JSON.stringify(cart));
   }, [cart, hydrated]);
+
+  useEffect(() => {
+    if (!hydrated || !auth?.isReady) {
+      return;
+    }
+
+    const isMember = auth.isMember;
+    const repricingTimer = window.setTimeout(() => {
+      setCart((currentCart) => {
+        const nextCart = repriceCartForAccount(currentCart, isMember);
+
+        if (nextCart !== currentCart) {
+          window.queueMicrotask(() => setStatusMessage("Cart pricing refreshed for your current account."));
+        }
+
+        return nextCart;
+      });
+    }, 0);
+
+    return () => window.clearTimeout(repricingTimer);
+  }, [auth?.isMember, auth?.isReady, hydrated]);
 
   const totals = useMemo(() => calculateCartTotals(cart), [cart]);
   const itemCount = totals.itemCount;
@@ -166,7 +192,13 @@ export function useCart() {
   return context;
 }
 
-export { checkoutPaymentMethods, defaultDeliveryMethods, defaultPaymentMethods };
+export {
+  checkoutPaymentMethods,
+  defaultDeliveryMethods,
+  defaultPaymentMethods,
+  getDeliveryMethodsForState,
+  isAdultSignatureRequiredState,
+};
 
 function readJson<T>(key: string): T | null {
   try {

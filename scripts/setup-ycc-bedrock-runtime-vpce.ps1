@@ -51,6 +51,7 @@ $lambdaSgId = "sg-00c3d67ac62d92ae7"
 $endpointGroupName = "ycc-bedrock-runtime-vpce"
 $endpointServiceName = "com.amazonaws.$Region.bedrock-runtime"
 $endpointSubnets = @("subnet-0d4aeff46b55c3760", "subnet-0c4a36f3966caa44c")
+$policyPath = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..\infra\ycc-phase45-bedrock-runtime-vpce-policy.json")).Path
 
 $groups = Invoke-AwsJson @(
   "ec2", "describe-security-groups",
@@ -156,9 +157,16 @@ if ($null -eq $endpoint -or [string]::IsNullOrWhiteSpace($endpoint.VpcEndpointId
   )
 }
 
+$null = Invoke-AwsJson @(
+  "ec2", "modify-vpc-endpoint",
+  "--vpc-endpoint-id", $endpoint.VpcEndpointId,
+  "--policy-document", "file://$policyPath"
+)
+
 [ordered]@{
   EndpointSecurityGroupId = $endpointSgId
   VpcEndpointId = $endpoint.VpcEndpointId
   ServiceName = $endpointServiceName
   State = $endpoint.State
+  PolicyDocument = $policyPath
 } | ConvertTo-Json

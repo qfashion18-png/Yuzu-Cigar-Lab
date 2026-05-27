@@ -3,6 +3,7 @@
 import Link from "@/components/static-link";
 import { AnimatePresence, motion } from "framer-motion";
 import { Bot, Headphones, Home, LoaderCircle, MessageCircle, Mic, Send, Volume2, VolumeX, X } from "lucide-react";
+import { usePathname } from "next/navigation";
 import { FormEvent, useEffect, useRef, useState } from "react";
 
 import { useBackupAuth } from "@/components/backup-auth-provider";
@@ -70,6 +71,7 @@ type ConciergeResponse = ConciergeChatResponse | ConciergeVoiceResponse;
 
 export function FloatingConcierge() {
   const auth = useBackupAuth();
+  const pathname = usePathname();
   const [isOpen, setIsOpen] = useState(false);
   const [mode, setMode] = useState<ConciergeAgentMode>("concierge");
   const [message, setMessage] = useState("");
@@ -294,9 +296,15 @@ export function FloatingConcierge() {
   const canSendText = Boolean(message.trim()) && !isSending && !isRecording;
   const speech = response?.voice?.speech ?? null;
   const isLiveReady = canUseLiveConcierge(auth.authSource);
+  const isCartRoute = pathname.startsWith("/cart");
 
   return (
-    <div className="fixed bottom-4 right-4 z-[45]">
+    <div
+      className={cn(
+        "fixed right-4 z-[45]",
+        isCartRoute ? "bottom-[calc(6.25rem+env(safe-area-inset-bottom))] lg:bottom-4" : "bottom-4"
+      )}
+    >
       <AnimatePresence initial={false} mode="wait">
         {isOpen ? (
           <motion.aside

@@ -541,6 +541,38 @@ function installPersistenceMocks(
         };
       }
 
+      if (normalized.includes("select phone, shipping_profile") && normalized.includes("from public.member_profiles")) {
+        return {
+          rows: [
+            {
+              phone: "4805552121",
+              shipping_profile: {
+                address1: "111 W Boston St",
+                address2: "Suite 5",
+                city: "Chandler",
+                state: "AZ",
+                postalCode: "85225",
+                country: "US",
+              },
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+
+      if (normalized.includes("insert into public.member_profiles") && normalized.includes("shipping_profile")) {
+        return {
+          rows: [
+            {
+              id: "22222222-2222-4222-8222-222222222222",
+              phone: params[1],
+              shipping_profile: JSON.parse(String(params[2] || "{}")),
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+
       if (normalized.includes("insert into public.member_profiles")) {
         return {
           rows: [
@@ -1193,6 +1225,7 @@ function installPersistenceMocks(
     CONCIERGE_VOICE_PREFIX: process.env.CONCIERGE_VOICE_PREFIX,
     CONCIERGE_VOICE_TRANSCRIBE_MAX_WAIT_MS: process.env.CONCIERGE_VOICE_TRANSCRIBE_MAX_WAIT_MS,
     BEDROCK_MODEL_ID: process.env.BEDROCK_MODEL_ID,
+    BEDROCK_ENABLE_GUARDRAILS: process.env.BEDROCK_ENABLE_GUARDRAILS,
     BEDROCK_GUARDRAIL_ID: process.env.BEDROCK_GUARDRAIL_ID,
     BEDROCK_GUARDRAIL_VERSION: process.env.BEDROCK_GUARDRAIL_VERSION,
     BEDROCK_KNOWLEDGE_BASE_ID: process.env.BEDROCK_KNOWLEDGE_BASE_ID,
@@ -1242,6 +1275,7 @@ function installPersistenceMocks(
   process.env.CONCIERGE_VOICE_PREFIX = "ycc/concierge-voice/";
   process.env.CONCIERGE_VOICE_TRANSCRIBE_MAX_WAIT_MS = "2000";
   process.env.BEDROCK_MODEL_ID = "amazon.nova-lite-v1:0";
+  process.env.BEDROCK_ENABLE_GUARDRAILS = "1";
   process.env.BEDROCK_GUARDRAIL_ID = "guardrail-test";
   process.env.BEDROCK_GUARDRAIL_VERSION = "1";
   process.env.BEDROCK_KNOWLEDGE_BASE_ID = "KBTEST1";
@@ -1775,6 +1809,57 @@ test("commerce checkout loads approved catalog from server configuration before 
       String(mock.checkoutSessionsCreated[0].success_url).includes("status_token=chkst_"),
       "Stripe success URL should carry the status token for the post-payment poller"
     );
+  } finally {
+    mock.restore();
+  }
+});
+
+test("commerce checkout allows AgeChecker-verified non-required states to use USPS Ground Advantage", async () => {
+  const mock = installStripeMock();
+  try {
+    process.env.STRIPE_SECRET_KEY = "sk_test_123";
+    process.env.STRIPE_LAUNCH_CATALOG_READY = "true";
+    process.env.FEATURE_STRIPE_TAX = "ready";
+    process.env.PUBLIC_SITE_URL = "https://www.yuzucigarclub.com";
+    process.env.AGE_VERIFICATION_SIGNING_SECRET = "age-secret";
+    delete process.env.ALLOW_LEGACY_AGE_VERIFICATION_TOKEN;
+    process.env.STRIPE_LAUNCH_CATALOG_JSON = JSON.stringify([
+      {
+        sku: "APPROVED-BOX",
+        slug: "approved-box",
+        name: "Approved Box",
+        price: 120,
+        publishStatus: "published",
+        inventoryPolicy: "track",
+        sourceQuantity: 5,
+        shippable: true,
+        adultSignatureRequired: true,
+        stripePriceId: "price_approved",
+      },
+    ]);
+
+    const response = await handler({
+      routeKey: "POST /commerce/checkout-session",
+      rawPath: "/commerce/checkout-session",
+      body: JSON.stringify({
+        items: [{ sku: "APPROVED-BOX", quantity: 1, unitPrice: 120 }],
+        customer: { email: "member@example.com" },
+        shippingAddress: {
+          address1: "123 Yuzu Way",
+          city: "Chandler",
+          country: "US",
+          state: "AZ",
+          postalCode: "85225",
+        },
+        shippingMethodId: "usps-ground-advantage",
+        compliance: { ageVerificationToken: createSignedAgeVerificationToken("age-secret") },
+      }),
+      requestContext: { requestId: "req-commerce-checkout-usps-ground-advantage", http: { method: "POST" } },
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.equal((mock.checkoutSessionsCreated[0].metadata as Record<string, string>).shipping_method_id, "usps-ground-advantage");
+    assert.equal((mock.checkoutSessionsCreated[0].metadata as Record<string, string>).adult_signature_required, "false");
   } finally {
     mock.restore();
   }
@@ -2827,6 +2912,49 @@ test("account route upserts the authenticated member when schema writes are read
   }
 });
 
+test("account profile update persists display name, phone, and shipping profile", async () => {
+  const mock = installPersistenceMocks();
+  try {
+    const response = await handler(
+      createAuthenticatedEvent("PATCH /account/me", {
+        name: "Member Two",
+        phone: "4805552121",
+        shippingAddress: {
+          address1: "111 W Boston St",
+          address2: "Suite 5",
+          city: "Chandler",
+          state: "AZ",
+          postalCode: "85225",
+          country: "US",
+        },
+      })
+    );
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.account.name, "Member Two");
+    assert.equal(body.profile.phone, "4805552121");
+    assert.equal(body.profile.shippingAddress.postalCode, "85225");
+    assert.equal(body.database.table, "member_profiles");
+
+    const queries = mock.clients.flatMap((client) => client.queries);
+    assert.ok(
+      queries.some((query) => query.sql.includes("update public.members") && query.sql.includes("display_name")),
+      "member display name should be persisted"
+    );
+    assert.ok(
+      queries.some((query) => query.sql.includes("insert into public.member_profiles") && query.sql.includes("shipping_profile")),
+      "profile shipping address should be persisted"
+    );
+    assert.ok(
+      queries.some((query) => query.sql.includes("insert into public.audit_log") && query.params.includes("account.profile.updated")),
+      "profile update should be audited"
+    );
+  } finally {
+    mock.restore();
+  }
+});
+
 test("membership route reads persisted subscription state and mints checkout entitlement", async () => {
   const mock = installPersistenceMocks();
   try {
@@ -3126,13 +3254,17 @@ test("concierge chat uses direct Bedrock Runtime for the selected cigar guide pe
     assert.match(body.reply, /Connecticut shade/);
     assert.equal(mock.agentInvocations.length, 0);
     assert.equal(mock.bedrockInvocations.length, 1);
-    assert.equal("guardrailConfig" in mock.bedrockInvocations[0], false);
+    assert.deepEqual(mock.bedrockInvocations[0].guardrailConfig, {
+      guardrailIdentifier: "guardrail-test",
+      guardrailVersion: "1",
+      trace: "enabled",
+    });
   } finally {
     mock.restore();
   }
 });
 
-test("concierge chat does not run cigar guide questions through Bedrock guardrails", async () => {
+test("concierge chat keeps direct cigar guide answers available with Bedrock guardrails enabled", async () => {
   const mock = installPersistenceMocks({
     agentReply:
       "Yuzu Cigar Club cannot help with that request. A concierge operator can review age-restricted, account, or compliance-sensitive questions.",
@@ -3155,7 +3287,11 @@ test("concierge chat does not run cigar guide questions through Bedrock guardrai
     assert.equal(mock.agentInvocations.length, 0);
     assert.equal(mock.knowledgeBaseRetrievals.length, 1);
     assert.equal(mock.bedrockInvocations.length, 1);
-    assert.equal("guardrailConfig" in mock.bedrockInvocations[0], false);
+    assert.deepEqual(mock.bedrockInvocations[0].guardrailConfig, {
+      guardrailIdentifier: "guardrail-test",
+      guardrailVersion: "1",
+      trace: "enabled",
+    });
   } finally {
     mock.restore();
   }

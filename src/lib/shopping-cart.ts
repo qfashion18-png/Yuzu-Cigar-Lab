@@ -58,6 +58,24 @@ export const adultSignatureRequiredStates = ["AR", "CA", "DE", "FL", "GA", "MA",
 
 export const defaultDeliveryMethods: DeliveryMethod[] = [
   {
+    id: "usps-ground-advantage",
+    title: "USPS Ground Advantage",
+    estimate: "3-5 business days",
+    price: 9,
+    carrier: defaultDeliveryCarrier,
+    adultSignatureRequired: false,
+    medusaOptionId: "so_usps_ground_advantage",
+  },
+  {
+    id: "usps-priority-mail",
+    title: "USPS Priority Mail",
+    estimate: "2-3 business days",
+    price: 15,
+    carrier: defaultDeliveryCarrier,
+    adultSignatureRequired: false,
+    medusaOptionId: "so_usps_priority_mail",
+  },
+  {
     id: "usps-adult-signature-ground",
     title: "USPS Adult Signature Ground",
     estimate: "3-5 business days",
@@ -76,6 +94,81 @@ export const defaultDeliveryMethods: DeliveryMethod[] = [
     medusaOptionId: "so_usps_adult_signature_priority",
   },
 ];
+
+const usStateCodeByName: Record<string, string> = {
+  ALABAMA: "AL",
+  ALASKA: "AK",
+  ARIZONA: "AZ",
+  ARKANSAS: "AR",
+  CALIFORNIA: "CA",
+  COLORADO: "CO",
+  CONNECTICUT: "CT",
+  DELAWARE: "DE",
+  FLORIDA: "FL",
+  GEORGIA: "GA",
+  HAWAII: "HI",
+  IDAHO: "ID",
+  ILLINOIS: "IL",
+  INDIANA: "IN",
+  IOWA: "IA",
+  KANSAS: "KS",
+  KENTUCKY: "KY",
+  LOUISIANA: "LA",
+  MAINE: "ME",
+  MARYLAND: "MD",
+  MASSACHUSETTS: "MA",
+  MICHIGAN: "MI",
+  MINNESOTA: "MN",
+  MISSISSIPPI: "MS",
+  MISSOURI: "MO",
+  MONTANA: "MT",
+  NEBRASKA: "NE",
+  NEVADA: "NV",
+  "NEW HAMPSHIRE": "NH",
+  "NEW JERSEY": "NJ",
+  "NEW MEXICO": "NM",
+  "NEW YORK": "NY",
+  "NORTH CAROLINA": "NC",
+  "NORTH DAKOTA": "ND",
+  OHIO: "OH",
+  OKLAHOMA: "OK",
+  OREGON: "OR",
+  PENNSYLVANIA: "PA",
+  "RHODE ISLAND": "RI",
+  "SOUTH CAROLINA": "SC",
+  "SOUTH DAKOTA": "SD",
+  TENNESSEE: "TN",
+  TEXAS: "TX",
+  UTAH: "UT",
+  VERMONT: "VT",
+  VIRGINIA: "VA",
+  WASHINGTON: "WA",
+  "WEST VIRGINIA": "WV",
+  WISCONSIN: "WI",
+  WYOMING: "WY",
+};
+
+export function normalizeUsStateCode(value: string) {
+  const normalizedValue = value.trim().toUpperCase().replace(/\s+/g, " ");
+
+  if (normalizedValue.length === 2) {
+    return normalizedValue;
+  }
+
+  return usStateCodeByName[normalizedValue] ?? normalizedValue;
+}
+
+export function isAdultSignatureRequiredState(state: string) {
+  return adultSignatureRequiredStates.includes(normalizeUsStateCode(state) as (typeof adultSignatureRequiredStates)[number]);
+}
+
+export function getDeliveryMethodsForState(state: string) {
+  if (!isAdultSignatureRequiredState(state)) {
+    return defaultDeliveryMethods;
+  }
+
+  return defaultDeliveryMethods.filter((method) => method.adultSignatureRequired);
+}
 
 export const defaultPaymentMethods: PaymentMethod[] = [
   {

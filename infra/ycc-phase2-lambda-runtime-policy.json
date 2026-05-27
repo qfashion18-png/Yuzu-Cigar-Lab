@@ -95,6 +95,15 @@
       "Resource": "arn:aws:bedrock:us-east-1:374587466106:guardrail/xczjnv3f1wzs"
     },
     {
+      "Sid": "RetrieveFromYccKnowledgeBaseV2",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:Retrieve",
+        "bedrock:RetrieveAndGenerate"
+      ],
+      "Resource": "arn:aws:bedrock:us-east-1:374587466106:knowledge-base/48GFMCLSTG"
+    },
+    {
       "Sid": "InvokeTaggedYccBedrockAgentAliases",
       "Effect": "Allow",
       "Action": "bedrock:InvokeAgent",

@@ -116,6 +116,29 @@ test("checkout compliance accepts verified adults with publishable stock and adu
   });
 });
 
+test("checkout compliance accepts AgeChecker-verified non-required states with USPS non-signature methods", () => {
+  const { validateCheckoutReadiness } = loadRules();
+  const result = validateCheckoutReadiness({
+    ...readyCheckout,
+    destination: {
+      country: "US",
+      state: "AZ",
+      postalCode: "85225",
+    },
+    shippingMethodId: "usps-ground-advantage",
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.shipping, {
+    methodId: "usps-ground-advantage",
+    submittedMethodId: "usps-ground-advantage",
+    carrier: "USPS",
+    adultSignatureRequired: false,
+    adultSignatureRequiredState: false,
+  });
+});
+
 test("checkout compliance uses USPS adult-signature states and rejects UPS methods", () => {
   const {
     adultSignatureRequiredStates,
@@ -131,6 +154,7 @@ test("checkout compliance uses USPS adult-signature states and rejects UPS metho
   assert.equal(adultSignatureShippingMethodIds.has("ups-adult-signature-ground"), false);
   assert.equal(requiresAdultSignatureDelivery([{ adultSignatureRequired: false }], { state: "CA" }), true);
   assert.equal(requiresAdultSignatureDelivery([{ adultSignatureRequired: false }], { state: "AZ" }), false);
+  assert.equal(requiresAdultSignatureDelivery([{ adultSignatureRequired: true }], { state: "AZ" }), false);
 
   const result = validateCheckoutReadiness({
     ...readyCheckout,
@@ -140,6 +164,24 @@ test("checkout compliance uses USPS adult-signature states and rejects UPS metho
   assert.equal(result.ok, false);
   assert.equal(result.errors.some((error) => error.code === "shipping_method_unavailable"), true);
   assert.equal(result.holdReasons.includes("shipping_method_unavailable"), true);
+});
+
+test("checkout compliance still requires adult-signature USPS methods in required states", () => {
+  const { validateCheckoutReadiness } = loadRules();
+  const result = validateCheckoutReadiness({
+    ...readyCheckout,
+    destination: {
+      country: "US",
+      state: "CA",
+      postalCode: "90210",
+    },
+    shippingMethodId: "usps-ground-advantage",
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.errors.some((error) => error.code === "adult_signature_required"), true);
+  assert.equal(result.errors.some((error) => error.code === "shipping_method_unavailable"), false);
+  assert.equal(result.holdReasons.includes("adult_signature_required"), true);
 });
 
 test("checkout compliance rejects unknown, draft, stale-price, and over-quantity cart lines", () => {
@@ -205,7 +247,7 @@ test("checkout compliance blocks unverified age, restricted destinations, missin
   const result = validateCheckoutReadiness({
     ...readyCheckout,
     ageVerification: { status: "pending" },
-    destination: { country: "US", state: "UT", postalCode: "84101" },
+    destination: { country: "US", state: "AR", postalCode: "72201" },
     shippingMethodId: "standard-ground",
     tax: { status: "unavailable" },
   });

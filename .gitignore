@@ -37,6 +37,7 @@ yarn-error.log*
 
 # local generated evidence and media caches
 /tmp/
+.playwright-cli/
 .waveform-cache/
 
 # env files (can opt-in for committing if needed)

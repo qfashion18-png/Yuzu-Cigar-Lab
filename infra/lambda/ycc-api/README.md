@@ -16,6 +16,7 @@ Stripe owns payment processing, hosted Checkout, Billing/subscriptions, Products
 - `GET /health?deep=1`
 - `GET /content/pages`
 - `GET /account/me`
+- `PATCH /account/me`
 - `POST /content/pages`
 - `POST /concierge/chat`
 - `POST /support/email-draft`
@@ -166,7 +167,8 @@ Supporting modules:
 
 When `FEATURE_DB_WRITES=schema_ready`, protected routes write through RDS Proxy into the Phase 3 PostgreSQL schema:
 
-- `GET /account/me` upserts the Cognito member row.
+- `GET /account/me` upserts the Cognito member row and reads the saved member profile.
+- `PATCH /account/me` persists the Cognito member display name, phone, shipping profile, and audit row.
 - `POST /concierge/chat` stores the member, conversation, user message, assistant reply, and audit row.
 - `POST /support/email-draft` stores the member, support case, outbound draft email, and audit row.
 - `POST /support/email-send` sends through SES when `FEATURE_SES=ready`, then stores the member, support case, sent email, SES message id, and audit row.
@@ -207,7 +209,7 @@ Direct Lambda migration invokes are guarded and intended for operator use from t
 
 ## AI Runtime
 
-When `FEATURE_BEDROCK=runtime_ready`, `POST /concierge/chat` invokes Bedrock for the selected YCC agent. Cigar-guide requests use direct Bedrock Runtime with the shared knowledge base so adult cigar questions do not inherit guardrails pinned to older prepared agent aliases. Other specialist agents can still use published Bedrock Agent Runtime aliases when they need action groups. The route passes authenticated member session attributes into those agent calls so Lambda action groups can safely persist support drafts and humidor updates.
+When `FEATURE_BEDROCK=runtime_ready`, `POST /concierge/chat` invokes Bedrock for the selected YCC agent. Cigar-guide requests use direct Bedrock Runtime with the shared knowledge base. Other specialist agents can still use published Bedrock Agent Runtime aliases when they need action groups. The route passes authenticated member session attributes into those agent calls so Lambda action groups can safely persist support drafts and humidor updates.
 
 - `YCCConcierge` for general member routing.
 - `YCCCigarGuide` for wrapper, vitola, tasting, storage, and pairing guidance.
@@ -216,7 +218,7 @@ When `FEATURE_BEDROCK=runtime_ready`, `POST /concierge/chat` invokes Bedrock for
 - `YCCAdminAgent` for internal admin/operator reasoning.
 - `YCCNewsAgent` for authorized cigar-news drafts based on official brand, company, distributor, event, regulator, or wire sources. The website newsroom workflow keeps generated stories in draft review until a Cognito admin or concierge operator approves publication.
 
-The live agents share Knowledge Base `48GFMCLSTG` and action group `YCCOperations`. Lambda does not attach Bedrock guardrails by default; direct Runtime guardrails are opt-in with `BEDROCK_ENABLE_GUARDRAILS=1`. Older prepared aliases may still carry alias-level Bedrock guardrail snapshots until they are rebuilt, so customer-facing cigar-guide traffic bypasses the alias path. `YCCAdminAgent` and `YCCNewsAgent` require a Cognito `admin` or `concierge_operator` group claim.
+The live agents share Knowledge Base `48GFMCLSTG` and action group `YCCOperations`. Agent aliases are rebuilt on guardrail version `8`; direct Runtime guardrails are enabled when the serving Lambda version has `BEDROCK_ENABLE_GUARDRAILS=1`. `YCCAdminAgent` and `YCCNewsAgent` require a Cognito `admin` or `concierge_operator` group claim.
 
 If Agent Runtime fails, the route logs the fallback and tries direct Bedrock Runtime `Converse` with `BEDROCK_MODEL_ID`. If that also fails, it returns the scaffolded assistant contract rather than failing the member request.
 

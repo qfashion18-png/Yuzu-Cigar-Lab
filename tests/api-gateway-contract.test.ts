@@ -7,6 +7,7 @@ const templateSource = readFileSync(new URL("../infra/ycc-phase1-edge.yaml", imp
 const expectedRouteAuth = new Map([
   ["GET /health", "NONE"],
   ["GET /account/me", "JWT"],
+  ["PATCH /account/me", "JWT"],
   ["GET /content/pages", "NONE"],
   ["POST /newsletter/subscribe", "NONE"],
   ["GET /news/stories", "NONE"],
@@ -96,5 +97,27 @@ test("API Gateway integration invokes the live Lambda alias", () => {
   assert.match(templateSource, /ExistingLambdaLiveAliasArn:[\s\S]*Default: arn:aws:lambda:us-east-1:374587466106:function:ycyyy:live/);
   assert.match(templateSource, /IntegrationUri:\s*!Ref ExistingLambdaLiveAliasArn/);
   assert.match(templateSource, /ApiInvokePermission:[\s\S]*FunctionName:\s*!Ref ExistingLambdaLiveAliasArn/);
-  assert.match(templateSource, /BedrockYccConciergeInvokePermission:[\s\S]*FunctionName:\s*!Ref ExistingLambdaName/);
+
+  for (const liveAliasLogicalId of [
+    "BedrockYccConciergeInvokePermission",
+    "BedrockYccCigarGuideInvokePermission",
+    "BedrockYccSupportInvokePermission",
+    "BedrockYccHumidorInvokePermission",
+    "BedrockYccAdminInvokePermission",
+    "BedrockYccNewsInvokePermission",
+  ]) {
+    const permissionBlock = templateSource.match(
+      new RegExp(`\\n  ${liveAliasLogicalId}:[\\s\\S]*?(?=\\n  [A-Za-z0-9]+:|\\nOutputs:)`),
+    )?.[0];
+
+    assert.ok(permissionBlock, `${liveAliasLogicalId} should exist`);
+    assert.match(permissionBlock, /FunctionName:\s*!Ref ExistingLambdaLiveAliasArn/);
+    assert.doesNotMatch(permissionBlock, /FunctionName:\s*!Ref ExistingLambdaName/);
+  }
+
+  assert.doesNotMatch(
+    templateSource,
+    /BedrockYcc(?:Concierge|CigarGuide|Support|Humidor|Admin|News)UnqualifiedInvokePermission/,
+    "Bedrock action groups should not recreate unqualified Lambda invoke permissions",
+  );
 });

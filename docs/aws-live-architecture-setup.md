@@ -29,6 +29,7 @@ Working pieces:
   - protected `GET /humidor/items`
   - protected `POST /humidor/items`
   - protected `GET /account/me`
+  - protected `PATCH /account/me`
 - Lambda `ycyyy` now runs the Phase 4.5 YCC API handler from `infra/lambda/ycc-api/index.js`.
 - Lambda `ycyyy` has runtime environment configured for Cognito, RDS Proxy, the RDS credential secret ARN, S3 bucket `classroom2`, EventBridge bus `ycc-events`, Bedrock Knowledge Base `48GFMCLSTG`, the six Bedrock Agent Runtime aliases, and Phase 5 SES support-email settings.
 - Lambda role `ycyyy-1778040454500` has inline policy `YccApiPhase2RuntimePolicy` for the RDS secret, CloudWatch log writes, approved S3 prefixes, `ycc-events`, selected Bedrock model/agent invocation, and SES sends only from approved future YCC sender identities.
@@ -39,9 +40,9 @@ Working pieces:
 - PostgreSQL database `postgresycc` has the Phase 3 app schema applied, including `newsletter_subscribers` and `site_page_content`.
 - Protected API routes persist authenticated member, concierge, support draft, live page content, and humidor writes into the Phase 3 tables when `FEATURE_DB_WRITES=schema_ready`; the public newsletter route stores opt-ins and monthly membership interest.
 - Repo-local Phase 3-12 commerce work now adds `0002_commerce_schema.sql`, `0005_member_stripe_customer_link.sql`, Lambda commerce routes, Stripe helper modules, compliance validation, frontend Stripe Checkout clients, DB member-to-Stripe Customer linking, live Stripe secret/catalog wiring, active Stripe Tax registration/defaults, and USPS Adult Signature readiness.
-- Phase 4.5 Bedrock Agent Runtime is enabled for `POST /concierge/chat` through Lambda with YCC persona routing, Knowledge Base retrieval, Lambda action groups, guardrail version `8` for Lambda fallback and the News Agent, and fallback behavior if agent invocation is unavailable.
+- Phase 4.5 Bedrock Agent Runtime is enabled for `POST /concierge/chat` through Lambda with YCC persona routing, Knowledge Base retrieval, Lambda action groups, guardrail version `8` for direct Runtime and all prepared agents, and fallback behavior if agent invocation is unavailable.
 - Bedrock Guardrail `YCCConciergeGuardrail` is versioned and associated with the Lambda runtime path and Bedrock Agents.
-- Bedrock Agents exist and have prepared `prod` aliases for `YCCConcierge`, `YCCCigarGuide`, `YCCSupportAgent`, `YCCHumidorAgent`, `YCCAdminAgent`, and `YCCNewsAgent`; the five pre-existing agents route to version `6`, and the News Agent routes to version `5`.
+- Bedrock Agents exist and have prepared `prod` aliases for `YCCConcierge`, `YCCCigarGuide`, `YCCSupportAgent`, `YCCHumidorAgent`, `YCCAdminAgent`, and `YCCNewsAgent`; all six use guardrail version `8`, invoke the Lambda `live` alias executor, and route to version `7`.
 - SES domain identity `yuzucigarclub.com` is verified in `us-east-1` with Easy DKIM DNS records imported into Route 53.
 - SES inbound support-email subdomain `ses-support.yuzucigarclub.com` has MX pointed to `inbound-smtp.us-east-1.amazonaws.com`.
 - SES receipt rule set `ycc-support-email` is active and stores raw inbound mail for `support@ses-support.yuzucigarclub.com` in `s3://classroom2/ycc/support-email/raw/`, then invokes Lambda `ycyyy`.
@@ -267,7 +268,7 @@ Lambda AI runtime:
 - Live Lambda code hash: `z8gJ8V36rIT1e7yv/qtUc1gHmnJFEiQ/t4s8UJD9m1w=`
 - Runtime model: `amazon.nova-lite-v1:0`
 - Runtime feature flag: `FEATURE_BEDROCK=runtime_ready`
-- `POST /concierge/chat` routes to `YCCConcierge`, `YCCCigarGuide`, `YCCSupportAgent`, `YCCHumidorAgent`, `YCCAdminAgent`, or `YCCNewsAgent`. `YCCCigarGuide` uses direct Bedrock Runtime with knowledge-base context so adult cigar questions do not inherit older alias-level guardrails; other specialist agents invoke the selected Bedrock Agent Runtime alias when configured.
+- `POST /concierge/chat` routes to `YCCConcierge`, `YCCCigarGuide`, `YCCSupportAgent`, `YCCHumidorAgent`, `YCCAdminAgent`, or `YCCNewsAgent`. `YCCCigarGuide` uses direct Bedrock Runtime with knowledge-base context; other specialist agents invoke the selected Bedrock Agent Runtime alias when configured.
 - `YCCAdminAgent` and `YCCNewsAgent` are restricted to Cognito `admin` and `concierge_operator` groups.
 
 Guardrail:
@@ -277,7 +278,7 @@ Guardrail:
 - Guardrail ARN: `arn:aws:bedrock:us-east-1:374587466106:guardrail/xczjnv3f1wzs`
 - Current guardrail version: `8`
 - Config: `infra/ycc-phase4-guardrail.json`
-- Lambda direct Runtime calls do not attach this guardrail by default. Guardrails are opt-in with `BEDROCK_ENABLE_GUARDRAILS=1`; older prepared aliases may still carry alias-level guardrail snapshots until rebuilt, so customer-facing cigar-guide traffic bypasses the alias path.
+- Prepared Bedrock agent aliases use guardrail version `8`. Lambda direct Runtime calls attach this guardrail when the serving Lambda version has `BEDROCK_ENABLE_GUARDRAILS=1`; the `live` alias points to Lambda version `4`, which has that setting.
 - Earlier versions `1` through `7` were superseded while tuning the guardrail so adult cigar education/editorial language is allowed, explicit minor or age-check bypass requests remain blocked, and off-domain sexual content remains blocked.
 
 Bedrock Runtime VPC endpoint:
@@ -287,6 +288,8 @@ Bedrock Runtime VPC endpoint:
 - Private DNS: enabled
 - Endpoint SG: `sg-08a5274b522caba3e`
 - Setup script: `scripts/setup-ycc-bedrock-runtime-vpce.ps1`
+- Endpoint policy: `infra/ycc-phase45-bedrock-runtime-vpce-policy.json`, scoped to the Lambda execution role, Nova Micro/Lite foundation models, and guardrail `xczjnv3f1wzs`.
+- Policy reapply script: `scripts/apply-ycc-bedrock-vpce-policies.ps1`
 
 Bedrock Agent Runtime VPC endpoint:
 
@@ -295,6 +298,7 @@ Bedrock Agent Runtime VPC endpoint:
 - Private DNS: enabled
 - Endpoint SG: `sg-0397e8dec94b262a5`
 - Endpoint policy: `infra/ycc-phase45-bedrock-agent-runtime-vpce-policy.json`, allowing the six prepared YCC `prod` aliases including `YCCNewsAgent` `TUVBTVKNXG/G25GBEUUMG`.
+- Policy reapply script: `scripts/apply-ycc-bedrock-vpce-policies.ps1`
 
 Bedrock agent service role:
 
@@ -302,18 +306,18 @@ Bedrock agent service role:
 - Trust policy: `infra/ycc-phase4-bedrock-agent-trust-policy.json`
 - Runtime policy: `infra/ycc-phase4-bedrock-agent-runtime-policy.json`
 - Root-approved bootstrap created this role and attached its inline runtime policy.
-- Operator role inline policy `YccPhase4PrepareAgentPermissionGapPolicy` grants `bedrock:PrepareAgent` only for the five YCC Phase 4 agent ARNs.
+- Operator role inline policy `YccPhase4PrepareAgentPermissionGapPolicy` grants `bedrock:PrepareAgent` for all six YCC agent ARNs, including `YCCNewsAgent`; it was re-applied live on 2026-05-27 after the News prepare gap was found.
 
 Prepared agent aliases:
 
 | Agent | Agent ID | Alias | Alias ID | Version |
 | --- | --- | --- | --- | --- |
-| `YCCConcierge` | `NDIEDXNZAV` | `prod` | `XXAQKDKDC0` | `6` |
-| `YCCCigarGuide` | `EJI2VA7AVF` | `prod` | `1JO8IAN4BL` | `6` |
-| `YCCSupportAgent` | `SJJ2DVNYES` | `prod` | `LIFBQL76AE` | `6` |
-| `YCCHumidorAgent` | `XLN9JKVRDA` | `prod` | `SOHCW5780U` | `6` |
-| `YCCAdminAgent` | `UQWB6AKMBT` | `prod` | `IHCMS7T9PB` | `6` |
-| `YCCNewsAgent` | `TUVBTVKNXG` | `prod` | `G25GBEUUMG` | `5` |
+| `YCCConcierge` | `NDIEDXNZAV` | `prod` | `XXAQKDKDC0` | `7` |
+| `YCCCigarGuide` | `EJI2VA7AVF` | `prod` | `1JO8IAN4BL` | `7` |
+| `YCCSupportAgent` | `SJJ2DVNYES` | `prod` | `LIFBQL76AE` | `7` |
+| `YCCHumidorAgent` | `XLN9JKVRDA` | `prod` | `SOHCW5780U` | `7` |
+| `YCCAdminAgent` | `UQWB6AKMBT` | `prod` | `IHCMS7T9PB` | `7` |
+| `YCCNewsAgent` | `TUVBTVKNXG` | `prod` | `G25GBEUUMG` | `7` |
 
 ## Phase 4.5 Live Outputs
 
@@ -331,7 +335,7 @@ Bedrock Knowledge Base:
 Bedrock action group:
 
 - Action group name: `YCCOperations`
-- Lambda executor: `arn:aws:lambda:us-east-1:374587466106:function:ycyyy`
+- Lambda executor: `arn:aws:lambda:us-east-1:374587466106:function:ycyyy:live`
 - Function schema: `infra/bedrock/ycc-agent-action-group-functions.json`
 - Functions: `GetMemberProfile`, `DraftSupportReply`, `AddHumidorItem`, `GetAdminQueueSummary`, `DraftWeeklyNews`
 - Action group IDs:
@@ -346,7 +350,7 @@ Phase 4 verification:
 
 - All six agents are `PREPARED`.
 - All six `prod` aliases are `PREPARED` and accept invocations.
-- Direct Lambda invoke of `POST /concierge/chat` with Cognito-like claims returns `ai.status=bedrock_runtime` for `YCCCigarGuide`, uses Knowledge Base `48GFMCLSTG`, and persists the conversation without a Bedrock guardrail config.
+- Direct Lambda invoke of `POST /concierge/chat` with Cognito-like claims returns `ai.status=bedrock_runtime` for `YCCCigarGuide`, uses Knowledge Base `48GFMCLSTG`, and serves through a Lambda version with direct Runtime guardrails enabled.
 - Direct Lambda invoke of `POST /concierge/chat` with admin/concierge Cognito-like claims and `agent=weekly_news` returns `ai.status=bedrock_agent_runtime` and a draft with source-note placeholders for `YCCNewsAgent` `TUVBTVKNXG/G25GBEUUMG`.
 - Direct Lambda action-group invoke for `DraftSupportReply` stores a support case and draft email.
 - Direct Lambda action-group invoke for `GetAdminQueueSummary` returns `REPROMPT` and `admin_agent_forbidden` for a non-admin session.
@@ -426,6 +430,7 @@ Create:
   - `POST /support/email-draft`
   - `POST /humidor/items`
   - `GET /account/me`
+  - `PATCH /account/me`
 
 Public route:
 
@@ -514,7 +519,7 @@ Current Phase 4 status:
 - Bedrock Runtime private endpoint is available.
 - Bedrock Agent Runtime private endpoint is available.
 - Lambda `POST /concierge/chat` invokes the selected Bedrock Agent Runtime alias first, then falls back to direct Bedrock Runtime if needed.
-- Six Bedrock Agents and `prod` aliases are prepared, including `YCCNewsAgent` version `5` for the weekly education/newsletter workflow.
+- Six Bedrock Agents and `prod` aliases are prepared, including `YCCNewsAgent` version `7` for the weekly education/newsletter workflow.
 - Knowledge Base and Lambda action groups are attached to all six prepared agents.
 
 ### Phase 5: Email Support
@@ -618,6 +623,16 @@ Verification:
 - Verification invoke `verify_member_stripe_customer_link_schema` returned `missingColumns=[]`, `indexCount=1`, `linkedMemberCount=0`, and migration row `0005`. The linked count is zero because the live Stripe account currently has no Customers.
 - Direct Lambda `GET /health?deep=1` after deployment returned HTTP `200`, `status=ok`, `databaseWrites=schema_ready`, and `db.proxyReachable=true`.
 - Webhook processing now links matched member rows to Stripe Customer IDs from Checkout/subscription events, and Customer Portal sessions prefer `members.stripe_customer_id` before falling back to subscription/order history.
+
+### 2026-05-27 Account Profile Persistence
+
+- Lambda package artifact: `output/ycc-api-account-profile-live-20260527.zip`.
+- Lambda code hash: `eAJUbNeihSMM7GQSKnArl87L4rEEJmeBagXwR8Gqacg=`.
+- Published Lambda version `5` and promoted alias `ycyyy:live` to version `5`.
+- API Gateway route `PATCH /account/me` now exists on API `13710cp67l`, uses JWT authorizer `n93hk9`, and targets integration `aercs6j`.
+- Unauthenticated live `PATCH /account/me` returned HTTP `401`, confirming the route is deployed and protected.
+- Live `GET /health?deep=1` after deployment returned HTTP `200`, `status=ok`, `databaseWrites=schema_ready`, `bedrock=runtime_ready`, and `ses=pending_production_access`.
+- The serving Lambda version retains `BEDROCK_ENABLE_GUARDRAILS=1` and `FEATURE_DB_WRITES=schema_ready`.
 
 ### Phase 6: Production Hardening
 

@@ -1,7 +1,7 @@
 import { request as httpRequest, type OutgoingHttpHeaders } from "node:http";
 import { request as httpsRequest } from "node:https";
 
-import { cigarFlowItems } from "../src/lib/cigar-flow";
+import { cigarFlowItems, cigarPressReleaseSearchSources } from "../src/lib/cigar-flow";
 import { resolveNewsroomAutomationAuth } from "../src/lib/newsroom-automation-auth";
 import { isPlaceholderNewsBodyMarkdown, officialCigarNewsSources, type NewsStoryImage } from "../src/lib/newsroom";
 
@@ -45,7 +45,6 @@ async function runDailyCigarFlow() {
     Math.max(1, Math.ceil(officialCigarNewsSources.length / sourceLimit)),
   );
   const sourceBatches = buildDailyCigarFlowSourceBatches(sourceLimit, maxDraftAttempts);
-  const storyImages = buildDailyCigarFlowStoryImages();
 
   console.log(
     `Auth ready: ${auth.source === "cognito_password" ? `fresh Cognito token for ${auth.username}` : "bearer token from env"}${
@@ -56,8 +55,10 @@ async function runDailyCigarFlow() {
   const draftUrl = `${baseUrl}/news/story-drafts`;
   let draftResult: NewsStoryDraftResponse | null = null;
   let lastDraftError: unknown = null;
+  let publishImages: NewsStoryImage[] = [];
 
   for (const [index, sourceBatch] of sourceBatches.entries()) {
+    const storyImages = buildDailyCigarFlowStoryImages(sourceBatch.sourceUrls);
     const draftInput = buildDailyCigarFlowDraftInput(sourceBatch, storyImages);
     console.log(`Draft attempt ${index + 1}/${sourceBatches.length}: ${sourceBatch.sourceNames.join(", ")}`);
 
@@ -66,6 +67,7 @@ async function runDailyCigarFlow() {
       if (isPlaceholderNewsBodyMarkdown(draftResult.draft.bodyMarkdown)) {
         throw new Error("Draft generation returned placeholder scaffold copy instead of a real story.");
       }
+      publishImages = selectSourceAlignedStoryImages(draftResult.draft.images, draftInput.sourceUrls, storyImages);
       break;
     } catch (error) {
       lastDraftError = error;
@@ -94,7 +96,7 @@ async function runDailyCigarFlow() {
 
   const publishPayload = {
     ...draftResult.draft,
-    images: storyImages,
+    images: publishImages,
     operatorApproved: true,
     publishStatus: "published",
     status: "published",
@@ -106,15 +108,24 @@ async function runDailyCigarFlow() {
 }
 
 function buildDailyCigarFlowDraftInput(sourceBatch: DailyCigarFlowSourceBatch, storyImages: NewsStoryImage[]) {
+  const sourceUrls = uniqueStrings([...sourceBatch.sourceUrls, ...cigarPressReleaseSearchSources.map((source) => source.url)]);
+  const searchSourceNames = cigarPressReleaseSearchSources.map((source) => source.publisher).join(", ");
+  const searchQueries = cigarPressReleaseSearchSources.map((source) => `"${source.searchQuery}"`).join(", ");
+
   return {
-    angle: `Daily cigar flow update - ${new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "America/Phoenix" }).format(
-      new Date(),
-    )}`,
+    angle: `Daily cigar flow press releases update - ${new Intl.DateTimeFormat("en-US", {
+      month: "short",
+      day: "numeric",
+      timeZone: "America/Phoenix",
+    }).format(new Date())}`,
     timeframe: "today",
     audience: "Adult Yuzu Cigar Club members of legal tobacco age",
-    sourceUrls: sourceBatch.sourceUrls,
-    sourceNotes: [`Automated daily flow draft run from approved source set: ${sourceBatch.sourceNames.join(", ")}.`],
-    storyImages,
+    sourceUrls,
+    sourceNotes: [
+      `Automated daily flow draft run from approved source set: ${sourceBatch.sourceNames.join(", ")}.`,
+      `Daily cigar press-release search: search ${searchSourceNames} for ${searchQueries} to find source-safe leads to write stories on. Treat search pages as discovery surfaces and draft only from primary release, wire, or official maker pages.`,
+    ],
+    ...(storyImages.length ? { storyImages } : {}),
   };
 }
 
@@ -152,9 +163,11 @@ function getDailySourceScore(source: OfficialCigarNewsSource) {
   return 0;
 }
 
-function buildDailyCigarFlowStoryImages(limit = 3): NewsStoryImage[] {
+function buildDailyCigarFlowStoryImages(sourceUrls: readonly string[], limit = 3): NewsStoryImage[] {
+  // Only seed source-aligned card images. Unrelated static Cigar Flow art is worse than no image.
   return cigarFlowItems
     .filter((item) => item.kind !== "member" && isHttpUrl(item.image) && isHttpUrl(item.href))
+    .filter((item) => isSourceAlignedUrl(item.href, sourceUrls))
     .slice(0, limit)
     .map((item) => ({
       label: item.title,
@@ -163,6 +176,16 @@ function buildDailyCigarFlowStoryImages(limit = 3): NewsStoryImage[] {
       alt: `${item.title} story image`,
       sourceUrl: item.href,
     }));
+}
+
+function selectSourceAlignedStoryImages(
+  draftImages: NewsStoryImage[] | undefined,
+  sourceUrls: readonly string[],
+  fallbackImages: NewsStoryImage[],
+) {
+  const alignedDraftImages = (draftImages ?? []).filter((image) => isHttpUrl(image.image) && isSourceAlignedUrl(image.sourceUrl ?? "", sourceUrls));
+
+  return alignedDraftImages.length ? alignedDraftImages : fallbackImages;
 }
 
 async function postJson<TResponse>(url: string, body: unknown, token: string, insecureTls: boolean): Promise<TResponse> {
@@ -286,6 +309,28 @@ function isHttpUrl(value: string) {
   } catch {
     return false;
   }
+}
+
+function isSourceAlignedUrl(value: string, sourceUrls: readonly string[]) {
+  const hostname = getHostname(value);
+
+  return Boolean(hostname) && sourceUrls.some((sourceUrl) => hostnamesOverlap(hostname, getHostname(sourceUrl)));
+}
+
+function getHostname(value: string) {
+  try {
+    return new URL(value).hostname.toLowerCase().replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+
+function hostnamesOverlap(left: string, right: string) {
+  return Boolean(left && right && (left === right || left.endsWith(`.${right}`) || right.endsWith(`.${left}`)));
+}
+
+function uniqueStrings(values: readonly string[]) {
+  return values.filter((value, index, list) => list.indexOf(value) === index);
 }
 
 runDailyCigarFlow().catch((error: unknown) => {

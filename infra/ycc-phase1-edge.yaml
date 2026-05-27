@@ -328,7 +328,7 @@ Resources:
     Type: AWS::Lambda::Permission
     Properties:
       Action: lambda:InvokeFunction
-      FunctionName: !Ref ExistingLambdaName
+      FunctionName: !Ref ExistingLambdaLiveAliasArn
       Principal: bedrock.amazonaws.com
       SourceAccount: !Ref AWS::AccountId
       SourceArn: !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:agent/NDIEDXNZAV
@@ -337,7 +337,7 @@ Resources:
     Type: AWS::Lambda::Permission
     Properties:
       Action: lambda:InvokeFunction
-      FunctionName: !Ref ExistingLambdaName
+      FunctionName: !Ref ExistingLambdaLiveAliasArn
       Principal: bedrock.amazonaws.com
       SourceAccount: !Ref AWS::AccountId
       SourceArn: !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:agent/EJI2VA7AVF
@@ -346,7 +346,7 @@ Resources:
     Type: AWS::Lambda::Permission
     Properties:
       Action: lambda:InvokeFunction
-      FunctionName: !Ref ExistingLambdaName
+      FunctionName: !Ref ExistingLambdaLiveAliasArn
       Principal: bedrock.amazonaws.com
       SourceAccount: !Ref AWS::AccountId
       SourceArn: !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:agent/SJJ2DVNYES
@@ -355,7 +355,7 @@ Resources:
     Type: AWS::Lambda::Permission
     Properties:
       Action: lambda:InvokeFunction
-      FunctionName: !Ref ExistingLambdaName
+      FunctionName: !Ref ExistingLambdaLiveAliasArn
       Principal: bedrock.amazonaws.com
       SourceAccount: !Ref AWS::AccountId
       SourceArn: !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:agent/XLN9JKVRDA
@@ -364,7 +364,7 @@ Resources:
     Type: AWS::Lambda::Permission
     Properties:
       Action: lambda:InvokeFunction
-      FunctionName: !Ref ExistingLambdaName
+      FunctionName: !Ref ExistingLambdaLiveAliasArn
       Principal: bedrock.amazonaws.com
       SourceAccount: !Ref AWS::AccountId
       SourceArn: !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:agent/UQWB6AKMBT
@@ -373,7 +373,7 @@ Resources:
     Type: AWS::Lambda::Permission
     Properties:
       Action: lambda:InvokeFunction
-      FunctionName: !Ref ExistingLambdaName
+      FunctionName: !Ref ExistingLambdaLiveAliasArn
       Principal: bedrock.amazonaws.com
       SourceAccount: !Ref AWS::AccountId
       SourceArn: !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:agent/TUVBTVKNXG
@@ -695,6 +695,15 @@ Resources:
     Properties:
       ApiId: !Ref HttpApi
       RouteKey: GET /account/me
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${LambdaIntegration}
+
+  AccountMeUpdateRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: PATCH /account/me
       AuthorizationType: JWT
       AuthorizerId: !Ref JwtAuthorizer
       Target: !Sub integrations/${LambdaIntegration}

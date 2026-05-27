@@ -31,6 +31,15 @@ export type CigarFlowItem = {
   videoDuration?: string;
 };
 
+export type CigarPressReleaseSearchSource = {
+  name: string;
+  publisher: string;
+  url: string;
+  searchQuery: string;
+  focus: string;
+  cadence: string;
+};
+
 export type CigarFlowAutomation = {
   id: string;
   cadence: string;
@@ -82,17 +91,45 @@ export const cigarFlowSources: CigarFlowSource[] = [
   },
 ];
 
+export const cigarPressReleaseSearchSources: CigarPressReleaseSearchSource[] = [
+  {
+    name: "PR Newswire cigar release search",
+    publisher: "PR Newswire",
+    url: "https://www.prnewswire.com/news-releases/news-releases-list/",
+    searchQuery: "cigar press release",
+    focus: "Daily wire search for cigar, premium cigar, and cigar-company announcements.",
+    cadence: "Daily press-release scan",
+  },
+  {
+    name: "Business Wire cigar newsroom search",
+    publisher: "Business Wire",
+    url: "https://www.businesswire.com/newsroom",
+    searchQuery: "cigar",
+    focus: "Daily newsroom keyword search for cigar launch, event, and company-release leads.",
+    cadence: "Daily press-release scan",
+  },
+  {
+    name: "GlobeNewswire cigar tag search",
+    publisher: "GlobeNewswire",
+    url: "https://www.globenewswire.com/en/search/tag/cigar",
+    searchQuery: "cigar",
+    focus: "Daily GlobeNewswire tag review for cigar-related release pages worth operator review.",
+    cadence: "Daily press-release scan",
+  },
+];
+
 export const cigarFlowAutomation: CigarFlowAutomation = {
-  id: "cigar-flow-friday-update",
-  cadence: "Fridays at 8:00 AM America/Phoenix",
-  owner: "Codex recurring workspace agent",
-  outputTargets: ["Cigar Flow feed", "Education weekly article", "Newsletter draft"],
+  id: "cigar-flow-daily-newsroom-refresh",
+  cadence: "Daily at 8:00 AM America/Phoenix",
+  owner: "GitHub Actions newsroom automation",
+  outputTargets: ["Cigar Flow news desk", "Published newsroom story", "Operator review trail"],
   updateScope: [
-    "Research the preceding day's cigar and cigar-adjacent news from verified sources.",
+    "Research current cigar and cigar-adjacent news from verified sources.",
     "Monitor every configured manufacturer URL in officialCigarNewsSources for brand-direct updates.",
-    "Refresh the first ten Cigar Flow cards in src/lib/cigar-flow.ts with current source links, images, and compact reader snippets.",
-    "Keep member smoke-log cards distinct from RSS and manufacturer cards.",
-    "Run project validation before reporting the update.",
+    "Run a daily search for cigar press releases across approved wire/newsroom search pages to find story leads.",
+    "POST /news/story-drafts with source-safe notes and only source-aligned story imagery.",
+    "POST /news/stories with operator approval so the Cigar Flow news desk updates through the live API.",
+    "Keep static member smoke-log concept cards distinct from live newsroom stories.",
   ],
 };
 

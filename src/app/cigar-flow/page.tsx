@@ -17,7 +17,14 @@ import { NewsStoryFeed } from "@/components/news-story-feed";
 import { ReferenceImage } from "@/components/reference-image";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { cigarFlowAutomation, cigarFlowItems, cigarFlowNewsStories, cigarFlowSources, cigarFlowStats } from "@/lib/cigar-flow";
+import {
+  cigarFlowAutomation,
+  cigarFlowItems,
+  cigarFlowNewsStories,
+  cigarFlowSources,
+  cigarFlowStats,
+  cigarPressReleaseSearchSources,
+} from "@/lib/cigar-flow";
 import { officialCigarNewsSources } from "@/lib/newsroom";
 import { siteUrl } from "@/lib/site";
 
@@ -59,9 +66,9 @@ export default function CigarFlowPage() {
                   <Radio data-icon="inline-start" />
                   View Flow
                 </Button>
-                <Button className="h-12 border-yuzu-gold px-8 text-yuzu-gold hover:bg-yuzu-gold hover:text-yuzu-ink" variant="outline" render={<Link href="/account" />}>
+                <Button className="h-12 border-yuzu-gold px-8 text-yuzu-gold hover:bg-yuzu-gold hover:text-yuzu-ink" variant="outline" render={<Link href="/humidor?section=tools&intent=cigar-flow" />}>
                   <Camera data-icon="inline-start" />
-                  Share a Smoke
+                  Prepare Smoke Note
                 </Button>
               </div>
               <div className="mt-8 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -168,8 +175,27 @@ export default function CigarFlowPage() {
                 <div>
                   <h2 className="font-heading text-3xl leading-tight text-yuzu-cream">Manufacturer update watchlist</h2>
                   <p className="mt-2 text-sm leading-6 text-yuzu-muted">
-                    Every configured official maker page is loaded into the newsroom seed list so updates can start from brand-direct sources.
+                    Every configured official maker page is loaded into the newsroom seed list, with a daily press-release search for source-safe story leads.
                   </p>
+                </div>
+              </div>
+              <div className="border border-yuzu-gold/45 bg-yuzu-gold/10 p-4">
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-yuzu-gold">Daily cigar press-release search</p>
+                <div className="mt-3 grid gap-2">
+                  {cigarPressReleaseSearchSources.map((source) => (
+                    <a
+                      key={source.url}
+                      href={source.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="group/source grid gap-1 border border-yuzu-line/60 bg-yuzu-night/36 p-3 transition hover:border-yuzu-gold/80 hover:bg-yuzu-forest/70"
+                    >
+                      <span className="truncate text-sm font-black uppercase tracking-[0.14em] text-yuzu-cream group-hover/source:text-yuzu-gold">
+                        {source.publisher}
+                      </span>
+                      <span className="truncate text-xs leading-5 text-yuzu-muted">{source.searchQuery}</span>
+                    </a>
+                  ))}
                 </div>
               </div>
               <div className="grid max-h-[28rem] gap-2 overflow-y-auto pr-1">
@@ -199,14 +225,14 @@ export default function CigarFlowPage() {
                 </span>
                 <h2 className="font-heading text-3xl leading-tight text-yuzu-cream">Member posts</h2>
                 <p className="text-sm leading-6 text-yuzu-muted">
-                  Members can share smoke logs, first-light clips, box-aging notes, pairing photos, and allocation tips from their account experience.
+                  Members can prepare saved cigar notes, first-light clips, box-aging context, pairing photos, and allocation tips from their humidor experience.
                 </p>
               </div>
               <div className="grid gap-3">
                 {[
-                  { label: "Age gate", detail: "Only adult members can post." },
-                  { label: "Humidor link", detail: "Posts can reference saved cigars or boxes." },
-                  { label: "Review queue", detail: "Admin moderation can approve public cards." },
+                  { label: "Age gate", detail: "Only adult members can prepare shareable notes." },
+                  { label: "Humidor link", detail: "Smoke notes start from saved cigar notes and boxes." },
+                  { label: "Concierge review", detail: "Polished notes can be reviewed before publication." },
                 ].map((item) => (
                   <div key={item.label} className="flex gap-3 border border-yuzu-line/60 bg-yuzu-night/35 p-3">
                     <ShieldCheck className="mt-0.5 size-4 shrink-0 text-yuzu-gold" />
@@ -217,9 +243,9 @@ export default function CigarFlowPage() {
                   </div>
                 ))}
               </div>
-              <Button className="h-11 border-yuzu-gold text-yuzu-gold hover:bg-yuzu-gold hover:text-yuzu-ink" variant="outline" render={<Link href="/account" />}>
+              <Button className="h-11 border-yuzu-gold text-yuzu-gold hover:bg-yuzu-gold hover:text-yuzu-ink" variant="outline" render={<Link href="/humidor?section=tools&intent=cigar-flow" />}>
                 <Send data-icon="inline-start" />
-                Start a Post
+                Prepare Smoke Note
               </Button>
             </CardContent>
           </Card>
@@ -229,7 +255,7 @@ export default function CigarFlowPage() {
               <Newspaper className="size-6 text-yuzu-gold" />
               <h2 className="font-heading text-3xl text-yuzu-cream">Daily refresh scheduled</h2>
               <p className="text-sm leading-6 text-yuzu-muted">
-                {cigarFlowAutomation.cadence}. The recurring workspace agent refreshes the feed data, education article, and newsletter draft from the same verified source set.
+                {cigarFlowAutomation.cadence}. The newsroom automation drafts and publishes source-safe Cigar Flow stories from the same verified source set.
               </p>
             </CardContent>
           </Card>

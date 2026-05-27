@@ -4,6 +4,22 @@ const requiredShippingCarrier = "USPS";
 const adultSignatureRequiredStates = new Set(["AR", "CA", "DE", "FL", "GA", "MA", "MN", "ND", "RI", "SC", "WY"]);
 const checkoutShippingMethods = new Map([
   [
+    "usps-ground-advantage",
+    {
+      id: "usps-ground-advantage",
+      carrier: requiredShippingCarrier,
+      adultSignatureRequired: false,
+    },
+  ],
+  [
+    "usps-priority-mail",
+    {
+      id: "usps-priority-mail",
+      carrier: requiredShippingCarrier,
+      adultSignatureRequired: false,
+    },
+  ],
+  [
     "usps-adult-signature-ground",
     {
       id: "usps-adult-signature-ground",
@@ -43,6 +59,59 @@ const adultSignatureShippingMethodIds = new Set(
     .filter(([, method]) => method.adultSignatureRequired)
     .map(([methodId]) => methodId)
 );
+
+const usStateCodeByName = {
+  ALABAMA: "AL",
+  ALASKA: "AK",
+  ARIZONA: "AZ",
+  ARKANSAS: "AR",
+  CALIFORNIA: "CA",
+  COLORADO: "CO",
+  CONNECTICUT: "CT",
+  DELAWARE: "DE",
+  FLORIDA: "FL",
+  GEORGIA: "GA",
+  HAWAII: "HI",
+  IDAHO: "ID",
+  ILLINOIS: "IL",
+  INDIANA: "IN",
+  IOWA: "IA",
+  KANSAS: "KS",
+  KENTUCKY: "KY",
+  LOUISIANA: "LA",
+  MAINE: "ME",
+  MARYLAND: "MD",
+  MASSACHUSETTS: "MA",
+  MICHIGAN: "MI",
+  MINNESOTA: "MN",
+  MISSISSIPPI: "MS",
+  MISSOURI: "MO",
+  MONTANA: "MT",
+  NEBRASKA: "NE",
+  NEVADA: "NV",
+  "NEW HAMPSHIRE": "NH",
+  "NEW JERSEY": "NJ",
+  "NEW MEXICO": "NM",
+  "NEW YORK": "NY",
+  "NORTH CAROLINA": "NC",
+  "NORTH DAKOTA": "ND",
+  OHIO: "OH",
+  OKLAHOMA: "OK",
+  OREGON: "OR",
+  PENNSYLVANIA: "PA",
+  "RHODE ISLAND": "RI",
+  "SOUTH CAROLINA": "SC",
+  "SOUTH DAKOTA": "SD",
+  TENNESSEE: "TN",
+  TEXAS: "TX",
+  UTAH: "UT",
+  VERMONT: "VT",
+  VIRGINIA: "VA",
+  WASHINGTON: "WA",
+  "WEST VIRGINIA": "WV",
+  WISCONSIN: "WI",
+  WYOMING: "WY",
+};
 
 const restrictedDestinationStates = new Set(["AR", "ME", "SD", "UT", "VT"]);
 const invalidAgeVerificationTokens = new Set(["checkout_identity_verification_required"]);
@@ -162,7 +231,7 @@ function validateCheckoutReadiness(input = {}) {
       methodId: shippingMethod?.id || normalizeShippingMethodId(input.shippingMethodId),
       submittedMethodId: normalizeShippingMethodId(input.shippingMethodId),
       carrier: shippingMethod?.carrier || requiredShippingCarrier,
-      adultSignatureRequired: requiresAdultSignature,
+      adultSignatureRequired: requiresAdultSignature || Boolean(shippingMethod?.adultSignatureRequired),
       adultSignatureRequiredState: adultSignatureRequiredStates.has(getDestinationState(input.destination)),
     },
   };
@@ -181,7 +250,11 @@ function resolveCheckoutShippingMethod(shippingMethodId) {
 }
 
 function requiresAdultSignatureDelivery(normalizedItems = [], destination = {}) {
-  return normalizedItems.some((item) => item.adultSignatureRequired) || adultSignatureRequiredStates.has(getDestinationState(destination));
+  if (!Array.isArray(normalizedItems)) {
+    destination = normalizedItems || {};
+  }
+
+  return adultSignatureRequiredStates.has(getDestinationState(destination));
 }
 
 function isAgeVerified(ageVerification) {
@@ -213,7 +286,13 @@ function isRestrictedDestination(destination) {
 }
 
 function getDestinationState(destination = {}) {
-  return String(destination.state || "").trim().toUpperCase();
+  const state = String(destination.state || "").trim().toUpperCase().replace(/\s+/g, " ");
+
+  if (state.length === 2) {
+    return state;
+  }
+
+  return usStateCodeByName[state] || state;
 }
 
 function isTaxReady(tax) {

@@ -268,9 +268,12 @@ test("checkout UI routes to Stripe-hosted checkout and success clears only after
   assert.ok(checkoutSource.includes("shippingAddress"), "checkout form should prefill from the saved account shipping address");
   assert.ok(checkoutSource.includes("checkoutPaymentMethods"), "checkout form should render only payment methods it can submit");
   assert.ok(checkoutSource.includes("defaultDeliveryMethods"), "checkout form should render configured delivery methods");
+  assert.ok(checkoutSource.includes("getDeliveryMethodsForState"), "checkout form should filter delivery methods by destination state");
   assert.deepEqual(
     defaultDeliveryMethods.map((method) => [method.id, method.carrier, method.adultSignatureRequired]),
     [
+      ["usps-ground-advantage", "USPS", false],
+      ["usps-priority-mail", "USPS", false],
       ["usps-adult-signature-ground", "USPS", true],
       ["usps-adult-signature-priority", "USPS", true],
     ]

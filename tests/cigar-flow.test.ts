@@ -3,7 +3,13 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import sitemap from "../src/app/sitemap";
-import { cigarFlowAutomation, cigarFlowItems, cigarFlowNewsStories, cigarFlowSources } from "../src/lib/cigar-flow";
+import {
+  cigarFlowAutomation,
+  cigarFlowItems,
+  cigarFlowNewsStories,
+  cigarFlowSources,
+  cigarPressReleaseSearchSources,
+} from "../src/lib/cigar-flow";
 import { navItems } from "../src/lib/data";
 import { officialCigarNewsSources } from "../src/lib/newsroom";
 import { siteUrl } from "../src/lib/site";
@@ -76,16 +82,30 @@ test("cigar flow route is wired into navigation, sitemap, metadata, and source p
   assert.ok(cigarFlowPageSource.includes("cigarFlowSources.map"));
   assert.ok(cigarFlowPageSource.includes("RSS and news sources"));
   assert.ok(cigarFlowPageSource.includes("Manufacturer update watchlist"));
-  assert.ok(cigarFlowPageSource.includes("Start a Post"));
+  assert.ok(cigarFlowPageSource.includes("Prepare Smoke Note"));
+  assert.equal(cigarFlowPageSource.includes("Start a Post"), false, "Cigar Flow should not advertise a direct public post flow without a post endpoint");
 });
 
-test("cigar flow documents the Friday refresh automation target", () => {
-  assert.equal(cigarFlowAutomation.id, "cigar-flow-friday-update");
-  assert.equal(cigarFlowAutomation.cadence, "Fridays at 8:00 AM America/Phoenix");
-  assert.ok(cigarFlowAutomation.outputTargets.includes("Cigar Flow feed"));
-  assert.ok(cigarFlowAutomation.outputTargets.includes("Education weekly article"));
-  assert.ok(cigarFlowAutomation.outputTargets.includes("Newsletter draft"));
-  assert.ok(cigarFlowAutomation.updateScope.some((line) => line.includes("officialCigarNewsSources")));
+test("cigar flow documents the actual daily newsroom automation target", () => {
+  const workflowSource = readFileSync(new URL("../.github/workflows/cigar-flow-daily.yml", import.meta.url), "utf8");
+
+  assert.equal(cigarFlowAutomation.id, "cigar-flow-daily-newsroom-refresh");
+  assert.equal(cigarFlowAutomation.cadence, "Daily at 8:00 AM America/Phoenix");
+  assert.ok(cigarFlowAutomation.outputTargets.includes("Cigar Flow news desk"));
+  assert.ok(cigarFlowAutomation.outputTargets.includes("Published newsroom story"));
+  assert.ok(cigarFlowAutomation.outputTargets.includes("Operator review trail"));
+  assert.ok(
+    cigarFlowAutomation.updateScope.some((line) => /daily search/i.test(line) && /cigar press releases/i.test(line)),
+    "Manufacturer update watchlist should include a daily cigar press-release search for story leads",
+  );
+  assert.ok(cigarFlowAutomation.updateScope.some((line) => line.includes("POST /news/story-drafts")));
+  assert.equal(
+    cigarFlowAutomation.updateScope.some((line) => line.includes("Refresh the first ten Cigar Flow cards")),
+    false,
+    "automation metadata should not claim the API job edits static source files"
+  );
+  assert.ok(workflowSource.includes('cron: "0 15 * * *"'), "GitHub workflow should match the displayed 8 AM Phoenix daily cadence");
+  assert.ok(workflowSource.includes('YCC_DAILY_NEWSROOM_AUTO_PUBLISH: "true"'), "workflow should publish the reviewed newsroom story");
   assert.ok(officialCigarNewsSources.length >= 40);
   assert.ok(cigarFlowNewsStories.some((story) => story.title.includes("Cigar Flow Update")));
   assert.ok(cigarFlowNewsStories.every((story) => (story.images?.length ?? 0) >= 3));
@@ -94,12 +114,23 @@ test("cigar flow documents the Friday refresh automation target", () => {
   assert.ok(!cigarFlowPageSource.includes("A later scheduled job can pull"));
 });
 
+test("manufacturer watchlist exposes daily cigar press-release search sources", () => {
+  assert.ok(cigarPressReleaseSearchSources.length >= 3);
+  assert.ok(cigarPressReleaseSearchSources.every((source) => source.searchQuery.toLowerCase().includes("cigar")));
+  assert.ok(cigarPressReleaseSearchSources.some((source) => source.url.includes("prnewswire.com")));
+  assert.ok(cigarPressReleaseSearchSources.some((source) => source.url.includes("businesswire.com")));
+  assert.ok(cigarPressReleaseSearchSources.some((source) => source.url.includes("globenewswire.com")));
+  assert.ok(cigarFlowPageSource.includes("cigarPressReleaseSearchSources.map"));
+  assert.ok(cigarFlowPageSource.includes("Daily cigar press-release search"));
+});
+
 test("daily cigar flow writer submits actual feed story images", () => {
   assert.ok(dailyCigarNewsRunSource.includes("cigarFlowItems"), "daily writer should read current Cigar Flow cards");
-  assert.ok(dailyCigarNewsRunSource.includes("storyImages"), "daily writer should build story image metadata");
+  assert.ok(dailyCigarNewsRunSource.includes("source-aligned"), "daily writer should document source-aligned image filtering");
   assert.ok(dailyCigarNewsRunSource.includes("imagePosition"), "story images should preserve crop positioning from feed cards");
   assert.ok(dailyCigarNewsRunSource.includes("sourceUrl"), "story images should link back to their source story");
-  assert.ok(dailyCigarNewsRunSource.includes("images: storyImages"), "publish payload should include actual story images");
+  assert.equal(dailyCigarNewsRunSource.includes("images: storyImages"), false, "publish should not blindly reuse static card images");
+  assert.ok(dailyCigarNewsRunSource.includes("selectSourceAlignedStoryImages"), "publish payload should use only source-aligned images");
 });
 
 test("home page promotes Cigar Flow with live feed context", () => {
@@ -108,6 +139,9 @@ test("home page promotes Cigar Flow with live feed context", () => {
   assert.ok(homePageSource.includes("homeCigarFlowItems.map"), "home promo should preview multiple flow cards");
   assert.ok(homePageSource.includes("cigarFlowStats.map"), "home promo should reuse Cigar Flow stats");
   assert.ok(homePageSource.includes('href="/cigar-flow"'), "home promo should link into Cigar Flow");
+  assert.ok(homePageSource.includes('href="/humidor?section=tools&intent=cigar-flow"'), "home Cigar Flow smoke CTA should deep-link to the humidor note workflow");
+  assert.ok(homePageSource.includes("Prepare Smoke Note"), "home Cigar Flow smoke CTA should describe the real workflow");
+  assert.equal(homePageSource.includes("Share a Smoke"), false, "home page should not imply a direct public post flow");
 });
 
 test("cigar flow cards open an in-Yuzu reader with close and article navigation controls", () => {
@@ -122,4 +156,45 @@ test("cigar flow cards open an in-Yuzu reader with close and article navigation 
   assert.ok(cigarFlowExperienceSource.includes("Read Full Source"), "source article link should remain available inside the reader");
   assert.ok(cigarFlowExperienceSource.includes("activeItem.storySnippet"), "reader note should render the active story snippet");
   assert.ok(cigarFlowExperienceSource.includes("Escape"), "keyboard users should be able to close the reader");
+});
+
+test("cigar flow member post CTAs route to a real humidor smoke-note workflow", () => {
+  assert.ok(
+    cigarFlowPageSource.includes('href="/humidor?section=tools&intent=cigar-flow"'),
+    "Cigar Flow share CTAs should deep-link to the humidor workflow instead of a generic account screen"
+  );
+  assert.ok(cigarFlowPageSource.includes("Prepare Smoke Note"), "the CTA should describe the real workflow");
+  assert.ok(cigarFlowPageSource.includes("saved cigar notes"), "member-post copy should anchor the flow in saved humidor notes");
+  assert.equal(cigarFlowPageSource.includes('href="/account"'), false, "Cigar Flow post CTAs should not dead-end on the account overview");
+  assert.equal(cigarFlowPageSource.includes("Admin moderation can approve public cards"), false);
+});
+
+test("cigar flow reader traps focus and restores the opener", () => {
+  assert.ok(cigarFlowExperienceSource.includes("useRef"), "reader should track dialog and opener focus");
+  assert.ok(cigarFlowExperienceSource.includes("readerDialogRef"), "dialog element should be addressable for focus management");
+  assert.ok(cigarFlowExperienceSource.includes("previouslyFocusedElementRef"), "reader should remember the opener before moving focus");
+  assert.ok(cigarFlowExperienceSource.includes("getReaderFocusableElements"), "reader should compute tabbable controls inside the dialog");
+  assert.ok(cigarFlowExperienceSource.includes('event.key === "Tab"'), "reader should handle Tab navigation");
+  assert.ok(cigarFlowExperienceSource.includes("event.preventDefault()"), "focus wrapping should prevent escape from the dialog");
+  assert.ok(cigarFlowExperienceSource.includes("previouslyFocusedElementRef.current?.focus()"), "closing the reader should restore focus to the opener");
+  assert.ok(cigarFlowExperienceSource.includes("tabIndex={-1}"), "dialog should be programmatically focusable");
+});
+
+test("cigar flow reader controls wrap within narrow mobile viewports", () => {
+  assert.ok(
+    cigarFlowExperienceSource.includes("grid-cols-2") && cigarFlowExperienceSource.includes("sm:grid-cols-[auto_1fr_auto]"),
+    "reader footer should switch from a compact two-column mobile layout to the desktop three-column controls",
+  );
+  assert.ok(
+    cigarFlowExperienceSource.includes("order-1 col-span-2") && cigarFlowExperienceSource.includes("sm:col-span-1"),
+    "source action should occupy a full mobile row before sharing the desktop footer row",
+  );
+  assert.ok(
+    cigarFlowExperienceSource.includes("order-2") && cigarFlowExperienceSource.includes("order-3"),
+    "previous and next controls should split the second mobile row",
+  );
+  assert.ok(
+    cigarFlowExperienceSource.includes("min-w-0"),
+    "reader shell and controls should allow shrinking instead of forcing horizontal overflow",
+  );
 });

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -25,6 +26,8 @@ const config = {
   logoutPath: "/auth/logout",
   scopes: ["openid", "email", "profile"],
 };
+const cognitoTemplateSource = readFileSync(new URL("../infra/ycc-phase1-edge.yaml", import.meta.url), "utf8");
+const envExampleSource = readFileSync(new URL("../.env.example", import.meta.url), "utf8");
 
 test("Cognito hosted UI authorize URL uses code flow with PKCE and the current origin", () => {
   const url = new URL(
@@ -508,6 +511,21 @@ test("Cognito config is enabled only when all public values are present", () => 
   );
 });
 
+test("default Cognito scopes match the app client OAuth scopes", () => {
+  assert.deepEqual(
+    resolveCognitoConfig({
+      NEXT_PUBLIC_COGNITO_HOSTED_UI_BASE: config.hostedUiBase,
+      NEXT_PUBLIC_COGNITO_USER_POOL_CLIENT_ID: config.clientId,
+      NEXT_PUBLIC_COGNITO_ISSUER: config.issuer,
+    })?.scopes.toSorted(),
+    getTemplateAllowedOAuthScopes().toSorted()
+  );
+});
+
+test("documented Cognito scopes match the app client OAuth scopes", () => {
+  assert.deepEqual(getEnvExampleCognitoScopes().toSorted(), getTemplateAllowedOAuthScopes().toSorted());
+});
+
 function createJwt(payload: Record<string, unknown>) {
   return `${base64Url({ alg: "RS256", typ: "JWT" })}.${base64Url(payload)}.signature`;
 }
@@ -518,4 +536,22 @@ function base64Url(value: Record<string, unknown>) {
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=+$/g, "");
+}
+
+function getTemplateAllowedOAuthScopes() {
+  const match = cognitoTemplateSource.match(/^      AllowedOAuthScopes:\r?\n((?:        - .+\r?\n)+)/m);
+  assert.ok(match, "CloudFormation template should define Cognito AllowedOAuthScopes");
+
+  return match[1]
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^\s*-\s*/, "").trim())
+    .filter(Boolean);
+}
+
+function getEnvExampleCognitoScopes() {
+  const match = envExampleSource.match(/^NEXT_PUBLIC_COGNITO_SCOPES=(.+)$/m);
+  assert.ok(match, ".env.example should document NEXT_PUBLIC_COGNITO_SCOPES");
+
+  return match[1].split(/\s+/).filter(Boolean);
 }

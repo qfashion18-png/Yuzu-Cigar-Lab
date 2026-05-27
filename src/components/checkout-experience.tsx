@@ -4,13 +4,15 @@ import Link from "@/components/static-link";
 import { CreditCard, Lock, MapPin, PackageCheck, ShieldCheck, Truck } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { ComponentProps, FormEvent, ReactNode } from "react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { useBackupAuth } from "@/components/backup-auth-provider";
 import { AgeCheckerVerification } from "@/components/agechecker-verification";
 import {
   checkoutPaymentMethods,
   defaultDeliveryMethods,
+  getDeliveryMethodsForState,
+  isAdultSignatureRequiredState,
   useCart,
 } from "@/components/cart-provider";
 import { MemberViewBanner } from "@/components/member-view-banner";
@@ -67,8 +69,10 @@ function CheckoutExperienceContent({ accountSession }: { accountSession: BackupA
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const selectedDelivery = defaultDeliveryMethods.find((method) => method.id === deliveryMethodId) ?? defaultDeliveryMethods[0];
+  const availableDeliveryMethods = useMemo(() => getDeliveryMethodsForState(form.state), [form.state]);
+  const selectedDelivery = availableDeliveryMethods.find((method) => method.id === deliveryMethodId) ?? availableDeliveryMethods[0] ?? defaultDeliveryMethods[0];
   const selectedPayment = checkoutPaymentMethods.find((method) => method.id === paymentMethodId) ?? checkoutPaymentMethods[0];
+  const adultSignatureRequiredForState = isAdultSignatureRequiredState(form.state);
   const hasMemberOnlyItems = isMemberOnlyCart(cart);
   const isMemberOnlyLocked = hasMemberOnlyItems && !auth.isMember;
   const totals = useMemo(
@@ -79,6 +83,17 @@ function CheckoutExperienceContent({ accountSession }: { accountSession: BackupA
       }),
     [cart, selectedDelivery.price]
   );
+
+  useEffect(() => {
+    if (availableDeliveryMethods.some((method) => method.id === deliveryMethodId)) {
+      return;
+    }
+
+    const nextDeliveryMethod = availableDeliveryMethods[0] ?? defaultDeliveryMethods[0];
+    const deliveryTimer = window.setTimeout(() => setDeliveryMethodId(nextDeliveryMethod.id), 0);
+
+    return () => window.clearTimeout(deliveryTimer);
+  }, [availableDeliveryMethods, deliveryMethodId]);
 
   function updateFormValue(field: keyof CheckoutFormState, value: string) {
     setForm((currentForm) => ({
@@ -155,7 +170,7 @@ function CheckoutExperienceContent({ accountSession }: { accountSession: BackupA
           postalCode: form.postalCode,
           country: form.country,
         },
-        shippingMethodId: deliveryMethodId,
+        shippingMethodId: selectedDelivery.id,
         complianceToken: ageVerificationToken,
         membershipEntitlementToken,
       });
@@ -236,8 +251,13 @@ function CheckoutExperienceContent({ accountSession }: { accountSession: BackupA
         </CheckoutPanel>
 
         <CheckoutPanel icon={Truck} title="2. Delivery Method">
+          <p className="text-sm leading-6 text-yuzu-muted">
+            {adultSignatureRequiredForState
+              ? "This destination requires a USPS Adult Signature method. AgeChecker.Net verification is still required before checkout."
+              : "AgeChecker.Net verifies 21+ eligibility before checkout. Adult Signature delivery remains available, but standard USPS options can be selected for this destination."}
+          </p>
           <div className="grid gap-3 md:grid-cols-2">
-            {defaultDeliveryMethods.map((method) => (
+            {availableDeliveryMethods.map((method) => (
               <button
                 key={method.id}
                 type="button"

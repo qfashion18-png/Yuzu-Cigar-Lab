@@ -4,7 +4,9 @@
     {
       "Sid": "AllowYccAgentAliasInvocations",
       "Effect": "Allow",
-      "Principal": "*",
+      "Principal": {
+        "AWS": "arn:aws:iam::374587466106:role/service-role/ycyyy-1778040454500"
+      },
       "Action": "bedrock:InvokeAgent",
       "Resource": [
         "arn:aws:bedrock:us-east-1:374587466106:agent-alias/NDIEDXNZAV/XXAQKDKDC0",
@@ -14,6 +16,18 @@
         "arn:aws:bedrock:us-east-1:374587466106:agent-alias/UQWB6AKMBT/IHCMS7T9PB",
         "arn:aws:bedrock:us-east-1:374587466106:agent-alias/TUVBTVKNXG/G25GBEUUMG"
       ]
+    },
+    {
+      "Sid": "AllowYccKnowledgeBaseRetrieval",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::374587466106:role/service-role/ycyyy-1778040454500"
+      },
+      "Action": [
+        "bedrock:Retrieve",
+        "bedrock:RetrieveAndGenerate"
+      ],
+      "Resource": "arn:aws:bedrock:us-east-1:374587466106:knowledge-base/48GFMCLSTG"
     }
   ]
 }

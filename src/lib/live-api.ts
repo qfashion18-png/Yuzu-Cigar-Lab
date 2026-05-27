@@ -9,6 +9,10 @@ export type AccountSummary = {
     name?: string;
     groups?: string[];
   };
+  profile?: {
+    phone?: string;
+    shippingAddress?: AccountShippingAddress | null;
+  };
   source: string;
   membership: {
     tier: string | null;
@@ -20,6 +24,37 @@ export type AccountSummary = {
     persisted: boolean;
     persistence: string;
     table?: string;
+    memberId?: string;
+  };
+};
+
+export type AccountShippingAddress = {
+  address1: string;
+  address2?: string;
+  city: string;
+  state: string;
+  postalCode: string;
+  country: string;
+};
+
+export type AccountProfileUpdateInput = {
+  name: string;
+  phone: string;
+  shippingAddress: AccountShippingAddress;
+};
+
+export type AccountProfileUpdateResponse = {
+  account: AccountSummary["account"];
+  profile: {
+    phone: string;
+    shippingAddress: AccountShippingAddress;
+  };
+  source: string;
+  membership?: AccountSummary["membership"];
+  database: {
+    persisted: boolean;
+    persistence: string;
+    table: "member_profiles";
     memberId?: string;
   };
 };
@@ -630,6 +665,10 @@ export async function fetchAccountSummary(headers: LiveApiHeaders) {
   return getLive<AccountSummary>("/account/me", headers);
 }
 
+export async function updateLiveAccountProfile(input: AccountProfileUpdateInput, headers: LiveApiHeaders) {
+  return patchLive<AccountProfileUpdateResponse>("/account/me", input, headers);
+}
+
 export async function fetchAccountOrders(headers: LiveApiHeaders) {
   return getLive<AccountOrdersResponse>("/commerce/orders", headers);
 }
@@ -796,10 +835,11 @@ export function getLiveApiErrorMessage(error: unknown) {
     voice_services_not_configured: "Voice transcription is not configured yet. Try sending the message as text.",
     live_api_network_error: "The live Yuzu API could not be reached from this site. Try again once the API route and CORS access are available.",
     missing_cigar_image: "Upload or take a cigar photo before asking the humidor agent to identify it.",
+    invalid_profile: "Enter a display name before saving your account profile.",
     invalid_cigar_image: "The uploaded cigar image could not be decoded.",
     unsupported_cigar_image_type: "Upload a PNG, JPEG, GIF, or WebP cigar image.",
     cigar_image_too_large: "Upload a cigar image under 5 MB.",
-    database_writes_not_ready: "The live humidor database is not ready for updates yet.",
+    database_writes_not_ready: "The live member database is not ready for updates yet.",
     humidor_item_not_found: "That humidor cigar could not be found for this account.",
     invalid_humidor_enrichment_fields: "Choose info, image, or MSRP for humidor enrichment.",
     missing_humidor_item_id: "Open a saved cigar before asking the humidor agent to update it.",

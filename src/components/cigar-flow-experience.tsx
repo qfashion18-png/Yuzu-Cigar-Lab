@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -35,19 +35,41 @@ function getSourceActionLabel(item: CigarFlowItem) {
   return "Read Full Source";
 }
 
+const readerFocusableSelector = [
+  "a[href]",
+  "button:not([disabled])",
+  "textarea:not([disabled])",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  '[tabindex]:not([tabindex="-1"])',
+].join(",");
+
+function getReaderFocusableElements(container: HTMLElement | null) {
+  if (!container) {
+    return [];
+  }
+
+  return Array.from(container.querySelectorAll<HTMLElement>(readerFocusableSelector)).filter(
+    (element) => !element.hasAttribute("disabled") && element.getAttribute("aria-hidden") !== "true",
+  );
+}
+
 function CigarFlowCard({
   item,
   index,
   onOpen,
+  openerRef,
 }: {
   item: CigarFlowItem;
   index: number;
   onOpen: (index: number) => void;
+  openerRef?: (node: HTMLButtonElement | null) => void;
 }) {
   return (
     <article className={cn("luxury-card overflow-hidden", item.featured && "sm:col-span-2 xl:col-span-2")}>
       <button
         type="button"
+        ref={openerRef}
         className={cn("group/card relative w-full cursor-pointer text-left", item.featured ? "min-h-[26rem] sm:min-h-[32rem]" : "min-h-[22rem]")}
         onClick={() => onOpen(index)}
         aria-label={`Open ${item.title} in Cigar Flow reader`}
@@ -125,8 +147,18 @@ export function CigarFlowExperience({ items }: { items: CigarFlowItem[] }) {
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const activeItem = activeIndex === null ? null : items[activeIndex];
   const articlePosition = useMemo(() => (activeIndex === null ? "" : `${activeIndex + 1} of ${items.length}`), [activeIndex, items.length]);
+  const isReaderOpen = activeIndex !== null;
+  const readerDialogRef = useRef<HTMLDivElement | null>(null);
+  const previouslyFocusedElementRef = useRef<HTMLElement | null>(null);
 
   const closeReader = useCallback(() => setActiveIndex(null), []);
+  const openReader = useCallback((index: number) => {
+    if (document.activeElement instanceof HTMLElement) {
+      previouslyFocusedElementRef.current = document.activeElement;
+    }
+
+    setActiveIndex(index);
+  }, []);
   const openPrevious = useCallback(
     () => setActiveIndex((current) => (current === null ? current : (current - 1 + items.length) % items.length)),
     [items.length]
@@ -137,51 +169,100 @@ export function CigarFlowExperience({ items }: { items: CigarFlowItem[] }) {
   );
 
   useEffect(() => {
-    if (activeIndex === null) {
+    if (!isReaderOpen) {
       return;
     }
 
     const handleKeyDown = (event: KeyboardEvent) => {
+      const dialog = readerDialogRef.current;
+
       if (event.key === "Escape") {
+        event.preventDefault();
         closeReader();
       }
 
       if (event.key === "ArrowLeft") {
+        event.preventDefault();
         openPrevious();
       }
 
       if (event.key === "ArrowRight") {
+        event.preventDefault();
         openNext();
+      }
+
+      if (event.key === "Tab") {
+        const focusableElements = getReaderFocusableElements(dialog);
+        const firstFocusableElement = focusableElements[0];
+        const lastFocusableElement = focusableElements[focusableElements.length - 1];
+
+        if (!dialog || !firstFocusableElement || !lastFocusableElement) {
+          event.preventDefault();
+          dialog?.focus();
+          return;
+        }
+
+        if (event.shiftKey && document.activeElement === firstFocusableElement) {
+          event.preventDefault();
+          lastFocusableElement.focus();
+          return;
+        }
+
+        if (!event.shiftKey && document.activeElement === lastFocusableElement) {
+          event.preventDefault();
+          firstFocusableElement.focus();
+          return;
+        }
+
+        if (document.activeElement instanceof Node && !dialog.contains(document.activeElement)) {
+          event.preventDefault();
+          firstFocusableElement.focus();
+        }
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
+    const focusTimer = window.setTimeout(() => {
+      const dialog = readerDialogRef.current;
+      const firstFocusableElement = getReaderFocusableElements(dialog)[0];
+
+      (firstFocusableElement ?? dialog)?.focus();
+    }, 0);
     const originalOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
 
     return () => {
+      window.clearTimeout(focusTimer);
       window.removeEventListener("keydown", handleKeyDown);
       document.body.style.overflow = originalOverflow;
+
+      if (previouslyFocusedElementRef.current?.isConnected) {
+        previouslyFocusedElementRef.current?.focus();
+      }
+
+      previouslyFocusedElementRef.current = null;
     };
-  }, [activeIndex, closeReader, openNext, openPrevious]);
+  }, [isReaderOpen, closeReader, openNext, openPrevious]);
 
   return (
     <>
       <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3" data-cigar-flow-grid="in-yuzu-reader">
         {items.map((item, index) => (
-          <CigarFlowCard key={item.id} item={item} index={index} onOpen={setActiveIndex} />
+          <CigarFlowCard key={item.id} item={item} index={index} onOpen={openReader} />
         ))}
       </div>
 
       {activeItem && (
         <div
+          ref={readerDialogRef}
           className="fixed inset-0 z-50 bg-yuzu-night/88 px-3 py-3 backdrop-blur-xl sm:px-5 sm:py-5"
           role="dialog"
           aria-modal="true"
           aria-label={`${activeItem.title} article preview`}
           data-cigar-flow-reader="open"
+          tabIndex={-1}
         >
-          <div className="mx-auto grid h-full max-w-[1440px] overflow-hidden border border-yuzu-line/80 bg-yuzu-ink shadow-[0_30px_90px_rgba(0,0,0,0.5)] lg:grid-cols-[minmax(0,0.58fr)_minmax(360px,0.42fr)]">
+          <div className="mx-auto grid h-full min-w-0 max-w-[1440px] overflow-hidden border border-yuzu-line/80 bg-yuzu-ink shadow-[0_30px_90px_rgba(0,0,0,0.5)] lg:grid-cols-[minmax(0,0.58fr)_minmax(360px,0.42fr)]">
             <div className="relative hidden border-b border-yuzu-line/70 bg-yuzu-night lg:block lg:min-h-0 lg:border-b-0 lg:border-r">
               <ReferenceImage
                 src={activeItem.image}
@@ -277,10 +358,10 @@ export function CigarFlowExperience({ items }: { items: CigarFlowItem[] }) {
                 </div>
               </div>
 
-              <div className="grid shrink-0 grid-cols-[auto_1fr_auto] gap-2 border-t border-yuzu-line/70 p-3 sm:p-4">
+              <div className="grid shrink-0 grid-cols-2 gap-2 border-t border-yuzu-line/70 p-3 sm:grid-cols-[auto_1fr_auto] sm:p-4">
                 <button
                   type="button"
-                  className="inline-flex min-h-10 items-center justify-center gap-2 whitespace-nowrap border border-yuzu-line px-3 text-[0.68rem] font-black uppercase tracking-[0.16em] text-yuzu-cream transition hover:border-yuzu-gold hover:text-yuzu-gold sm:px-4 sm:text-xs"
+                  className="order-2 inline-flex min-h-10 min-w-0 items-center justify-center gap-2 whitespace-nowrap border border-yuzu-line px-2 text-[0.68rem] font-black uppercase tracking-[0.16em] text-yuzu-cream transition hover:border-yuzu-gold hover:text-yuzu-gold sm:order-none sm:px-4 sm:text-xs"
                   onClick={openPrevious}
                 >
                   <ArrowLeft className="size-4" />
@@ -291,7 +372,7 @@ export function CigarFlowExperience({ items }: { items: CigarFlowItem[] }) {
                     href={activeItem.href}
                     target="_blank"
                     rel="noreferrer"
-                    className="inline-flex min-h-10 items-center justify-center gap-2 whitespace-nowrap bg-yuzu-gold px-3 text-[0.68rem] font-black uppercase tracking-[0.16em] text-yuzu-ink transition hover:bg-yuzu-gold-light sm:px-5 sm:text-xs"
+                    className="order-1 col-span-2 inline-flex min-h-10 min-w-0 items-center justify-center gap-2 whitespace-nowrap bg-yuzu-gold px-3 text-[0.68rem] font-black uppercase tracking-[0.16em] text-yuzu-ink transition hover:bg-yuzu-gold-light sm:order-none sm:col-span-1 sm:px-5 sm:text-xs"
                   >
                     {getSourceActionLabel(activeItem)}
                     <ExternalLink className="size-4" />
@@ -299,7 +380,7 @@ export function CigarFlowExperience({ items }: { items: CigarFlowItem[] }) {
                 ) : (
                   <Link
                     href={activeItem.href}
-                    className="inline-flex min-h-10 items-center justify-center gap-2 whitespace-nowrap bg-yuzu-gold px-3 text-[0.68rem] font-black uppercase tracking-[0.16em] text-yuzu-ink transition hover:bg-yuzu-gold-light sm:px-5 sm:text-xs"
+                    className="order-1 col-span-2 inline-flex min-h-10 min-w-0 items-center justify-center gap-2 whitespace-nowrap bg-yuzu-gold px-3 text-[0.68rem] font-black uppercase tracking-[0.16em] text-yuzu-ink transition hover:bg-yuzu-gold-light sm:order-none sm:col-span-1 sm:px-5 sm:text-xs"
                   >
                     {getSourceActionLabel(activeItem)}
                     <ExternalLink className="size-4" />
@@ -307,7 +388,7 @@ export function CigarFlowExperience({ items }: { items: CigarFlowItem[] }) {
                 )}
                 <button
                   type="button"
-                  className="inline-flex min-h-10 items-center justify-center gap-2 whitespace-nowrap border border-yuzu-gold px-3 text-[0.68rem] font-black uppercase tracking-[0.16em] text-yuzu-gold transition hover:bg-yuzu-gold hover:text-yuzu-ink sm:px-4 sm:text-xs"
+                  className="order-3 inline-flex min-h-10 min-w-0 items-center justify-center gap-2 whitespace-nowrap border border-yuzu-gold px-2 text-[0.68rem] font-black uppercase tracking-[0.16em] text-yuzu-gold transition hover:bg-yuzu-gold hover:text-yuzu-ink sm:order-none sm:px-4 sm:text-xs"
                   onClick={openNext}
                   aria-label="Next article"
                 >

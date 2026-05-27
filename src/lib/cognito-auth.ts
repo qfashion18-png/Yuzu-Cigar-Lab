@@ -87,7 +87,7 @@ export const cognitoProfileCacheStorageKey = "yuzu-cognito-auth-profile-cache-v1
 
 const defaultRedirectPath = "/auth/callback";
 const defaultLogoutPath = "/auth/logout";
-const defaultScopes = ["openid", "email", "profile", "phone"];
+const defaultScopes = ["openid", "email", "profile"];
 const expirationSkewMs = 60_000;
 const cognitoInitiateAuthTarget = "AWSCognitoIdentityProviderService.InitiateAuth";
 type CognitoProfileSnapshot = {

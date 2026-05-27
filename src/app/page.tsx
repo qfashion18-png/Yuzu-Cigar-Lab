@@ -277,8 +277,8 @@ export default function Home() {
                   Open Cigar Flow
                   <ArrowRight data-icon="inline-end" />
                 </Button>
-                <Button className="h-11 border-yuzu-gold px-7 text-yuzu-gold hover:bg-yuzu-gold hover:text-yuzu-ink" variant="outline" render={<Link href="/cigar-flow" />}>
-                  Share a Smoke
+                <Button className="h-11 border-yuzu-gold px-7 text-yuzu-gold hover:bg-yuzu-gold hover:text-yuzu-ink" variant="outline" render={<Link href="/humidor?section=tools&intent=cigar-flow" />}>
+                  Prepare Smoke Note
                 </Button>
               </div>
             </div>
