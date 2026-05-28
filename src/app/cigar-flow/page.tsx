@@ -26,24 +26,17 @@ import {
   cigarPressReleaseSearchSources,
 } from "@/lib/cigar-flow";
 import { officialCigarNewsSources } from "@/lib/newsroom";
-import { siteUrl } from "@/lib/site";
+import { buildPageMetadata } from "@/lib/seo";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = buildPageMetadata({
   title: "Cigar Flow | Yuzu Cigar Club",
   description:
-    "An Instagram-style cigar news feed for manufacturer releases, new drops, trusted cigar RSS sources, public news updates, and member smoke posts.",
-  alternates: {
-    canonical: "/cigar-flow",
-  },
-  openGraph: {
-    title: "Cigar Flow | Yuzu Cigar Club",
-    description:
-      "Follow cigar manufacturer news, new drops, verified RSS sources, public news updates, and Yuzu member smoke posts in one visual feed.",
-    url: `${siteUrl}/cigar-flow/`,
-    siteName: "Yuzu Cigar Club",
-    type: "website",
-  },
-};
+    "Follow cigar manufacturer news, new drops, verified RSS sources, public news updates, and Yuzu member smoke posts in one visual feed.",
+  path: "/cigar-flow",
+  image: "/assets/about-lounge.png",
+  imageAlt: "Cigar lounge table arranged for Cigar Flow",
+  keywords: ["cigar news feed", "cigar RSS", "cigar manufacturer releases"],
+});
 
 export default function CigarFlowPage() {
   return (
@@ -131,35 +124,35 @@ export default function CigarFlowPage() {
 
         <aside className="grid content-start gap-5 lg:sticky lg:top-28">
           <Card className="luxury-card">
-            <CardContent className="grid gap-5 p-5">
+            <CardContent className="grid gap-3 p-4">
               <div className="flex items-start gap-3">
-                <span className="grid size-11 shrink-0 place-items-center border border-yuzu-gold/55 bg-yuzu-gold/10 text-yuzu-gold">
-                  <Rss className="size-5" />
+                <span className="grid size-9 shrink-0 place-items-center border border-yuzu-gold/55 bg-yuzu-gold/10 text-yuzu-gold">
+                  <Rss className="size-4" />
                 </span>
                 <div>
-                  <h2 className="font-heading text-3xl leading-tight text-yuzu-cream">RSS and news sources</h2>
-                  <p className="mt-2 text-sm leading-6 text-yuzu-muted">
-                    Verified RSS feeds plus requested cigar news sources for a future ingestion job or admin publishing review.
+                  <h2 className="font-heading text-2xl leading-tight text-yuzu-cream">RSS and news sources</h2>
+                  <p className="mt-1 text-xs leading-5 text-yuzu-muted">
+                    Verified feeds for ingestion and admin review.
                   </p>
                 </div>
               </div>
-              <div className="grid gap-3">
+              <div className="grid gap-2">
                 {cigarFlowSources.map((source) => (
                   <a
                     key={source.feedUrl}
                     href={source.feedUrl}
                     target="_blank"
                     rel="noreferrer"
-                    className="group/source border border-yuzu-line/65 bg-yuzu-night/42 p-4 transition hover:border-yuzu-gold/80 hover:bg-yuzu-forest/70"
+                    title={`${source.publisher}: ${source.focus}`}
+                    className="group/source flex min-h-14 items-center justify-between gap-3 border border-yuzu-line/65 bg-yuzu-night/42 px-3 py-2 transition hover:border-yuzu-gold/80 hover:bg-yuzu-forest/70"
                   >
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-black uppercase tracking-[0.16em] text-yuzu-cream">{source.publisher}</p>
-                        <p className="mt-2 text-xs leading-5 text-yuzu-muted">{source.focus}</p>
-                      </div>
-                      <ExternalLink className="size-4 shrink-0 text-yuzu-gold transition group-hover/source:translate-x-0.5" />
+                    <div className="min-w-0">
+                      <p className="truncate text-xs font-black uppercase tracking-[0.13em] text-yuzu-cream group-hover/source:text-yuzu-gold">
+                        {source.publisher}
+                      </p>
+                      <p className="mt-1 truncate font-mono text-[0.64rem] leading-4 text-yuzu-gold/82">{source.feedUrl}</p>
                     </div>
-                    <p className="mt-3 break-all font-mono text-[0.68rem] leading-5 text-yuzu-gold/88">{source.feedUrl}</p>
+                    <ExternalLink className="size-3.5 shrink-0 text-yuzu-gold transition group-hover/source:translate-x-0.5" />
                   </a>
                 ))}
               </div>

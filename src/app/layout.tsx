@@ -4,28 +4,10 @@ import { BackupAuthProvider } from "@/components/backup-auth-provider";
 import { PwaRegister } from "@/components/pwa-register";
 import { SiteChrome } from "@/components/site-chrome";
 import { ageGateBootstrapScript } from "@/lib/age-gate-bootstrap";
-import { siteUrl } from "@/lib/site";
+import { buildRootMetadata } from "@/lib/seo";
 import "./globals.css";
 
-export const metadata: Metadata = {
-  metadataBase: new URL(siteUrl),
-  title: "Yuzu Cigar Club | Membership, Storefront, Digital Humidor",
-  description:
-    "A premium cigar club storefront with Medusa-ready commerce, adult compliance, memberships, events, and a PWA digital humidor.",
-  openGraph: {
-    title: "Yuzu Cigar Club | Membership, Storefront, Digital Humidor",
-    description:
-      "A premium cigar club storefront with Medusa-ready commerce, adult compliance, memberships, events, and a PWA digital humidor.",
-    url: "/",
-    siteName: "Yuzu Cigar Club",
-    type: "website",
-  },
-  manifest: "/manifest.webmanifest",
-  icons: {
-    icon: "/assets/yuzu-logo-192.png",
-    apple: "/assets/yuzu-logo-180.png",
-  },
-};
+export const metadata: Metadata = buildRootMetadata();
 
 export const viewport: Viewport = {
   themeColor: "#030504",

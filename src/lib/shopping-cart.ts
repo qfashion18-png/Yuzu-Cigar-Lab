@@ -31,6 +31,7 @@ export type CartTotals = {
   subtotal: number;
   discount: number;
   shipping: number;
+  handling: number;
   tax: number;
   total: number;
 };
@@ -54,6 +55,7 @@ export type PaymentMethod = {
 };
 
 export const defaultDeliveryCarrier = "USPS";
+export const nonMemberShippingHandlingFee = 10;
 export const adultSignatureRequiredStates = ["AR", "CA", "DE", "FL", "GA", "MA", "MN", "ND", "RI", "SC", "WY"] as const;
 
 export const defaultDeliveryMethods: DeliveryMethod[] = [
@@ -293,7 +295,7 @@ export function applyPromotionCode(cart: ShoppingCart, code: string, now = Date.
 
 export function calculateCartTotals(
   cart: ShoppingCart,
-  options: { deliveryPrice?: number; taxRate?: number } = {}
+  options: { deliveryPrice?: number; handlingFee?: number; isMember?: boolean; taxRate?: number } = {}
 ): CartTotals {
   const subtotal = roundCurrency(cart.items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0));
   const discountRate = cart.promotionCode ? promotionRates[cart.promotionCode] ?? 0 : 0;
@@ -304,15 +306,19 @@ export function calculateCartTotals(
   );
   const discount = roundCurrency(eligibleSubtotal * discountRate);
   const shipping = roundCurrency(options.deliveryPrice ?? 0);
+  const handling = roundCurrency(
+    options.handlingFee ?? (cart.items.length > 0 && options.isMember === false ? nonMemberShippingHandlingFee : 0)
+  );
   const taxableAmount = Math.max(subtotal - discount, 0);
   const tax = roundCurrency(taxableAmount * (options.taxRate ?? 0));
-  const total = roundCurrency(taxableAmount + shipping + tax);
+  const total = roundCurrency(taxableAmount + shipping + handling + tax);
 
   return {
     itemCount: cart.items.reduce((sum, item) => sum + item.quantity, 0),
     subtotal,
     discount,
     shipping,
+    handling,
     tax,
     total,
   };

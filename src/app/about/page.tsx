@@ -8,6 +8,7 @@ import { ReferenceImage } from "@/components/reference-image";
 import { SectionHeading } from "@/components/section-heading";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { buildPageMetadata } from "@/lib/seo";
 
 const difference: Array<{ title: string; text: string; icon: LucideIcon }> = [
   { title: "Expert Curation", text: "Our team selects only boxes worth collecting.", icon: Box },
@@ -17,20 +18,15 @@ const difference: Array<{ title: string; text: string; icon: LucideIcon }> = [
   { title: "Concierge Support", text: "Real people for recommendations and order help.", icon: Headphones },
 ];
 
-export const metadata: Metadata = {
+export const metadata: Metadata = buildPageMetadata({
   title: "About | Yuzu Cigar Club",
   description:
     "Learn about Yuzu Cigar Club's premium cigar curation, member pricing, secure access, and concierge support.",
-  alternates: {
-    canonical: "/about",
-  },
-  openGraph: {
-    title: "About | Yuzu Cigar Club",
-    description:
-      "Learn about Yuzu Cigar Club's premium cigar curation, member pricing, secure access, and concierge support.",
-    url: "/about",
-  },
-};
+  path: "/about",
+  image: "/assets/about-lounge.png",
+  imageAlt: "Yuzu Cigar Club lounge and curated cigar boxes",
+  keywords: ["cigar club", "premium cigar curation", "cigar concierge"],
+});
 
 export default function AboutPage() {
   return (

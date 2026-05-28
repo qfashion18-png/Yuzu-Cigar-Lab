@@ -2,20 +2,17 @@ import type { Metadata } from "next";
 import Link from "@/components/static-link";
 import { CircleAlert, Mail } from "lucide-react";
 
-export const metadata: Metadata = {
+import { buildPageMetadata } from "@/lib/seo";
+
+export const metadata: Metadata = buildPageMetadata({
   title: "Terms of Service | Yuzu Cigar Club",
   description:
     "Yuzu Cigar Club terms for adult-only membership, cigar storefront access, checkout, subscriptions, support, digital humidor tools, and compliance obligations.",
-  alternates: {
-    canonical: "/terms",
-  },
-  openGraph: {
-    title: "Terms of Service | Yuzu Cigar Club",
-    description:
-      "Terms for adult-only Yuzu Cigar Club membership, storefront, checkout, subscriptions, support, and digital humidor tools.",
-    url: "/terms",
-  },
-};
+  path: "/terms",
+  image: "/assets/yuzu-logo.png",
+  imageAlt: "Yuzu Cigar Club logo",
+  keywords: ["Yuzu terms of service", "adult cigar ecommerce terms", "cigar membership terms"],
+});
 
 const sections = [
   {

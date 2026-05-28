@@ -13,21 +13,17 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { storefrontCategories, storefrontProductCards } from "@/lib/catalog";
 import { tiers } from "@/lib/data";
+import { buildPageMetadata } from "@/lib/seo";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = buildPageMetadata({
   title: "Shop Premium Cigar Boxes | Yuzu Cigar Club",
   description:
     "Browse Yuzu Cigar Club premium cigar boxes, curated releases, member drops, and catalog inventory with adult-signature checkout.",
-  alternates: {
-    canonical: "/shop",
-  },
-  openGraph: {
-    title: "Shop Premium Cigar Boxes | Yuzu Cigar Club",
-    description:
-      "Browse Yuzu Cigar Club premium cigar boxes, curated releases, member drops, and catalog inventory with adult-signature checkout.",
-    url: "/shop",
-  },
-};
+  path: "/shop",
+  image: "/assets/shop-hero.png",
+  imageAlt: "Premium cigar boxes in the Yuzu shop",
+  keywords: ["premium cigar boxes", "cigar box catalog", "adult signature cigar delivery"],
+});
 
 const limitedDropCountdown = [
   { value: "04", label: "Days" },
@@ -41,7 +37,7 @@ const categoryParamKey = "category";
 function getShopCategoryHref(category: string) {
   const params = new URLSearchParams({ [categoryParamKey]: category });
 
-  return `/shop?${params.toString()}#catalog`;
+  return `/shop/?${params.toString()}#catalog`;
 }
 
 function ShopCatalogFallback() {

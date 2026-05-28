@@ -110,9 +110,13 @@ test("checkout compliance accepts verified adults with publishable stock and adu
   assert.deepEqual(result.shipping, {
     methodId: "usps-adult-signature-ground",
     submittedMethodId: "usps-adult-signature-ground",
+    title: "USPS Adult Signature Ground",
     carrier: "USPS",
     adultSignatureRequired: true,
     adultSignatureRequiredState: false,
+    deliveryAmountCents: 1800,
+    handlingFeeCents: 1000,
+    amountCents: 2800,
   });
 });
 
@@ -130,13 +134,89 @@ test("checkout compliance accepts AgeChecker-verified non-required states with U
 
   assert.equal(result.ok, true);
   assert.deepEqual(result.errors, []);
-  assert.deepEqual(result.shipping, {
-    methodId: "usps-ground-advantage",
-    submittedMethodId: "usps-ground-advantage",
-    carrier: "USPS",
-    adultSignatureRequired: false,
-    adultSignatureRequiredState: false,
+  assert.deepEqual(
+    {
+      methodId: result.shipping.methodId,
+      submittedMethodId: result.shipping.submittedMethodId,
+      carrier: result.shipping.carrier,
+      adultSignatureRequired: result.shipping.adultSignatureRequired,
+      adultSignatureRequiredState: result.shipping.adultSignatureRequiredState,
+    },
+    {
+      methodId: "usps-ground-advantage",
+      submittedMethodId: "usps-ground-advantage",
+      carrier: "USPS",
+      adultSignatureRequired: false,
+      adultSignatureRequiredState: false,
+    }
+  );
+  assert.deepEqual(
+    result.shipping as typeof result.shipping & {
+      title?: string;
+      deliveryAmountCents?: number;
+      handlingFeeCents?: number;
+      amountCents?: number;
+    },
+    {
+      methodId: "usps-ground-advantage",
+      submittedMethodId: "usps-ground-advantage",
+      title: "USPS Ground Advantage",
+      carrier: "USPS",
+      adultSignatureRequired: false,
+      adultSignatureRequiredState: false,
+      deliveryAmountCents: 900,
+      handlingFeeCents: 1000,
+      amountCents: 1900,
+    }
+  );
+});
+
+test("checkout compliance waives the shipping and handling fee for trusted members", () => {
+  const { validateCheckoutReadiness } = loadRules();
+  const guestResult = validateCheckoutReadiness({
+    ...readyCheckout,
+    shippingMethodId: "usps-ground-advantage",
+    quote: {
+      subtotal: 240,
+      handling: 10,
+      currency: "USD",
+    },
   });
+  const memberResult = validateCheckoutReadiness({
+    ...readyCheckout,
+    shippingMethodId: "usps-ground-advantage",
+    quote: {
+      subtotal: 240,
+      handling: 0,
+      currency: "USD",
+    },
+    membership: {
+      status: "member",
+      trusted: true,
+      tiers: ["sensei"],
+    },
+  });
+
+  assert.equal(guestResult.ok, true);
+  assert.equal((guestResult.shipping as typeof guestResult.shipping & { handlingFeeCents?: number }).handlingFeeCents, 1000);
+  assert.equal(memberResult.ok, true);
+  assert.equal((memberResult.shipping as typeof memberResult.shipping & { handlingFeeCents?: number }).handlingFeeCents, 0);
+});
+
+test("checkout compliance rejects a non-member quote that omits the handling fee", () => {
+  const { validateCheckoutReadiness } = loadRules();
+  const result = validateCheckoutReadiness({
+    ...readyCheckout,
+    shippingMethodId: "usps-ground-advantage",
+    quote: {
+      subtotal: 240,
+      handling: 0,
+      currency: "USD",
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.errors.some((error) => error.code === "quote_mismatch"), true);
 });
 
 test("checkout compliance uses USPS adult-signature states and rejects UPS methods", () => {

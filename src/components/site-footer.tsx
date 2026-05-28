@@ -6,6 +6,7 @@ import Link from "@/components/static-link";
 
 import { BrandMark } from "@/components/brand-mark";
 import { commerceNav, complianceStack, navItems } from "@/lib/data";
+import { seoFooterLinks } from "@/lib/seo-links";
 
 export function SiteFooter() {
   const pathname = usePathname();
@@ -27,7 +28,7 @@ export function SiteFooter() {
         <div>
           <h3 className="footer-title">Club</h3>
           <div className="mt-4 flex flex-col gap-2">
-            {navItems.slice(0, 7).map((item) => (
+            {navItems.map((item) => (
               <Link key={item.href} href={item.href} className="footer-link">
                 {item.label}
               </Link>
@@ -65,6 +66,16 @@ export function SiteFooter() {
               <Link href="/terms" className="footer-link">
                 Terms of Service
               </Link>
+            </div>
+          </div>
+          <div>
+            <h3 className="footer-title">Guides</h3>
+            <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2">
+              {seoFooterLinks.slice(0, 8).map((item) => (
+                <Link key={item.href} href={item.href} className="footer-link">
+                  {item.label}
+                </Link>
+              ))}
             </div>
           </div>
         </div>

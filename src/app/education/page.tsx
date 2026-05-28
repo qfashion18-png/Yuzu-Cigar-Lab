@@ -9,21 +9,17 @@ import { ReferenceImage } from "@/components/reference-image";
 import { Button } from "@/components/ui/button";
 import { cigarEducationStories } from "@/lib/data";
 import { featuredStory } from "@/lib/education-journal";
+import { buildPageMetadata } from "@/lib/seo";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = buildPageMetadata({
   title: "Education Journal | Yuzu Cigar Club",
   description:
     "Read Yuzu Cigar Club education stories about cigars, culture, craftsmanship, pairings, and collection care.",
-  alternates: {
-    canonical: "/education",
-  },
-  openGraph: {
-    title: "Education Journal | Yuzu Cigar Club",
-    description:
-      "Read Yuzu Cigar Club education stories about cigars, culture, craftsmanship, pairings, and collection care.",
-    url: "/education",
-  },
-};
+  path: "/education",
+  image: "/assets/hero-boxes.png",
+  imageAlt: "Yuzu cigar boxes and a glass arranged for the education journal",
+  keywords: ["cigar education", "cigar aging", "cigar pairing guide"],
+});
 
 export default function EducationPage() {
   return (

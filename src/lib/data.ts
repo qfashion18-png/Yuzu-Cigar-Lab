@@ -29,6 +29,7 @@ export const navItems = [
   { href: "/education", label: "Education" },
   { href: "/events", label: "Events" },
   { href: "/about", label: "About" },
+  { href: "/contact", label: "Contact" },
 ];
 
 export const commerceNav = [

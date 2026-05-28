@@ -74,7 +74,7 @@ test("cigar flow reader notes carry compact story snippets", () => {
 test("cigar flow route is wired into navigation, sitemap, metadata, and source panel", () => {
   assert.ok(navItems.some((item) => item.href === "/cigar-flow" && item.label === "Cigar Flow"));
   assert.equal(navItems.some((item) => item.href === "/news"), false, "News should not appear as a separate public tab");
-  assert.ok(sitemap().some((entry) => entry.url === `${siteUrl}/cigar-flow`));
+  assert.ok(sitemap().some((entry) => entry.url === `${siteUrl}/cigar-flow/`));
   assert.ok(cigarFlowPageSource.includes("Cigar Flow | Yuzu Cigar Club"));
   assert.ok(cigarFlowPageSource.includes("CigarFlowExperience"));
   assert.ok(cigarFlowPageSource.includes("NewsStoryFeed"));

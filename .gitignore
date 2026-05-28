@@ -37,6 +37,8 @@ yarn-error.log*
 
 # local generated evidence and media caches
 /tmp/
+/test-results/
+.kiro/
 .playwright-cli/
 .waveform-cache/
 

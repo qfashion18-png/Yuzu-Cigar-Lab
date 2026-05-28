@@ -8,21 +8,17 @@ import { MemberViewBanner } from "@/components/member-view-banner";
 import { SectionHeading } from "@/components/section-heading";
 import { Button } from "@/components/ui/button";
 import { events } from "@/lib/data";
+import { buildPageMetadata } from "@/lib/seo";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = buildPageMetadata({
   title: "Events | Yuzu Cigar Club",
   description:
     "Explore Yuzu Cigar Club private tastings, workshops, allocation nights, and member cigar events.",
-  alternates: {
-    canonical: "/events",
-  },
-  openGraph: {
-    title: "Events | Yuzu Cigar Club",
-    description:
-      "Explore Yuzu Cigar Club private tastings, workshops, allocation nights, and member cigar events.",
-    url: "/events",
-  },
-};
+  path: "/events",
+  image: "/assets/about-lounge.png",
+  imageAlt: "Yuzu Cigar Club lounge event room",
+  keywords: ["cigar events", "private cigar tastings", "cigar workshops"],
+});
 
 export default function EventsPage() {
   const initialNowIso = new Date().toISOString();

@@ -42,13 +42,13 @@ test("extracts runtime asset references from html without treating anchors as as
 test("extracts internal route links separately from runtime assets", () => {
   const html = `
     <a href="/shop/">Shop</a>
-    <a href="/shop?category=Humidors#catalog">Humidors</a>
+    <a href="/shop/?category=Humidors#catalog">Humidors</a>
     <a href="#catalog">Catalog</a>
     <a href="mailto:hello@example.test">Email</a>
     <a href="https://example.test/events/">External</a>
   `;
 
-  assert.deepEqual(extractHtmlRouteLinks(html), ["/shop/", "/shop?category=Humidors#catalog"]);
+  assert.deepEqual(extractHtmlRouteLinks(html), ["/shop/", "/shop/?category=Humidors#catalog"]);
 });
 
 test("extracts local css url references while ignoring external and data urls", () => {

@@ -18,12 +18,15 @@
     "launch:go-live-check": "tsx scripts/launch-readiness.ts --strict",
     "lambda:package": "node scripts/package-ycc-api-lambda.mjs",
     "db:check": "tsx scripts/check-rds-connection.ts",
-    "cigar-flow:daily": "tsx scripts/daily-cigar-news-run.ts"
+    "cigar-flow:daily": "tsx scripts/daily-cigar-news-run.ts",
+    "nova-act:e2e": "python scripts/nova_act_cigar_enrichment_e2e.py"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-agent-runtime": "^3.1043.0",
     "@aws-sdk/client-bedrock-runtime": "^3.1043.0",
+    "@aws-sdk/client-lex-runtime-v2": "^3.1055.0",
     "@aws-sdk/client-polly": "^3.1045.0",
+    "@aws-sdk/client-rekognition": "^3.1055.0",
     "@aws-sdk/client-s3": "^3.1044.0",
     "@aws-sdk/client-secrets-manager": "^3.1043.0",
     "@aws-sdk/client-sesv2": "^3.1044.0",

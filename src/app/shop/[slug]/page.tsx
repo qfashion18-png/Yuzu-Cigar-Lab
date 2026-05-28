@@ -30,7 +30,7 @@ import { ReferenceImage } from "@/components/reference-image";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { getCatalogProductDetails, getStorefrontProductBySlug, storefrontProducts } from "@/lib/catalog";
-import { siteUrl } from "@/lib/site";
+import { buildBreadcrumbJsonLd, buildPageMetadata, buildProductJsonLd, jsonLdScriptProps } from "@/lib/seo";
 
 type ProductPageProps = {
   params: Promise<{ slug: string }>;
@@ -54,20 +54,14 @@ export async function generateMetadata({ params }: ProductPageProps): Promise<Me
 
   const details = getCatalogProductDetails(product);
 
-  return {
+  return buildPageMetadata({
     title: `${product.name} | Yuzu Cigar Club`,
     description: details.summary,
-    alternates: {
-      canonical: `${siteUrl}/shop/${product.slug}/`,
-    },
-    openGraph: {
-      title: `${product.name} | Yuzu Cigar Club`,
-      description: details.summary,
-      url: `${siteUrl}/shop/${product.slug}/`,
-      images: [toAbsoluteUrl(product.image)],
-      type: "website",
-    },
-  };
+    path: `/shop/${product.slug}/`,
+    image: product.image,
+    imageAlt: `${product.name} premium cigar box`,
+    keywords: [product.name, product.brand, product.category, "premium cigar box"],
+  });
 }
 
 export default async function ProductDetailPage({ params }: ProductPageProps) {
@@ -84,50 +78,12 @@ export default async function ProductDetailPage({ params }: ProductPageProps) {
     .filter((candidate) => candidate.category === product.category || candidate.brand === product.brand)
     .slice(0, 3);
   const hasCigarSpecs = Boolean(product.vitola || product.length || product.gauge || product.strength || product.wrapper || product.filler || product.binder);
-  const productJsonLd = toJsonLd({
-    type: "Product",
-    name: product.name,
-    description: details.summary,
-    image: toAbsoluteUrl(product.image),
-    sku: product.sku,
-    brand: {
-      "@type": "Brand",
-      name: product.brand,
-    },
-    category: product.category,
-    offers: {
-      "@type": "Offer",
-      url: `${siteUrl}/shop/${product.slug}/`,
-      price: product.nonMemberPrice,
-      priceCurrency: "USD",
-      availability: getSchemaAvailability(product.availability),
-      priceValidUntil: "2026-12-31",
-      itemCondition: "https://schema.org/NewCondition",
-    },
-  });
-  const breadcrumbJsonLd = toJsonLd({
-    type: "BreadcrumbList",
-    itemListElement: [
-      {
-        "@type": "ListItem",
-        position: 1,
-        name: "Home",
-        item: siteUrl,
-      },
-      {
-        "@type": "ListItem",
-        position: 2,
-        name: "Shop",
-        item: `${siteUrl}/shop`,
-      },
-      {
-        "@type": "ListItem",
-        position: 3,
-        name: product.name,
-        item: `${siteUrl}/shop/${product.slug}/`,
-      },
-    ],
-  });
+  const productJsonLd = buildProductJsonLd(product, details);
+  const breadcrumbJsonLd = buildBreadcrumbJsonLd([
+    { name: "Home", path: "/" },
+    { name: "Shop", path: "/shop/" },
+    { name: product.name, path: `/shop/${product.slug}/` },
+  ]);
   const specTiles = [
     ...(hasCigarSpecs
       ? [
@@ -146,8 +102,8 @@ export default async function ProductDetailPage({ params }: ProductPageProps) {
 
   return (
     <div className="mx-auto flex max-w-[1520px] flex-col gap-8 px-5 py-8 md:px-[clamp(3rem,8.5vw,5rem)]">
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(productJsonLd) }} />
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbJsonLd) }} />
+      <script {...jsonLdScriptProps(productJsonLd)} />
+      <script {...jsonLdScriptProps(breadcrumbJsonLd)} />
       <Link href="/shop" className="inline-flex w-fit items-center gap-2 text-xs font-bold uppercase tracking-[0.2em] text-yuzu-muted transition hover:text-yuzu-gold">
         <ArrowLeft className="size-4" />
         Back to shop
@@ -324,36 +280,6 @@ export default async function ProductDetailPage({ params }: ProductPageProps) {
 
 function getProduct(slug: string) {
   return getStorefrontProductBySlug(slug);
-}
-
-function toJsonLd<T extends { type: string }>(value: T) {
-  const { type, ...rest } = value;
-
-  return {
-    "@context": "https://schema.org",
-    "@type": type,
-    ...rest,
-  };
-}
-
-function toAbsoluteUrl(value: string) {
-  if (/^https?:\/\//i.test(value)) {
-    return value;
-  }
-
-  return `${siteUrl}${value.startsWith("/") ? value : `/${value}`}`;
-}
-
-function getSchemaAvailability(availability: string) {
-  if (availability === "Out of stock") {
-    return "https://schema.org/OutOfStock";
-  }
-
-  if (availability === "Low stock") {
-    return "https://schema.org/LimitedAvailability";
-  }
-
-  return "https://schema.org/InStock";
 }
 
 function Spec({ icon: Icon, label, value }: { icon: LucideIcon; label: string; value: string }) {

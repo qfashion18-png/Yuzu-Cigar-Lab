@@ -2,20 +2,17 @@ import type { Metadata } from "next";
 import Link from "@/components/static-link";
 import { Mail, ShieldCheck } from "lucide-react";
 
-export const metadata: Metadata = {
+import { buildPageMetadata } from "@/lib/seo";
+
+export const metadata: Metadata = buildPageMetadata({
   title: "Privacy Policy | Yuzu Cigar Club",
   description:
     "Yuzu Cigar Club's privacy policy for member accounts, newsletter signups, support requests, checkout, age verification, and digital humidor tools.",
-  alternates: {
-    canonical: "/privacy",
-  },
-  openGraph: {
-    title: "Privacy Policy | Yuzu Cigar Club",
-    description:
-      "How Yuzu Cigar Club handles member account, support, newsletter, checkout, age verification, and digital humidor data.",
-    url: "/privacy",
-  },
-};
+  path: "/privacy",
+  image: "/assets/yuzu-logo.png",
+  imageAlt: "Yuzu Cigar Club logo",
+  keywords: ["Yuzu privacy policy", "cigar membership privacy", "age verification privacy"],
+});
 
 const sections = [
   {

@@ -2,7 +2,7 @@
 
 import Link from "@/components/static-link";
 import { AnimatePresence, motion } from "framer-motion";
-import { Bot, Headphones, Home, LoaderCircle, MessageCircle, Mic, Send, Volume2, VolumeX, X } from "lucide-react";
+import { LoaderCircle, MessageCircle, Mic, Send, Volume2, VolumeX, X } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { FormEvent, useEffect, useRef, useState } from "react";
 
@@ -13,7 +13,6 @@ import {
   getLiveApiErrorMessage,
   sendConciergeChat,
   sendConciergeVoiceMessage,
-  type ConciergeAgentMode,
   type ConciergeChatResponse,
   type ConciergeSpeechOutput,
   type ConciergeVoiceResponse,
@@ -51,13 +50,6 @@ declare global {
   }
 }
 
-const conciergeModes: Array<{ id: ConciergeAgentMode; label: string; icon: typeof MessageCircle }> = [
-  { id: "concierge", label: "Concierge", icon: MessageCircle },
-  { id: "cigar_guide", label: "Cigar", icon: Bot },
-  { id: "support", label: "Support", icon: Headphones },
-  { id: "humidor", label: "Humidor", icon: Home },
-];
-
 const recorderMimeTypes = [
   "audio/webm;codecs=opus",
   "audio/webm",
@@ -73,7 +65,6 @@ export function FloatingConcierge() {
   const auth = useBackupAuth();
   const pathname = usePathname();
   const [isOpen, setIsOpen] = useState(false);
-  const [mode, setMode] = useState<ConciergeAgentMode>("concierge");
   const [message, setMessage] = useState("");
   const [response, setResponse] = useState<ConciergeResponse | null>(null);
   const [conversationId, setConversationId] = useState("");
@@ -120,7 +111,6 @@ export function FloatingConcierge() {
       const nextResponse = await sendConciergeChat(
         {
           message: nextMessage,
-          agent: mode,
           conversationId: conversationId || undefined,
           voiceOutput: voiceEnabled,
         },
@@ -214,7 +204,6 @@ export function FloatingConcierge() {
           mimeType: blob.type || "audio/webm",
           transcriptHint: transcriptRef.current,
           durationMs,
-          agent: mode,
           conversationId: conversationId || undefined,
           voiceOutput: voiceEnabled,
         },
@@ -320,8 +309,8 @@ export function FloatingConcierge() {
                 <MessageCircle className="size-5" />
               </div>
               <div className="min-w-0">
-                <p className="truncate text-sm font-black uppercase tracking-[0.16em] text-yuzu-gold">Yuzu Concierge</p>
-                <p className="truncate text-xs text-yuzu-muted">{response ? formatStatusLabel(response.agent) : "Member support"}</p>
+                <p className="truncate text-sm font-black uppercase tracking-[0.16em] text-yuzu-gold">Yuzu Concierge AI</p>
+                <p className="truncate text-xs text-yuzu-muted">{response ? formatStatusLabel(response.ai.status) : "Member support"}</p>
               </div>
               <Button className="ml-auto border-yuzu-line text-yuzu-cream" size="icon-sm" type="button" variant="outline" aria-label="Close concierge" onClick={() => setIsOpen(false)}>
                 <X />
@@ -329,29 +318,6 @@ export function FloatingConcierge() {
             </header>
 
             <div className="grid min-h-0 gap-3 overflow-y-auto p-4">
-              <div className="grid grid-cols-4 gap-1">
-                {conciergeModes.map((item) => {
-                  const Icon = item.icon;
-                  const isActive = mode === item.id;
-
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      aria-label={item.label}
-                      title={item.label}
-                      className={cn(
-                        "grid h-10 min-w-0 place-items-center rounded-md border text-yuzu-cream transition",
-                        isActive ? "border-yuzu-gold bg-yuzu-gold text-yuzu-ink" : "border-yuzu-line bg-yuzu-night/45 hover:border-yuzu-gold hover:text-yuzu-gold"
-                      )}
-                      onClick={() => setMode(item.id)}
-                    >
-                      <Icon className="size-4" />
-                    </button>
-                  );
-                })}
-              </div>
-
               {!isLiveReady ? (
                 <div className="grid gap-3 rounded-md border border-yuzu-line bg-yuzu-night/50 p-3 text-sm text-yuzu-muted">
                   <p>Sign in with Cognito to use the live concierge.</p>
@@ -408,7 +374,7 @@ export function FloatingConcierge() {
               {response ? (
                 <div className="grid gap-2 rounded-md border border-yuzu-line/70 bg-yuzu-night/55 p-3">
                   <div className="flex items-center justify-between gap-2 text-[0.68rem] font-bold uppercase tracking-[0.14em] text-yuzu-muted">
-                    <span>{formatStatusLabel(response.agent)}</span>
+                    <span>Yuzu Concierge AI</span>
                     <span>{formatStatusLabel(response.ai.status)}</span>
                   </div>
                   {response.voice && "transcription" in response.voice ? (
@@ -441,7 +407,7 @@ export function FloatingConcierge() {
             type="button"
             data-concierge-launcher="sitewide"
             className="grid size-14 place-items-center rounded-lg border border-yuzu-gold bg-yuzu-gold text-yuzu-ink shadow-[0_18px_52px_rgba(0,0,0,0.5)] transition hover:bg-yuzu-gold-light"
-            aria-label="Open Yuzu Concierge"
+            aria-label="Open Yuzu Concierge AI"
             onClick={() => setIsOpen(true)}
           >
             <MessageCircle className="size-6" />

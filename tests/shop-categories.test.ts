@@ -4,6 +4,7 @@ import test from "node:test";
 
 import sitemap from "../src/app/sitemap";
 import { catalogProducts, storefrontCategories, storefrontProductCards, storefrontProducts } from "../src/lib/catalog";
+import { getCategorySlug } from "../src/lib/seo-content";
 
 const shopPageSource = readFileSync(new URL("../src/app/shop/page.tsx", import.meta.url), "utf8");
 const shopCatalogSource = readFileSync(new URL("../src/components/shop-catalog.tsx", import.meta.url), "utf8");
@@ -108,19 +109,20 @@ test("shop catalog category filter subscribes to Next URL search params", () => 
 
 test("sitemap includes shareable shop category URLs", () => {
   const urls = sitemap().map((entry) => entry.url);
-  const hasLuxuryCategoryUrl = urls.some((url) => {
-    const parsedUrl = new URL(url);
-
-    return parsedUrl.pathname === "/shop" && parsedUrl.searchParams.get("category") === "Luxury Cigars ($300+)";
-  });
+  const hasLuxuryCategoryUrl = urls.some((url) => new URL(url).pathname === `/shop/categories/${getCategorySlug("Luxury Cigars ($300+)")}/`);
   const hasEmptyCuratedBoxesUrl = urls.some((url) => {
     const parsedUrl = new URL(url);
 
-    return parsedUrl.pathname === "/shop" && parsedUrl.searchParams.get("category") === "Curated Boxes";
+    return parsedUrl.pathname === `/shop/categories/${getCategorySlug("Curated Boxes")}/`;
   });
 
-  assert.ok(hasLuxuryCategoryUrl, "sitemap should include category-specific shop URLs");
+  assert.ok(hasLuxuryCategoryUrl, "sitemap should include rich category-specific shop URLs");
   assert.equal(hasEmptyCuratedBoxesUrl, false, "sitemap should omit empty curated box category URLs");
+  assert.equal(
+    urls.some((url) => new URL(url).pathname === "/shop/" && new URL(url).searchParams.has("category")),
+    false,
+    "sitemap should not list duplicate query-parameter category URLs"
+  );
 });
 
 test("secondary product listing pages use catalog product exports", () => {

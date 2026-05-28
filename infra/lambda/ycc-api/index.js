@@ -23,6 +23,7 @@ const MAX_MESSAGE_LENGTH = 4000;
 const MAX_SUPPORT_MESSAGE_LENGTH = 6000;
 const MAX_FIELD_LENGTH = 500;
 const MAX_EMAIL_BODY_LENGTH = 10000;
+const MAX_EMAIL_HTML_LENGTH = 20000;
 const MAX_LIVE_PAGE_EDIT_FIELDS = 80;
 const MAX_LIVE_PAGE_EDIT_FIELD_LENGTH = 2000;
 const MAX_CIGAR_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -32,8 +33,11 @@ const DEFAULT_SUPPORT_EMAIL_RAW_PREFIX = "ycc/support-email/raw/";
 const DEFAULT_BEDROCK_MODEL_ID = "amazon.nova-lite-v1:0";
 const DEFAULT_CONCIERGE_POLLY_VOICE_ID = "Joanna";
 const DEFAULT_CONCIERGE_VOICE_PREFIX = "ycc/concierge-voice/";
+const DEFAULT_LEX_ROUTER_LOCALE_ID = "en_US";
 const CONCIERGE_RESPONSE_STYLE_INSTRUCTION =
   "Answer the member's question directly first. Keep replies concise: one short paragraph or up to three bullets. Do not include broad background, internal implementation details, or extra next steps unless the member asks or a safety, compliance, or account handoff requires it.";
+const ADULT_CIGAR_21_PLUS_CONTEXT_INSTRUCTION =
+  "Yuzu Cigar Club is a 21+ adult cigar website. Adult cigar education, product, storage, flavor, pairing, buying, and ritual questions are allowed. Do not refuse just because the member mentions cigars, tobacco, smoking, nicotine, or age-restricted products. Refuse only underage access, age-check bypass, illegal purchase/shipping evasion, or requests for medical, cessation, or safety claims.";
 const CIGAR_IMAGE_MIME_FORMATS = new Map([
   ["image/jpeg", "jpeg"],
   ["image/jpg", "jpeg"],
@@ -41,6 +45,10 @@ const CIGAR_IMAGE_MIME_FORMATS = new Map([
   ["image/gif", "gif"],
   ["image/webp", "webp"],
 ]);
+const REKOGNITION_TEXT_IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/jpg", "image/png"]);
+const REKOGNITION_FEATURE_READY_VALUE = "detect_text_ready";
+const DEFAULT_REKOGNITION_MIN_TEXT_CONFIDENCE = 70;
+const MAX_REKOGNITION_TEXT_LINES = 12;
 const VOICE_AUDIO_MIME_FORMATS = new Map([
   ["audio/webm", "webm"],
   ["audio/ogg", "ogg"],
@@ -70,6 +78,10 @@ const HUMIDOR_ALERT_DISPATCH_SECRET_HEADER = "x-humidor-alert-dispatch-secret";
 const HUMIDOR_REORDER_REMINDER_DISPATCH_MARKER = "humidorReorderReminderDispatchedOn";
 const HUMIDOR_ALERT_DISPATCH_NOTIFICATION_TAG = "digital-humidor-alert";
 const HUMIDOR_DISPATCH_ACTOR_SUB = "system.humidor-dispatch";
+const HUMIDOR_IOT_TELEMETRY_SOURCE = "ycc.humidor.iot.telemetry";
+const HUMIDOR_IOT_TELEMETRY_TOPIC_PREFIX = "ycc/humidor/";
+const HUMIDOR_IOT_TELEMETRY_TOPIC_SUFFIX = "/telemetry";
+const HUMIDOR_IOT_ACTOR_SUB = "system.humidor-iot";
 const ADMIN_ROUTES = new Set([
   "GET /admin/commerce/orders",
   "PATCH /admin/commerce/orders/{id}",
@@ -139,20 +151,47 @@ const BEDROCK_AGENT_NAMES = new Set([
   "YCCNewsAgent",
 ]);
 const DIRECT_BEDROCK_RUNTIME_AGENTS = new Set(["YCCCigarGuide"]);
+const CIGAR_WRAPPER_TERMS = [
+  "maduro",
+  "connecticut",
+  "habano",
+  "cameroon",
+  "sumatra",
+  "broadleaf",
+  "corojo",
+  "candela",
+  "rosado",
+];
 const CIGAR_GUIDE_TERMS = [
   "cigar",
+  "cigars",
+  "tobacco",
+  "nicotine",
   "vitola",
   "wrapper",
+  ...CIGAR_WRAPPER_TERMS,
+  "robusto",
+  "toro",
+  "churchill",
+  "lonsdale",
+  "gordo",
+  "torpedo",
   "binder",
   "filler",
+  "blend",
   "humidor",
   "humidity",
   "pairing",
   "strength",
   "draw",
+  "cut",
+  "light",
+  "ash",
+  "retrohale",
   "smoke",
 ];
 const HUMIDOR_AGENT_TERMS = ["humidor", "humidity", "hygrometer", "temperature", "aging", "reorder", "inventory"];
+const LEX_DIALOG_ACTION_TYPES = new Set(["ElicitIntent", "ElicitSlot", "ConfirmIntent"]);
 const DEFAULT_HUMIDOR_ALERT_PREFERENCES = Object.freeze({
   pushEnabled: false,
   reorderRemindersEnabled: true,
@@ -225,6 +264,12 @@ exports.handler = async function handler(event = {}, context = {}) {
       return response;
     }
 
+    if (isHumidorIotTelemetryEvent(event)) {
+      const response = await handleHumidorIotTelemetry(event, requestId);
+      logCompleted(event, "IOT_HUMIDOR_TELEMETRY", response.statusCode, startedAt, requestId);
+      return response;
+    }
+
     if (isBedrockActionGroupEvent(event)) {
       const response = await handleBedrockActionGroup(event, requestId);
       logCompleted(event, `BEDROCK_ACTION ${event.actionGroup}.${event.function || event.apiPath}`, getActionResponseStatus(response), startedAt, requestId);
@@ -243,6 +288,12 @@ exports.handler = async function handler(event = {}, context = {}) {
 
     if (routeKey === "POST /newsletter/subscribe") {
       const response = await handleNewsletterSubscribe(event, requestId);
+      logCompleted(event, routeKey, response.statusCode, startedAt, requestId);
+      return response;
+    }
+
+    if (routeKey === "POST /support/contact") {
+      const response = await handlePublicSupportContact(event, requestId);
       logCompleted(event, routeKey, response.statusCode, startedAt, requestId);
       return response;
     }
@@ -444,6 +495,7 @@ async function handleHealth(event, requestId) {
       bedrock: process.env.FEATURE_BEDROCK || "pending_agent",
       ses: process.env.FEATURE_SES || "pending_identity",
       newsletterSubscribe: true,
+      publicSupportContact: true,
     },
   });
 }
@@ -476,6 +528,12 @@ async function handleNewsletterSubscribe(event, requestId) {
       body.value.membershipInterest ||
       preferredTier
   );
+  const brandPreferences = normalizeNewsletterBrandPreferences(
+    body.value.brandPreferences || body.value.favoriteBrands || body.value.topBrands
+  );
+  const promotedCigars = normalizeNewsletterPromotedCigars(
+    body.value.promotedCigars || body.value.selectedCigars || body.value.cigarPromotions
+  );
   const signup = {
     email,
     firstName: sanitizeText(body.value.firstName, 80),
@@ -486,12 +544,20 @@ async function handleNewsletterSubscribe(event, requestId) {
     pagePath: sanitizeText(body.value.pagePath || body.value.path, 180),
     wantsMonthlyMembership,
     preferredTier: wantsMonthlyMembership ? preferredTier : null,
+    brandPreferences,
+    promotedCigars,
   };
 
   let persistedSubscriber = null;
   if (shouldPersistDatabaseWrites()) {
     persistedSubscriber = await persistNewsletterSubscriber(event, requestId, signup);
   }
+
+  const brandPreferenceEmail = await maybeSendNewsletterBrandPreferenceEmail(signup, requestId);
+  const preferenceAction = promotedCigars.length ? "send_selected_cigar_promotions" : "collect_brand_preferences";
+  const nextActions = wantsMonthlyMembership
+    ? ["send_newsletter", "send_monthly_membership_info", "invite_to_choose_plan", preferenceAction]
+    : ["send_newsletter", "offer_membership_education", preferenceAction];
 
   return json(200, requestId, {
     subscriber: {
@@ -501,12 +567,508 @@ async function handleNewsletterSubscribe(event, requestId) {
       persistence: persistedSubscriber ? "stored" : getDatabasePersistenceStatus(),
       wantsMonthlyMembership,
       preferredTier: signup.preferredTier,
+      brandPreferences,
+      promotedCigars,
       updatedAt: persistedSubscriber?.updatedAt || null,
+      brandPreferenceEmail,
     },
-    nextActions: wantsMonthlyMembership
-      ? ["send_newsletter", "send_monthly_membership_info", "invite_to_choose_plan"]
-      : ["send_newsletter", "offer_membership_education"],
+    nextActions,
   });
+}
+
+async function maybeSendNewsletterBrandPreferenceEmail(signup, requestId) {
+  if (process.env.FEATURE_SES !== "ready") {
+    return {
+      status: "pending_ses",
+      sesMessageId: null,
+    };
+  }
+
+  try {
+    const emailContent = buildNewsletterFollowupEmailContent(signup, requestId);
+    const sesMessageId = await sendSupportEmail({
+      bodyHtml: emailContent.bodyHtml,
+      bodyText: emailContent.bodyText,
+      fromAddress: getSupportEmailFrom(),
+      replyToAddresses: [getSupportInboundReplyToAddress()],
+      subject: emailContent.subject,
+      toAddresses: [signup.email],
+    });
+
+    return {
+      kind: emailContent.kind,
+      status: "sent",
+      sesMessageId,
+    };
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        level: "warn",
+        event: "newsletter_brand_preference_email_failed",
+        requestId,
+        name: error instanceof Error ? error.name : null,
+        message: error instanceof Error ? error.message : String(error),
+      })
+    );
+
+    return {
+      status: "failed",
+      sesMessageId: null,
+    };
+  }
+}
+
+function buildNewsletterFollowupEmailContent(signup, requestId) {
+  if (Array.isArray(signup.promotedCigars) && signup.promotedCigars.length > 0) {
+    return buildSelectedCigarPromotionEmailContent(signup, requestId);
+  }
+
+  return {
+    kind: "brand_preferences_request",
+    subject: "Tell us your top cigar brands",
+    bodyText: buildNewsletterBrandPreferenceEmailBody(signup, requestId),
+    bodyHtml: buildNewsletterBrandPreferenceEmailHtml(signup, requestId),
+  };
+}
+
+function buildNewsletterBrandPreferenceEmailBody(signup, requestId) {
+  const firstName = sanitizeText(signup.firstName || splitFirstName(signup.fullName), 80);
+  const greeting = firstName ? `Hi ${firstName},` : "Hi there,";
+  const lines = [
+    greeting,
+    "",
+    "Welcome to Yuzu Cigar Club.",
+    "",
+    "To help us promote cigars you actually want to hear about, reply with your top 3-5 cigar brands.",
+    "",
+    "A simple reply is perfect, for example: Padron, Arturo Fuente, Davidoff, Drew Estate, My Father.",
+    "If you have favorite wrappers, strength, vitolas, or brands you never want promoted, include those too.",
+    "",
+    "Yuzu Cigar Club is for adults 21+. We use your reply to personalize Yuzu recommendations and promotional follow-ups.",
+    `Request ID: ${requestId}`,
+  ];
+
+  return sanitizeMultilineText(lines.join("\n"), MAX_EMAIL_BODY_LENGTH);
+}
+
+function buildSelectedCigarPromotionEmailContent(signup, requestId) {
+  const firstName = sanitizeText(signup.firstName || splitFirstName(signup.fullName), 80);
+  const greeting = firstName ? `Hi ${firstName},` : "Hi there,";
+  const brandLabels = formatNewsletterBrandPreferenceLabels(signup.brandPreferences);
+  const brandSummary = brandLabels.length ? brandLabels.join(", ") : "your selected brands";
+  const productLines = signup.promotedCigars.flatMap((cigar, index) => [
+    `${index + 1}. ${cigar.name}`,
+    `Brand: ${cigar.brand}`,
+    cigar.packageLabel ? `Package: ${cigar.packageLabel}` : "",
+    `Public cost: ${formatNewsletterMoney(cigar.nonMemberPrice)}`,
+    `Member cost: ${formatNewsletterMoney(cigar.memberPrice)}`,
+    `View: ${resolveNewsletterEmailUrl(cigar.storeHref)}`,
+    "",
+  ]).filter(Boolean);
+  const bodyText = sanitizeMultilineText(
+    [
+      greeting,
+      "",
+      `Based on ${brandSummary}, here are selected cigar picks with current Yuzu costs.`,
+      "",
+      ...productLines,
+      "Reply with another brand any time and we will tune future newsletters.",
+      "Yuzu Cigar Club is for adults 21+. Pricing can change with inventory, availability, and member status.",
+      `Request ID: ${requestId}`,
+    ].join("\n"),
+    MAX_EMAIL_BODY_LENGTH
+  );
+
+  return {
+    kind: "cigar_cost_promotions",
+    subject: "Your selected Yuzu cigar picks and pricing",
+    bodyText,
+    bodyHtml: buildSelectedCigarPromotionEmailHtml(signup, requestId, brandSummary),
+  };
+}
+
+function buildNewsletterBrandPreferenceEmailHtml(signup, requestId) {
+  const firstName = sanitizeText(signup.firstName || splitFirstName(signup.fullName), 80);
+  const greeting = firstName ? `Hi ${firstName},` : "Hi there,";
+  const logoUrl = resolveNewsletterEmailUrl("/assets/yuzu-logo.png");
+  const html = `
+<!doctype html>
+<html>
+  <body style="margin:0;padding:0;background:#11100d;color:#f8f0df;font-family:Arial,Helvetica,sans-serif;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#11100d;">
+      <tr>
+        <td align="center" style="padding:32px 18px;">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;border:1px solid #4f3b21;background:#18130f;">
+            <tr>
+              <td style="padding:28px 28px 18px;border-bottom:1px solid #4f3b21;">
+                <img src="${escapeHtmlAttribute(logoUrl)}" width="84" alt="Yuzu Cigar Club" style="display:block;margin:0 0 18px;border:0;outline:none;text-decoration:none;">
+                <p style="margin:0 0 10px;color:#d8a84f;font-size:11px;font-weight:700;letter-spacing:0.16em;text-transform:uppercase;">Yuzu Cigar Club</p>
+                <h1 style="margin:0;color:#f8f0df;font-size:32px;line-height:1.1;font-weight:800;">Tell us your top cigar brands</h1>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:28px;color:#d9cfbd;font-size:16px;line-height:1.65;">
+                <p style="margin:0 0 18px;">${escapeHtml(greeting)}</p>
+                <p style="margin:0 0 18px;">Welcome to Yuzu Cigar Club. Reply with your top 3-5 cigar brands and we will tune future newsletters around cigars you actually want to see.</p>
+                <p style="margin:0 0 18px;color:#f8f0df;">Padron, Arturo Fuente, Davidoff, Drew Estate, and My Father are perfect examples.</p>
+                <p style="margin:0;color:#b7aa96;font-size:13px;line-height:1.6;">Yuzu Cigar Club is for adults 21+. Request ID: ${escapeHtml(requestId)}</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+
+  return sanitizeEmailHtml(html);
+}
+
+function buildSelectedCigarPromotionEmailHtml(signup, requestId, brandSummary) {
+  const firstName = sanitizeText(signup.firstName || splitFirstName(signup.fullName), 80);
+  const greeting = firstName ? `Hi ${firstName},` : "Hi there,";
+  const logoUrl = resolveNewsletterEmailUrl("/assets/yuzu-logo.png");
+  const productRows = signup.promotedCigars
+    .map((cigar, index) => buildSelectedCigarPromotionProductHtml(cigar, index))
+    .join("");
+  const html = `
+<!doctype html>
+<html>
+  <body style="margin:0;padding:0;background:#11100d;color:#f8f0df;font-family:Arial,Helvetica,sans-serif;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#11100d;">
+      <tr>
+        <td align="center" style="padding:32px 18px;">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:680px;border:1px solid #4f3b21;background:#18130f;">
+            <tr>
+              <td style="padding:28px 28px 22px;border-bottom:1px solid #4f3b21;background:#1d1711;">
+                <img src="${escapeHtmlAttribute(logoUrl)}" width="88" alt="Yuzu Cigar Club" style="display:block;margin:0 0 18px;border:0;outline:none;text-decoration:none;">
+                <p style="margin:0 0 10px;color:#d8a84f;font-size:11px;font-weight:700;letter-spacing:0.16em;text-transform:uppercase;">Yuzu Cigar Club</p>
+                <h1 style="margin:0;color:#f8f0df;font-size:34px;line-height:1.08;font-weight:800;">Selected cigars for your shelf</h1>
+                <p style="margin:16px 0 0;color:#d9cfbd;font-size:16px;line-height:1.6;">${escapeHtml(greeting)} Based on ${escapeHtml(brandSummary)}, here are current Yuzu picks with public and member pricing.</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:10px 28px 0;">
+                ${productRows}
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:24px 28px 30px;background:#211911;border-top:1px solid #4f3b21;">
+                <p style="margin:0 0 10px;color:#f8f0df;font-size:15px;line-height:1.6;">Reply with another brand any time and we will tune future newsletters.</p>
+                <p style="margin:0;color:#b7aa96;font-size:12px;line-height:1.6;">Yuzu Cigar Club is for adults 21+. Pricing can change with inventory, availability, and member status. Request ID: ${escapeHtml(requestId)}</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+
+  return sanitizeEmailHtml(html);
+}
+
+function buildSelectedCigarPromotionProductHtml(cigar, index) {
+  const productUrl = resolveNewsletterEmailUrl(cigar.storeHref);
+  const imageUrl = resolveNewsletterEmailUrl(cigar.image);
+  const imageCell = imageUrl
+    ? `<td width="128" style="padding:20px 18px 20px 0;vertical-align:top;"><img src="${escapeHtmlAttribute(imageUrl)}" width="118" alt="${escapeHtmlAttribute(cigar.name)}" style="display:block;width:118px;max-width:118px;border:1px solid #4f3b21;background:#11100d;"></td>`
+    : `<td width="128" style="padding:20px 18px 20px 0;vertical-align:top;"><div style="width:118px;height:118px;border:1px solid #4f3b21;background:#211911;color:#d8a84f;font-size:34px;line-height:118px;text-align:center;font-weight:800;">${index + 1}</div></td>`;
+
+  return `
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-bottom:1px solid #352719;">
+                  <tr>
+                    ${imageCell}
+                    <td style="padding:20px 0;vertical-align:top;">
+                      <p style="margin:0 0 6px;color:#d8a84f;font-size:11px;font-weight:700;letter-spacing:0.16em;text-transform:uppercase;">${escapeHtml(cigar.brand)}</p>
+                      <h2 style="margin:0 0 8px;color:#f8f0df;font-size:21px;line-height:1.25;font-weight:800;">${escapeHtml(cigar.name)}</h2>
+                      ${cigar.packageLabel ? `<p style="margin:0 0 14px;color:#b7aa96;font-size:13px;line-height:1.5;">${escapeHtml(cigar.packageLabel)}</p>` : ""}
+                      <table role="presentation" cellspacing="0" cellpadding="0" style="margin:0 0 16px;">
+                        <tr>
+                          <td style="padding:10px 14px;border:1px solid #4f3b21;background:#11100d;">
+                            <p style="margin:0 0 4px;color:#b7aa96;font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">Public cost</p>
+                            <p style="margin:0;color:#f8f0df;font-size:18px;font-weight:800;">${escapeHtml(formatNewsletterMoney(cigar.nonMemberPrice))}</p>
+                          </td>
+                          <td width="10"></td>
+                          <td style="padding:10px 14px;border:1px solid #d8a84f;background:#2b2114;">
+                            <p style="margin:0 0 4px;color:#d8a84f;font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;">Member cost</p>
+                            <p style="margin:0;color:#f8f0df;font-size:18px;font-weight:800;">${escapeHtml(formatNewsletterMoney(cigar.memberPrice))}</p>
+                          </td>
+                        </tr>
+                      </table>
+                      <a href="${escapeHtmlAttribute(productUrl)}" style="display:inline-block;background:#d8a84f;color:#11100d;text-decoration:none;font-size:12px;font-weight:800;letter-spacing:0.14em;text-transform:uppercase;padding:12px 16px;">View cigar</a>
+                    </td>
+                  </tr>
+                </table>`;
+}
+
+function splitFirstName(value) {
+  return sanitizeText(value, 160).split(/\s+/).filter(Boolean)[0] || "";
+}
+
+const NEWSLETTER_BRAND_LABELS = {
+  arturo_fuente: "Arturo Fuente",
+  davidoff: "Davidoff",
+  drew_estate: "Drew Estate",
+  my_father: "My Father",
+  oliva: "Oliva",
+  padron: "Padron",
+  perdomo: "Perdomo",
+  rocky_patel: "Rocky Patel",
+};
+
+const NEWSLETTER_BRAND_ALIASES = {
+  arturo_fuente: "arturo_fuente",
+  arturofuente: "arturo_fuente",
+  davidoff: "davidoff",
+  drew_estate: "drew_estate",
+  drewestate: "drew_estate",
+  my_father: "my_father",
+  myfather: "my_father",
+  oliva: "oliva",
+  padron: "padron",
+  perdomo: "perdomo",
+  rocky_patel: "rocky_patel",
+  rockypatel: "rocky_patel",
+};
+
+function normalizeNewsletterBrandPreferences(value, maxItems = 5) {
+  const candidates = Array.isArray(value) ? value : typeof value === "string" ? value.split(/[,\n;]/) : [];
+  const preferences = [];
+
+  for (const candidate of candidates) {
+    const normalized = NEWSLETTER_BRAND_ALIASES[normalizeNewsletterBrandKey(candidate)];
+    if (normalized && !preferences.includes(normalized)) {
+      preferences.push(normalized);
+    }
+
+    if (preferences.length >= maxItems) {
+      break;
+    }
+  }
+
+  return preferences;
+}
+
+function normalizeNewsletterBrandKey(value) {
+  return sanitizeText(value, 120)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function normalizeNewsletterPromotedCigars(value, maxItems = 4) {
+  const candidates = Array.isArray(value) ? value : [];
+  const promotedCigars = [];
+
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== "object") {
+      continue;
+    }
+
+    const slug = slugify(sanitizeText(candidate.slug, 180));
+    const name = sanitizeText(candidate.name, 180);
+    const brand = sanitizeText(candidate.brand, 80);
+    const nonMemberPrice = normalizeNewsletterMoney(candidate.nonMemberPrice ?? candidate.publicPrice ?? candidate.price);
+    const memberPrice = normalizeNewsletterMoney(candidate.memberPrice) || nonMemberPrice;
+    const storeHref = sanitizeNewsletterRelativeOrAbsoluteUrl(candidate.storeHref || candidate.href, slug ? `/shop/${slug}/` : "");
+    const image = sanitizeNewsletterRelativeOrAbsoluteUrl(candidate.image || candidate.imageUrl, "");
+    const packageLabel = sanitizeText(candidate.packageLabel, 80);
+
+    if (slug && name && brand && storeHref && nonMemberPrice > 0) {
+      promotedCigars.push({
+        slug,
+        name,
+        brand,
+        storeHref,
+        nonMemberPrice,
+        memberPrice,
+        ...(packageLabel ? { packageLabel } : {}),
+        ...(image ? { image } : {}),
+      });
+    }
+
+    if (promotedCigars.length >= maxItems) {
+      break;
+    }
+  }
+
+  return promotedCigars;
+}
+
+function normalizeNewsletterMoney(value) {
+  const amount = Number(String(value ?? "").replace(/[$,]/g, ""));
+  return Number.isFinite(amount) && amount > 0 ? Math.round((amount + Number.EPSILON) * 100) / 100 : 0;
+}
+
+function formatNewsletterMoney(value) {
+  const amount = normalizeNewsletterMoney(value);
+  return amount > 0
+    ? `$${amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : "Ask";
+}
+
+function formatNewsletterBrandPreferenceLabels(value) {
+  return normalizeNewsletterBrandPreferences(value).map((preference) => NEWSLETTER_BRAND_LABELS[preference] || preference);
+}
+
+function sanitizeNewsletterRelativeOrAbsoluteUrl(value, fallback) {
+  const text = sanitizeText(value, 1000);
+  if (/^https?:\/\//i.test(text) || text.startsWith("/")) {
+    return text;
+  }
+
+  return fallback;
+}
+
+function resolveNewsletterEmailUrl(value) {
+  const text = sanitizeNewsletterRelativeOrAbsoluteUrl(value, "");
+  if (!text) {
+    return "";
+  }
+
+  if (/^https?:\/\//i.test(text)) {
+    return text;
+  }
+
+  return `${getNewsletterSiteBaseUrl()}${text.startsWith("/") ? text : `/${text}`}`;
+}
+
+function getNewsletterSiteBaseUrl() {
+  const baseUrl = sanitizeText(process.env.BASE_URL || process.env.NEXT_PUBLIC_BASE_URL || "https://www.yuzucigarclub.com", 240);
+  return (baseUrl || "https://www.yuzucigarclub.com").replace(/\/+$/, "");
+}
+
+function sanitizeEmailHtml(value) {
+  return typeof value === "string" ? value.trim().slice(0, MAX_EMAIL_HTML_LENGTH) : "";
+}
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (character) => {
+    switch (character) {
+      case "&":
+        return "&amp;";
+      case "<":
+        return "&lt;";
+      case ">":
+        return "&gt;";
+      case '"':
+        return "&quot;";
+      case "'":
+        return "&#39;";
+      default:
+        return character;
+    }
+  });
+}
+
+function escapeHtmlAttribute(value) {
+  return escapeHtml(value);
+}
+
+async function handlePublicSupportContact(event, requestId) {
+  const body = parseJsonBody(event);
+  if (body.error) {
+    return body.error;
+  }
+
+  const name = sanitizeText(body.value.name, 160);
+  if (!name) {
+    return json(400, requestId, {
+      error: "missing_contact_name",
+      message: "Send your name with the support request.",
+    });
+  }
+
+  const email = normalizeEmailAddresses(body.value.email, 1)[0];
+  if (!email) {
+    return json(400, requestId, {
+      error: "missing_contact_email",
+      message: "Send a valid email address with the support request.",
+    });
+  }
+
+  const message = sanitizeMultilineText(body.value.message || body.value.body || body.value.text, MAX_SUPPORT_MESSAGE_LENGTH);
+  if (message.length < 10) {
+    return json(400, requestId, {
+      error: "missing_contact_message",
+      message: "Send a support message with at least 10 characters.",
+    });
+  }
+
+  const topic = sanitizeText(body.value.topic, 80) || "General question";
+  const orderNumber = sanitizeText(body.value.orderNumber || body.value.order || body.value.orderId, 80);
+  const pagePath = sanitizeText(body.value.pagePath || body.value.path, 180);
+  const subject = `Yuzu Contact - ${topic}${orderNumber ? ` - ${orderNumber}` : ""}`;
+  const fromAddress = getSupportEmailFrom();
+  const supportRecipient = getSupportContactEmailTo();
+  const bodyText = buildPublicSupportContactEmailBody({
+    email,
+    message,
+    name,
+    orderNumber,
+    pagePath,
+    requestId,
+    topic,
+  });
+  const sesMessageId = await sendSupportEmail({
+    bodyText,
+    fromAddress,
+    replyToAddresses: [email],
+    subject,
+    toAddresses: [supportRecipient],
+  });
+
+  let persistedCase = null;
+  if (shouldPersistDatabaseWrites()) {
+    persistedCase = await persistPublicSupportContact(event, requestId, {
+      bodyText,
+      email,
+      message,
+      name,
+      orderNumber,
+      pagePath,
+      sesMessageId,
+      subject,
+      topic,
+      toAddresses: [supportRecipient],
+    });
+  }
+
+  return json(200, requestId, {
+    contact: {
+      status: "sent",
+      email,
+      persisted: Boolean(persistedCase),
+      persistence: persistedCase ? "stored" : getDatabasePersistenceStatus(),
+      caseId: persistedCase?.caseId || null,
+      caseNumber: persistedCase?.caseNumber || null,
+      messageId: persistedCase?.emailMessageId || null,
+      sesMessageId,
+    },
+    nextActions: ["support_team_review", "reply_to_customer_email"],
+  });
+}
+
+function buildPublicSupportContactEmailBody(details) {
+  const lines = [
+    "New Yuzu Cigar Club support contact form submission.",
+    "",
+    `Name: ${details.name}`,
+    `Email: ${details.email}`,
+    `Topic: ${details.topic}`,
+    details.orderNumber ? `Order: ${details.orderNumber}` : "",
+    details.pagePath ? `Page: ${details.pagePath}` : "",
+    `Request ID: ${details.requestId}`,
+    "",
+    "Message:",
+    details.message,
+  ].filter(Boolean);
+
+  return sanitizeMultilineText(lines.join("\n"), MAX_EMAIL_BODY_LENGTH);
 }
 
 async function handleCommerceCheckoutSession(event, requestId) {
@@ -564,7 +1126,8 @@ async function handleCommerceCheckoutSession(event, requestId) {
     });
   }
 
-  const ageVerification = resolveCheckoutAgeVerification(body.value.compliance?.ageVerificationToken, commerceEnv);
+  const checkoutAgeIdentity = buildCheckoutAgeIdentityBinding(customer, shippingAddress);
+  const ageVerification = resolveCheckoutAgeVerification(body.value.compliance?.ageVerificationToken, commerceEnv, checkoutAgeIdentity);
   if (!ageVerification.ok) {
     return json(400, requestId, {
       error: ageVerification.error || "age_verification_required",
@@ -611,8 +1174,12 @@ async function handleCommerceCheckoutSession(event, requestId) {
     statusToken,
     shipping: {
       methodId: compliance.shipping.methodId,
+      title: compliance.shipping.title,
       carrier: compliance.shipping.carrier,
       adultSignatureRequired: compliance.shipping.adultSignatureRequired,
+      deliveryAmountCents: compliance.shipping.deliveryAmountCents,
+      handlingFeeCents: compliance.shipping.handlingFeeCents,
+      amountCents: compliance.shipping.amountCents,
       address: shippingAddress,
     },
     compliance: {
@@ -653,6 +1220,11 @@ async function handleCommerceAgeVerificationToken(event, requestId) {
     });
   }
 
+  const checkoutAgeIdentity = normalizeCheckoutAgeVerificationIdentity(body.value);
+  if (checkoutAgeIdentity.error) {
+    return json(400, requestId, checkoutAgeIdentity.error);
+  }
+
   const verification = await validateAgeCheckerVerification(uuid, commerceEnv);
   const status = sanitizeText(verification.status, 40).toLowerCase();
 
@@ -675,7 +1247,14 @@ async function handleCommerceAgeVerificationToken(event, requestId) {
     vendor: "AgeChecker.Net",
     vendorTransactionId,
     verifiedAt,
-    ageVerificationToken: createSignedCheckoutAgeToken({ vendorTransactionId, verifiedAt }, commerceEnv),
+    ageVerificationToken: createSignedCheckoutAgeToken(
+      {
+        vendorTransactionId,
+        verifiedAt,
+        identityHash: checkoutAgeIdentity.value.identityHash,
+      },
+      commerceEnv
+    ),
   });
 }
 
@@ -1318,10 +1897,10 @@ async function handleAdminMembers(event, actor, requestId) {
 }
 
 async function handleAdminMemberAccessUpdate(event, actor, requestId) {
-  if (!canUseAdminAgent(actor)) {
+  if (!canAdministerMemberAccess(actor)) {
     return json(403, requestId, {
       error: "admin_forbidden",
-      message: "User access administration requires an admin or concierge operator group.",
+      message: "User access administration requires an admin group.",
     });
   }
 
@@ -2449,8 +3028,40 @@ function formatAdminMoney(value) {
 }
 
 function isAdminGuardrailReply(reply) {
+  return isAgentGuardrailRefusalReply(reply);
+}
+
+function isAgentGuardrailRefusalReply(reply) {
   const normalized = String(reply || "").toLowerCase();
-  return normalized.includes("cannot help with that request") || normalized.includes("concierge operator can review");
+  const tobaccoComparisonRefusal =
+    normalized.includes("facilitate") &&
+    normalized.includes("tobacco product") &&
+    (normalized.includes("can't provide information") ||
+      normalized.includes("cannot provide information") ||
+      normalized.includes("can not provide information"));
+  const tobaccoHealthRefusal =
+    normalized.includes("tobacco") &&
+    (normalized.includes("misleading") ||
+      normalized.includes("health effects") ||
+      normalized.includes("can't give") ||
+      normalized.includes("cannot give") ||
+      normalized.includes("can not give")) &&
+    (normalized.includes("can't provide information") ||
+      normalized.includes("cannot provide information") ||
+      normalized.includes("can not provide information") ||
+      normalized.includes("can't give") ||
+      normalized.includes("cannot give") ||
+      normalized.includes("can not give"));
+  const generatedTextBlocked =
+    normalized.includes("generated text has been blocked") || normalized.includes("blocked by our content filters");
+
+  return (
+    normalized.includes("cannot help with that request") ||
+    normalized.includes("concierge operator can review") ||
+    generatedTextBlocked ||
+    tobaccoComparisonRefusal ||
+    tobaccoHealthRefusal
+  );
 }
 
 async function buildAdminQueueSummarySnapshot(queue) {
@@ -3021,7 +3632,11 @@ async function handleConciergeVoice(event, actor, requestId) {
 async function buildConciergeExchange(event, actor, requestId, details) {
   const message = details.message;
   const requestedAgent = sanitizeText(details.requestedAgent, 80);
-  const agent = chooseAgent(message, requestedAgent);
+  const conversationId = sanitizeText(details.conversationId, 120) || `conv_${crypto.randomUUID()}`;
+  const lexRouting = shouldUseLexRouterForRequest(requestedAgent)
+    ? await maybeRecognizeLexRoute(actor, message, conversationId)
+    : null;
+  const agent = chooseAgent(message, requestedAgent, lexRouting);
   if (agent === "YCCAdminAgent" && !canUseAdminAgent(actor)) {
     return {
       error: json(403, requestId, {
@@ -3049,7 +3664,54 @@ async function buildConciergeExchange(event, actor, requestId, details) {
     };
   }
 
-  const conversationId = sanitizeText(details.conversationId, 120) || `conv_${crypto.randomUUID()}`;
+  if (shouldHonorLexDialogTurn(agent, message, lexRouting)) {
+    const reply = buildLexDialogReply(lexRouting);
+    let persistedConversation = null;
+    const bedrock = {
+      status: "lex_dialog",
+      reply,
+    };
+
+    if (shouldPersistDatabaseWrites()) {
+      persistedConversation = await persistConciergeChat(event, actor, requestId, {
+        agent,
+        bedrock,
+        conversationId,
+        lex: lexRouting,
+        message,
+        reply,
+        source: details.source,
+      });
+    }
+
+    return {
+      payload: {
+        conversation: {
+          id: persistedConversation?.conversationId || conversationId,
+          persisted: Boolean(persistedConversation),
+          persistence: persistedConversation ? "stored" : getDatabasePersistenceStatus(),
+        },
+        agent,
+        ai: {
+          status: bedrock.status,
+        },
+        lex: buildLexResponsePayload(lexRouting),
+        reply,
+        input: {
+          accepted: true,
+          length: message.length,
+        },
+        guardrails: {
+          ageRestricted: true,
+          piiMinimized: true,
+          tobaccoHealthClaims: "not_provided",
+          humanHandoff: agent === "YCCSupportAgent" || messageNeedsHumanSupport(message),
+        },
+        nextActions: getLexDialogNextActions(agent, lexRouting),
+      },
+    };
+  }
+
   let adminSummary = null;
   let bedrock;
 
@@ -3075,6 +3737,10 @@ async function buildConciergeExchange(event, actor, requestId, details) {
         status: "admin_queue_summary_fallback",
         reply: adminSummary.reply,
       };
+    } else if (bedrock.status === "bedrock_agent_runtime" && isAgentGuardrailRefusalReply(bedrock.reply)) {
+      bedrock = await maybeBuildBedrockReply(agent, actor, message, conversationId, {
+        forceDirectRuntime: true,
+      });
     }
   }
 
@@ -3086,6 +3752,7 @@ async function buildConciergeExchange(event, actor, requestId, details) {
       agent,
       bedrock,
       conversationId,
+      lex: lexRouting,
       message,
       reply,
       source: details.source,
@@ -3103,6 +3770,7 @@ async function buildConciergeExchange(event, actor, requestId, details) {
       ai: {
         status: bedrock.status,
       },
+      ...(lexRouting ? { lex: buildLexResponsePayload(lexRouting) } : {}),
       reply,
       input: {
         accepted: true,
@@ -3276,10 +3944,19 @@ async function handleSesReceipt(event, requestId) {
     const fromAddress = normalizeEmailAddresses(commonHeaders.from || parsed.from, 1)[0] || "unknown@example.invalid";
     const toAddresses = normalizeEmailAddresses(commonHeaders.to || receipt.recipients || parsed.to, 25);
     const bodyText = sanitizeMultilineText(parsed.bodyText, MAX_EMAIL_BODY_LENGTH);
+    const agentDraft = await buildInboundSupportEmailAgentDraft({
+      bodyText,
+      fromAddress,
+      rawKey,
+      sesMessageId,
+      subject,
+      toAddresses,
+    });
 
     let persisted = null;
     if (shouldPersistDatabaseWrites()) {
       persisted = await persistInboundSupportEmail(event, requestId, {
+        agentDraft,
         bodyText,
         fromAddress,
         receivedAt: sanitizeText(mail.timestamp, 80) || new Date().toISOString(),
@@ -3300,6 +3977,13 @@ async function handleSesReceipt(event, requestId) {
       status: persisted ? "stored" : getDatabasePersistenceStatus(),
       subject,
       to: toAddresses,
+      agent: {
+        name: agentDraft.agent,
+        status: agentDraft.status,
+        handled: true,
+        draftPersisted: Boolean(persisted?.agentDraftMessageId),
+        draftMessageId: persisted?.agentDraftMessageId || null,
+      },
     });
   }
 
@@ -3310,6 +3994,88 @@ async function handleSesReceipt(event, requestId) {
     },
     processed: stored.length,
   });
+}
+
+async function buildInboundSupportEmailAgentDraft(details) {
+  const actor = buildInboundSupportEmailAgentActor(details.fromAddress);
+  const prompt = buildInboundSupportEmailAgentPrompt(details);
+  const conversationId = `ses_${sanitizeText(details.sesMessageId, 120) || crypto.randomUUID()}`;
+  const bedrock = await maybeBuildBedrockReply("YCCSupportAgent", actor, prompt, conversationId, {
+    maxTokens: 900,
+    temperature: 0.25,
+    topP: 0.85,
+  });
+  const reply = sanitizeMultilineText(bedrock.reply || buildInboundSupportEmailFallbackDraft(details), MAX_EMAIL_BODY_LENGTH);
+
+  return {
+    agent: "YCCSupportAgent",
+    agentAliasId: bedrock.agentAliasId || null,
+    agentId: bedrock.agentId || null,
+    handled: true,
+    modelId: bedrock.modelId || null,
+    reply,
+    status: bedrock.status,
+  };
+}
+
+function buildInboundSupportEmailAgentActor(fromAddress) {
+  const email = normalizeEmailAddresses(fromAddress, 1)[0] || "";
+  return {
+    sub: "ses-inbound",
+    email,
+    emailVerified: false,
+    name: email ? "Inbound email sender" : "SES inbound email",
+    username: "ses-inbound",
+    groups: [],
+    membershipTier: null,
+    memberStatus: null,
+  };
+}
+
+function buildInboundSupportEmailAgentPrompt(details) {
+  const toAddresses = normalizeEmailAddresses(details.toAddresses, 25);
+  const bodyText = sanitizeMultilineText(details.bodyText, 3500) || "(No message body was available in the raw email.)";
+
+  return sanitizeMultilineText(
+    [
+      "Inbound SES support email.",
+      "Task: YCCSupportAgent must triage this inbound email and draft an operator-review-only support reply. Do not send email, do not collect payment data, and call out anything that needs a human concierge check.",
+      `SES message ID: ${sanitizeText(details.sesMessageId, 240)}`,
+      `Raw S3 key: ${sanitizeText(details.rawKey, 500)}`,
+      `From: ${normalizeEmailAddresses(details.fromAddress, 1)[0] || "unknown"}`,
+      `To: ${toAddresses.join(", ") || "unknown"}`,
+      `Subject: ${sanitizeText(details.subject, 240) || "Yuzu Cigar Club support email"}`,
+      "Body:",
+      bodyText,
+    ].join("\n"),
+    5000
+  );
+}
+
+function buildInboundSupportEmailFallbackDraft(details) {
+  const subject = sanitizeText(details.subject, 180) || "Yuzu Cigar Club support email";
+  const bodyPreview = sanitizeMultilineText(details.bodyText, 700) || "No body text was available in the raw inbound email.";
+
+  return sanitizeMultilineText(
+    [
+      `Operator review draft for inbound support email: ${subject}`,
+      "",
+      "Hi there,",
+      "",
+      "Thanks for reaching out to Yuzu Cigar Club. We received your note and a concierge operator is reviewing the order, membership, account, or humidor context tied to your request.",
+      "",
+      "We will follow up with the next useful step after that review.",
+      "",
+      "Best,",
+      "Yuzu Cigar Club Support",
+      "",
+      "Operator notes:",
+      `- Inbound preview: ${bodyPreview}`,
+      `- SES message ID: ${sanitizeText(details.sesMessageId, 240) || "unavailable"}`,
+      `- Raw S3 key: ${sanitizeText(details.rawKey, 500) || "unavailable"}`,
+    ].join("\n"),
+    MAX_EMAIL_BODY_LENGTH
+  );
 }
 
 async function handleBedrockActionGroup(event, requestId) {
@@ -3593,13 +4359,15 @@ async function handleHumidorItemUpdate(event, actor, requestId) {
     Object.prototype.hasOwnProperty.call(body.value, "humidorLocation") ||
     Object.prototype.hasOwnProperty.call(body.value, "location");
   const hasAgingStartDateUpdate = Object.prototype.hasOwnProperty.call(body.value, "agingStartDate");
+  const hasTrayUpdate = Object.prototype.hasOwnProperty.call(body.value, "tray");
   const humidorLocation = sanitizeText(body.value.humidorLocation || body.value.location, MAX_FIELD_LENGTH);
   const agingStartDate = hasAgingStartDateUpdate ? normalizeDateOnly(body.value.agingStartDate) : undefined;
+  const tray = hasTrayUpdate ? sanitizeText(body.value.tray, MAX_FIELD_LENGTH) : undefined;
 
-  if (!hasHumidorLocationUpdate && !hasAgingStartDateUpdate) {
+  if (!hasHumidorLocationUpdate && !hasAgingStartDateUpdate && !hasTrayUpdate) {
     return json(400, requestId, {
       error: "missing_humidor_item_update",
-      message: "Send a humidor location or aging start date before updating this saved cigar.",
+      message: "Send a humidor location, tray, or aging start date before updating this saved cigar.",
     });
   }
 
@@ -3644,6 +4412,8 @@ async function handleHumidorItemUpdate(event, actor, requestId) {
       itemId,
       memberId: member.id,
       requestId,
+      tray,
+      updateTray: hasTrayUpdate,
     });
     const updatedItem = mapHumidorItemRow(updatedRow);
 
@@ -3659,10 +4429,12 @@ async function handleHumidorItemUpdate(event, actor, requestId) {
         agingStartDate: updatedItem.agingStartDate,
         humidorLocation: updatedItem.humidorLocation,
         itemId,
+        tray: updatedItem.tray,
       },
       beforeData: {
         agingStartDate: currentItem.agingStartDate,
         humidorLocation: currentItem.humidorLocation,
+        tray: currentItem.tray,
       },
       memberId: member.id,
       requestId,
@@ -3886,6 +4658,7 @@ async function handleHumidorCigarIdentification(event, actor, requestId) {
       status: ai.status,
       modelId: ai.modelId,
       stopReason: ai.stopReason || null,
+      rekognition: summarizeRekognitionForClient(ai.rekognition),
     },
     input: {
       accepted: true,
@@ -3955,7 +4728,7 @@ async function handleHumidorAlertDispatch(event, requestId) {
           and mp.preferences->'pushSubscription' is not null
           and hi.reorder_reminder is not null
           and hi.reorder_reminder::date <= $1::date
-          and coalesce(hi.metadata#>>'{${HUMIDOR_REORDER_REMINDER_DISPATCH_MARKER}}', '') <> $1
+          and coalesce(hi.metadata#>>'{${HUMIDOR_REORDER_REMINDER_DISPATCH_MARKER}}', '') <> $1::text
           and hi.archived_at is null
         order by m.id, hi.reorder_reminder asc
       `,
@@ -4245,14 +5018,261 @@ function buildHumidorClimateAlertPayload(group) {
   };
 }
 
+async function handleHumidorIotTelemetry(event, requestId) {
+  const telemetry = normalizeHumidorIotTelemetry(event);
+  if (telemetry.error) {
+    return json(400, requestId, telemetry.error);
+  }
+
+  if (!shouldPersistDatabaseWrites()) {
+    return json(202, requestId, {
+      status: "accepted",
+      message: "Humidor IoT telemetry was accepted, but schema-backed writes are not enabled.",
+      persistence: getDatabasePersistenceStatus(),
+      summary: {
+        thingName: telemetry.value.thingName,
+        matchedProfiles: 0,
+        updatedDevices: 0,
+      },
+    });
+  }
+
+  const actor = buildHumidorIotActor();
+  return withDatabaseClient("ycc-api-humidor-iot-telemetry", async (client) => {
+    const profileResult = await client.query(
+      `
+        select
+          id,
+          member_id,
+          preferences
+        from public.member_profiles
+        where jsonb_array_length(coalesce(preferences->'pairedDevices', '[]'::jsonb)) > 0
+        order by updated_at desc
+      `
+    );
+    let matchedProfiles = 0;
+    let updatedDevices = 0;
+
+    for (const row of profileResult.rows) {
+      const preferences = normalizeHumidorAlertPreferences(row.preferences);
+      const update = applyHumidorTelemetryToPairedDevices(preferences, telemetry.value);
+
+      if (update.updatedDevices === 0) {
+        continue;
+      }
+
+      matchedProfiles += 1;
+      updatedDevices += update.updatedDevices;
+      const memberId = String(row.member_id || "");
+      const savedPreferences = await upsertHumidorAlertPreferences(client, actor, requestId, memberId, update.preferences);
+
+      await insertAuditLog(client, event, {
+        action: "humidor_device.telemetry_ingested",
+        actor,
+        afterData: {
+          thingName: telemetry.value.thingName,
+          topic: telemetry.value.topic,
+          humidity: telemetry.value.humidity,
+          temperature: telemetry.value.temperature,
+          batteryPercent: telemetry.value.batteryPercent,
+          recordedAt: telemetry.value.recordedAt,
+          updatedDevices: update.updatedDeviceIds,
+          pairedDeviceCount: savedPreferences.pairedDevices.length,
+        },
+        memberId,
+        requestId,
+        resourceId: telemetry.value.thingName,
+        resourceType: "humidor_iot_thing",
+      });
+    }
+
+    return json(200, requestId, {
+      status: "ingested",
+      persistence: "stored",
+      summary: {
+        thingName: telemetry.value.thingName,
+        matchedProfiles,
+        updatedDevices,
+      },
+    });
+  });
+}
+
+function isHumidorIotTelemetryEvent(event) {
+  if (!event || typeof event !== "object") {
+    return false;
+  }
+
+  if (event.source === HUMIDOR_IOT_TELEMETRY_SOURCE) {
+    return true;
+  }
+
+  const topic = sanitizeText(event.topic || event.mqttTopic || event.topicName, 240);
+  return topic.startsWith(HUMIDOR_IOT_TELEMETRY_TOPIC_PREFIX) && topic.endsWith(HUMIDOR_IOT_TELEMETRY_TOPIC_SUFFIX);
+}
+
+function normalizeHumidorIotTelemetry(event) {
+  const topic = sanitizeText(event.topic || event.mqttTopic || event.topicName, 240);
+  const topicThingName = parseHumidorIotThingNameFromTopic(topic);
+  const thingName = sanitizeText(
+    topicThingName || firstDefined(event.thingName, event.thing, event.clientId, event.clientID),
+    128
+  );
+  const identifier = sanitizeText(firstDefined(event.identifier, event.deviceIdentifier, event.device_id), 180);
+  const deviceId = sanitizeText(firstDefined(event.deviceId, event.id), 220);
+  const humidity = normalizeIotNumber(firstDefined(event.humidity, event.relativeHumidity, event.humidityPercent, event.rh));
+  const temperature = normalizeIotNumber(firstDefined(event.temperature, event.temperatureF, event.tempF));
+  const batteryPercent = normalizeIotOptionalPercent(firstDefined(event.batteryPercent, event.battery, event.batteryLevel));
+  const recordedAt = normalizeIotTimestamp(firstDefined(event.recordedAt, event.timestamp, event.ts, event.receivedAt));
+
+  if (!thingName) {
+    return {
+      error: {
+        error: "missing_iot_thing_name",
+        message: "Humidor IoT telemetry must include a thingName or a ycc/humidor/{thingName}/telemetry topic.",
+      },
+    };
+  }
+
+  if (!isValidHumidorDeviceClimate(humidity, temperature)) {
+    return {
+      error: {
+        error: "invalid_iot_climate_reading",
+        message: "Humidor IoT telemetry must include humidity from 1-100 and temperature from 40-95 F.",
+      },
+    };
+  }
+
+  return {
+    value: {
+      topic,
+      thingName,
+      identifier,
+      deviceId,
+      humidity,
+      temperature,
+      batteryPercent,
+      recordedAt,
+    },
+  };
+}
+
+function parseHumidorIotThingNameFromTopic(topic) {
+  const normalized = sanitizeText(topic, 240);
+  if (!normalized.startsWith(HUMIDOR_IOT_TELEMETRY_TOPIC_PREFIX) || !normalized.endsWith(HUMIDOR_IOT_TELEMETRY_TOPIC_SUFFIX)) {
+    return "";
+  }
+
+  return normalized.slice(HUMIDOR_IOT_TELEMETRY_TOPIC_PREFIX.length, -HUMIDOR_IOT_TELEMETRY_TOPIC_SUFFIX.length);
+}
+
+function normalizeIotNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.round(number * 10) / 10 : NaN;
+}
+
+function normalizeIotOptionalPercent(value) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+
+  const number = normalizeIotNumber(value);
+  return Number.isFinite(number) && number >= 0 && number <= 100 ? number : null;
+}
+
+function normalizeIotTimestamp(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const milliseconds = value < 1000000000000 ? value * 1000 : value;
+    const date = new Date(milliseconds);
+    return Number.isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString();
+  }
+
+  const text = sanitizeText(value, 80);
+  if (text) {
+    const numeric = Number(text);
+    if (Number.isFinite(numeric)) {
+      return normalizeIotTimestamp(numeric);
+    }
+
+    const date = new Date(text);
+    if (!Number.isNaN(date.getTime())) {
+      return date.toISOString();
+    }
+  }
+
+  return new Date().toISOString();
+}
+
+function applyHumidorTelemetryToPairedDevices(preferences, telemetry) {
+  const authoritativeThingName = sanitizeText(telemetry.thingName, 220).toLowerCase();
+  const updatedDeviceIds = [];
+  const pairedDevices = preferences.pairedDevices.map((device) => {
+    const deviceCandidates = normalizeHumidorTelemetryDeviceCandidates(device);
+    const matches = Boolean(authoritativeThingName && deviceCandidates.has(authoritativeThingName));
+
+    if (!matches) {
+      return device;
+    }
+
+    updatedDeviceIds.push(device.id);
+    return {
+      ...device,
+      humidity: telemetry.humidity,
+      temperature: telemetry.temperature,
+      status: "Connected",
+      lastSyncedAt: telemetry.recordedAt,
+    };
+  });
+
+  return {
+    preferences: {
+      ...preferences,
+      pairedDevices,
+    },
+    updatedDevices: updatedDeviceIds.length,
+    updatedDeviceIds,
+  };
+}
+
+function normalizeHumidorTelemetryDeviceCandidates(value) {
+  const candidates = new Set();
+  for (const candidate of [value.thingName, value.identifier, value.deviceIdentifier, value.deviceId, value.id]) {
+    const normalized = sanitizeText(candidate, 220).toLowerCase();
+    if (normalized) {
+      candidates.add(normalized);
+    }
+  }
+
+  return candidates;
+}
+
+function buildHumidorIotActor() {
+  return {
+    sub: HUMIDOR_IOT_ACTOR_SUB,
+    email: "",
+    name: "YCC Humidor IoT",
+    groups: [],
+    username: HUMIDOR_IOT_ACTOR_SUB,
+    role: "system",
+    membership: {
+      tier: null,
+      status: null,
+      role: "system",
+      groups: [],
+    },
+  };
+}
+
 async function maybeIdentifyCigarFromImage(actor, image, notes) {
   const modelId = process.env.BEDROCK_VISION_MODEL_ID || process.env.BEDROCK_MODEL_ID || DEFAULT_BEDROCK_MODEL_ID;
+  const rekognition = await maybeDetectCigarImageText(image);
 
   if (process.env.FEATURE_BEDROCK !== "runtime_ready") {
     return {
       status: process.env.FEATURE_BEDROCK || "pending_agent",
       modelId,
       stopReason: null,
+      rekognition,
       suggestion: buildFallbackCigarSuggestion(notes, "low"),
     };
   }
@@ -4266,7 +5286,7 @@ async function maybeIdentifyCigarFromImage(actor, image, notes) {
         {
           role: "user",
           content: [
-            { text: buildCigarImageIdentificationPrompt(notes) },
+            { text: buildCigarImageIdentificationPrompt(notes, rekognition) },
             {
               image: {
                 format: image.format,
@@ -4292,6 +5312,7 @@ async function maybeIdentifyCigarFromImage(actor, image, notes) {
       status: reply ? "bedrock_runtime" : "fallback",
       modelId,
       stopReason: result.stopReason || null,
+      rekognition,
       suggestion: parseCigarIdentificationReply(reply, notes),
     };
   } catch (error) {
@@ -4309,6 +5330,7 @@ async function maybeIdentifyCigarFromImage(actor, image, notes) {
       status: "fallback",
       modelId,
       stopReason: null,
+      rekognition,
       suggestion: buildFallbackCigarSuggestion(notes, "low"),
     };
   }
@@ -4323,7 +5345,8 @@ async function maybeEnrichHumidorItem(item, requestedFields, actor, requestId) {
           buildHumidorEnrichmentRetrievalQuery(item, requestedFields)
         )
       : null;
-  const prompt = buildHumidorEnrichmentPrompt(item, requestedFields);
+  const browserSearch = buildHumidorEnrichmentBrowserSearchPlan(item, requestedFields);
+  const prompt = buildHumidorEnrichmentPrompt(item, requestedFields, browserSearch);
   const bedrock = await maybeBuildBedrockReply("YCCHumidorAgent", actor, prompt, conversationId, {
     knowledgeBaseRetrieval,
     maxTokens: 1400,
@@ -4332,6 +5355,7 @@ async function maybeEnrichHumidorItem(item, requestedFields, actor, requestId) {
 
   return {
     ...bedrock,
+    browserSearch,
     suggestion: parseHumidorEnrichmentReply(bedrock.reply || "", item, requestedFields),
   };
 }
@@ -4355,7 +5379,57 @@ function buildHumidorEnrichmentRetrievalQuery(item, requestedFields) {
   ].join("\n");
 }
 
-function buildHumidorEnrichmentPrompt(item, requestedFields) {
+function buildHumidorEnrichmentBrowserSearchPlan(item, requestedFields) {
+  const identityParts = [
+    item.name,
+    item.brand && item.brand !== item.name ? item.brand : "",
+    item.line && item.line !== item.name ? item.line : "",
+    item.vitola,
+  ]
+    .map((value) => sanitizeText(value, MAX_FIELD_LENGTH))
+    .filter(Boolean);
+  const uniqueIdentityParts = identityParts.filter((value, index, list) => {
+    const normalized = value.toLowerCase();
+    return list.findIndex((candidate) => candidate.toLowerCase() === normalized) === index;
+  });
+  const fieldTerms = [];
+
+  if (requestedFields.includes("info")) {
+    fieldTerms.push("wrapper", "origin", "strength");
+  }
+
+  if (requestedFields.includes("msrp")) {
+    fieldTerms.push("MSRP");
+  }
+
+  if (requestedFields.includes("image")) {
+    fieldTerms.push("product image");
+  }
+
+  return {
+    status: "requested",
+    query: [...uniqueIdentityParts, "cigar", ...fieldTerms].filter(Boolean).join(" "),
+    missingFields: requestedFields,
+    sourcePolicy: [
+      "Prefer official brand or manufacturer pages.",
+      "Use reputable cigar retailers or cigar reference pages when official pages do not expose every requested field.",
+      "Every returned value needs a source URL in evidence or sourceSummary.",
+    ],
+  };
+}
+
+function buildHumidorEnrichmentPrompt(item, requestedFields, browserSearch = null) {
+  const browserSearchBlock = browserSearch?.query
+    ? [
+        "Browser search required before needsReview:",
+        `Search query: ${browserSearch.query}`,
+        "Use an available browser/search tool to inspect public manufacturer, retailer, or reputable cigar reference pages for the missing groups.",
+        "Do not invent values from search snippets alone; inspect result pages before using facts.",
+        "Every non-null filled field must be supported by evidence with a source URL or by details.sourceSummary naming the source URL.",
+        "If browser search is unavailable or no reliable source is found, leave the field empty and add the search query plus source gap to needsReview.",
+      ]
+    : [];
+
   return [
     "Locate missing reference data for this member humidor cigar and return only strict JSON.",
     "Do not overwrite member-entered values. Fill only the requested missing groups: info, image, and/or MSRP.",
@@ -4364,6 +5438,7 @@ function buildHumidorEnrichmentPrompt(item, requestedFields) {
     "details must be an object with this schema exactly: manufacturer, country, region, factory, size, length, ringGauge, shape, wrapper, binder, filler, blend, flavorProfile, body, finish, msrp, releaseStatus, packaging, sourceSummary, imageObservations.",
     "Set estimatedValue to the best per-cigar retail/MSRP number when known, otherwise null. Set estimatedValueCurrency to USD unless another currency is explicit.",
     "Evidence and needsReview must be arrays of short strings. Avoid health, cessation, medical, safety, or underage tobacco claims.",
+    ...browserSearchBlock,
     `Requested missing groups: ${requestedFields.join(", ")}`,
     `Current humidor item: ${JSON.stringify({
       name: item.name,
@@ -5902,6 +6977,9 @@ async function persistInboundSupportEmail(event, requestId, details) {
   return withDatabaseTransaction("ycc-api-support-email-inbound", async (client) => {
     const supportCase = await insertInboundSupportCase(client, requestId, details);
     const emailMessage = await insertInboundSupportEmailMessage(client, supportCase.id, requestId, details);
+    const agentDraftMessage = details.agentDraft?.reply
+      ? await insertInboundSupportAgentDraftMessage(client, supportCase.id, requestId, details)
+      : null;
 
     await insertAuditLog(client, event, {
       action: "support.email.received",
@@ -5909,8 +6987,74 @@ async function persistInboundSupportEmail(event, requestId, details) {
       afterData: {
         caseNumber: supportCase.caseNumber,
         emailMessageId: emailMessage.id,
+        agentDraftMessageId: agentDraftMessage?.id || null,
+        agentStatus: details.agentDraft?.status || null,
         sesMessageId: details.sesMessageId,
         s3RawKey: details.rawKey,
+      },
+      memberId: null,
+      requestId,
+      resourceId: supportCase.id,
+      resourceType: "support_case",
+    });
+
+    return {
+      caseId: supportCase.id,
+      caseNumber: supportCase.caseNumber,
+      emailMessageId: emailMessage.id,
+      agentDraftMessageId: agentDraftMessage?.id || null,
+    };
+  });
+}
+
+async function persistPublicSupportContact(event, requestId, details) {
+  const actor = {
+    sub: "support-contact-public",
+    email: details.email,
+    emailVerified: false,
+    name: details.name || details.email,
+    username: "support-contact-public",
+    groups: [],
+    membershipTier: null,
+    memberStatus: null,
+  };
+  const receivedAt = new Date().toISOString();
+
+  return withDatabaseTransaction("ycc-api-public-support-contact", async (client) => {
+    const supportCase = await insertInboundSupportCase(client, requestId, {
+      bodyText: details.bodyText,
+      fromAddress: details.email,
+      message: details.message,
+      name: details.name,
+      orderNumber: details.orderNumber,
+      pagePath: details.pagePath,
+      rawKey: null,
+      sesMessageId: details.sesMessageId,
+      source: "contact_form",
+      subject: details.subject,
+      toAddresses: details.toAddresses,
+      topic: details.topic,
+    });
+    const emailMessage = await insertInboundSupportEmailMessage(client, supportCase.id, requestId, {
+      bodyText: details.bodyText,
+      fromAddress: details.email,
+      rawKey: null,
+      receivedAt,
+      sesMessageId: details.sesMessageId,
+      source: "contact_form",
+      subject: details.subject,
+      toAddresses: details.toAddresses,
+    });
+
+    await insertAuditLog(client, event, {
+      action: "support.contact.sent",
+      actor,
+      afterData: {
+        caseNumber: supportCase.caseNumber,
+        email: details.email,
+        emailMessageId: emailMessage.id,
+        sesMessageId: details.sesMessageId,
+        topic: details.topic,
       },
       memberId: null,
       requestId,
@@ -5946,6 +7090,8 @@ async function persistNewsletterSubscriber(event, requestId, details) {
       actor,
       afterData: {
         email: details.email,
+        brandPreferences: details.brandPreferences,
+        promotedCigarCount: details.promotedCigars.length,
         preferredTier: details.preferredTier,
         source: details.source,
         wantsMonthlyMembership: details.wantsMonthlyMembership,
@@ -6142,9 +7288,10 @@ async function updateHumidorItemLocation(client, details) {
       /* humidor_item_location_update */
       update public.humidor_items
       set humidor_location = coalesce($3, humidor_location),
-          aging_start_date = coalesce($4::date, aging_start_date),
-          actor_id = $5,
-          request_id = $6,
+          tray = case when $4::boolean then $5 else tray end,
+          aging_start_date = coalesce($6::date, aging_start_date),
+          actor_id = $7,
+          request_id = $8,
           updated_at = now()
       where id = $1 and member_id = $2 and archived_at is null
       returning
@@ -6172,6 +7319,8 @@ async function updateHumidorItemLocation(client, details) {
       details.itemId,
       details.memberId,
       nullable(details.humidorLocation),
+      Boolean(details.updateTray),
+      details.tray ?? "",
       nullable(details.agingStartDate),
       details.actor.sub,
       details.requestId,
@@ -6750,7 +7899,9 @@ async function upsertNewsletterSubscriber(client, requestId, details) {
       details.wantsMonthlyMembership,
       details.preferredTier,
       JSON.stringify({
+        brandPreferences: details.brandPreferences,
         capturePath: details.pagePath || null,
+        promotedCigars: details.promotedCigars,
         source: details.source,
       }),
       requestId,
@@ -6943,8 +8094,13 @@ async function insertInboundSupportCase(client, requestId, details) {
       getSupportPriority(details.bodyText),
       JSON.stringify({
         fromAddress: details.fromAddress,
+        name: details.name || null,
+        orderNumber: details.orderNumber || null,
+        pagePath: details.pagePath || null,
         s3RawKey: details.rawKey,
         sesMessageId: details.sesMessageId,
+        source: details.source || "ses",
+        topic: details.topic || null,
         toAddresses: details.toAddresses,
       }),
       requestId,
@@ -6990,10 +8146,10 @@ async function insertInboundSupportEmailMessage(client, supportCaseId, requestId
       details.subject,
       details.bodyText,
       details.sesMessageId,
-      details.rawKey,
-      details.receivedAt,
+      details.rawKey || null,
+      details.receivedAt || new Date().toISOString(),
       JSON.stringify({
-        source: "ses",
+        source: details.source || "ses",
       }),
       requestId,
     ]
@@ -7007,6 +8163,60 @@ async function insertInboundSupportEmailMessage(client, supportCaseId, requestId
   return {
     id: row.id,
   };
+}
+
+async function insertInboundSupportAgentDraftMessage(client, supportCaseId, requestId, details) {
+  const replySubject = buildSupportReplySubject(details.subject);
+  const result = await client.query(
+    `
+      insert into public.support_email_messages (
+        support_case_id,
+        direction,
+        from_address,
+        to_addresses,
+        subject,
+        body_text,
+        draft_status,
+        metadata,
+        actor_id,
+        request_id
+      )
+      values ($1, 'outbound', $2, $3, $4, $5, 'draft', $6::jsonb, 'ses-inbound-agent', $7)
+      returning id
+    `,
+    [
+      supportCaseId,
+      getSupportEmailFrom(),
+      normalizeEmailAddresses(details.fromAddress, 1),
+      replySubject,
+      details.agentDraft.reply,
+      JSON.stringify({
+        source: "ses_inbound_agent",
+        agent: details.agentDraft.agent,
+        aiStatus: details.agentDraft.status,
+        agentId: details.agentDraft.agentId,
+        agentAliasId: details.agentDraft.agentAliasId,
+        modelId: details.agentDraft.modelId,
+        inboundSesMessageId: details.sesMessageId,
+        s3RawKey: details.rawKey,
+      }),
+      requestId,
+    ]
+  );
+
+  const row = result.rows[0];
+  if (!row) {
+    throw new Error("Inbound support agent draft insert did not return a row.");
+  }
+
+  return {
+    id: row.id,
+  };
+}
+
+function buildSupportReplySubject(subject) {
+  const cleaned = sanitizeText(subject, 180) || "Yuzu Cigar Club support email";
+  return /^re:/i.test(cleaned) ? cleaned : `Re: ${cleaned}`;
 }
 
 async function insertAuditLog(client, event, details) {
@@ -7107,7 +8317,56 @@ function normalizeCheckoutShippingAddress(value) {
   };
 }
 
-function resolveCheckoutAgeVerification(rawToken, env = process.env) {
+function normalizeCheckoutAgeVerificationIdentity(value) {
+  const identitySource = value?.identity && typeof value.identity === "object" ? value.identity : value || {};
+  const customer = normalizeCheckoutCustomer(identitySource.customer);
+  const shippingAddress = normalizeCheckoutShippingAddress(identitySource.shippingAddress || identitySource.shipping);
+
+  if (!customer.email || !shippingAddress.address1 || !shippingAddress.city || !shippingAddress.state || !shippingAddress.postalCode) {
+    return {
+      error: {
+        error: "age_verification_identity_required",
+        message: "Checkout identity details are required before signing age verification for checkout.",
+      },
+    };
+  }
+
+  const identity = buildCheckoutAgeIdentityBinding(customer, shippingAddress);
+  return {
+    value: {
+      identity,
+      identityHash: createCheckoutAgeIdentityHash(identity),
+    },
+  };
+}
+
+function buildCheckoutAgeIdentityBinding(customer, shippingAddress) {
+  return {
+    email: normalizeEmailAddresses(customer?.email, 1)[0] || "",
+    phone: normalizeCheckoutAgeIdentityText(customer?.phone, 40),
+    fullName: normalizeCheckoutAgeIdentityText(customer?.fullName || customer?.name, 160).toLowerCase(),
+    address1: normalizeCheckoutAgeIdentityText(shippingAddress?.address1 || shippingAddress?.line1, 160).toLowerCase(),
+    address2: normalizeCheckoutAgeIdentityText(shippingAddress?.address2 || shippingAddress?.line2, 160).toLowerCase(),
+    city: normalizeCheckoutAgeIdentityText(shippingAddress?.city, 120).toLowerCase(),
+    state: normalizeCheckoutAgeIdentityText(shippingAddress?.state, 80).toUpperCase(),
+    postalCode: normalizeCheckoutAgeIdentityPostalCode(shippingAddress?.postalCode || shippingAddress?.zip),
+    country: normalizeCheckoutAgeIdentityText(shippingAddress?.country || "US", 2).toUpperCase() || "US",
+  };
+}
+
+function normalizeCheckoutAgeIdentityText(value, maxLength) {
+  return sanitizeText(value, maxLength).replace(/\s+/g, " ").trim();
+}
+
+function normalizeCheckoutAgeIdentityPostalCode(value) {
+  return normalizeCheckoutAgeIdentityText(value, 40).replace(/\s+/g, "").toUpperCase();
+}
+
+function createCheckoutAgeIdentityHash(identity) {
+  return crypto.createHash("sha256").update(JSON.stringify(identity)).digest("base64url");
+}
+
+function resolveCheckoutAgeVerification(rawToken, env = process.env, checkoutIdentity = null) {
   const token = sanitizeText(rawToken, 600);
   if (!token || invalidAgeVerificationTokens.has(token)) {
     return {
@@ -7119,6 +8378,15 @@ function resolveCheckoutAgeVerification(rawToken, env = process.env) {
 
   const signed = parseSignedCheckoutAgeToken(token, env);
   if (signed) {
+    const expectedIdentityHash = checkoutIdentity ? createCheckoutAgeIdentityHash(checkoutIdentity) : "";
+    if (!signed.identityHash || signed.identityHash !== expectedIdentityHash) {
+      return {
+        ok: false,
+        error: "age_verification_identity_mismatch",
+        message: "Verify again after changing checkout identity details.",
+      };
+    }
+
     return {
       ok: true,
       value: {
@@ -7178,10 +8446,15 @@ function normalizeAgeCheckerUuid(value) {
   return /^[A-Za-z0-9_-]{8,160}$/.test(uuid) ? uuid : "";
 }
 
-function createSignedCheckoutAgeToken({ vendorTransactionId, verifiedAt }, env = process.env) {
+function createSignedCheckoutAgeToken({ vendorTransactionId, verifiedAt, identityHash }, env = process.env) {
   const signingSecret = getCheckoutAgeSigningSecret(env);
   if (!signingSecret) {
     throw new Error("AGE_VERIFICATION_SIGNING_SECRET is required to sign checkout age tokens.");
+  }
+
+  const normalizedIdentityHash = sanitizeText(identityHash, 120);
+  if (!/^[A-Za-z0-9_-]{32,}$/.test(normalizedIdentityHash)) {
+    throw new Error("A checkout identity hash is required to sign checkout age tokens.");
   }
 
   const nowSeconds = Math.floor(Date.now() / 1000);
@@ -7190,6 +8463,7 @@ function createSignedCheckoutAgeToken({ vendorTransactionId, verifiedAt }, env =
     iat: nowSeconds,
     exp: nowSeconds + CHECKOUT_AGE_TOKEN_TTL_SECONDS,
     verifiedAt,
+    identityHash: normalizedIdentityHash,
   };
   const payloadSegment = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
   const signedMessage = `${CHECKOUT_AGE_TOKEN_VERSION}.${payloadSegment}`;
@@ -7349,9 +8623,15 @@ function parseSignedCheckoutAgeToken(token, env = process.env) {
   }
 
   const verifiedAt = toValidIsoTimestamp(payload.verifiedAt) || new Date(nowSeconds * 1000).toISOString();
+  const identityHash = sanitizeText(payload.identityHash || payload.checkoutIdentityHash, 120);
+  if (!/^[A-Za-z0-9_-]{32,}$/.test(identityHash)) {
+    return null;
+  }
+
   return {
     vendorTransactionId,
     verifiedAt,
+    identityHash,
   };
 }
 
@@ -8200,6 +9480,14 @@ function getSupportEmailFrom() {
   return normalizeEmailAddresses(process.env.SUPPORT_EMAIL_FROM || DEFAULT_SUPPORT_EMAIL_FROM, 1)[0] || DEFAULT_SUPPORT_EMAIL_FROM;
 }
 
+function getSupportContactEmailTo() {
+  return normalizeEmailAddresses(process.env.SUPPORT_CONTACT_EMAIL_TO || getSupportEmailFrom(), 1)[0] || getSupportEmailFrom();
+}
+
+function getSupportInboundReplyToAddress() {
+  return normalizeEmailAddresses(process.env.SUPPORT_EMAIL_INBOUND_RECIPIENT || getSupportContactEmailTo(), 1)[0] || getSupportEmailFrom();
+}
+
 function getSupportEmailRawBucket() {
   return process.env.SUPPORT_EMAIL_RAW_BUCKET || process.env.S3_APP_BUCKET || "classroom2";
 }
@@ -8970,6 +10258,55 @@ function normalizeHumidorLocationProfile(value) {
   };
 }
 
+function normalizeHumidorProfileLocationKind(value) {
+  return sanitizeText(value, 40).toLowerCase() === "humidor" ? "humidor" : "other";
+}
+
+function normalizeHumidorProfileTextList(value) {
+  const rawValues = Array.isArray(value)
+    ? value
+    : typeof value === "string" && value.trim()
+      ? value.split(/\r?\n|,/)
+      : [];
+  const values = [];
+  const seen = new Set();
+
+  for (const rawValue of rawValues) {
+    const text = sanitizeText(String(rawValue || ""), 120);
+    const key = text.toLowerCase();
+
+    if (!text || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    values.push(text);
+  }
+
+  return values;
+}
+
+function normalizeHumidorProfileLocation(value) {
+  if (typeof value === "string") {
+    const name = sanitizeText(value, 120);
+    return name ? { name, kind: "other", trays: [] } : null;
+  }
+
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const name = sanitizeText(value.name || value.location || value.label, 120);
+  if (!name) {
+    return null;
+  }
+
+  const kind = normalizeHumidorProfileLocationKind(value.kind || value.type || value.locationType);
+  const trays = kind === "humidor" ? normalizeHumidorProfileTextList(value.trays || value.trayNames || value.trayOptions) : [];
+
+  return { name, kind, trays };
+}
+
 function normalizeHumidorProfileLocations(value) {
   const rawLocations = Array.isArray(value)
     ? value
@@ -8977,21 +10314,34 @@ function normalizeHumidorProfileLocations(value) {
       ? value.split(/\r?\n|,/)
       : [];
   const locations = [];
-  const seen = new Set();
+  const locationsByKey = new Map();
 
   for (const rawLocation of rawLocations) {
-    const location = sanitizeText(String(rawLocation || ""), 120);
-    const key = location.toLowerCase();
+    const location = normalizeHumidorProfileLocation(rawLocation);
 
-    if (!location || seen.has(key)) {
+    if (!location) {
       continue;
     }
 
-    seen.add(key);
-    locations.push(location);
+    const key = location.name.toLowerCase();
+    const existing = locationsByKey.get(key);
+
+    if (!existing) {
+      locationsByKey.set(key, location);
+      locations.push(location);
+      continue;
+    }
+
+    if (location.kind === "humidor") {
+      existing.kind = "humidor";
+      existing.trays = normalizeHumidorProfileTextList([...existing.trays, ...location.trays]);
+    }
   }
 
-  return locations;
+  return locations.map((location) => ({
+    ...location,
+    trays: location.kind === "humidor" ? normalizeHumidorProfileTextList(location.trays) : [],
+  }));
 }
 
 function normalizeHumidorPushSubscription(value) {
@@ -9194,7 +10544,7 @@ async function maybeBuildBedrockReply(agent, actor, message, conversationId, opt
     };
   }
 
-  const agentTarget = shouldUseBedrockAgentRuntime(agent) ? resolveBedrockAgentTarget(agent) : null;
+  const agentTarget = options.forceDirectRuntime ? null : shouldUseBedrockAgentRuntime(agent) ? resolveBedrockAgentTarget(agent) : null;
   if (agentTarget) {
     try {
       const { BedrockAgentRuntimeClient, InvokeAgentCommand } = require("@aws-sdk/client-bedrock-agent-runtime");
@@ -9280,7 +10630,10 @@ async function maybeBuildBedrockReply(agent, actor, message, conversationId, opt
         : {}),
     });
     const result = await client.send(command);
-    const reply = extractConverseText(result);
+    let reply = extractConverseText(result);
+    if (agent === "YCCCigarGuide" && shouldUseAdultCigarQuestionFallbackReply(message, reply)) {
+      reply = buildAdultCigarQuestionFallbackReply(message);
+    }
 
     return {
       status: reply ? "bedrock_runtime" : "fallback",
@@ -9305,6 +10658,19 @@ async function maybeBuildBedrockReply(agent, actor, message, conversationId, opt
         message: error instanceof Error ? error.message : String(error),
       })
     );
+
+    if (isCigarGuideQuestion(message)) {
+      return {
+        status: "bedrock_runtime",
+        modelId,
+        knowledgeBaseId,
+        knowledgeBaseStatus: knowledgeBaseRetrieval.status,
+        retrievedContextCount: knowledgeBaseRetrieval.count,
+        guardrailId,
+        guardrailVersion,
+        reply: buildAdultCigarQuestionFallbackReply(message),
+      };
+    }
 
     return {
       status: "fallback",
@@ -9391,25 +10757,34 @@ async function maybeBuildNewsDraftRuntimeReply(actor, prompt) {
 async function sendSupportEmail(details) {
   const { SESv2Client, SendEmailCommand } = require("@aws-sdk/client-sesv2");
   const client = new SESv2Client({ region: process.env.AWS_REGION || "us-east-1" });
+  const body = {
+    Text: {
+      Data: details.bodyText,
+      Charset: "UTF-8",
+    },
+  };
+
+  if (details.bodyHtml) {
+    body.Html = {
+      Data: details.bodyHtml,
+      Charset: "UTF-8",
+    };
+  }
+
   const response = await client.send(
     new SendEmailCommand({
       FromEmailAddress: details.fromAddress,
       Destination: {
         ToAddresses: details.toAddresses,
       },
-      ReplyToAddresses: [details.fromAddress],
+      ReplyToAddresses: normalizeEmailAddresses(details.replyToAddresses || details.fromAddress, 10),
       Content: {
         Simple: {
           Subject: {
             Data: details.subject,
             Charset: "UTF-8",
           },
-          Body: {
-            Text: {
-              Data: details.bodyText,
-              Charset: "UTF-8",
-            },
-          },
+          Body: body,
         },
       },
     })
@@ -9841,20 +11216,20 @@ function buildBedrockAgentInputText(message, retrievedContext = "") {
     ? `\n\nRetrieved YCC knowledge base context:\n${knowledgeContext}\n\nUse this context when it is relevant. If the retrieved context is insufficient, say what needs operator review instead of inventing facts.`
     : "";
 
-  return `Response style: ${CONCIERGE_RESPONSE_STYLE_INSTRUCTION}${contextBlock}\n\nMember message: ${message}`;
+  return `Response style: ${CONCIERGE_RESPONSE_STYLE_INSTRUCTION}\nAdult cigar context: ${ADULT_CIGAR_21_PLUS_CONTEXT_INSTRUCTION}${contextBlock}\n\nMember message: ${message}`;
 }
 
 function buildAgentSystemPrompt(agent, actor, retrievedContext = "") {
   const base =
     "You are part of Yuzu Cigar Club. Only answer for adults in an age-restricted tobacco context. " +
     "Do not make health, cessation, medical, or safety claims. Minimize PII, avoid collecting payment data, and hand off sensitive account issues to a human operator. " +
-    CONCIERGE_RESPONSE_STYLE_INSTRUCTION;
+    `${ADULT_CIGAR_21_PLUS_CONTEXT_INSTRUCTION} ${CONCIERGE_RESPONSE_STYLE_INSTRUCTION}`;
 
   const personas = {
     YCCConcierge:
       "You are YCCConcierge, the warm front-door concierge for membership, account, education, events, support triage, and humidor routing.",
     YCCCigarGuide:
-      "You are YCCCigarGuide, a cigar education specialist. Discuss vitola, wrapper, binder, filler, origin, strength, tasting notes, storage, and pairings without health claims.",
+      "You are YCCCigarGuide, a 21+ adult cigar education specialist. Discuss vitola, wrapper, binder, filler, origin, strength, tasting notes, cutting, lighting, draw, storage, aging, buying, and pairings without health claims.",
     YCCSupportAgent:
       "You are YCCSupportAgent, a support drafting specialist. Summarize the issue, ask for only necessary details, and prepare handoff-ready next steps.",
     YCCHumidorAgent:
@@ -9920,7 +11295,310 @@ function buildConciergeReply(agent, actor) {
   );
 }
 
-function chooseAgent(message, requestedAgent) {
+function isCigarGuideQuestion(message) {
+  const normalizedMessage = String(message || "").toLowerCase();
+  return CIGAR_GUIDE_TERMS.some((term) => normalizedMessage.includes(term));
+}
+
+function shouldUseAdultCigarQuestionFallbackReply(message, reply) {
+  if (!isCigarGuideQuestion(message)) {
+    return false;
+  }
+
+  return isAdultCigarHealthQuestion(message) || isAgentGuardrailRefusalReply(reply) || isAdultWrapperReplyMissingRequestedTerms(message, reply);
+}
+
+function isAdultWrapperReplyMissingRequestedTerms(message, reply) {
+  const normalizedMessage = String(message || "").toLowerCase();
+  const normalizedReply = String(reply || "").toLowerCase();
+  const requestedWrapperTerms = CIGAR_WRAPPER_TERMS.filter((term) => normalizedMessage.includes(term));
+
+  if (requestedWrapperTerms.length === 0) {
+    return false;
+  }
+
+  return requestedWrapperTerms.some((term) => !normalizedReply.includes(term));
+}
+
+function isAdultCigarHealthQuestion(message) {
+  return /\b(safe|safer|safest|safety|healthy|health|risk|risks|cancer|medical|doctor|pregnant|addiction|cessation|quit)\b/.test(
+    String(message || "").toLowerCase()
+  );
+}
+
+function isDisallowedTobaccoAccessQuestion(message) {
+  const normalizedMessage = String(message || "").toLowerCase();
+  const mentionsTobacco = isCigarGuideQuestion(normalizedMessage);
+  const underagePattern =
+    /\b(underage|minor|teen|teenager|kid|child|children|school|fake id|without id|bypass|evade|avoid age|age check bypass|age verification bypass)\b/;
+  const under21AgePattern = /\b(1[0-9]|20)\b.*\b(buy|purchase|order|ship|smoke|use|access|get)\b/;
+
+  return mentionsTobacco && (underagePattern.test(normalizedMessage) || under21AgePattern.test(normalizedMessage));
+}
+
+function buildAdultCigarQuestionFallbackReply(message) {
+  const normalizedMessage = String(message || "").toLowerCase();
+
+  if (isDisallowedTobaccoAccessQuestion(message)) {
+    return "I can help adults 21+ with cigar education, storage, pairings, and product selection, but I cannot help anyone under 21 access tobacco or bypass age verification.";
+  }
+
+  if (isAdultCigarHealthQuestion(normalizedMessage)) {
+    return "For adults 21+, I can discuss cigar flavor, storage, pairings, construction, and etiquette, but I cannot describe cigar use as safe or give medical advice. For health questions, rely on a qualified clinician or public-health source.";
+  }
+
+  if (/\b(pair|pairs|pairing|coffee|espresso|whiskey|bourbon|rum|wine|drink)\b/.test(normalizedMessage)) {
+    return "For adults 21+, pair by matching intensity: Connecticut shade works well with coffee or lighter pours, Cameroon and Habano suit medium-bodied drinks, and Maduro or Broadleaf usually fits espresso, bourbon, rum, or dessert notes.";
+  }
+
+  if (/\b(humidor|humidity|storage|store|age|aging|hygrometer|temperature)\b/.test(normalizedMessage)) {
+    return "For adults 21+, keep cigars stable rather than chasing perfect numbers: roughly 65-72% RH and 64-74 F, with a calibrated hygrometer, steady airflow, and slow adjustments if wrappers feel too dry or too soft.";
+  }
+
+  if (/\b(wrapper|maduro|connecticut|habano|cameroon|sumatra|broadleaf|corojo|candela|rosado)\b/.test(normalizedMessage)) {
+    return "For adults 21+, wrapper is a strong flavor signal: Connecticut tends creamy and mellow, Cameroon often adds cedar and baking spice, Habano can bring pepper and earth, and Maduro or Broadleaf leans cocoa, espresso, and sweetness.";
+  }
+
+  if (/\b(cut|light|draw|ash|retrohale|smoke|smoking)\b/.test(normalizedMessage)) {
+    return "For adults 21+, focus on construction and pace: make a clean shallow cut, toast the foot evenly, take slow draws, let the cigar rest between puffs, and use retrohale sparingly because it intensifies pepper and aroma.";
+  }
+
+  return "For adults 21+, I can answer cigar questions about wrappers, vitolas, blends, strength, flavor notes, storage, aging, cutting, lighting, draw, pairings, and box selection. Share the cigar name or the flavor profile you want and I will narrow it down.";
+}
+
+function shouldUseLexRouterForRequest(requestedAgent) {
+  const normalizedAgent = normalizeAgentKey(requestedAgent);
+  return ["", "auto", "lex", "router", "concierge", "yccconcierge", "yccconciergeagent"].includes(normalizedAgent);
+}
+
+async function maybeRecognizeLexRoute(actor, message, conversationId) {
+  const featureStatus = process.env.FEATURE_LEX_ROUTER || "pending_bot";
+  const config = getLexRouterConfig();
+
+  if (featureStatus !== "ready" || !config) {
+    return null;
+  }
+
+  try {
+    const { LexRuntimeV2Client, RecognizeTextCommand } = require("@aws-sdk/client-lex-runtime-v2");
+    const client = new LexRuntimeV2Client({ region: process.env.AWS_REGION || "us-east-1" });
+    const sessionId = buildLexSessionId(actor, conversationId);
+    const command = new RecognizeTextCommand({
+      botId: config.botId,
+      botAliasId: config.botAliasId,
+      localeId: config.localeId,
+      sessionId,
+      text: message.slice(0, 1024),
+      requestAttributes: compactStringMap({
+        "ycc-source": "concierge",
+        "ycc-conversation-id": conversationId,
+      }),
+      sessionState: {
+        sessionAttributes: compactStringMap({
+          conversationId,
+          memberSub: actor.sub,
+          memberEmail: actor.email,
+          memberName: actor.name,
+          membershipTier: actor.membershipTier,
+          memberStatus: actor.memberStatus,
+          cognitoGroups: actor.groups.join(","),
+        }),
+      },
+    });
+
+    return normalizeLexRoute(await client.send(command), sessionId);
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        level: "warn",
+        event: "lex_router_fallback",
+        name: error instanceof Error ? error.name : null,
+        message: error instanceof Error ? error.message : String(error),
+      })
+    );
+
+    return {
+      status: "unavailable",
+      sessionId: buildLexSessionId(actor, conversationId),
+      intentName: null,
+      confidence: null,
+      dialogActionType: null,
+      slotToElicit: null,
+      slots: {},
+      messages: [],
+    };
+  }
+}
+
+function getLexRouterConfig() {
+  const botId = sanitizeText(process.env.LEX_ROUTER_BOT_ID, 40);
+  const botAliasId = sanitizeText(process.env.LEX_ROUTER_BOT_ALIAS_ID, 40);
+  const localeId = sanitizeText(process.env.LEX_ROUTER_LOCALE_ID, 24) || DEFAULT_LEX_ROUTER_LOCALE_ID;
+
+  if (!botId || !botAliasId) {
+    return null;
+  }
+
+  return { botId, botAliasId, localeId };
+}
+
+function buildLexSessionId(actor, conversationId) {
+  const rawId = sanitizeText(conversationId, 80);
+  const readableId = rawId.replace(/[^0-9a-zA-Z._:-]+/g, "-").replace(/^-+|-+$/g, "");
+  if (readableId) {
+    return `ycc-lex-${readableId}`.slice(0, 100);
+  }
+
+  const seed = `${actor.sub || actor.email || "anonymous"}:${conversationId || "default"}`;
+  return `ycc-lex-${crypto.createHash("sha256").update(seed).digest("hex").slice(0, 32)}`;
+}
+
+function normalizeLexRoute(result, fallbackSessionId) {
+  const interpretation = Array.isArray(result?.interpretations) ? result.interpretations[0] : null;
+  const intent = result?.sessionState?.intent || interpretation?.intent || null;
+  const dialogAction = result?.sessionState?.dialogAction || {};
+  const dialogActionType = sanitizeText(dialogAction.type, 80) || null;
+  const slotToElicit = sanitizeText(dialogAction.slotToElicit, 120) || null;
+  const messages = Array.isArray(result?.messages)
+    ? result.messages
+        .map((message) => sanitizeText(message?.content, 1000))
+        .filter(Boolean)
+    : [];
+  const confidence = Number(interpretation?.nluConfidence?.score);
+
+  return {
+    status: dialogActionType && LEX_DIALOG_ACTION_TYPES.has(dialogActionType) ? "slot_elicitation" : "recognized",
+    sessionId: sanitizeText(result?.sessionId, 100) || fallbackSessionId,
+    intentName: sanitizeText(intent?.name, 120) || null,
+    confidence: Number.isFinite(confidence) ? confidence : null,
+    dialogActionType,
+    slotToElicit,
+    slots: extractLexSlots(intent?.slots),
+    messages,
+  };
+}
+
+function extractLexSlots(slots) {
+  if (!slots || typeof slots !== "object") {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(slots)
+      .map(([key, slot]) => [key, extractLexSlotValue(slot)])
+      .filter(([, value]) => Boolean(value))
+  );
+}
+
+function extractLexSlotValue(slot) {
+  if (!slot || typeof slot !== "object") {
+    return "";
+  }
+
+  const value = slot.value || {};
+  const interpretedValue = sanitizeText(value.interpretedValue || value.originalValue, MAX_FIELD_LENGTH);
+  if (interpretedValue) {
+    return interpretedValue;
+  }
+
+  if (Array.isArray(slot.values)) {
+    return slot.values.map(extractLexSlotValue).filter(Boolean).join(", ");
+  }
+
+  return "";
+}
+
+function shouldReturnLexDialogTurn(lexRouting) {
+  return Boolean(lexRouting && lexRouting.status === "slot_elicitation" && buildLexDialogReply(lexRouting));
+}
+
+function shouldHonorLexDialogTurn(agent, message, lexRouting) {
+  if (!shouldReturnLexDialogTurn(lexRouting)) {
+    return false;
+  }
+
+  if (isCigarGuideQuestion(message) && agent !== "YCCSupportAgent") {
+    return false;
+  }
+
+  const lexAgent = mapLexIntentToAgent(lexRouting?.intentName);
+  return Boolean(lexAgent && lexAgent === agent);
+}
+
+function buildLexDialogReply(lexRouting) {
+  const messageReply = Array.isArray(lexRouting?.messages) ? lexRouting.messages.join("\n").trim() : "";
+  if (messageReply) {
+    return messageReply;
+  }
+
+  if (lexRouting?.slotToElicit) {
+    return `What ${formatLexSlotLabel(lexRouting.slotToElicit)} should I use?`;
+  }
+
+  return "";
+}
+
+function buildLexResponsePayload(lexRouting) {
+  return {
+    status: lexRouting.status,
+    intentName: lexRouting.intentName,
+    confidence: lexRouting.confidence,
+    dialogActionType: lexRouting.dialogActionType,
+    slotToElicit: lexRouting.slotToElicit,
+    slots: lexRouting.slots,
+    sessionId: lexRouting.sessionId,
+  };
+}
+
+function getLexDialogNextActions(agent, lexRouting) {
+  const slotAction = lexRouting?.slotToElicit ? `collect_${lexRouting.slotToElicit}` : "collect_requested_detail";
+  return ["continue_lex_guided_flow", slotAction, agent === "YCCSupportAgent" ? "review_operator_handoffs" : "route_after_slots_ready"];
+}
+
+function formatLexSlotLabel(value) {
+  return String(value || "")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function mapLexIntentToAgent(intentName) {
+  const normalizedIntent = normalizeAgentKey(intentName).replace(/_?intent$/, "");
+  if (!normalizedIntent) {
+    return null;
+  }
+
+  if (normalizedIntent.includes("fallback") || normalizedIntent.includes("unknown")) {
+    return null;
+  }
+
+  if (normalizedIntent.includes("humidor")) {
+    return "YCCHumidorAgent";
+  }
+
+  if (normalizedIntent.includes("support") || normalizedIntent.includes("case") || normalizedIntent.includes("order_help")) {
+    return "YCCSupportAgent";
+  }
+
+  if (normalizedIntent.includes("cigar") || normalizedIntent.includes("wrapper") || normalizedIntent.includes("pairing")) {
+    return "YCCCigarGuide";
+  }
+
+  if (
+    normalizedIntent.includes("concierge") ||
+    normalizedIntent.includes("membership") ||
+    normalizedIntent.includes("account") ||
+    normalizedIntent.includes("event") ||
+    normalizedIntent.includes("education")
+  ) {
+    return "YCCConcierge";
+  }
+
+  return null;
+}
+
+function chooseAgent(message, requestedAgent, lexRouting = null) {
   const normalizedAgent = normalizeAgentKey(requestedAgent);
   if (["admin", "admin_agent", "yccadminagent"].includes(normalizedAgent)) {
     return "YCCAdminAgent";
@@ -9953,13 +11631,18 @@ function chooseAgent(message, requestedAgent) {
     return "YCCSupportAgent";
   }
 
-  const normalizedMessage = message.toLowerCase();
+  const normalizedMessage = String(message || "").toLowerCase();
   if (HUMIDOR_AGENT_TERMS.some((term) => normalizedMessage.includes(term))) {
     return "YCCHumidorAgent";
   }
 
-  if (CIGAR_GUIDE_TERMS.some((term) => normalizedMessage.includes(term))) {
+  if (isCigarGuideQuestion(normalizedMessage)) {
     return "YCCCigarGuide";
+  }
+
+  const lexAgent = mapLexIntentToAgent(lexRouting?.intentName);
+  if (lexAgent) {
+    return lexAgent;
   }
 
   return "YCCConcierge";
@@ -9987,6 +11670,10 @@ function normalizeAgentKey(value) {
 
 function canUseAdminAgent(actor) {
   return actor.groups.some((group) => ["admin", "concierge_operator"].includes(String(group).toLowerCase()));
+}
+
+function canAdministerMemberAccess(actor) {
+  return actor.groups.some((group) => String(group).toLowerCase() === "admin");
 }
 
 function canSendSupportEmail(actor) {
@@ -10241,6 +11928,7 @@ function buildHumidorEnrichmentAiSummary(ai) {
     agentAliasId: ai.agentAliasId,
     knowledgeBaseStatus: ai.knowledgeBaseStatus,
     retrievedContextCount: ai.retrievedContextCount,
+    browserSearch: ai.browserSearch,
     stopReason: ai.stopReason || null,
   };
 }
@@ -10657,7 +12345,118 @@ function buildCigarVisionSystemPrompt(actor) {
   ].join(" ");
 }
 
-function buildCigarImageIdentificationPrompt(notes) {
+async function maybeDetectCigarImageText(image) {
+  const minConfidence = normalizeRekognitionMinTextConfidence(process.env.REKOGNITION_MIN_TEXT_CONFIDENCE);
+  const featureStatus = sanitizeText(process.env.FEATURE_REKOGNITION || "pending_service", 80);
+
+  if (featureStatus !== REKOGNITION_FEATURE_READY_VALUE) {
+    return {
+      status: featureStatus,
+      minConfidence,
+      textLines: [],
+    };
+  }
+
+  if (!REKOGNITION_TEXT_IMAGE_MIME_TYPES.has(image.mimeType)) {
+    return {
+      status: "unsupported_image_type",
+      minConfidence,
+      textLines: [],
+    };
+  }
+
+  try {
+    const { DetectTextCommand, RekognitionClient } = require("@aws-sdk/client-rekognition");
+    const client = new RekognitionClient({ region: process.env.AWS_REGION || "us-east-1" });
+    const result = await client.send(
+      new DetectTextCommand({
+        Image: {
+          Bytes: image.bytes,
+        },
+      })
+    );
+
+    const textLines = normalizeRekognitionTextLines(result.TextDetections, minConfidence);
+    return {
+      status: textLines.length ? "detected_text" : "no_text",
+      minConfidence,
+      textLines,
+    };
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        level: "warn",
+        event: "rekognition_cigar_text_detection_failed",
+        name: error instanceof Error ? error.name : null,
+        message: error instanceof Error ? error.message : String(error),
+      })
+    );
+
+    return {
+      status: "detect_text_failed",
+      minConfidence,
+      textLines: [],
+    };
+  }
+}
+
+function normalizeRekognitionMinTextConfidence(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_REKOGNITION_MIN_TEXT_CONFIDENCE;
+  }
+
+  return Math.min(99, Math.max(1, Math.round(parsed * 10) / 10));
+}
+
+function normalizeRekognitionTextLines(detections, minConfidence) {
+  const lines = [];
+  const seen = new Set();
+
+  for (const detection of Array.isArray(detections) ? detections : []) {
+    const type = sanitizeText(detection?.Type, 20).toUpperCase();
+    if (type !== "LINE") {
+      continue;
+    }
+
+    const text = sanitizeText(detection?.DetectedText, 180);
+    const confidence = Number(detection?.Confidence);
+    const key = text.toLowerCase();
+    if (!text || seen.has(key) || !Number.isFinite(confidence) || confidence < minConfidence) {
+      continue;
+    }
+
+    seen.add(key);
+    lines.push({
+      text,
+      confidence: Math.round(confidence * 10) / 10,
+    });
+
+    if (lines.length >= MAX_REKOGNITION_TEXT_LINES) {
+      break;
+    }
+  }
+
+  return lines;
+}
+
+function summarizeRekognitionForClient(rekognition) {
+  const textLines = Array.isArray(rekognition?.textLines)
+    ? rekognition.textLines.map((line) => ({
+        text: sanitizeText(line.text, 180),
+        confidence: normalizeRekognitionMinTextConfidence(line.confidence),
+      }))
+    : [];
+
+  return {
+    status: sanitizeText(rekognition?.status || "not_run", 80),
+    minConfidence: normalizeRekognitionMinTextConfidence(rekognition?.minConfidence),
+    textCount: textLines.length,
+    textLines,
+  };
+}
+
+function buildCigarImageIdentificationPrompt(notes, rekognition) {
   return [
     "Identify the cigar in this image and return only strict JSON. If the exact cigar is visually identifiable, include generally known reference details; if it is not, leave uncertain fields empty and add review notes.",
     "Use this top-level schema exactly: name, brand, line, vitola, wrapper, origin, strength, quantity, purchaseDate, agingStartDate, productionDate, reorderReminder, humidorLocation, tray, rating, estimatedValue, estimatedValueCurrency, tastingNotes, confidence, evidence, needsReview, details.",
@@ -10667,7 +12466,35 @@ function buildCigarImageIdentificationPrompt(notes) {
     "Evidence, needsReview, details.flavorProfile, and details.imageObservations must be arrays of short strings.",
     "Separate visual evidence from reference knowledge: evidence and imageObservations should describe what is visible; sourceSummary should say which details are inferred from known cigar references.",
     "Explain useful humidor-ready details in tastingNotes, including blend, size, likely flavor profile, aging/storage notes, and any fields the member should confirm. Do not claim certainty when the band or label is unclear.",
+    buildRekognitionPromptEvidence(rekognition),
     notes ? `Member notes: ${notes}` : "No member notes were provided.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function buildRekognitionPromptEvidence(rekognition) {
+  const lines = Array.isArray(rekognition?.textLines) ? rekognition.textLines : [];
+  if (!lines.length) {
+    return "";
+  }
+
+  const formattedLines = lines
+    .map((line) => {
+      const text = sanitizeText(line.text, 180);
+      const confidence = normalizeRekognitionMinTextConfidence(line.confidence);
+      return text ? `- ${text} (${confidence}% confidence)` : "";
+    })
+    .filter(Boolean);
+
+  if (!formattedLines.length) {
+    return "";
+  }
+
+  return [
+    `Amazon Rekognition OCR candidates from cigar band or box text, minimum confidence ${normalizeRekognitionMinTextConfidence(rekognition.minConfidence)}%:`,
+    ...formattedLines,
+    "Use these OCR candidates only as visual evidence. If the OCR conflicts with the image, member notes, or known cigar references, mark the affected fields for review instead of guessing.",
   ].join("\n");
 }
 
@@ -10794,6 +12621,11 @@ function logCigarIdentificationSummary(event, requestId, actor, ai, image, notes
       detailsCoverage: getCigarDetailsCoverage(suggestion.details),
       evidenceCount: Array.isArray(suggestion.evidence) ? suggestion.evidence.length : 0,
       needsReviewCount: Array.isArray(suggestion.needsReview) ? suggestion.needsReview.length : 0,
+      rekognition: {
+        status: ai.rekognition?.status || "not_run",
+        textCount: Array.isArray(ai.rekognition?.textLines) ? ai.rekognition.textLines.length : 0,
+        minConfidence: ai.rekognition?.minConfidence || null,
+      },
       input: {
         imageType: image.mimeType,
         imageBytes: image.bytes.length,

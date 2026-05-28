@@ -19,6 +19,7 @@ Stripe owns payment processing, hosted Checkout, Billing/subscriptions, Products
 - `PATCH /account/me`
 - `POST /content/pages`
 - `POST /concierge/chat`
+- `POST /support/contact`
 - `POST /support/email-draft`
 - `POST /support/email-send`
 - `POST /newsletter/subscribe`
@@ -32,7 +33,7 @@ Stripe owns payment processing, hosted Checkout, Billing/subscriptions, Products
 - `POST /humidor/alerts`
 - `POST /humidor/alerts/dispatch`
 
-`GET /health`, `GET /content/pages`, `GET /news/stories`, and `POST /newsletter/subscribe` are public. All other routes expect API Gateway to provide Cognito JWT claims at `requestContext.authorizer.jwt.claims`; the handler also checks this defensively. `POST /content/pages`, `POST /news/story-drafts`, and `POST /news/stories` additionally require an `admin` or `concierge_operator` group.
+`GET /health`, `GET /content/pages`, `GET /news/stories`, `POST /newsletter/subscribe`, and `POST /support/contact` are public. All other routes expect API Gateway to provide Cognito JWT claims at `requestContext.authorizer.jwt.claims`; the handler also checks this defensively. `POST /content/pages`, `POST /news/story-drafts`, and `POST /news/stories` additionally require an `admin` or `concierge_operator` group.
 
 ## Commerce Routes
 
@@ -170,9 +171,10 @@ When `FEATURE_DB_WRITES=schema_ready`, protected routes write through RDS Proxy 
 - `GET /account/me` upserts the Cognito member row and reads the saved member profile.
 - `PATCH /account/me` persists the Cognito member display name, phone, shipping profile, and audit row.
 - `POST /concierge/chat` stores the member, conversation, user message, assistant reply, and audit row.
+- `POST /support/contact` sends the public contact form to the configured YCC support recipient through SES, stores an inbound support case/email row when DB writes are enabled, and uses the visitor email as Reply-To.
 - `POST /support/email-draft` stores the member, support case, outbound draft email, and audit row.
 - `POST /support/email-send` sends through SES when `FEATURE_SES=ready`, then stores the member, support case, sent email, SES message id, and audit row.
-- `POST /newsletter/subscribe` upserts a public newsletter subscriber, monthly membership interest, preferred tier, source, and audit row.
+- `POST /newsletter/subscribe` upserts a public newsletter subscriber, monthly membership interest, preferred tier, selected cigar brands, matched promoted cigars, source, and audit row. When `FEATURE_SES=ready`, it sends a best-effort subscriber follow-up: selected cigar picks with public/member costs when the signup includes matched cigars, otherwise a brand-preference request; replies go to `SUPPORT_EMAIL_INBOUND_RECIPIENT`.
 - `POST /content/pages` stores published public-page edits and an audit row.
 - `POST /news/story-drafts` creates a review-required YCCNewsAgent story draft from official or operator-verified primary source URLs.
 - `POST /news/stories` stores an operator-approved story in `news_stories` and writes an audit row.
@@ -181,6 +183,7 @@ When `FEATURE_DB_WRITES=schema_ready`, protected routes write through RDS Proxy 
 - `POST /humidor/items` stores the member, humidor item, and audit row after the member confirms the fields.
 - `GET /humidor/alerts` reads stored humidor notification preference settings from `member_profiles.preferences`.
 - `POST /humidor/alerts` writes humidor alert preference settings (including push subscription details) to `member_profiles.preferences` and writes an audit row.
+- AWS IoT Core can invoke the Lambda with `source=ycc.humidor.iot.telemetry` or a `ycc/humidor/{thingName}/telemetry` topic payload. The handler matches `{thingName}` or `deviceId`/`identifier` to saved `pairedDevices`, updates humidity, temperature, status, and `lastSyncedAt` in `member_profiles.preferences`, and writes a `humidor_device.telemetry_ingested` audit row.
 - `POST /humidor/alerts/dispatch` sends reorder reminder pushes for due items after checking `HUMIDOR_ALERT_DISPATCH_SECRET`, writes `humidorReorderReminderDispatchedOn` into item metadata for sent items, and disables invalid push subscriptions when web-push returns 404/410.
 - `POST /concierge/voice` accepts a short member voice message, uses Amazon Transcribe for speech-to-text when `FEATURE_CONCIERGE_VOICE=ready`, routes the transcript through the same concierge exchange, and uses Amazon Polly for spoken replies.
 - Stripe Checkout and subscription webhooks write order/subscription rows and backfill the canonical Stripe Customer ID onto `members.stripe_customer_id` when the event email matches a member.
@@ -191,6 +194,32 @@ If schema writes are not enabled, the same routes keep returning the contract re
 
 - `HUMIDOR_ALERT_DISPATCH_SECRET` authorizes `POST /humidor/alerts/dispatch` calls.
 - `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, and `VAPID_SUBJECT` are required for web-push VAPID signing.
+- The static storefront build must set `NEXT_PUBLIC_VAPID_PUBLIC_KEY` to the same value as Lambda's `VAPID_PUBLIC_KEY`; otherwise browsers cannot create deliverable mobile push subscriptions.
+- A scheduled dispatcher can invoke the live Lambda alias with `routeKey=POST /humidor/alerts/dispatch` and the dispatch secret header so due reorder and climate alerts are evaluated without a browser session.
+
+## Humidor AWS IoT
+
+Run `scripts/setup-ycc-humidor-iot.ps1` after packaging/publishing a Lambda version to create or update:
+
+- IoT policy `YccHumidorDeviceTelemetryPolicy`
+- Thing type `YccHumidorDevice`
+- Topic rule `YccHumidorTelemetryToLambda`
+- Lambda invoke permission scoped to the IoT rule
+
+Pass `-SampleThingName <thing-name> -ProvisionSampleCertificate` to create a sample Thing certificate and store the generated certificate/private key files under the gitignored `secure/humidor-iot/<thing-name>/` directory. Do not copy those private keys into source control, tickets, logs, or chat.
+
+Devices should connect with an IoT Thing certificate and publish JSON telemetry to `ycc/humidor/{thingName}/telemetry`, for example:
+
+```json
+{
+  "humidity": 68.4,
+  "temperature": 70.2,
+  "batteryPercent": 94,
+  "recordedAt": "2026-05-27T15:00:00.000Z"
+}
+```
+
+The member pairing identifier in `pairedDevices` should equal the IoT Thing name unless a payload supplies a matching `deviceId` or `identifier`.
 
 ## Schema Migrations
 
@@ -209,6 +238,8 @@ Direct Lambda migration invokes are guarded and intended for operator use from t
 
 ## AI Runtime
 
+When `FEATURE_LEX_ROUTER=ready`, `POST /concierge/chat` first calls Amazon Lex V2 `RecognizeText` using `LEX_ROUTER_BOT_ID`, `LEX_ROUTER_BOT_ALIAS_ID`, and `LEX_ROUTER_LOCALE_ID` to detect intent and collect required slots. If Lex returns a guided prompt such as `ElicitSlot`, the API returns that prompt without invoking Bedrock. Once Lex has enough context, Lambda maps the recognized intent to the existing YCC agent layer. If Lex is not configured or unavailable, the handler falls back to the local keyword router.
+
 When `FEATURE_BEDROCK=runtime_ready`, `POST /concierge/chat` invokes Bedrock for the selected YCC agent. Cigar-guide requests use direct Bedrock Runtime with the shared knowledge base. Other specialist agents can still use published Bedrock Agent Runtime aliases when they need action groups. The route passes authenticated member session attributes into those agent calls so Lambda action groups can safely persist support drafts and humidor updates.
 
 - `YCCConcierge` for general member routing.
@@ -221,6 +252,8 @@ When `FEATURE_BEDROCK=runtime_ready`, `POST /concierge/chat` invokes Bedrock for
 The live agents share Knowledge Base `48GFMCLSTG` and action group `YCCOperations`. Agent aliases are rebuilt on guardrail version `8`; direct Runtime guardrails are enabled when the serving Lambda version has `BEDROCK_ENABLE_GUARDRAILS=1`. `YCCAdminAgent` and `YCCNewsAgent` require a Cognito `admin` or `concierge_operator` group claim.
 
 If Agent Runtime fails, the route logs the fallback and tries direct Bedrock Runtime `Converse` with `BEDROCK_MODEL_ID`. If that also fails, it returns the scaffolded assistant contract rather than failing the member request.
+
+`POST /humidor/identify-cigar` powers the AI Cigar Adder. When `FEATURE_REKOGNITION=detect_text_ready`, Lambda first runs Amazon Rekognition `DetectText` against member-uploaded PNG/JPEG bytes, filters line detections by `REKOGNITION_MIN_TEXT_CONFIDENCE`, and passes those OCR candidates into the Bedrock Nova Vision prompt as visual evidence. Rekognition failures, unsupported GIF/WebP images, or disabled feature flags degrade back to the existing Bedrock-only flow, and the route still requires member confirmation before saving anything to the humidor.
 
 ## Concierge Voice
 
@@ -235,7 +268,7 @@ Server-only settings:
 
 ## SES Support Email
 
-`POST /support/email-send` is restricted to Cognito `admin` and `concierge_operator` groups. SES receipt events are also accepted directly from the active receipt rule set; the handler reads raw email from `SUPPORT_EMAIL_RAW_BUCKET` and `SUPPORT_EMAIL_RAW_PREFIX`, then persists inbound support cases and email messages.
+`POST /newsletter/subscribe` sends subscriber-facing follow-up only when `FEATURE_SES=ready`; while SES production access is pending, the signup still succeeds and reports the follow-up as pending. The selected-cigar promotion email includes text and branded HTML bodies so clients can render product images, public costs, member costs, and shop links while still preserving a plain-text fallback. `POST /support/contact` is public but only sends to the configured YCC support recipient (`SUPPORT_CONTACT_EMAIL_TO`, falling back to `SUPPORT_EMAIL_FROM`) and sets Reply-To to the visitor. `POST /support/email-send` is restricted to Cognito `admin` and `concierge_operator` groups. SES receipt events are also accepted directly from the active receipt rule set; the handler reads raw email from `SUPPORT_EMAIL_RAW_BUCKET` and `SUPPORT_EMAIL_RAW_PREFIX`, routes every inbound email through `YCCSupportAgent`, then persists the inbound support case, received email, and an operator-review outbound draft.
 
 ## Bedrock Action Group
 

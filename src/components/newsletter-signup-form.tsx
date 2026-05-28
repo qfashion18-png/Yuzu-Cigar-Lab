@@ -9,7 +9,9 @@ import { Button } from "@/components/ui/button";
 import {
   buildNewsletterSignupPayload,
   createLocalNewsletterStore,
+  newsletterBrandOptions,
   syncNewsletterSignup,
+  type NewsletterBrandPreference,
   type NewsletterSignupPayload,
 } from "@/lib/newsletter-signup";
 import { cn } from "@/lib/utils";
@@ -51,9 +53,20 @@ export function NewsletterSignupForm({
   const [phone, setPhone] = useState("");
   const [wantsMonthlyMembership, setWantsMonthlyMembership] = useState(defaultMonthlyInterest);
   const [preferredTier, setPreferredTier] = useState("sensei");
+  const [brandPreferences, setBrandPreferences] = useState<NewsletterBrandPreference[]>([]);
   const [consent, setConsent] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [status, setStatus] = useState<SignupStatus>({ kind: "idle", message: "" });
+
+  function toggleBrandPreference(value: NewsletterBrandPreference) {
+    setBrandPreferences((current) => {
+      if (current.includes(value)) {
+        return current.filter((item) => item !== value);
+      }
+
+      return current.length >= 5 ? current : [...current, value];
+    });
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -68,24 +81,31 @@ export function NewsletterSignupForm({
         phone,
         wantsMonthlyMembership,
         preferredTier: wantsMonthlyMembership ? preferredTier : undefined,
+        brandPreferences,
         source,
         consent,
         pagePath: typeof window !== "undefined" ? window.location.pathname : undefined,
       });
       const syncResult = await syncNewsletterSignup(payload);
       const store = createLocalNewsletterStore(window.localStorage);
+      let successMessage = "You are on the newsletter list. Watch for journal highlights and early drop notes.";
+      if (brandPreferences.length) {
+        successMessage = "You are on the newsletter list. Watch for selected cigar picks with public and member pricing.";
+      } else if (wantsMonthlyMembership) {
+        successMessage = "You are on the newsletter list. We saved your monthly membership interest for follow-up.";
+      }
+
       store.save(payload, syncResult.synced ? "synced" : "sync_pending");
       setStatus({
         kind: "success",
         synced: syncResult.synced,
-        message: wantsMonthlyMembership
-          ? "You are on the newsletter list. We saved your monthly membership interest for follow-up."
-          : "You are on the newsletter list. Watch for journal highlights and early drop notes.",
+        message: successMessage,
       });
       setEmail("");
       setFirstName("");
       setLastName("");
       setPhone("");
+      setBrandPreferences([]);
       onSuccess?.(payload);
     } catch (error) {
       setStatus({
@@ -130,6 +150,12 @@ export function NewsletterSignupForm({
           />
           <span>Send monthly membership info too.</span>
         </label>
+        <BrandPreferenceFieldset
+          compact
+          id={`${formId}-compact-brands`}
+          selected={brandPreferences}
+          onToggle={toggleBrandPreference}
+        />
         <p
           className={cn(
             "min-h-5 text-xs font-bold uppercase tracking-[0.12em]",
@@ -181,6 +207,11 @@ export function NewsletterSignupForm({
         autoComplete="tel"
         placeholder="Optional"
       />
+      <BrandPreferenceFieldset
+        id={`${formId}-brands`}
+        selected={brandPreferences}
+        onToggle={toggleBrandPreference}
+      />
       <label className="flex items-start gap-3 border border-yuzu-line/70 bg-yuzu-night/55 p-4 text-sm leading-6 text-yuzu-muted">
         <input
           checked={wantsMonthlyMembership}
@@ -222,7 +253,7 @@ export function NewsletterSignupForm({
         disabled={submitting}
         type="submit"
       >
-        {submitting ? "Saving" : "Join the Newsletter"}
+        {submitting ? "Saving" : brandPreferences.length ? "Send cigar picks and pricing" : "Join the Newsletter"}
         {status.kind === "success" ? <CheckCircle2 data-icon="inline-end" /> : <MailCheck data-icon="inline-end" />}
       </Button>
       <div className="min-h-16" aria-live="polite">
@@ -245,6 +276,54 @@ export function NewsletterSignupForm({
         )}
       </div>
     </form>
+  );
+}
+
+function BrandPreferenceFieldset({
+  id,
+  selected,
+  onToggle,
+  compact = false,
+}: {
+  id: string;
+  selected: NewsletterBrandPreference[];
+  onToggle: (value: NewsletterBrandPreference) => void;
+  compact?: boolean;
+}) {
+  return (
+    <fieldset className={cn("grid gap-3", compact && "gap-2")}>
+      <legend className="text-xs font-black uppercase tracking-[0.16em] text-yuzu-gold">
+        Favorite cigar brands
+      </legend>
+      <div className={cn("grid gap-2 sm:grid-cols-2", compact && "grid-cols-2 sm:grid-cols-2 xl:grid-cols-1")}>
+        {newsletterBrandOptions.map((option) => {
+          const checked = selected.includes(option.value);
+          const disabled = !checked && selected.length >= 5;
+
+          return (
+            <label
+              key={option.value}
+              className={cn(
+                "flex min-h-11 items-center gap-2 border border-yuzu-line/70 bg-yuzu-night/55 px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-yuzu-muted transition",
+                checked && "border-yuzu-gold bg-yuzu-gold/10 text-yuzu-cream",
+                disabled && "opacity-50"
+              )}
+              htmlFor={`${id}-${option.value}`}
+            >
+              <input
+                id={`${id}-${option.value}`}
+                checked={checked}
+                className="size-4 shrink-0 accent-yuzu-gold"
+                disabled={disabled}
+                onChange={() => onToggle(option.value)}
+                type="checkbox"
+              />
+              <span className="min-w-0">{option.label}</span>
+            </label>
+          );
+        })}
+      </div>
+    </fieldset>
   );
 }
 

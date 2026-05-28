@@ -7,6 +7,7 @@ import { ReferenceImage } from "@/components/reference-image";
 import Link from "@/components/static-link";
 import { Button } from "@/components/ui/button";
 import { events, getEventBySlug } from "@/lib/data";
+import { buildBreadcrumbJsonLd, buildEventJsonLd, buildPageMetadata, jsonLdScriptProps } from "@/lib/seo";
 
 type EventDetailPageProps = {
   params: Promise<{ slug: string }>;
@@ -28,19 +29,14 @@ export async function generateMetadata({ params }: EventDetailPageProps): Promis
     };
   }
 
-  return {
+  return buildPageMetadata({
     title: `${event.title} | Yuzu Cigar Club Events`,
     description: event.deck,
-    alternates: {
-      canonical: `/events/${event.slug}/`,
-    },
-    openGraph: {
-      title: `${event.title} | Yuzu Cigar Club Events`,
-      description: event.deck,
-      url: `/events/${event.slug}/`,
-      images: [event.image],
-    },
-  };
+    path: `/events/${event.slug}/`,
+    image: event.image,
+    imageAlt: `${event.title} event setting`,
+    keywords: [event.title, "cigar event", event.location, event.access],
+  });
 }
 
 export default async function EventDetailPage({ params }: EventDetailPageProps) {
@@ -52,9 +48,17 @@ export default async function EventDetailPage({ params }: EventDetailPageProps) 
   }
 
   const reservationKey = `yuzu-event-rsvp-${event.slug}`;
+  const eventJsonLd = buildEventJsonLd(event);
+  const breadcrumbJsonLd = buildBreadcrumbJsonLd([
+    { name: "Home", path: "/" },
+    { name: "Events", path: "/events/" },
+    { name: event.title, path: `/events/${event.slug}/` },
+  ]);
 
   return (
     <div className="mx-auto flex max-w-[1520px] flex-col gap-8 px-5 py-8 lg:px-10">
+      <script {...jsonLdScriptProps(eventJsonLd)} />
+      <script {...jsonLdScriptProps(breadcrumbJsonLd)} />
       <Link href="/events" className="inline-flex w-fit items-center gap-2 text-xs font-bold uppercase tracking-[0.2em] text-yuzu-muted transition hover:text-yuzu-gold">
         <ArrowLeft className="size-4" />
         Back to events

@@ -28,6 +28,10 @@ const completeEnv = {
   NEXT_PUBLIC_REQUIRE_LIVE_AUTH: "true",
   NEXT_PUBLIC_ENABLE_BACKUP_ADMIN: "false",
   NEXT_PUBLIC_ADMIN_APP_URL: "https://admin.yuzucigarclub.com",
+  NEXT_PUBLIC_VAPID_PUBLIC_KEY: "vapid-public-key",
+  VAPID_PUBLIC_KEY: "vapid-public-key",
+  VAPID_PRIVATE_KEY: "vapid-private-key",
+  VAPID_SUBJECT: "mailto:alerts@yuzucigarclub.com",
   STRIPE_TOBACCO_APPROVAL_CONFIRMED: "true",
   STRIPE_SECRET_KEY: fakeLiveStripeSecret,
   STRIPE_WEBHOOK_SECRET: fakeWebhookSecret,
@@ -87,6 +91,45 @@ test("go-live readiness passes when storefront, commerce, compliance, QA, and AW
     checks.filter((check) => check.status === "fail"),
     [],
   );
+});
+
+test("go-live readiness requires mobile push VAPID settings", () => {
+  const checks = assessLaunchReadiness(
+    {
+      ...completeEnv,
+      NEXT_PUBLIC_VAPID_PUBLIC_KEY: "",
+      VAPID_PUBLIC_KEY: "",
+      VAPID_PRIVATE_KEY: "",
+      VAPID_SUBJECT: "",
+    },
+    { strictExternal: true },
+  );
+  const failedIds = checks.filter((check) => check.status === "fail").map((check) => check.id);
+
+  assert.deepEqual(failedIds.sort(), [
+    "next-public-vapid-public-key-configured",
+    "vapid-public-key-configured",
+    "vapid-private-key-configured",
+    "vapid-subject-configured",
+    "vapid-public-key-match",
+  ].sort());
+});
+
+test("go-live readiness requires matching browser and server VAPID public keys", () => {
+  const checks = assessLaunchReadiness(
+    {
+      ...completeEnv,
+      NEXT_PUBLIC_VAPID_PUBLIC_KEY: "browser-public-key",
+      VAPID_PUBLIC_KEY: "server-public-key",
+      VAPID_PRIVATE_KEY: "private-key",
+      VAPID_SUBJECT: "mailto:alerts@yuzucigarclub.com",
+    },
+    { strictExternal: true },
+  );
+
+  const matchCheck = checks.find((check) => check.id === "vapid-public-key-match");
+  assert.ok(matchCheck, "VAPID public key parity check should run");
+  assert.equal(matchCheck.status, "fail");
 });
 
 test("commerce provider secret marks tax unconfirmed unless the live provider is ready", () => {

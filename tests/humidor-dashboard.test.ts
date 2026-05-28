@@ -80,38 +80,81 @@ test("add locations tab saves, displays, and edits member humidor locations", ()
   assert.ok(source.includes('if (activeSection === "locations")'), "active section router should handle Add Locations");
   assert.ok(source.includes("return renderLocations();"), "Add Locations should render its own section");
   assert.ok(locationsSection.includes("Add Locations"), "locations section should have an Add Locations title");
+  assert.equal(locationsSection.includes("humidor name and default location"), false, "anonymous Add Locations copy should not mention removed profile fields");
+  assert.ok(locationsSection.includes("saved locations and trays"), "anonymous Add Locations copy should point members to saved locations");
   assert.ok(locationsSection.includes("renderHumidorLocationProfile()"), "locations section should reuse the saved profile form");
   assert.ok(settingsSection.includes("renderHumidorLocationProfile()"), "settings should reuse the same saved profile form");
-  assert.ok(profileSection.includes("Humidor Location Profile"), "shared profile form should keep the saved humidor/location fields");
+  assert.equal(profileSection.includes("Humidor name"), false, "Add Locations should not render a separate humidor name field");
+  assert.equal(profileSection.includes("Default location"), false, "Add Locations should derive the default from saved locations");
+  assert.ok(source.includes("function getPrimaryHumidorProfileLocationName"), "dashboard should derive the primary location from saved profile rows");
   assert.ok(profileSection.includes("handleSaveHumidorLocationProfile"), "shared profile form should save through the existing profile handler");
   assert.ok(source.includes("locations: []"), "humidor profiles should keep saved member-added locations");
+  assert.ok(source.includes('type HumidorProfileLocationKind = "humidor" | "other"'), "saved locations should distinguish humidors from other tracked places");
+  assert.ok(source.includes("type HumidorProfileLocation = {"), "saved locations should use structured profile entries");
+  assert.ok(source.includes("trays: string[];"), "humidor locations should keep tray names");
   assert.ok(source.includes("function normalizeHumidorProfileLocations"), "saved locations should be normalized before storing");
   assert.ok(source.includes("handleAddHumidorProfileLocation"), "Add Locations should add a saved profile location");
   assert.ok(source.includes("handleEditHumidorProfileLocation"), "saved profile locations should be editable");
+  assert.ok(source.includes("handleEditHumidorProfileLocationTrays"), "humidor tray lists should be editable per saved location");
   assert.ok(source.includes("handleRemoveHumidorProfileLocation"), "saved profile locations should be removable");
   assert.ok(profileSection.includes("Saved Locations"), "saved locations should be visible in the Add Locations profile form");
+  assert.ok(profileSection.includes("Location type"), "Add Locations should let members mark a row as humidor or other storage");
+  assert.ok(profileSection.includes("Tray names"), "Add Locations should capture tray names for humidor rows");
   assert.ok(profileSection.includes('aria-label="New humidor location"'), "Add Locations should expose a new-location input");
+  assert.ok(profileSection.includes('aria-label="New humidor tray names"'), "Add Locations should expose a tray input for humidor rows");
   assert.ok(profileSection.includes("humidorLocationProfile.locations.map"), "saved locations should render from persisted profile state");
-  assert.ok(profileSection.includes('aria-label={`Edit saved location ${index + 1}`}'), "saved locations should be editable from the list");
+  assert.ok(profileSection.includes('aria-label={`Edit saved location ${index + 1}`}'), "saved location names should be editable from the list");
+  assert.ok(profileSection.includes('aria-label={`Edit type for saved location ${index + 1}`}'), "saved location types should be editable from the list");
+  assert.ok(profileSection.includes('aria-label={`Edit trays for saved location ${index + 1}`}'), "saved humidor trays should be editable from the list");
   assert.ok(profileSection.includes('aria-label={`Remove saved location ${index + 1}`}'), "saved locations should have a remove control");
   assert.ok(profileSection.includes("No saved locations yet"), "Add Locations should explain the empty saved-location state");
 });
 
-test("add locations save includes the typed draft location", () => {
+test("add locations save includes the typed draft location and tray names", () => {
   const source = readFileSync(new URL("../src/components/humidor-dashboard.tsx", import.meta.url), "utf8");
   const saveHandler = source.slice(source.indexOf("async function handleSaveHumidorLocationProfile"), source.indexOf("async function handleEnableHumidorPushAlerts"));
   const profileSection = source.slice(source.indexOf("function renderHumidorLocationProfile()"), source.indexOf("\n  return (\n    <main", source.indexOf("function renderHumidorLocationProfile()")));
 
   assert.ok(saveHandler.includes("newHumidorLocationDraft.trim()"), "saving should read the currently typed Add Locations draft");
+  assert.ok(saveHandler.includes("newHumidorTrayDraft.trim()"), "saving should read the currently typed tray draft");
+  assert.ok(saveHandler.includes("buildHumidorProfileLocationInput()"), "saving should build a structured pending location");
   assert.ok(
-    saveHandler.includes("normalizeHumidorProfileLocations([...humidorLocationProfile.locations, pendingLocation])"),
-    "saving should merge the unsaved draft into the profile locations before persistence",
+    saveHandler.includes("normalizeHumidorProfileLocations([...humidorLocationProfile.locations, pendingLocation].filter(Boolean))"),
+    "saving should merge the unsaved structured draft into the profile locations before persistence",
   );
   assert.ok(
-    profileSection.includes("humidorLocationProfile.defaultLocation.trim() || savedLocations.length || newHumidorLocationDraft.trim()"),
-    "Save Humidor Profile should be enabled when only the new-location draft has text",
+    profileSection.includes("const canSaveHumidorProfile = !hasIncompleteNewHumidorLocation && Boolean(savedLocations.length || hasNewHumidorLocationDraft)"),
+    "Save Locations should be enabled from saved rows or a valid new-location draft, not a separate default field",
   );
   assert.ok(saveHandler.includes('setNewHumidorLocationDraft("")'), "successful save should clear the consumed draft location");
+  assert.ok(saveHandler.includes('setNewHumidorTrayDraft("")'), "successful save should clear the consumed tray draft");
+});
+
+test("alerts tab includes an iOS web push setup guide", () => {
+  const source = readFileSync(new URL("../src/components/humidor-dashboard.tsx", import.meta.url), "utf8");
+  const alertsSection = getFunctionBlock(source, "renderAlerts", "renderSettings");
+
+  assert.ok(alertsSection.includes("iPhone setup guide"), "alerts should include an iPhone setup guide");
+  assert.ok(alertsSection.includes("iOS 16.4 or later"), "guide should name the minimum iOS version");
+  assert.ok(alertsSection.includes("Add to Home Screen"), "guide should tell members to install the web app");
+  assert.ok(alertsSection.includes("Open Yuzu from the Home Screen"), "guide should require opening the installed app");
+  assert.ok(alertsSection.includes("Enable Push Alerts"), "guide should point members back to the push opt-in button");
+  assert.ok(alertsSection.includes("Settings > Notifications"), "guide should include the iOS notification recovery path");
+  assert.ok(alertsSection.includes("Safari tab alone cannot receive iPhone push alerts"), "guide should warn that a browser tab cannot receive iPhone push");
+});
+
+test("add locations separates the draft composer from saved rows and blocks tray-only drafts", () => {
+  const source = readFileSync(new URL("../src/components/humidor-dashboard.tsx", import.meta.url), "utf8");
+  const profileSection = source.slice(source.indexOf("function renderHumidorLocationProfile()"), source.indexOf("\n  return (\n    <main", source.indexOf("function renderHumidorLocationProfile()")));
+
+  assert.ok(profileSection.includes("Add a location"), "new location draft controls should have their own composer title");
+  assert.ok(profileSection.indexOf("Add a location") < profileSection.indexOf("Saved Locations"), "the draft composer should appear before the saved locations list");
+  assert.ok(profileSection.includes("const hasIncompleteNewHumidorLocation"), "profile save logic should track tray text without a location name");
+  assert.ok(profileSection.includes("const canAddHumidorProfileLocation = Boolean(pendingHumidorProfileLocation)"), "Add Location should be enabled only for a valid structured draft");
+  assert.ok(profileSection.includes("!hasIncompleteNewHumidorLocation"), "Save Humidor Profile should be blocked while tray-only draft text is present");
+  assert.ok(profileSection.includes("disabled={!canAddHumidorProfileLocation}"), "Add Location should use the shared draft validity check");
+  assert.ok(profileSection.includes("setNewHumidorTrayDraft(\"\")"), "changing a draft to non-humidor storage should clear stale tray text");
+  assert.ok(profileSection.includes("Location columns"), "saved rows should use one compact column header instead of repeating labels in every row");
 });
 
 test("add cigars tab gates bulk import to full membership tiers", () => {
@@ -176,6 +219,21 @@ test("humidor dashboard shows collection value and saves uploaded cigar photos w
   assert.ok(source.includes("cigarImage"), "confirmed items should carry cigar image data");
   assert.ok(source.includes("buildHumidorImageAttachment"), "AI save path should attach the uploaded cigar image");
   assert.ok(toolsSection.includes("Saved photo"), "review flow should show the photo that will be saved");
+});
+
+test("my cigars table exposes sortable headers and smart sort presets", () => {
+  const source = readFileSync(new URL("../src/components/humidor-dashboard.tsx", import.meta.url), "utf8");
+  const table = source.slice(source.indexOf("function HumidorTable"), source.indexOf("function HumidorDetailCard"));
+
+  assert.ok(source.includes("sortHumidorItems"), "My Cigars table should sort items through the shared sorter");
+  assert.ok(table.includes("const [sort, setSort] = useState(defaultHumidorTableSort)"), "table should keep a selected sort mode");
+  assert.ok(table.includes("const sortedItems = useMemo"), "table should memoize sorted rows");
+  assert.ok(table.includes("humidorTableSortOptions.map"), "table should expose smart sort presets");
+  assert.ok(table.includes('aria-label="Sort My Cigars"'), "sort preset select should be accessible");
+  assert.ok(table.includes("SortableHumidorTableHead"), "headers should be sortable controls");
+  assert.ok(table.includes('aria-sort={getHumidorTableAriaSort(sort, sortKey)}'), "active header should announce sort direction");
+  assert.ok(table.includes("toggleHumidorTableSort(sort, sortKey)"), "clicking an active header should toggle direction");
+  assert.ok(table.includes("sortedItems.map((item)"), "table rows should render from the sorted result");
 });
 
 test("overview stat cards show humidity and temperature from the connected device reading", () => {
@@ -247,7 +305,8 @@ test("my cigars rows open a detailed cigar info card", () => {
   const detailCard = source.slice(source.indexOf("function HumidorDetailCard"), source.indexOf("function EmptyLiveState"));
 
   assert.ok(source.includes("const [selectedHumidorItem, setSelectedHumidorItem]"), "dashboard should track the selected cigar");
-  assert.ok(cigarSection.includes("onSelectItem={setSelectedHumidorItem}"), "My Cigars table should select rows into dashboard state");
+  assert.ok(cigarSection.includes("onSelectItem={handleSelectHumidorItem}"), "My Cigars table should select rows into dashboard state");
+  assert.ok(source.includes("setSelectedHumidorItem(item)"), "the shared row-selection handler should set the selected cigar");
   assert.ok(cigarSection.includes("selectedHumidorItem ?"), "My Cigars should render a detail card after a cigar is selected");
   assert.ok(table.includes("onSelectItem"), "HumidorTable should expose row selection");
   assert.ok(table.includes('role="button"'), "cigar rows should be interactive for assistive tech");
@@ -256,6 +315,23 @@ test("my cigars rows open a detailed cigar info card", () => {
   assert.ok(detailCard.includes("Tasting Notes"), "detail card should show notes");
   assert.ok(detailCard.includes("Collection Value"), "detail card should show value details");
   assert.ok(detailCard.includes("Close Details"), "detail card should be dismissible");
+});
+
+test("my cigars row selection scrolls to the top of the detailed cigar card", () => {
+  const source = readFileSync(new URL("../src/components/humidor-dashboard.tsx", import.meta.url), "utf8");
+  const overviewSection = getFunctionBlock(source, "renderOverview", "renderTools");
+  const cigarSection = getFunctionBlock(source, "renderCigars", "renderAging");
+
+  assert.ok(source.includes("useRef"), "dashboard should keep a DOM ref for the detailed card scroll target");
+  assert.ok(source.includes("humidorDetailCardRef"), "dashboard should name the detailed card scroll target");
+  assert.ok(source.includes("pendingHumidorDetailScrollItemId"), "dashboard should remember when a user-triggered selection needs scrolling");
+  assert.ok(source.includes("function handleSelectHumidorItem"), "row selection should go through one shared open-details handler");
+  assert.ok(overviewSection.includes("handleSelectHumidorItem(item)"), "overview row selection should request the same detail-card scroll");
+  assert.ok(cigarSection.includes("onSelectItem={handleSelectHumidorItem}"), "My Cigars row selection should request the detail-card scroll");
+  assert.ok(cigarSection.includes('data-humidor-detail-card="top"'), "the rendered detail card should expose a stable top scroll target");
+  assert.ok(cigarSection.includes("ref={humidorDetailCardRef}"), "the top detail-card wrapper should receive the scroll ref");
+  assert.ok(cigarSection.includes("scroll-mt-24"), "the detail-card scroll target should remain visible below the fixed site header");
+  assert.ok(source.includes("scrollIntoView({ block: \"start\", behavior: \"smooth\" })"), "selection should move the viewport to the top of the detail card");
 });
 
 test("my cigars offers humidor agent enrichment for missing info image and MSRP", () => {
@@ -318,7 +394,7 @@ test("my cigars detail card can update a missing humidor location later", () => 
   assert.ok(cigarSection.includes("handleUpdateHumidorItem"), "My Cigars should pass the update action to the detail card");
   assert.ok(detailCard.includes("Update Location"), "detail cards should expose a location update action");
   assert.ok(detailCard.includes('aria-live="polite"'), "location update status should be announced accessibly");
-  assert.ok(detailCard.includes("humidorLocationDraft"), "detail card should let the member enter a later humidor location");
+  assert.ok(detailCard.includes("selectedStorageLocationKey"), "detail card should let the member choose a later location/tray option");
 });
 
 test("my cigars detail card chooses storage location from entered locations", () => {
@@ -326,18 +402,28 @@ test("my cigars detail card chooses storage location from entered locations", ()
   const cigarSection = getFunctionBlock(source, "renderCigars", "renderAging");
   const detailCard = source.slice(source.indexOf("function HumidorDetailCard"), source.indexOf("function EmptyLiveState"));
 
+  assert.ok(source.includes("type HumidorStorageLocationOption = {"), "dashboard should derive structured storage choices");
+  assert.ok(source.includes("function buildHumidorStorageOptionKey"), "storage choices should key location and tray together");
   assert.ok(source.includes("getHumidorStorageLocationOptions"), "dashboard should derive dropdown choices from entered humidor locations");
-  assert.ok(source.includes("[profile.defaultLocation, ...profile.locations, ...items.map((item) => item.humidorLocation)]"), "storage choices should include saved Add Locations entries");
+  assert.ok(source.includes("for (const location of profile.locations)"), "storage choices should include structured Add Locations entries");
+  assert.ok(source.includes("for (const tray of location.trays)"), "humidor locations with trays should produce tray-level choices");
+  assert.ok(source.includes("addOption(item.humidorLocation, item.tray)"), "storage choices should include existing item location/tray pairs");
   assert.ok(source.includes("const storageLocationOptions = useMemo"), "dashboard should memoize available humidor locations for detail cards");
   assert.ok(cigarSection.includes("storageLocationOptions={storageLocationOptions}"), "detail cards should receive the available storage locations");
   assert.ok(detailCard.includes("storageLocationOptions"), "detail card should accept storage location options");
   assert.ok(detailCard.includes('aria-label="Humidor location update"'), "location dropdown should keep the existing accessible label");
   assert.ok(detailCard.includes("<select"), "storage location update should be a dropdown");
-  assert.ok(detailCard.includes("storageLocationOptions.map"), "storage location dropdown should render entered location choices");
+  assert.ok(detailCard.includes("selectedStorageLocation"), "detail card should resolve the selected storage option");
+  assert.ok(detailCard.includes("storageLocationOptions.map((option)"), "storage location dropdown should render entered location/tray choices");
+  assert.ok(detailCard.includes("option.label"), "storage location dropdown should show tray-aware labels");
+  assert.ok(
+    detailCard.includes("onUpdate?.(item, { humidorLocation: selectedStorageLocation.humidorLocation, tray: selectedStorageLocation.tray });"),
+    "detail card should update both humidor location and tray from a tray-level choice",
+  );
   assert.equal(detailCard.includes('onChange={(event: ChangeEvent<HTMLInputElement>) => setHumidorLocationDraft'), false, "storage location update should not be a free-typed input");
 });
 
-test("settings tab saves a humidor location profile that feeds add and device flows", () => {
+test("settings tab saves saved humidor locations that feed add and device flows", () => {
   const source = readFileSync(new URL("../src/components/humidor-dashboard.tsx", import.meta.url), "utf8");
   const settingsStart = source.indexOf("function renderSettings()");
   const settingsSection = source.slice(settingsStart, source.indexOf("\n  return (\n    <main", settingsStart));
@@ -346,11 +432,12 @@ test("settings tab saves a humidor location profile that feeds add and device fl
   const pairDevice = source.slice(source.indexOf("async function handlePairDevice"), source.indexOf("async function handleAiImageChange"));
 
   assert.ok(source.includes("humidorLocationProfile"), "dashboard should keep a member humidor location profile");
-  assert.ok(settingsSection.includes("Humidor Location Profile"), "settings should expose a humidor/location form");
+  assert.ok(settingsSection.includes("Add a location"), "settings should expose saved location controls");
   assert.ok(settingsSection.includes("handleSaveHumidorLocationProfile"), "profile form should save member-entered humidor/location info");
-  assert.ok(settingsSection.includes("Default location"), "profile form should capture the default humidor location");
-  assert.ok(settingsSection.includes("Save Humidor Profile"), "profile form should have an explicit save action");
+  assert.equal(settingsSection.includes("Default location"), false, "settings should not expose a manual default location field");
+  assert.ok(settingsSection.includes("Save Locations"), "profile form should have an explicit save action");
   assert.ok(source.includes("humidorProfile: humidorLocationProfile"), "profile saves should persist through humidor preferences");
+  assert.ok(source.includes("defaultLocation: getPrimaryHumidorProfileLocationName(nextLocations)"), "profile saves should derive the default location from saved locations");
   assert.ok(source.includes("getFormWithDefaultHumidorLocation"), "dashboard should centralize default location application");
   assert.ok(source.includes("previousDefaultLocation"), "profile changes should refresh fields that still contain the previous default");
   assert.ok(source.includes("currentLocation !== previousDefaultLocation.trim()"), "member-entered item locations should not be overwritten by profile changes");

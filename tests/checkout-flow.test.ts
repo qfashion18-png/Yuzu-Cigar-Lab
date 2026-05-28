@@ -62,9 +62,35 @@ test("checkout session request sends cart identifiers, price snapshots, customer
   assert.equal(request.shippingMethodId, "usps-adult-signature-ground");
   assert.equal(request.compliance.ageVerificationToken, "age_txn_123");
   assert.equal(request.quote.subtotal, 240);
+  assert.equal((request.quote as { handling?: number }).handling, 10);
+  assert.equal((request.quote as { total?: number }).total, 250);
   assert.equal(request.quote.currency, "USD");
   assert.equal(JSON.stringify(request).includes("paymentMethodId"), false);
   assert.equal(JSON.stringify(request).includes("card"), false);
+});
+
+test("member checkout request carries the membership entitlement and waives the handling fee", async () => {
+  const { buildCheckoutSessionRequest } = await loadCheckoutClient();
+  const request = buildCheckoutSessionRequest({
+    cart,
+    customer: { email: "member@example.com", phone: "4805551212", fullName: "Member One" },
+    isMember: true,
+    membershipEntitlementToken: "yccmem1.payload.signature",
+    shippingAddress: {
+      address1: "111 W Boston St",
+      address2: "",
+      city: "Chandler",
+      state: "AZ",
+      postalCode: "85225",
+      country: "US",
+    },
+    shippingMethodId: "usps-adult-signature-ground",
+    complianceToken: "age_txn_123",
+  });
+
+  assert.equal(request.membership?.entitlementToken, "yccmem1.payload.signature");
+  assert.equal((request.quote as { handling?: number }).handling, 0);
+  assert.equal((request.quote as { total?: number }).total, 240);
 });
 
 test("checkout client posts to the configured commerce API and returns the hosted Stripe URL", async () => {
@@ -237,6 +263,18 @@ test("checkout client exchanges an AgeChecker verification UUID for a signed che
   try {
     const result = await createCheckoutAgeVerificationToken({
       vendorTransactionId: "12345678901234567890123456789012",
+      customer: {
+        email: "member@example.com",
+        phone: "4805551212",
+        fullName: "Member One",
+      },
+      shippingAddress: {
+        address1: "123 Yuzu Way",
+        city: "Chandler",
+        state: "AZ",
+        postalCode: "85225",
+        country: "US",
+      },
     });
 
     assert.equal(result.ageVerificationToken, "yccav1.payload123.signature1234567");
@@ -244,6 +282,19 @@ test("checkout client exchanges an AgeChecker verification UUID for a signed che
     assert.equal(calls[0].init?.method, "POST");
     assert.deepEqual(JSON.parse(String(calls[0].init?.body)), {
       vendorTransactionId: "12345678901234567890123456789012",
+      customer: {
+        email: "member@example.com",
+        phone: "4805551212",
+        fullName: "Member One",
+      },
+      shippingAddress: {
+        address1: "123 Yuzu Way",
+        address2: "",
+        city: "Chandler",
+        state: "AZ",
+        postalCode: "85225",
+        country: "US",
+      },
     });
   } finally {
     globalThis.fetch = originalFetch;
@@ -269,6 +320,7 @@ test("checkout UI routes to Stripe-hosted checkout and success clears only after
   assert.ok(checkoutSource.includes("checkoutPaymentMethods"), "checkout form should render only payment methods it can submit");
   assert.ok(checkoutSource.includes("defaultDeliveryMethods"), "checkout form should render configured delivery methods");
   assert.ok(checkoutSource.includes("getDeliveryMethodsForState"), "checkout form should filter delivery methods by destination state");
+  assert.ok(checkoutSource.includes("Non-member shipping/handling"), "checkout should disclose the non-member handling fee in the order summary");
   assert.deepEqual(
     defaultDeliveryMethods.map((method) => [method.id, method.carrier, method.adultSignatureRequired]),
     [

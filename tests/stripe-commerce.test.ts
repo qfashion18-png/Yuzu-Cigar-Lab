@@ -44,8 +44,12 @@ test("Stripe product checkout sessions use hosted Checkout with server-computed 
       ],
       shipping: {
         methodId: "usps-adult-signature-ground",
+        title: "USPS Adult Signature Ground",
         carrier: "USPS",
         adultSignatureRequired: true,
+        deliveryAmountCents: 1800,
+        handlingFeeCents: 1000,
+        amountCents: 2800,
         address: {
           address1: "123 Yuzu Way",
           address2: "Suite 5",
@@ -67,6 +71,18 @@ test("Stripe product checkout sessions use hosted Checkout with server-computed 
   assert.deepEqual(params.phone_number_collection, { enabled: true });
   assert.deepEqual(params.shipping_address_collection, { allowed_countries: ["US"] });
   assert.deepEqual(params.line_items, [{ price: "price_approved", quantity: 2 }]);
+  assert.deepEqual(params.shipping_options, [
+    {
+      shipping_rate_data: {
+        type: "fixed_amount",
+        display_name: "USPS Adult Signature Ground + non-member handling",
+        fixed_amount: {
+          amount: 2800,
+          currency: "usd",
+        },
+      },
+    },
+  ]);
   assert.deepEqual(params.automatic_tax, { enabled: true });
   assert.match(String(params.success_url), /\/checkout\/success\?session_id=\{CHECKOUT_SESSION_ID\}&status_token=chkst_unit_test_/);
   assert.match(String(params.cancel_url), /\/checkout\/cancel/);
@@ -77,6 +93,9 @@ test("Stripe product checkout sessions use hosted Checkout with server-computed 
     compliance_policy_version: "2026-05-07",
     shipping_method_id: "usps-adult-signature-ground",
     shipping_carrier: "USPS",
+    shipping_amount_cents: "2800",
+    shipping_delivery_amount_cents: "1800",
+    shipping_handling_fee_cents: "1000",
     adult_signature_required: "true",
     order_id: "",
     shipping_name: "",

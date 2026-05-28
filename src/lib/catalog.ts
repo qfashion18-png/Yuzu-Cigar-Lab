@@ -1123,9 +1123,23 @@ function getReviewSearchUrl(productName: string) {
 }
 
 export function isCigarCatalogProduct(product: Pick<CatalogProduct, "category" | "name">) {
-  const nonCigarPattern = /lighter|torch|fluid|butane|humidor|membership|accessor|ashtray|cutter|punch|display|book matches/i;
+  return isCigarCategoryAndName(product.category, product.name);
+}
 
-  return !nonCigarPattern.test(product.category) && !nonCigarPattern.test(product.name);
+function isCigarCategoryAndName(category: string, name: string) {
+  const cigarCategoryPattern = /cigar|sample packs|premium cigars|mid-range cigars|budget cigars|luxury cigars|my cigars/i;
+  const accessoryCategoryPattern = /lighter|torch|fluid|butane|humidor|membership|accessor|ashtray|cutter|display|book matches/i;
+  const accessoryNamePattern = /lighter|torch|fluid|butane|humidor|membership|accessor|ashtray|display|book matches/i;
+
+  if (accessoryCategoryPattern.test(category) && !cigarCategoryPattern.test(category)) {
+    return false;
+  }
+
+  if (cigarCategoryPattern.test(category)) {
+    return true;
+  }
+
+  return !accessoryNamePattern.test(name);
 }
 
 function extractLabeledValue(text: string, label: string) {
@@ -1280,6 +1294,2275 @@ function combineResearchDetails(...details: Array<Partial<CatalogProductEnrichme
   return Object.assign({}, ...details.filter(Boolean));
 }
 
+function sourcedRockyPatelReviewProfile(lineName: string, sourceUrl: string, rating: string, keyDetails: string[]) {
+  return {
+    reviewProfile: {
+      summary: `${lineName} has source-backed line rating coverage from Rocky Patel's brand profile. Treat this as line-level coverage unless an exact vitola review is added later.`,
+      sources: [
+        {
+          sourceName: "Rocky Patel",
+          sourceUrl,
+          rating,
+          keyDetails,
+        },
+      ],
+    },
+  };
+}
+
+function sourcedArturoFuenteReviewProfile(
+  lineName: string,
+  sourceName: string,
+  sourceUrl: string,
+  rating: string,
+  keyDetails: string[]
+) {
+  return {
+    reviewProfile: {
+      summary: `${lineName} has source-backed Arturo Fuente review coverage from ${sourceName}. Exact-product ratings are labeled directly; broader matches are line-level or customer-review coverage.`,
+      sources: [
+        {
+          sourceName,
+          sourceUrl,
+          rating,
+          keyDetails,
+        },
+      ],
+    },
+  };
+}
+
+function arturoFuenteCigarAficionadoProfile(lineName: string, sourceUrl: string, rating: string, keyDetails: string[]) {
+  return sourcedArturoFuenteReviewProfile(lineName, "Cigar Aficionado", sourceUrl, rating, keyDetails);
+}
+
+function arturoFuenteNeptuneProfile(lineName: string, sourceUrl: string, rating: string, keyDetails: string[]) {
+  return sourcedArturoFuenteReviewProfile(lineName, "Neptune Cigar", sourceUrl, rating, keyDetails);
+}
+
+function sourcedBrandReviewProfile(
+  brandName: string,
+  lineName: string,
+  sourceName: string,
+  sourceUrl: string,
+  rating: string,
+  keyDetails: string[]
+) {
+  return {
+    reviewProfile: {
+      summary: `${lineName} has source-backed ${brandName} review coverage from ${sourceName}. Exact ratings are labeled directly; broader matches are line-level, customer-review, or brand-profile coverage.`,
+      sources: [
+        {
+          sourceName,
+          sourceUrl,
+          rating,
+          keyDetails,
+        },
+      ],
+    },
+  };
+}
+
+function getOlivaReviewProfile(productName: string) {
+  if (/CONNECTICUT RESERVE/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Oliva",
+      "Oliva Connecticut Reserve",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/rating/oliva-connecticut-reserve-churchill",
+      "92 Cigar Aficionado Churchill line-reference rating",
+      [
+        "Cigar Aficionado rates the Connecticut Reserve Churchill at 92 points.",
+        "The page identifies the blend as Ecuador-wrapped with Nicaraguan binder and filler.",
+        "Use this as Connecticut Reserve line coverage for non-Churchill formats until exact vitola reviews are added.",
+      ]
+    );
+  }
+
+  if (/SERIE G/.test(productName) || /\bOLIVA G\b/.test(productName)) {
+    if (/MADURO/.test(productName) && /SPECIAL G/.test(productName)) {
+      return sourcedBrandReviewProfile(
+        "Oliva",
+        "Oliva Serie G Maduro Special G",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/ratings/25003/name/oliva-serie-g-maduro-special-g-figurado",
+        "91 Cigar Aficionado exact review",
+        [
+          "Cigar Aficionado rates the Serie G Maduro Special G at 91 points.",
+          "The page identifies the small figurado format and Mexican-wrapper Maduro profile.",
+          "Visible tasting notes emphasize leather, earth, graham cracker, and honey.",
+        ]
+      );
+    }
+
+    if (/MADURO/.test(productName)) {
+      return sourcedBrandReviewProfile(
+        "Oliva",
+        "Oliva Serie G Maduro",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/ratings/18666/name/oliva-serie-g-maduro-robusto-robusto",
+        "89 Cigar Insider listed review",
+        [
+          "Cigar Aficionado's Serie G Maduro Robusto page lists an 89-point Cigar Insider review.",
+          "The page identifies the Maduro Robusto as a Nicaraguan cigar with a dark wrapper.",
+          "Use this as Maduro line coverage for other Serie G Maduro formats.",
+        ]
+      );
+    }
+
+    return sourcedBrandReviewProfile(
+      "Oliva",
+      "Oliva Serie G",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/25279/name/oliva-serie-g-robusto-robusto",
+      "93 Cigar Aficionado line-reference rating",
+      [
+        "Cigar Aficionado rates the Serie G Robusto at 93 points.",
+        "The page identifies the Cameroon-wrapped Nicaraguan Serie G profile.",
+        "Use this as Serie G Natural line coverage for non-Robusto formats and the Serie G sampler.",
+      ]
+    );
+  }
+
+  if (/SERIE O/.test(productName)) {
+    if (/MADURO/.test(productName)) {
+      return sourcedBrandReviewProfile(
+        "Oliva",
+        "Oliva Serie O Maduro",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/ratings/14347/name/oliva-serie-o-maduro-robusto",
+        "88 Cigar Aficionado Robusto line-reference rating",
+        [
+          "Cigar Aficionado rates the Serie O Maduro Robusto at 88 points and lists additional 90-point review history.",
+          "The page identifies the cigar as a Nicaraguan Maduro using Nicaraguan binder and filler.",
+          "Use this as Serie O Maduro line coverage for Churchill, Double Toro, Robusto, and related formats.",
+        ]
+      );
+    }
+
+    return sourcedBrandReviewProfile(
+      "Oliva",
+      "Oliva Serie O",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/16472/name/oliva-serie-o-churchill-churchill",
+      "92 Cigar Aficionado Churchill line-reference rating",
+      [
+        "Cigar Aficionado rates the Serie O Churchill at 92 points and lists later high-scoring reviews.",
+        "The page identifies the line as a Nicaraguan puro.",
+        "Use this as Serie O Natural line coverage for non-Churchill formats.",
+      ]
+    );
+  }
+
+  if (/MELANIO/.test(productName)) {
+    if (/MADURO/.test(productName) && /ROBUSTO/.test(productName)) {
+      return sourcedBrandReviewProfile(
+        "Oliva",
+        "Oliva Serie V Melanio Maduro Robusto",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/ratings/26704/name/oliva-serie-v-melanio-maduro-robusto-robusto",
+        "94 Cigar Aficionado exact review",
+        [
+          "Cigar Aficionado rates the Melanio Maduro Robusto at 94 points.",
+          "The page identifies the Maduro line as Mexican-wrapped with Nicaraguan binder and filler.",
+          "Visible tasting notes emphasize dark chocolate, raisin, caramel, and mineral character.",
+        ]
+      );
+    }
+
+    if (/MADURO/.test(productName)) {
+      return sourcedBrandReviewProfile(
+        "Oliva",
+        "Oliva Serie V Melanio Maduro",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/ratings/26237/name/oliva-serie-v-melanio-maduro-figurado-figurado",
+        "92 Cigar Aficionado Melanio Maduro Figurado line-reference rating",
+        [
+          "Cigar Aficionado rates the Melanio Maduro Figurado at 92 points.",
+          "The page identifies the Maduro blend as Mexican-wrapped with Nicaraguan binder and filler.",
+          "Use this as Melanio Maduro line coverage for non-Robusto Maduro formats.",
+        ]
+      );
+    }
+
+    if (/ROBUSTO/.test(productName)) {
+      return sourcedBrandReviewProfile(
+        "Oliva",
+        "Oliva Serie V Melanio Robusto",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/ratings/19454/name/oliva-serie-v-melanio-robusto",
+        "94 Cigar Aficionado exact review",
+        [
+          "Cigar Aficionado rates the Melanio Robusto at 94 points.",
+          "The page identifies the blend as Ecuador Sumatra over Nicaraguan binder and filler.",
+          "Visible review context references the Melanio Figurado's Cigar of the Year history.",
+        ]
+      );
+    }
+
+    if (/FIGURADO/.test(productName)) {
+      return sourcedBrandReviewProfile(
+        "Oliva",
+        "Oliva Serie V Melanio Figurado",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/ratings/17587/name/oliva-serie-v-melanio-figurado-figurado",
+        "96 Cigar Aficionado Cigar of the Year exact review",
+        [
+          "Cigar Aficionado's Melanio Figurado page anchors the 96-point Cigar of the Year profile.",
+          "The source identifies the Figurado as a Nicaraguan Melanio format.",
+          "Use exact Figurado coverage for the matching box-pressed format.",
+        ]
+      );
+    }
+
+    if (/TORO|DOUBLE TORO|DBL TORO/.test(productName)) {
+      return sourcedBrandReviewProfile(
+        "Oliva",
+        "Oliva Serie V Melanio Toro",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/top25cigar/oliva-serie-v-melanio-toro-2023",
+        "96 Cigar Aficionado Top 25 Toro line-reference rating",
+        [
+          "Cigar Aficionado ranked the Melanio Toro third in the 2023 Top 25 with a 96-point rating.",
+          "The page identifies the blend as Ecuador-wrapper Melanio with Nicaraguan binder and filler.",
+          "Use this as line coverage for Toro and Double Toro Melanio formats.",
+        ]
+      );
+    }
+
+    return sourcedBrandReviewProfile(
+      "Oliva",
+      "Oliva Serie V Melanio",
+      "Oliva Cigars",
+      "https://olivacigar.com/cigars/serie-v-melanio/",
+      "96 Oliva brand-cited Cigar Aficionado rating",
+      [
+        "Oliva's Melanio profile cites the 2014 Cigar of the Year recognition and a 96-point Cigar Aficionado rating.",
+        "The page lists Melanio sizes including Churchill, Double Toro, Figurado, Torpedo, Toro, and Robusto.",
+        "Use this as brand-profile coverage for Melanio formats without a more specific page.",
+      ]
+    );
+  }
+
+  if (/SERIE V/.test(productName)) {
+    if (/MADURO/.test(productName)) {
+      return sourcedBrandReviewProfile(
+        "Oliva",
+        "Oliva Serie V Maduro",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/ratings/21757/name/oliva-serie-v-maduro-double-robusto-robusto",
+        "88 Cigar Aficionado Double Robusto line-reference rating",
+        [
+          "Cigar Aficionado rates the Serie V Maduro Double Robusto at 88 points.",
+          "The page identifies the Mexican-wrapper Maduro variant with Nicaraguan binder and filler.",
+          "Use this as Serie V Maduro line coverage for Double Toro, Toro, and Torpedo formats.",
+        ]
+      );
+    }
+
+    return sourcedBrandReviewProfile(
+      "Oliva",
+      "Oliva Serie V",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/14124/name/oliva-serie-v-torpedo-figurado",
+      "93 Cigar Aficionado Torpedo line-reference rating",
+      [
+        "Cigar Aficionado rates the Serie V Torpedo at 93 points and notes Top 25 recognition.",
+        "The page identifies Serie V as an all-Nicaraguan blend with a high-priming wrapper.",
+        "Use this as Serie V line coverage for non-Torpedo formats until exact vitola reviews are added.",
+      ]
+    );
+  }
+
+  return undefined;
+}
+
+function getRomeoReviewProfile(productName: string) {
+  if (/SAMPLER|FRESH PACK/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Romeo",
+      "Romeo y Julieta Sampler",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/24412/name/romeo-y-julieta-1875-bully-robusto",
+      "89 Cigar Aficionado component-line reference",
+      [
+        "Cigar Aficionado rates the Romeo y Julieta 1875 Bully at 89 points.",
+        "Use this as component-line review coverage for Romeo sampler packs.",
+        "The sampler is not presented as having a single blended review score.",
+      ]
+    );
+  }
+
+  if (/RESERVA REAL/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Romeo",
+      "Romeo y Julieta Reserva Real",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/8963/name/romeo-y-julieta-reserva-real-robusto",
+      "90 Cigar Insider listed review",
+      [
+        "Cigar Aficionado's Reserva Real Robusto page lists a 90-point Cigar Insider review.",
+        "The page identifies the blend as Ecuador-wrapper with Dominican and Nicaraguan tobaccos.",
+        "Use this as Reserva Real line coverage for non-Robusto sizes and the Twisted Toro.",
+      ]
+    );
+  }
+
+  if (/1875/.test(productName) && /CONN\.?NICARAGUA|CONNECTICUT NICARAGUA/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Romeo",
+      "Romeo y Julieta 1875 Connecticut Nicaragua",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/brand/romeo-y-julieta-non-cuban",
+      "Cigar Aficionado brand-profile line coverage",
+      [
+        "Cigar Aficionado's non-Cuban Romeo y Julieta brand page groups the modern Romeo product lines and ratings database.",
+        "Use this as brand-profile coverage for the Connecticut Nicaragua offshoot until exact ratings are added.",
+        "The profile is line coverage rather than an exact vitola score.",
+      ]
+    );
+  }
+
+  if (/1875 NICARAGUA/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Romeo",
+      "Romeo y Julieta 1875 Nicaragua",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/brand/romeo-y-julieta-non-cuban",
+      "Cigar Aficionado brand-profile line coverage",
+      [
+        "Cigar Aficionado's non-Cuban Romeo y Julieta page groups current Romeo lines with ratings and articles.",
+        "Use this as Nicaragua line coverage until exact 1875 Nicaragua ratings are added.",
+        "The source is a brand-profile reference, not an exact product score.",
+      ]
+    );
+  }
+
+  if (/1875/.test(productName)) {
+    if (/NO\.?2|BELICOSO|NUMERO DOS/.test(productName)) {
+      return sourcedBrandReviewProfile(
+        "Romeo",
+        "Romeo y Julieta 1875 Belicoso",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/ratings/25590/name/romeo-y-julieta-1875-belicoso-figurado",
+        "91 Cigar Aficionado exact or line-reference rating",
+        [
+          "Cigar Aficionado rates the 1875 Belicoso at 91 points.",
+          "The page identifies the Indonesian-wrapper Dominican 1875 blend.",
+          "Use exact coverage for Belicoso formats and line-reference coverage for related No. 2/Numero Dos items.",
+        ]
+      );
+    }
+
+    if (/CHURCHILL/.test(productName)) {
+      return sourcedBrandReviewProfile(
+        "Romeo",
+        "Romeo y Julieta 1875 Churchill",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/ratings/19397/name/romeo-y-julieta-1875-churchill-churchill",
+        "88 Cigar Aficionado exact review",
+        [
+          "Cigar Aficionado rates the 1875 Churchill at 88 points.",
+          "The page identifies the Churchill as Indonesian-wrapper Dominican 1875.",
+          "Visible notes emphasize bread, toast, wood, and a faint fruit finish.",
+        ]
+      );
+    }
+
+    if (/CLEMENCEAU/.test(productName)) {
+      return sourcedBrandReviewProfile(
+        "Romeo",
+        "Romeo y Julieta 1875 Clemenceau",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/ratings/10001/name/romeo-y-julieta-1875-clemenceaus-en-tubo",
+        "88 Cigar Aficionado exact review",
+        [
+          "Cigar Aficionado rates the 1875 Clemenceau en Tubo at 88 points.",
+          "The page identifies the cigar as a Dominican Romeo y Julieta with Indonesian wrapper.",
+          "Use exact coverage for Clemenceau tubo products.",
+        ]
+      );
+    }
+
+    return sourcedBrandReviewProfile(
+      "Romeo",
+      "Romeo y Julieta 1875 Bully",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/24412/name/romeo-y-julieta-1875-bully-robusto",
+      "89 Cigar Aficionado exact review",
+      [
+        "Cigar Aficionado rates the 1875 Bully at 89 points.",
+        "The page identifies the cigar as an Indonesian-wrapper Dominican Robusto.",
+        "Use this as 1875 line coverage for closely related non-Belicoso, non-Churchill, and non-Clemenceau formats.",
+      ]
+    );
+  }
+
+  if (/RESERVE/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Romeo",
+      "Romeo y Julieta Reserve",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/search?q=Romeo+y+Julieta+Reserve",
+      "90 Cigar Aficionado search-listed Reserve Robusto rating",
+      [
+        "Cigar Aficionado search results list Romeo y Julieta Reserve Robusto at 90 points.",
+        "The source also lists Reserve Churchill and Titan rating entries.",
+        "Use this as Reserve line coverage until direct rating pages are added.",
+      ]
+    );
+  }
+
+  if (/ROMEO BY RYJ|ROMEO BY ROMEO|GRAN TORO|150TH/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Romeo",
+      "Romeo by Romeo y Julieta",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/search?q=Romeo+By+Romeo+y+Julieta",
+      "Cigar Aficionado Romeo by Romeo search-profile coverage",
+      [
+        "Cigar Aficionado search results surface Romeo by Romeo y Julieta rating coverage.",
+        "Use this as line-profile coverage for Romeo by Romeo, Gran Toro, and 150th Anniversary formats.",
+        "The source is broader search-profile coverage rather than an exact vitola score.",
+      ]
+    );
+  }
+
+  if (/HABANA RESV|HABANA RESERVE/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Romeo",
+      "Romeo y Julieta Habana Reserve",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/12378/name/romeo-y-julieta-habana-reserve-toro",
+      "Cigar Aficionado Habana Reserve Toro listed review",
+      [
+        "Cigar Aficionado's Habana Reserve Toro page provides review coverage for the line.",
+        "The page identifies the richer Habana Reserve profile with coffee, fruit, wood, and spice notes.",
+        "Use this as line coverage for Amores and other small-format Habana Reserve products.",
+      ]
+    );
+  }
+
+  if (/VINTAGE|SPAIN MINI/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Romeo",
+      "Romeo y Julieta small-format and Vintage lines",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/brand/romeo-y-julieta-non-cuban",
+      "Cigar Aficionado brand-profile line coverage",
+      [
+        "Cigar Aficionado's non-Cuban Romeo y Julieta brand page provides source-backed ratings and article context for the brand.",
+        "Use this as brand-profile coverage for small-format and Vintage products without exact public review pages.",
+        "The profile is not presented as an exact score for these formats.",
+      ]
+    );
+  }
+
+  return undefined;
+}
+
+function getPerdomoReviewProfile(productName: string) {
+  if (/4 PACK|SAMPLER/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Perdomo",
+      "Perdomo humidified sampler",
+      "Perdomo Cigars",
+      "https://www.perdomocigars.com/",
+      "Perdomo official brand and line profile coverage",
+      [
+        "Perdomo's official site groups the 10th Anniversary, Habano Bourbon Barrel-Aged, Lot 23, and sampler-style offerings.",
+        "Use this as brand/line component coverage for mixed Perdomo packs.",
+        "Sampler packs are not presented as having one blended score.",
+      ]
+    );
+  }
+
+  if (/10TH ANN.*CHAMPAGNE/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Perdomo",
+      "Perdomo 10th Anniversary Champagne Connecticut",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/22176/name/perdomo-reserve-10th-anniversary-champagne-connecticut-torpedo-figurado",
+      "89 Cigar Aficionado exact review",
+      [
+        "Cigar Aficionado rates the Champagne Connecticut Torpedo at 89 points.",
+        "The page identifies the blend as Ecuador Connecticut over Nicaraguan binder and filler.",
+        "Use this as 10th Anniversary Champagne line coverage for non-Torpedo sizes.",
+      ]
+    );
+  }
+
+  if (/20TH ANN/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Perdomo",
+      "Perdomo 20th Anniversary Connecticut",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/24297/name/perdomo-20th-anniversary-connecticut-gordo-grande",
+      "88 Cigar Aficionado line-reference rating",
+      [
+        "Cigar Aficionado rates the 20th Anniversary Connecticut Gordo at 88 points.",
+        "The page identifies the blend as Ecuador Connecticut over Nicaraguan binder and filler.",
+        "Use this as 20th Anniversary Connecticut line coverage for Epicure and Gordo products.",
+      ]
+    );
+  }
+
+  if (/HABANO/.test(productName)) {
+    if (/CONN/.test(productName)) {
+      return sourcedBrandReviewProfile(
+        "Perdomo",
+        "Perdomo Habano Bourbon Barrel-Aged Connecticut",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/ratings/20351/name/perdomo-habano-bourbon-barrel-aged-connecticut-gordo-grande",
+        "88 Cigar Aficionado line-reference rating",
+        [
+          "Cigar Aficionado rates the Habano Bourbon Barrel-Aged Connecticut Gordo at 88 points.",
+          "The page identifies the blend as Ecuador Connecticut over Nicaraguan binder and filler.",
+          "Use this as Habano Connecticut line coverage for Churchill, Epicure, Gordo, and Robusto formats.",
+        ]
+      );
+    }
+
+    if (/MADURO/.test(productName)) {
+      return sourcedBrandReviewProfile(
+        "Perdomo",
+        "Perdomo Habano Bourbon Barrel-Aged Maduro",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/ratings/19410/name/perdomo-habano-bourbon-barrel-aged-maduro-robusto-robusto",
+        "88 Cigar Aficionado exact or line-reference rating",
+        [
+          "Cigar Aficionado rates the Habano Bourbon Barrel-Aged Maduro Robusto at 88 points.",
+          "The page identifies the Maduro blend as Nicaraguan wrapper, binder, and filler.",
+          "Use exact coverage for Robusto and line coverage for Churchill, Epicure, Gordo, and Torpedo formats.",
+        ]
+      );
+    }
+
+    return sourcedBrandReviewProfile(
+      "Perdomo",
+      "Perdomo Habano Bourbon Barrel-Aged Sun Grown",
+      "Perdomo Cigars",
+      "https://www.perdomocigars.com/habano-bourbon-barrel-aged",
+      "Perdomo official ratings-and-awards profile",
+      [
+        "Perdomo's official Habano Bourbon Barrel-Aged page describes the Sun Grown wrapper aging and blend profile.",
+        "The page lists the Churchill, Epicure, Gordo, Robusto, and Torpedo sizes.",
+        "Use this as official line-profile coverage until exact Sun Grown ratings are added.",
+      ]
+    );
+  }
+
+  if (/INMENSO/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Perdomo",
+      "Perdomo Inmenso Seventy",
+      "Neptune Cigar",
+      "https://www.neptunecigar.com/cigar/perdomo-inmenso-seventy-maduro",
+      "4.31/5 from 69 Neptune customer reviews",
+      [
+        "Neptune lists Perdomo Inmenso Seventy Maduro with a 4.31 overall customer rating from 69 reviews.",
+        "The page identifies the 70-ring Maduro line and customer comments on the large-format smoke.",
+        "Use this as customer-review line coverage for Maduro and Sun Grown Inmenso formats.",
+      ]
+    );
+  }
+
+  if (/LOT 23/.test(productName)) {
+    if (/MADURO/.test(productName)) {
+      return sourcedBrandReviewProfile(
+        "Perdomo",
+        "Perdomo Lot 23 Maduro",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/ratings/14640/name/perdomo-lot-23-maduro-gordito-odd",
+        "89 Cigar Aficionado line-reference rating",
+        [
+          "Cigar Aficionado rates the Lot 23 Maduro Gordito at 89 points.",
+          "The page identifies the Maduro line as a Nicaraguan Perdomo Lot 23 cigar.",
+          "Use this as Lot 23 Maduro line coverage for Churchill, Robusto, and Toro products.",
+        ]
+      );
+    }
+
+    return sourcedBrandReviewProfile(
+      "Perdomo",
+      "Perdomo Lot 23",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/21596/name/perdomo-lot-23-robusto",
+      "90 Cigar Aficionado exact or line-reference rating",
+      [
+        "Cigar Aficionado rates the Lot 23 Robusto at 90 points.",
+        "The page identifies the line as Nicaraguan with Nicaraguan wrapper, binder, and filler.",
+        "Use exact coverage for Robusto and line coverage for Churchill and Toro natural formats.",
+      ]
+    );
+  }
+
+  if (/RESERVE MADURO/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Perdomo",
+      "Perdomo Reserve Maduro",
+      "Perdomo Cigars",
+      "https://www.perdomocigars.com/10th-anniversary",
+      "Perdomo official Reserve Maduro ratings-and-awards profile",
+      [
+        "Perdomo's 10th Anniversary page describes the Maduro reserve profile and its ratings-and-awards section.",
+        "The page identifies Maduro sizes including Robusto, Epicure, Super Toro, and Churchill.",
+        "Use this as official line-profile coverage until exact Reserve Maduro ratings are added.",
+      ]
+    );
+  }
+
+  return undefined;
+}
+
+function getMacanudoReviewProfile(productName: string) {
+  if (/SAMPLER/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Macanudo",
+      "Macanudo Inspirado sampler",
+      "Neptune Cigar",
+      "https://www.neptunecigar.com/cigar/macanudo-inspirado-orange",
+      "4.39/5 from 212 Neptune customer reviews",
+      [
+        "Neptune lists Macanudo Inspirado Orange with a 4.39 overall rating from 212 customer reviews.",
+        "Use this as component-line customer coverage for Inspirado sampler packs.",
+        "Sampler packs are not presented as having one blended score.",
+      ]
+    );
+  }
+
+  if (/GOLD/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Macanudo",
+      "Macanudo Gold Label",
+      "Neptune Cigar",
+      "https://www.neptunecigar.com/cigar/macanudo-gold-label",
+      "4.56/5 from 50 Neptune customer reviews",
+      [
+        "Neptune lists Macanudo Gold Label with a 4.56 overall customer rating from 50 reviews.",
+        "The page groups Gold Label sizes including Crystal and Ascot-related small formats.",
+        "Visible customer themes emphasize smooth, mild, mellow, creamy, and easy-smoking traits.",
+      ]
+    );
+  }
+
+  if (/CAFE|ASCOT|CRYSTAL CAFE|ROTHSCHILD|MINIATURES/.test(productName) && !/INSPIRADO/.test(productName)) {
+    if (/HYDE PARK/.test(productName)) {
+      return sourcedBrandReviewProfile(
+        "Macanudo",
+        "Macanudo Cafe Hyde Park",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/ratings/14291/name/macanudo-cafe-hyde-park-toro",
+        "90 Cigar Aficionado exact review",
+        [
+          "Cigar Aficionado rates the Macanudo Cafe Hyde Park at 90 points and notes Top 25 recognition.",
+          "The page identifies Hyde Park as a classic mild Macanudo Cafe format.",
+          "Visible review context emphasizes consistency, mildness, vanilla, bread, and sweet spice.",
+        ]
+      );
+    }
+
+    return sourcedBrandReviewProfile(
+      "Macanudo",
+      "Macanudo Cafe",
+      "Neptune Cigar",
+      "https://www.neptunecigar.com/cigar/macanudo-cafe",
+      "4.43/5 from 262 Neptune customer reviews",
+      [
+        "Neptune lists Macanudo Cafe with a 4.43 overall customer rating from 262 reviews.",
+        "The page groups Cafe sizes including Ascots, Baron de Rothschild, Court, Crystal, Hyde Park, Portofino, and related formats.",
+        "Visible customer themes emphasize sweet, smooth, mild, mellow, creamy, and good-construction impressions.",
+      ]
+    );
+  }
+
+  if (/INSPIRADO WHITE/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Macanudo",
+      "Macanudo Inspirado White",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/20283/name/macanudo-inspirado-white-robusto-robusto",
+      "87 Cigar Insider Robusto line-reference rating",
+      [
+        "Cigar Aficionado's Inspirado White Robusto page lists an 87-point Cigar Insider review.",
+        "The page identifies the blend as Ecuador Connecticut over Indonesian binder and Mexican/Nicaraguan filler.",
+        "Use this as Inspirado White line coverage for Churchill, cigarillo, mini, Robusto, Toro, and tubo formats.",
+      ]
+    );
+  }
+
+  if (/INSPIRADO BLACK/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Macanudo",
+      "Macanudo Inspirado Black",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/article/macanudo-inspirado-going-black-and-white-19474",
+      "Cigar Aficionado Inspirado Black line article profile",
+      [
+        "Cigar Aficionado's Inspirado Black and White article identifies Inspirado Black sizes and the Broadleaf-led blend.",
+        "The article describes Robusto, Toro, and Churchill sizes for the Black line.",
+        "Use this as line-profile coverage until exact Inspirado Black ratings are added.",
+      ]
+    );
+  }
+
+  if (/INSPIRADO GREEN/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Macanudo",
+      "Macanudo Inspirado Green",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/rating/macanudo-inspirado-green-toro",
+      "91 Cigar Aficionado Toro line-reference rating",
+      [
+        "Cigar Aficionado rates the Inspirado Green Toro at 91 points.",
+        "The page identifies the Brazilian-wrapper Green blend with Dominican and Colombian filler.",
+        "Use this as Inspirado Green line coverage for Robusto and Toro formats.",
+      ]
+    );
+  }
+
+  if (/INSPIRADO ORANGE/.test(productName)) {
+    if (/ROBUSTO/.test(productName)) {
+      return sourcedBrandReviewProfile(
+        "Macanudo",
+        "Macanudo Inspirado Orange Robusto",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/ratings/19007/name/macanudo-inspirado-orange-robusto-robusto",
+        "90 Cigar Aficionado exact review",
+        [
+          "Cigar Aficionado rates Inspirado Orange Robusto at 90 points.",
+          "The page identifies the Honduran-wrapper blend with Dominican, Honduran, and Nicaraguan filler.",
+          "Visible tasting notes emphasize caramel, maple, and char.",
+        ]
+      );
+    }
+
+    return sourcedBrandReviewProfile(
+      "Macanudo",
+      "Macanudo Inspirado Orange",
+      "Neptune Cigar",
+      "https://www.neptunecigar.com/cigar/macanudo-inspirado-orange",
+      "4.39/5 from 212 Neptune customer reviews",
+      [
+        "Neptune lists Inspirado Orange with a 4.39 overall rating from 212 customer reviews.",
+        "The page groups Churchill, Gigante, Minis, Robusto, Toro, and sampler coverage.",
+        "Visible customer themes emphasize smooth, good flavor, sweetness, creaminess, and citrus/orange impressions.",
+      ]
+    );
+  }
+
+  if (/INSPIRADO RED/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Macanudo",
+      "Macanudo Inspirado Red",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/20426/name/macanudo-inspirado-red-robusto-robusto",
+      "86 Cigar Insider Robusto line-reference rating",
+      [
+        "Cigar Aficionado's Inspirado Red Robusto page lists an 86-point Cigar Insider review.",
+        "The page identifies the Ecuador Habano wrapper with Nicaraguan binder and Nicaraguan/Honduran filler.",
+        "Use this as Inspirado Red line coverage for Gigante, Minis, Robusto, and Toro formats.",
+      ]
+    );
+  }
+
+  if (/\bM ESPRESSO W\/ CREAM\b|M ESPRESSO/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Macanudo",
+      "M by Macanudo Espresso with Cream",
+      "Neptune Cigar",
+      "https://www.neptunecigar.com/cigar/m-by-macanudo-espresso",
+      "Neptune customer-review product page",
+      [
+        "Neptune's M by Macanudo Espresso page provides customer-review coverage for the flavored Espresso line.",
+        "Use this as retailer/customer coverage for the Espresso with Cream Toro.",
+        "The source is not presented as an expert score.",
+      ]
+    );
+  }
+
+  return undefined;
+}
+
+function getTatianaReviewProfile(productName: string) {
+  if (/MINI|TINS/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Tatiana",
+      "Tatiana Mini Tins",
+      "Cigars International",
+      "https://www.cigarsinternational.com/p/Tatiana-Flavored-Cigarillos/2003029/",
+      "4.76/5 from 152 Cigars International customer ratings",
+      [
+        "Cigars International lists Tatiana Flavored Cigarillos at 4.76 out of 5 from 152 customer ratings.",
+        "Use this as customer-review coverage for Tatiana tins and mini cigarillo formats.",
+        "The source is retailer/customer coverage rather than an expert review.",
+      ]
+    );
+  }
+
+  if (/CHERRY/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Tatiana",
+      "Tatiana Cherry",
+      "Neptune Cigar",
+      "https://www.neptunecigar.com/cigar/tatiana-cherry",
+      "4.37/5 from 111 Neptune customer reviews",
+      [
+        "Neptune lists Tatiana Cherry with a 4.37 overall customer rating from 111 reviews.",
+        "The page groups Classic Corona, Dolce, Miniatures, and sampler reviews for the Cherry flavor.",
+        "Visible customer themes emphasize sweet, smooth, mild, favorite, and easy-smoking impressions.",
+      ]
+    );
+  }
+
+  if (/VANILLA/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Tatiana",
+      "Tatiana Vanilla",
+      "Neptune Cigar",
+      "https://www.neptunecigar.com/cigar/tatiana-vanilla",
+      "4.48/5 from 188 Neptune customer reviews",
+      [
+        "Neptune lists Tatiana Vanilla with a 4.48 overall customer rating from 188 reviews.",
+        "The page groups Classic Corona, Dolce, sampler, and related Vanilla reviews.",
+        "Visible customer themes emphasize vanilla, smooth, sweet, good flavor, mild, and favorite impressions.",
+      ]
+    );
+  }
+
+  return sourcedBrandReviewProfile(
+    "Tatiana",
+    "Tatiana infused cigar lines",
+    "Cigars.com",
+    "https://www.cigars.com/cigars/handmade-cigars/tatiana-cigars/",
+    "4.3/5 from 19 Cigars.com customer reviews",
+    [
+      "Cigars.com lists the Tatiana brand page with a 4.3 average customer review from 19 reviews.",
+      "The page groups Tatiana Classic, Classic Trio, Dolce, La Vita, Mini Tins, Robusto, and Trios Petite formats.",
+      "Use this as broad customer-review coverage for Tatiana flavors without exact Neptune review pages.",
+    ]
+  );
+}
+
+function getGurkhaReviewProfile(productName: string) {
+  if (/CELLAR RESV 12YR PLATINUM/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Gurkha",
+      "Gurkha Cellar Reserve Platinum 12 Year",
+      "Neptune Cigar",
+      "https://www.neptunecigar.com/cigar/gurkha-cellar-reserve-platinum-12-year",
+      "4.44/5 from 115 Neptune customer reviews",
+      [
+        "Neptune lists Gurkha Cellar Reserve Platinum 12 Year with a 4.44 overall customer rating from 115 reviews.",
+        "The page groups Solara, Hedonism, Kraken, and sampler review coverage for the 12 Year Platinum line.",
+        "Use this as customer-review line coverage for the Platinum 12 Year formats.",
+      ]
+    );
+  }
+
+  if (/CELLAR RESV 15YR/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Gurkha",
+      "Gurkha Cellar Reserve 15 Years",
+      "Neptune Cigar",
+      "https://www.neptunecigar.com/cigars/gurkha-cellar-reserve-15-years-hedonism",
+      "4.35/5 from 26 Neptune customer reviews",
+      [
+        "Neptune lists Gurkha Cellar Reserve 15 Years Hedonism with a 4.35 overall customer rating from 26 reviews.",
+        "The page identifies the Dominican Cellar Reserve profile with cedar, earth, leather, and cocoa descriptors.",
+        "Use this as customer-review line coverage for Cellar Reserve 15 Year and related Maduro/Prisoner formats.",
+      ]
+    );
+  }
+
+  if (/GHOST/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Gurkha",
+      "Gurkha Ghost",
+      "Neptune Cigar",
+      "https://www.neptunecigar.com/cigar/gurkha-ghost",
+      "4.28/5 from 123 Neptune customer reviews",
+      [
+        "Neptune lists Gurkha Ghost with a 4.28 overall customer rating from 123 reviews.",
+        "The page groups Ghost Shadow, Exorcist, and sampler review coverage.",
+        "Use this as customer-review line coverage for Ghost and Ghost sampler products.",
+      ]
+    );
+  }
+
+  if (/GRAND RESERVE|GRAN RESERVE/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Gurkha",
+      "Gurkha Grand Reserve",
+      "Neptune Cigar",
+      "https://www.neptunecigar.com/cigar/gurkha-grand-reserve",
+      "4.47/5 from 78 Neptune customer reviews",
+      [
+        "Neptune lists Gurkha Grand Reserve with a 4.47 overall customer rating from 78 reviews.",
+        "The page identifies Grand Reserve as the cognac-infused Gurkha line and groups Churchill review coverage.",
+        "Use this as customer-review line coverage for Grand Reserve cognac formats.",
+      ]
+    );
+  }
+
+  if (/HERITAGE MADURO/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Gurkha",
+      "Gurkha Heritage Maduro",
+      "Neptune Cigar",
+      "https://www.neptunecigar.com/cigar/gurkha-heritage-maduro",
+      "4.35/5 from 21 Neptune customer reviews",
+      [
+        "Neptune lists Gurkha Heritage Maduro with a 4.35 overall customer rating from 21 reviews.",
+        "The page identifies the Heritage Maduro customer-review line and reviewer descriptors.",
+        "Use this as customer-review line coverage for the Heritage Maduro Robusto.",
+      ]
+    );
+  }
+
+  if (/NICARAGUA SERIES/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Gurkha",
+      "Gurkha Nicaragua Series",
+      "Neptune Cigar",
+      "https://www.neptunecigar.com/cigar/gurkha-nicaragua-series",
+      "4.48/5 from 40 Neptune customer reviews",
+      [
+        "Neptune lists Gurkha Nicaragua Series with a 4.48 overall customer rating from 40 reviews.",
+        "The page identifies the Nicaraguan Corojo/Criollo profile and groups Robusto and sampler reviews.",
+        "Use this as customer-review line coverage for Nicaragua Series Robusto and Toro products.",
+      ]
+    );
+  }
+
+  if (/ROYAL CHALLENGE/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Gurkha",
+      "Gurkha Royal Challenge",
+      "Neptune Cigar",
+      "https://www.neptunecigar.com/cigar/gurkha-royal-challenge",
+      "4.4/5 from 89 Neptune customer reviews",
+      [
+        "Neptune lists Gurkha Royal Challenge with a 4.4 overall customer rating from 89 reviews.",
+        "The page groups Royal Challenge Robusto, Toro, and sampler review coverage.",
+        "Use this as customer-review line coverage for Royal Challenge formats.",
+      ]
+    );
+  }
+
+  return sourcedBrandReviewProfile(
+    "Gurkha",
+    "Gurkha cigar lines",
+    "Neptune Cigar",
+    "https://www.neptunecigar.com/gurkha-cigar",
+    "4.41/5 from 1,487 Neptune customer reviews",
+    [
+      "Neptune's Gurkha brand page lists a 4.41 overall customer rating from 1,487 reviews.",
+      "The page groups Gurkha Bourbon, Castle Hall, Cellar Reserve, Private Select, Year of the Dragon, and other lines.",
+      "Use this as broad customer-review brand coverage where exact line review pages are not yet mapped.",
+    ]
+  );
+}
+
+function getMontecristoReviewProfile(productName: string) {
+  if (/1935 ANNIVERSARY/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Montecristo",
+      "Montecristo 1935 Anniversary Nicaragua No. 2",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/top25cigar/montecristo-1935-anniversary-nicaragua-no-2-0",
+      "95 Cigar Aficionado Top 25 line-reference rating",
+      [
+        "Cigar Aficionado ranked the 1935 Anniversary Nicaragua No. 2 second in the 2021 Top 25 with a 95-point rating.",
+        "The page identifies the Nicaraguan A.J. Fernandez-made Anniversary blend and its No. 2 dimensions.",
+        "Use this as line-reference coverage for the No. 2 and Toro Anniversary formats.",
+      ]
+    );
+  }
+
+  if (/WHITE/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Montecristo",
+      "Montecristo White Toro",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/15552/name/montecristo-white-toro-toro",
+      "88 Cigar Aficionado exact review",
+      [
+        "Cigar Aficionado rates the Montecristo White Toro at 88 points.",
+        "The page identifies the Dominican-made White line with Ecuador wrapper and Dominican/Nicaraguan filler.",
+        "Use exact coverage for Toro formats and line-reference coverage for Churchill, Court, No. 2, and Prontos products.",
+      ]
+    );
+  }
+
+  if (/CLASSIC/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Montecristo",
+      "Montecristo Classic Series Churchill",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/25584/name/montecristo-classic-series-churchill-churchill",
+      "88 Cigar Aficionado Churchill line-reference rating",
+      [
+        "Cigar Aficionado rates the Montecristo Classic Series Churchill at 88 points.",
+        "The page identifies the Classic Series as Dominican-made with Ecuador wrapper and Dominican filler.",
+        "Use this as Classic line coverage for El Conde, Especial No. 3, No. 2, and tubo formats.",
+      ]
+    );
+  }
+
+  if (/ESPADA/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Montecristo",
+      "Espada by Montecristo Guard",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/18942/name/espada-by-montecristo-guard-toro",
+      "89 Cigar Aficionado exact or line-reference rating",
+      [
+        "Cigar Aficionado rates the Espada by Montecristo Guard at 89 points.",
+        "The page identifies Espada as an all-Nicaraguan Montecristo line.",
+        "Use exact coverage for Guard and line-reference coverage for Ricasso.",
+      ]
+    );
+  }
+
+  if (/NICARAGUA SERIES/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Montecristo",
+      "Montecristo Nicaragua Series Toro",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/21048/name/montecristo-nicaragua-series-toro",
+      "90 Cigar Aficionado exact review",
+      [
+        "Cigar Aficionado rates the Montecristo Nicaragua Series Toro at 90 points.",
+        "The page identifies the blend as Nicaraguan wrapper, binder, and filler.",
+        "Use this as exact coverage for the Nicaragua Series Toro.",
+      ]
+    );
+  }
+
+  if (/PLATINUM/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Montecristo",
+      "Montecristo Platinum Series Robusto",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/6008/name/montecristo-platinum-series-robusto",
+      "89 Cigar Aficionado Robusto line-reference rating",
+      [
+        "Cigar Aficionado lists the Montecristo Platinum Series Robusto with an 89-point review history.",
+        "The page identifies the Platinum blend as Mexican-wrapper with Dominican, Nicaraguan, and Peruvian filler.",
+        "Use this as line-reference coverage for Platinum Churchill and Rothchilde tubos.",
+      ]
+    );
+  }
+
+  if (/CHURCHILL/.test(productName) && !/CLASSIC|WHITE|PLATINUM/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Montecristo",
+      "Montecristo Churchill",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/7348/name/montecristo-churchill-churchill",
+      "88 Cigar Insider exact review",
+      [
+        "Cigar Aficionado's Montecristo Churchill page lists an 88-point Cigar Insider review.",
+        "The page identifies the Churchill as a Dominican Montecristo with Connecticut Shade wrapper.",
+        "Use exact coverage for the core Churchill and line-reference coverage for closely related core formats.",
+      ]
+    );
+  }
+
+  return sourcedBrandReviewProfile(
+    "Montecristo",
+    "Montecristo non-Cuban core lines",
+    "Cigar Aficionado",
+    "https://www.cigaraficionado.com/brand/montecristo-non-cuban",
+    "Cigar Aficionado non-Cuban brand-profile ratings coverage",
+    [
+      "Cigar Aficionado's non-Cuban Montecristo brand page lists Classic, White, Platinum, Espada, and other rated product lines.",
+      "Use this as brand-profile coverage for core sizes, Memories, Freshloc, and sampler products without exact public pages.",
+      "The source is broader brand-profile coverage rather than an exact vitola score.",
+    ]
+  );
+}
+
+function getMyFatherReviewProfile(productName: string) {
+  if (/CONNECTICUT/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "My Father",
+      "My Father Connecticut Robusto",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/19239/name/my-father-connecticut-robusto-robusto",
+      "90 Cigar Aficionado line-reference rating",
+      [
+        "Cigar Aficionado's My Father Connecticut Robusto page lists a 90-point review history.",
+        "The page identifies the Connecticut line as Nicaraguan-made with Ecuador wrapper.",
+        "Use exact coverage for Robusto and line-reference coverage for Toro and Toro Gordo formats.",
+      ]
+    );
+  }
+
+  if (/FONSECA/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "My Father",
+      "Fonseca by My Father Cedros",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/22425/name/fonseca-by-my-father-cedros",
+      "90 Cigar Aficionado Cedros line-reference rating",
+      [
+        "Cigar Aficionado's Fonseca by My Father Cedros page lists a 90-point Cigar Aficionado review.",
+        "The page identifies Fonseca by My Father as Nicaraguan-made with Nicaraguan binder and filler.",
+        "Use exact Cedros coverage and line-reference coverage for the Robusto.",
+      ]
+    );
+  }
+
+  if (/JUDGE/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "My Father",
+      "My Father The Judge Grand Robusto",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/24975/name/my-father-the-judge-grand-robusto-grande",
+      "98 Cigar Aficionado Cigar of the Year line-reference rating",
+      [
+        "Cigar Aficionado's Judge Grand Robusto page lists a 98-point Cigar Aficionado review.",
+        "The page identifies the Grande format as Nicaraguan with Ecuador wrapper.",
+        "Use exact coverage for Grand Robusto and line-reference coverage for Corona Gorda and Toro formats.",
+      ]
+    );
+  }
+
+  if (/LA GRAN OFERTA/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "My Father",
+      "My Father La Gran Oferta Robusto",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/25385/name/my-father-la-gran-oferta-robusto-robusto",
+      "90 Cigar Aficionado exact or line-reference rating",
+      [
+        "Cigar Aficionado rates My Father La Gran Oferta Robusto at 90 points.",
+        "The page identifies the line as Nicaraguan-made with Ecuador wrapper.",
+        "Use this as line-reference coverage for the La Gran Oferta assortment product.",
+      ]
+    );
+  }
+
+  if (/LA OPULENCIA/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "My Father",
+      "My Father La Opulencia Robusto",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/20403/name/my-father-la-opulencia-robusto-robusto",
+      "92 Cigar Aficionado line-reference rating",
+      [
+        "Cigar Aficionado's La Opulencia Robusto page lists a 92-point Cigar Aficionado review.",
+        "The page identifies the Mexican-wrapper La Opulencia blend from Nicaragua.",
+        "Use exact coverage for Robusto and line-reference coverage for Toro.",
+      ]
+    );
+  }
+
+  if (/LA PROMESA/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "My Father",
+      "My Father La Promesa Robusto Grande",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/21675/name/my-father-la-promesa-robusto-grande-toro",
+      "87 Cigar Insider line-reference rating",
+      [
+        "Cigar Aficionado's La Promesa Robusto Grande page lists an 87-point Cigar Insider review.",
+        "The page identifies the line as Nicaraguan-made with Ecuador wrapper.",
+        "Use this as line-reference coverage for La Promesa Toro and Lancero products.",
+      ]
+    );
+  }
+
+  if (/LE BIJOU/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "My Father",
+      "My Father Le Bijou 1922 Torpedo Box Pressed",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/18642/name/my-father-le-bijou-1922-torpedo-box-pressed-figurado",
+      "97 Cigar Aficionado Cigar of the Year exact review",
+      [
+        "Cigar Aficionado rates the Le Bijou 1922 Torpedo Box Pressed at 97 points and named it Cigar of the Year.",
+        "The page identifies Le Bijou as a Nicaraguan line with Nicaraguan wrapper, binder, and filler.",
+        "Use exact coverage for Torpedo and line-reference coverage for Churchill, Petite Robusto, and Toro formats.",
+      ]
+    );
+  }
+
+  if (/LA ANTIGUEDAD/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "My Father",
+      "La Antiguedad Super Toro",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/rating/la-antiguedad-super-toro",
+      "92 Cigar Aficionado line-reference rating",
+      [
+        "Cigar Aficionado rates La Antiguedad Super Toro at 92 points.",
+        "The page identifies the line as Nicaraguan with Ecuador wrapper.",
+        "Use exact Super Toro coverage and line-reference coverage for Toro Gordo.",
+      ]
+    );
+  }
+
+  if (/NO\.?\s*[135]/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "My Father",
+      "My Father No. 1 Robusto",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/22009/name/my-father-no.-1-robusto",
+      "92 Cigar Aficionado No. 1 line-reference rating",
+      [
+        "Cigar Aficionado rates My Father No. 1 Robusto at 92 points.",
+        "The page identifies the core My Father profile as Nicaraguan-made with Ecuador wrapper.",
+        "Use exact No. 1 coverage and line-reference coverage for No. 3 Cremas and No. 5 Toro.",
+      ]
+    );
+  }
+
+  return sourcedBrandReviewProfile(
+    "My Father",
+    "My Father cigar lines",
+    "Cigar Aficionado",
+    "https://www.cigaraficionado.com/brand/my-father",
+    "Cigar Aficionado brand-profile ratings coverage",
+    [
+      "Cigar Aficionado's My Father brand page lists My Father, Le Bijou 1922, The Judge, and Connecticut product lines.",
+      "The profile notes Cigar of the Year recognition for Le Bijou 1922.",
+      "Use this as brand-profile coverage for samplers until component-level reviews are added.",
+    ]
+  );
+}
+
+function getFactoryReviewProfile(productName: string) {
+  if (/FACTORY SMOKES/.test(productName)) {
+    if (/SUN\s*GROWN/.test(productName)) {
+      return sourcedBrandReviewProfile(
+        "Factory",
+        "Factory Smokes Sun Grown",
+        "Neptune Cigar",
+        "https://www.neptunecigar.com/cigars/factory-smokes-sungrown-robusto",
+        "4.03/5 from 91 Neptune customer reviews",
+        [
+          "Neptune lists Factory Smokes Sun Grown Robusto with a 4.03 overall customer rating from 91 reviews.",
+          "The page identifies Sun Grown Robusto customer-review coverage and reviewer descriptors.",
+          "Use exact Robusto coverage and line-reference coverage for Toro.",
+        ]
+      );
+    }
+
+    if (/SWEET/.test(productName)) {
+      return sourcedBrandReviewProfile(
+        "Factory",
+        "Factory Smokes Sweets",
+        "Neptune Cigar",
+        "https://www.neptunecigar.com/cigar/factory-smokes-sweets",
+        "4.19/5 from 376 Neptune customer reviews",
+        [
+          "Neptune lists Factory Smokes Sweets with a 4.19 overall customer rating from 376 reviews.",
+          "The page groups Belicoso, Churchill, Robusto, and Toro review coverage.",
+          "Use this as customer-review line coverage for Sweet formats.",
+        ]
+      );
+    }
+
+    if (/SHADE/.test(productName)) {
+      return sourcedBrandReviewProfile(
+        "Factory",
+        "Factory Smokes Shade",
+        "Neptune Cigar",
+        "https://www.neptunecigar.com/cigar/factory-smokes-shade",
+        "4.14/5 from 273 Neptune customer reviews",
+        [
+          "Neptune lists Factory Smokes Shade with a 4.14 overall customer rating from 273 reviews.",
+          "The page groups Churchill, Gordito, Robusto, and Toro review coverage.",
+          "Use this as customer-review line coverage for Shade formats.",
+        ]
+      );
+    }
+
+    return sourcedBrandReviewProfile(
+      "Factory",
+      "Factory Smokes Maduro",
+      "Neptune Cigar",
+      "https://www.neptunecigar.com/cigar/factory-smokes-maduro",
+      "4.12/5 from 567 Neptune customer reviews",
+      [
+        "Neptune lists Factory Smokes Maduro with a 4.12 overall customer rating from 567 reviews.",
+        "The page groups Churchill, Gordito, Robusto, and Toro review coverage.",
+        "Use this as customer-review line coverage for Maduro formats.",
+      ]
+    );
+  }
+
+  if (/FACTORY THROWOUTS/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Factory",
+      "Factory Throw-Outs",
+      "Cigars International",
+      "https://www.cigarsinternational.com/p/factory-throwouts-cigars/1479955/",
+      "4.5/5 from 1,938 Cigars International customer ratings",
+      [
+        "Cigars International lists Factory Throw-Outs with a 4.5 out of 5 customer rating from 1,938 ratings.",
+        "The page groups No. 49, No. 59, and No. 99 natural and sweet variants.",
+        "Use this as customer-review line coverage for Factory Throw-Outs products.",
+      ]
+    );
+  }
+
+  return undefined;
+}
+
+function cigarAficionadoPublicSearchUrl(query: string) {
+  return `https://www.cigaraficionado.com/search?${new URLSearchParams({ q: query }).toString()}`;
+}
+
+function cigarAficionadoSearchReviewProfile(productName: string, lineName: string, query: string) {
+  return sourcedBrandReviewProfile(
+    inferBrand(productName),
+    lineName,
+    "Cigar Aficionado",
+    cigarAficionadoPublicSearchUrl(query),
+    "Cigar Aficionado review-search profile coverage",
+    [
+      "Cigar Aficionado's public search page is used as review-discovery coverage for this long-tail catalog item.",
+      "The profile is intentionally labeled as search-profile coverage rather than an exact score.",
+      "Replace this with exact or line-level review details when a stronger public source is mapped.",
+    ]
+  );
+}
+
+function neptuneReviewProfile(brandName: string, lineName: string, sourceUrl: string, rating: string) {
+  return sourcedBrandReviewProfile(
+    brandName,
+    lineName,
+    "Neptune Cigar",
+    sourceUrl,
+    rating,
+    [
+      "The Neptune page exposes customer review coverage for the named product family.",
+      "Use this as customer-review coverage for related vitolas in the same line.",
+      "The source is retailer/customer coverage rather than an exact publication score.",
+    ]
+  );
+}
+
+function cigarAficionadoBrandProfile(brandName: string, lineName: string, sourceUrl: string) {
+  return sourcedBrandReviewProfile(
+    brandName,
+    lineName,
+    "Cigar Aficionado",
+    sourceUrl,
+    "Cigar Aficionado brand-profile ratings coverage",
+    [
+      "Cigar Aficionado's brand profile groups public ratings, reviews, and article context for this brand family.",
+      "Use this as brand-profile coverage for related catalog formats without an exact mapped page.",
+      "The profile is not presented as an exact vitola score.",
+    ]
+  );
+}
+
+function getFinalCoverageReviewProfile(productName: string) {
+  if (/^ACID\b/.test(productName)) {
+    if (/KUBA KUBA/.test(productName)) {
+      return neptuneReviewProfile("ACID", "ACID Kuba Kuba", "https://www.neptunecigar.com/cigars/acid-kuba-kuba", "Neptune customer-review product page");
+    }
+
+    return sourcedBrandReviewProfile(
+      "ACID",
+      "ACID infused cigar lines",
+      "Cigar World",
+      "https://www.cigarworld.com/cigars/acid/",
+      "Cigar World ACID community-review profile coverage",
+      [
+        "Cigar World groups ACID line pages and community review coverage for Drew Estate's infused catalog.",
+        "Use this as brand/line coverage for ACID formats without an exact customer-review page mapped.",
+        "The source is community-review coverage rather than an exact publication score.",
+      ]
+    );
+  }
+
+  if (/^QUORUM\b/.test(productName)) {
+    return neptuneReviewProfile("Quorum", "Quorum", "https://www.neptunecigar.com/cigar/quorum", "Neptune customer-review brand and line page");
+  }
+
+  if (/^PUNCH\b/.test(productName)) {
+    if (/SIGNATURE/.test(productName)) {
+      return cigarAficionadoSearchReviewProfile(productName, "Punch Signature", "PUNCH SIGNATURE ROBUSTO");
+    }
+
+    if (/DIABLO/.test(productName)) {
+      return cigarAficionadoSearchReviewProfile(productName, "Punch Diablo", "PUNCH DIABLO");
+    }
+
+    if (/RARE COROJO/.test(productName)) {
+      return cigarAficionadoSearchReviewProfile(productName, "Punch Rare Corojo", "PUNCH RARE COROJO");
+    }
+
+    if (/GRAN PURO/.test(productName)) {
+      return cigarAficionadoSearchReviewProfile(productName, "Punch Gran Puro", "PUNCH GRAN PURO");
+    }
+
+    return cigarAficionadoSearchReviewProfile(productName, "Punch", "PUNCH CIGARS");
+  }
+
+  if (/^COHIBA\b/.test(productName)) {
+    if (/BLUE/.test(productName)) {
+      return cigarAficionadoSearchReviewProfile(productName, "Cohiba Blue", "COHIBA BLUE ROBUSTO");
+    }
+
+    return cigarAficionadoSearchReviewProfile(productName, "Cohiba non-Cuban lines", "COHIBA NON CUBAN");
+  }
+
+  if (/^ASHTON\b/.test(productName)) {
+    return cigarAficionadoBrandProfile("Ashton", /VSG/.test(productName) ? "Ashton VSG" : "Ashton", "https://www.cigaraficionado.com/brand/ashton");
+  }
+
+  if (/^BRICK HOUSE\b/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Brick House",
+      "Brick House",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/26184/name/brick-house-corona",
+      "Cigar Aficionado line-reference rating coverage",
+      [
+        "Cigar Aficionado's Brick House Corona page provides public rating coverage for the Brick House family.",
+        "Use this as line-reference coverage for Natural, Maduro, Connecticut, and sampler products.",
+        "The mapped source is line-reference coverage unless the exact vitola is the Corona.",
+      ]
+    );
+  }
+
+  if (/^LA GLORIA CUBANA\b|^LA GLORIA ESTELI\b/.test(productName)) {
+    if (/SERIE R/.test(productName)) {
+      return cigarAficionadoSearchReviewProfile(productName, "La Gloria Cubana", "LA GLORIA CUBANA SERIE R");
+    }
+
+    return cigarAficionadoSearchReviewProfile(productName, "La Gloria Cubana", "LA GLORIA CUBANA");
+  }
+
+  if (/^DREW ESTATE JAVA\b|^JAVA\b/.test(productName)) {
+    if (/MADURO/.test(productName)) {
+      return neptuneReviewProfile("Java", "Java by Drew Estate", "https://www.neptunecigar.com/cigars/java-maduro-toro", "Neptune customer-review product page");
+    }
+
+    return neptuneReviewProfile("Java", "Java by Drew Estate", "https://www.neptunecigar.com/java-cigar", "Neptune customer-review brand and line page");
+  }
+
+  if (/^JM'?S?\b|^JM DOMINICAN\b/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "JM's Dominican",
+      "JM's Dominican",
+      "Cigars.com",
+      "https://www.cigars.com/item/jms-dominican/connecticut-robusto/JMDCR.html",
+      "Cigars.com product-review page",
+      [
+        "Cigars.com provides product-page coverage for the JM's Dominican Connecticut Robusto.",
+        "Use this as customer/product page coverage for JM's Dominican Connecticut, Maduro, Sumatra, and Corojo formats.",
+        "The source is product-page coverage rather than an exact publication score.",
+      ]
+    );
+  }
+
+  if (/^DAVIDOFF WINSTON CHURCHILL/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Davidoff",
+      "Davidoff Winston Churchill The Late Hour",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/20277/name/davidoff-winston-churchill-the-late-hour-churchill",
+      "86 Cigar Aficionado Churchill line-reference rating",
+      [
+        "Cigar Aficionado rates the Winston Churchill The Late Hour Churchill at 86 points and lists later reviews.",
+        "The page identifies the Churchill as a Dominican Davidoff with Ecuador wrapper, Mexican binder, and Dominican/Nicaraguan filler.",
+        "Use this as line-reference coverage for Winston Churchill tins and Late Hour packs.",
+      ]
+    );
+  }
+
+  if (/^TABAK\b/.test(productName)) {
+    return neptuneReviewProfile("Tabak", "Tabak Especial", "https://www.neptunecigar.com/tabak-especial-cigar", "Neptune customer-review brand and line page");
+  }
+
+  if (/^DEADWOOD\b/.test(productName)) {
+    return neptuneReviewProfile("Deadwood", "Deadwood", "https://www.neptunecigar.com/cigars/deadwood-fat-bottom-betty", "Neptune customer-review product page");
+  }
+
+  if (/^AJ FERNANDEZ\b|^SAN LOTANO\b/.test(productName)) {
+    return neptuneReviewProfile("AJ Fernandez", "AJ Fernandez New World and San Lotano", "https://www.neptunecigar.com/cigar/new-world", "Neptune customer-review brand and line page");
+  }
+
+  if (/^NUB\b|^TASTE OF OLIVA\b/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Nub",
+      "Nub by Oliva",
+      "CIGAR.com",
+      "https://www.cigar.com/p/nub-by-oliva-cigars/1411708",
+      "CIGAR.com customer-review and brand-profile page",
+      [
+        "CIGAR.com's Nub by Oliva page provides customer-review and line-profile coverage for Nub formats.",
+        "Use this as broad line coverage for Nub Cameroon, Connecticut, Habano, Maduro, and sampler products.",
+        "The source is retailer/customer coverage rather than an exact expert score.",
+      ]
+    );
+  }
+
+  if (/^CAO\b/.test(productName)) {
+    return cigarAficionadoSearchReviewProfile(productName, "CAO cigar lines", /^CAO FLATHEAD/.test(productName) ? "CAO FLATHEAD" : "CAO CIGARS");
+  }
+
+  if (/^PARTAGAS\b/.test(productName)) {
+    if (/BLACK LABEL/.test(productName)) {
+      return sourcedBrandReviewProfile(
+        "Partagas",
+        "Partagas Black Label",
+        "Cigar World",
+        "https://www.cigarworld.com/cigars/partagas/black-label/",
+        "Cigar World line profile with 90 Cigar Insider rating context",
+        [
+          "Cigar World's Partagas Black Label page notes 90-rating context and groups the line profile.",
+          "Use this as Black Label line coverage for boxes, tubos, and tins.",
+          "The source is line-profile coverage rather than an exact vitola score.",
+        ]
+      );
+    }
+
+    return cigarAficionadoSearchReviewProfile(productName, "Partagas", "PARTAGAS CORTADO");
+  }
+
+  if (/^CAMACHO\b/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "Camacho",
+      "Camacho cigar lines",
+      "Holt's Cigar Company",
+      "https://www.holts.com/cigars/all-cigar-brands/brand/camacho",
+      "Holt's customer-rating brand profile",
+      [
+        "Holt's Camacho brand page provides brand/customer-rating coverage across Camacho lines.",
+        "Use this as broad customer-review coverage for Connecticut, Corojo, Ecuador, Nicaragua, and Triple Maduro formats.",
+        "The source is retailer/customer coverage rather than an exact publication score.",
+      ]
+    );
+  }
+
+  if (/^LA AURORA\b/.test(productName)) {
+    return cigarAficionadoSearchReviewProfile(productName, "La Aurora", /^LA AURORA 120TH/.test(productName) ? "LA AURORA 120TH" : "LA AURORA PREFERIDO");
+  }
+
+  if (/^LA ANTIQUEDAD\b|^FLOR DE LAS ANTILLAS\b|^JAIME GARCIA\b|^DON PEPIN\b|^EL CENTURION\b|^LA DUENA\b/.test(productName)) {
+    return cigarAficionadoBrandProfile("My Father", "My Father extended family lines", "https://www.cigaraficionado.com/brand/my-father");
+  }
+
+  if (/^ASLYUM\b|^ASYLUM\b/.test(productName)) {
+    return cigarAficionadoSearchReviewProfile(productName, /^ASYLUM INSIDIOUS/.test(productName) ? "Asylum Insidious" : "Asylum 13", /^ASYLUM INSIDIOUS/.test(productName) ? "ASYLUM INSIDIOUS" : "ASYLUM 13");
+  }
+
+  if (/^KAREN BERGER\b/.test(productName)) {
+    return cigarAficionadoSearchReviewProfile(productName, "Karen Berger", "KAREN BERGER CIGARS");
+  }
+
+  if (/^ROCKY PATEL\b|^RP\b|^EDGE\b/.test(productName)) {
+    return sourcedRockyPatelReviewProfile("Rocky Patel residual lines", "https://www.rockypatel.com/cigars/", "Rocky Patel official brand profile coverage", [
+      "Rocky Patel's official cigar index groups residual Rocky Patel, Edge, Juniors, and sampler lines.",
+      "Use this as official brand-profile coverage where no exact review profile has been mapped yet.",
+      "The source is official brand coverage rather than an exact score.",
+    ]);
+  }
+
+  if (/^TATUAJE\b/.test(productName)) {
+    return cigarAficionadoSearchReviewProfile(productName, "Tatuaje", /^TATUAJE BLACK/.test(productName) ? "TATUAJE BLACK" : "TATUAJE CIGARS");
+  }
+
+  if (/^ALADINO\b/.test(productName)) {
+    return cigarAficionadoSearchReviewProfile(productName, "Aladino", "ALADINO CIGARS");
+  }
+
+  if (/^AVO\b/.test(productName)) {
+    return cigarAficionadoSearchReviewProfile(productName, "AVO", "AVO SYNCRO");
+  }
+
+  if (/^BACCARAT\b/.test(productName)) {
+    return cigarAficionadoSearchReviewProfile(productName, "Baccarat", "BACCARAT CIGARS");
+  }
+
+  if (/^JOYA\b|^ANTANO\b/.test(productName)) {
+    return cigarAficionadoSearchReviewProfile(productName, "Joya de Nicaragua", /^JOYA DE NICARAGUA ANTANO CT|^ANTANO/.test(productName) ? "JOYA DE NICARAGUA ANTANO CONNECTICUT" : "JOYA DE NICARAGUA");
+  }
+
+  if (/^PERLA DEL MAR\b/.test(productName)) {
+    return cigarAficionadoSearchReviewProfile(productName, "Perla del Mar", "PERLA DEL MAR CIGARS");
+  }
+
+  if (/^LEAF BY OSCAR\b|^OSCAR 2012\b|^OLD MAN\b|^OUTCAST\b/.test(productName)) {
+    return cigarAficionadoSearchReviewProfile(productName, "Oscar Valladares cigar lines", "OSCAR VALLADARES CIGARS");
+  }
+
+  if (/^UNDERCROWN\b|^LIGA UNDERCROWN\b|^NICA RUSTICA\b|^KUBA KUBA FRESH PACK/.test(productName)) {
+    return cigarAficionadoSearchReviewProfile(productName, "Drew Estate cigar lines", /^NICA RUSTICA/.test(productName) ? "NICA RUSTICA" : "UNDERCROWN DREW ESTATE");
+  }
+
+  if (/^H[.\s]?UPMANN\b/.test(productName)) {
+    return cigarAficionadoSearchReviewProfile(productName, "H. Upmann", "H UPMANN AJ FERNANDEZ");
+  }
+
+  if (/^HOYO\b|^HOYO DE MONTERREY\b/.test(productName)) {
+    return cigarAficionadoSearchReviewProfile(productName, "Hoyo de Monterrey", "HOYO DE MONTERREY EXCALIBUR");
+  }
+
+  if (/^DIESEL\b|^BOLIVAR\b|^CHILLIN MOOSE\b|^SHADY MOOSE\b|^SANCHO PANZA\b|^TRINIDAD\b/.test(productName)) {
+    return cigarAficionadoSearchReviewProfile(productName, "Forged cigar lines", stripPackageFromName(productName));
+  }
+
+  if (/^NEW CUBA\b|^HAVANA Q\b|^CAZADORES\b|^SCHIZO\b|^TRADER JACK/.test(productName)) {
+    return cigarAficionadoSearchReviewProfile(productName, "value cigar lines", stripPackageFromName(productName));
+  }
+
+  if (/^PLASENCIA\b/.test(productName)) {
+    return cigarAficionadoSearchReviewProfile(productName, "Plasencia Alma Fuerte", "PLASENCIA ALMA FUERTE");
+  }
+
+  if (/^OLMEC\b/.test(productName)) {
+    return cigarAficionadoSearchReviewProfile(productName, "Olmec", "OLMEC FOUNDATION CIGARS");
+  }
+
+  if (/^ZINO\b/.test(productName)) {
+    return cigarAficionadoSearchReviewProfile(productName, "Zino Platinum", "ZINO PLATINUM");
+  }
+
+  if (/^VILLIGER\b/.test(productName)) {
+    return cigarAficionadoSearchReviewProfile(productName, "Villiger Mini", "VILLIGER MINI");
+  }
+
+  if (/^20 ACRE FARM\b/.test(productName)) {
+    return cigarAficionadoSearchReviewProfile(productName, "20 Acre Farm", "20 ACRE FARM CIGAR");
+  }
+
+  if (/^6 X 60 SAMPLER JC NEWMAN\b/.test(productName)) {
+    return cigarAficionadoSearchReviewProfile(productName, "J.C. Newman 6 x 60 Sampler", "JC NEWMAN CIGARS");
+  }
+
+  return cigarAficionadoSearchReviewProfile(productName, `${inferBrand(productName)} cigar line`, stripPackageFromName(productName));
+}
+
+function getArturoFuenteDonCarlosReviewProfile(productName: string) {
+  if (/ROBUSTO/.test(productName) && !/DBL|DOUBLE/.test(productName)) {
+    return arturoFuenteCigarAficionadoProfile(
+      "Don Carlos Robusto",
+      "https://www.cigaraficionado.com/ratings/22809/name/arturo-fuente-don-carlos-robusto",
+      "94 Cigar Aficionado listed review",
+      [
+        "Cigar Aficionado lists Don Carlos Robusto reviews including a 94-point Cigar Aficionado entry.",
+        "The review page identifies the Robusto as a Cameroon-wrapped Dominican Fuente cigar.",
+        "Visible tasting notes emphasize citrus, tea, honey, wood, raisin, herbal tones, and brown sugar.",
+      ]
+    );
+  }
+
+  if (/NO\.?\s*2/.test(productName)) {
+    return arturoFuenteCigarAficionadoProfile(
+      "Don Carlos",
+      "https://www.cigaraficionado.com/ratings/16969/name/arturo-fuente-don-carlos-no-2",
+      "94 Cigar Aficionado exact review",
+      [
+        "Cigar Aficionado gives the Don Carlos No. 2 a 94-point rating and notes Top 25 recognition.",
+        "The page describes the Don Carlos line as Cameroon-wrapped and built with aged Fuente tobaccos.",
+        "Visible tasting notes center on nut, cocoa, spice, and sweet cedar.",
+      ]
+    );
+  }
+
+  return arturoFuenteCigarAficionadoProfile(
+    "Don Carlos Double Robusto",
+    "https://www.cigaraficionado.com/ratings/16969/name/arturo-fuente-don-carlos-no-2",
+    "94 Cigar Aficionado Don Carlos No. 2 line-reference rating",
+    [
+      "Cigar Aficionado's Don Carlos No. 2 page provides source-backed Don Carlos line context and a 94-point anchor rating.",
+      "The page describes the line as Cameroon-wrapped with Dominican filler and binder tobaccos.",
+      "Use this as line-level Don Carlos coverage for non-No. 2 sizes until exact vitola reviews are added.",
+    ]
+  );
+}
+
+function getArturoFuenteHemingwayReviewProfile(productName: string) {
+  if (/BEST SELLER/.test(productName)) {
+    return arturoFuenteCigarAficionadoProfile(
+      "Hemingway Best Seller",
+      "https://www.cigaraficionado.com/ratings/20270/name/arturo-fuente-hemingway-best-seller",
+      "91 Cigar Insider / 90 Cigar Aficionado listed review",
+      [
+        "Cigar Aficionado's page lists Best Seller reviews including 91-point and 90-point entries.",
+        "The page identifies the cigar as a Cameroon-wrapped Fuente perfecto.",
+        "Visible tasting notes include almond, sweet spice, candied orange peel, and gingerbread.",
+      ]
+    );
+  }
+
+  if (/CLASSIC/.test(productName)) {
+    return arturoFuenteCigarAficionadoProfile(
+      "Hemingway Classic",
+      "https://www.cigaraficionado.com/ratings/20268/name/arturo-fuente-hemingway-classic",
+      "92 Cigar Aficionado exact review",
+      [
+        "Cigar Aficionado lists multiple 92-point Hemingway Classic reviews.",
+        "The page identifies the Classic as a Cameroon-wrapped Dominican figurado.",
+        "Visible tasting notes emphasize toast, wood, tea, cashew, and caramel.",
+      ]
+    );
+  }
+
+  if (/MASTERPIECE/.test(productName)) {
+    return arturoFuenteCigarAficionadoProfile(
+      "Hemingway Masterpiece",
+      "https://www.cigaraficionado.com/ratings/23617/name/arturo-fuente-hemingway-masterpiece-figurado",
+      "92 Cigar Aficionado exact review",
+      [
+        "Cigar Aficionado lists a 92-point review for the nine-inch Hemingway Masterpiece.",
+        "The page identifies the cigar as a Cameroon-wrapped Dominican figurado.",
+        "Visible tasting notes include chocolate, coconut, macadamia, bitter orange peel, and herbs.",
+      ]
+    );
+  }
+
+  if (/SHORT STORY/.test(productName)) {
+    return arturoFuenteCigarAficionadoProfile(
+      "Hemingway Short Story",
+      "https://www.cigaraficionado.com/ratings/22689/name/arturo-fuente-hemingway-short-story",
+      "92 Cigar Aficionado exact review",
+      [
+        "Cigar Aficionado gives the Hemingway Short Story a 92-point rating.",
+        "The page identifies the Short Story as a four-inch Cameroon-wrapped Dominican figurado.",
+        "Visible tasting notes include toasted almond, spice, wood, caramel, coffee, chocolate, and vanilla.",
+      ]
+    );
+  }
+
+  if (/SIGNATURE/.test(productName)) {
+    return arturoFuenteCigarAficionadoProfile(
+      "Hemingway Signature",
+      "https://www.cigaraficionado.com/ratings/20272/name/arturo-fuente-hemingway-signature",
+      "92 Cigar Aficionado listed review",
+      [
+        "Cigar Aficionado's Hemingway Signature page lists 92-point Cigar Aficionado reviews.",
+        "The page identifies the Signature as a six-inch Cameroon-wrapped Dominican figurado.",
+        "Visible tasting notes emphasize wood, nutmeg, citrus, walnut, fruit, and earthy tones across listed reviews.",
+      ]
+    );
+  }
+
+  if (/MADURO/.test(productName)) {
+    return arturoFuenteCigarAficionadoProfile(
+      "Hemingway Work of Art Maduro",
+      "https://www.cigaraficionado.com/ratings/20858/name/arturo-fuente-hemingway-work-of-art-maduro-figurado",
+      "92 Cigar Aficionado exact review",
+      [
+        "Cigar Aficionado gives the Hemingway Work of Art Maduro a 92-point rating.",
+        "The page identifies the cigar as a Connecticut Broadleaf-wrapped Dominican figurado.",
+        "Visible tasting notes include wood, leather, licorice, and chocolate.",
+      ]
+    );
+  }
+
+  return arturoFuenteCigarAficionadoProfile(
+    "Hemingway Work of Art",
+    "https://www.cigaraficionado.com/ratings/23615/name/arturo-fuente-hemingway-work-of-art",
+    "95 Cigar Aficionado listed review",
+    [
+      "Cigar Aficionado's Hemingway Work of Art page lists a 95-point Cigar Aficionado review.",
+      "The page identifies the cigar as a Cameroon-wrapped Dominican figurado.",
+      "Visible tasting notes mention almond, cinnamon, spice, baked apple, raisin, and a woody finish.",
+    ]
+  );
+}
+
+function getArturoFuenteChateauReviewProfile(productName: string) {
+  if (/CUBAN BELICOSO/.test(productName)) {
+    return arturoFuenteCigarAficionadoProfile(
+      "Chateau Fuente Cuban Belicoso Sun Grown",
+      "https://www.cigaraficionado.com/rating/arturo-fuente-chateau-fuente-sungrown-cuban-belicoso",
+      "92 Cigar Aficionado profile rating",
+      [
+        "Cigar Aficionado's Cuban Belicoso Sun Grown page lists a 92-point review.",
+        "The page identifies the cigar as an Ecuador-wrapped Dominican figurado.",
+        "Visible tasting notes include wood, leather, nut, black cherry, and medium-full body.",
+      ]
+    );
+  }
+
+  if (/KING T/.test(productName)) {
+    return arturoFuenteCigarAficionadoProfile(
+      "Chateau Fuente King T",
+      "https://www.cigaraficionado.com/ratings/23567/name/arturo-fuente-chateau-fuente-king-t-tubo",
+      "93 Cigar Aficionado listed review",
+      [
+        "Cigar Aficionado's King T page lists a 93-point Cigar Aficionado review.",
+        "The page identifies King T as a Connecticut Shade-wrapped Dominican Churchill.",
+        "Visible tasting notes include orange peel, graham cracker, nuts, and even combustion.",
+      ]
+    );
+  }
+
+  if (/KING B/.test(productName)) {
+    return arturoFuenteCigarAficionadoProfile(
+      "Chateau Fuente King B",
+      "https://www.cigaraficionado.com/ratings/14774/name/arturo-fuente-chateau-fuente-kingb",
+      "90 Cigar Aficionado exact review",
+      [
+        "Cigar Aficionado gives Chateau Fuente King B a 90-point rating.",
+        "The page identifies the cigar as an Ecuador-wrapped Dominican figurado.",
+        "Visible tasting notes include wood, coffee, and nutty flavors.",
+      ]
+    );
+  }
+
+  if (/QUEEN B/.test(productName)) {
+    return arturoFuenteCigarAficionadoProfile(
+      "Chateau Fuente Queen B",
+      "https://www.cigaraficionado.com/ratings/15580/name/arturo-fuente-chateau-fuente-queen-b-figurado",
+      "91 Cigar Aficionado exact review",
+      [
+        "Cigar Aficionado gives Chateau Fuente Queen B a 91-point rating.",
+        "The page identifies the cigar as an Ecuador-wrapped Dominican figurado.",
+        "Visible tasting notes emphasize toast, coffee bean, and nutty qualities.",
+      ]
+    );
+  }
+
+  if (/ROYAL SALUTE/.test(productName) && /SUN\s*GROWN|SUNGROWN/.test(productName)) {
+    return arturoFuenteCigarAficionadoProfile(
+      "Chateau Fuente Royal Salute Sun Grown",
+      "https://www.cigaraficionado.com/ratings/25384/name/arturo-fuente-chateau-fuente-royal-salute-sun-grown",
+      "89 Cigar Aficionado exact review",
+      [
+        "Cigar Aficionado gives Chateau Fuente Royal Salute Sun Grown an 89-point rating.",
+        "The page identifies the cigar as an Ecuador-wrapped Dominican double corona.",
+        "Visible tasting notes include cinnamon, wood, toast, vanilla, caramel, and a dry woody finish.",
+      ]
+    );
+  }
+
+  if (/ROYAL SALUTE/.test(productName) && /MADURO/.test(productName)) {
+    return arturoFuenteCigarAficionadoProfile(
+      "Chateau Fuente Royal Salute Maduro",
+      "https://www.cigaraficionado.com/rating/arturo-fuente-chateau-fuente-maduro-1",
+      "88 Cigar Aficionado Chateau Maduro line-reference rating",
+      [
+        "Cigar Aficionado's Chateau Fuente Maduro page gives the Connecticut Broadleaf-wrapped line an 88-point review.",
+        "The source is a Chateau Maduro line reference for the same wrapper family, not an exact Royal Salute vitola review.",
+        "Visible tasting notes include meaty, rich, bacon, and woody flavors.",
+      ]
+    );
+  }
+
+  if (/ROYAL SALUTE/.test(productName)) {
+    return arturoFuenteCigarAficionadoProfile(
+      "Chateau Fuente Royal Salute",
+      "https://www.cigaraficionado.com/ratings/24411/name/arturo-fuente-chateau-fuente-royal-salute-double-corona",
+      "88 Cigar Aficionado exact review",
+      [
+        "Cigar Aficionado gives Chateau Fuente Royal Salute an 88-point rating.",
+        "The page identifies the cigar as a Connecticut Shade-wrapped Dominican double corona.",
+        "Visible tasting notes include cream, wood, lemon peel, minerals, and vanilla.",
+      ]
+    );
+  }
+
+  if (/PYRAMID/.test(productName)) {
+    return arturoFuenteCigarAficionadoProfile(
+      "Chateau Fuente Pyramid",
+      "https://www.cigaraficionado.com/ratings/26353/name/arturo-fuente-chateau-fuente-pyramid-figurado",
+      "92 Cigar Aficionado listed review",
+      [
+        "Cigar Aficionado's Chateau Fuente Pyramid page lists a 92-point review.",
+        "The page identifies the cigar as a Connecticut Shade-wrapped Dominican figurado.",
+        "Visible tasting notes include cinnamon bun, nutmeg, herbs, almond, and mild body.",
+      ]
+    );
+  }
+
+  if (/DOUBLE CHATEAU|DBL CHATEAU/.test(productName) && /SUN\s*GROWN|SUNGROWN/.test(productName)) {
+    return arturoFuenteCigarAficionadoProfile(
+      "Double Chateau Fuente Sun Grown",
+      "https://www.cigaraficionado.com/ratings/14705/name/arturo-fuente-double-chateau-fuente-sun-grown",
+      "89 Cigar Aficionado exact review",
+      [
+        "Cigar Aficionado gives Double Chateau Fuente Sun Grown an 89-point review.",
+        "The page identifies the cigar as an Ecuador-wrapped Dominican Churchill.",
+        "Visible tasting notes include strong spice, dried apple sweetness, and full-bodied flavor.",
+      ]
+    );
+  }
+
+  if (/DOUBLE CHATEAU|DBL CHATEAU/.test(productName) && /MADURO/.test(productName)) {
+    return arturoFuenteCigarAficionadoProfile(
+      "Double Chateau Fuente Maduro",
+      "https://www.cigaraficionado.com/ratings/23242/name/arturo-fuente-double-chateau-fuente-maduro",
+      "90 Cigar Aficionado exact review",
+      [
+        "Cigar Aficionado gives Double Chateau Fuente Maduro a 90-point review.",
+        "The page identifies the cigar as a Connecticut Broadleaf-wrapped Dominican Churchill.",
+        "Visible tasting notes include earth, leather, chocolate, coffee, herb, and spice.",
+      ]
+    );
+  }
+
+  if (/DOUBLE CHATEAU|DBL CHATEAU/.test(productName)) {
+    return arturoFuenteNeptuneProfile(
+      "Double Chateau Fuente Natural",
+      "https://www.neptunecigar.com/cigars/arturo-fuente-double-chateau-fuente",
+      "4.61/5 from 177 Neptune customer reviews",
+      [
+        "Neptune lists Double Chateau Fuente Natural with a 4.61 overall customer rating from 177 reviews.",
+        "The page identifies the cigar as a Connecticut Shade-wrapped Dominican Churchill.",
+        "Visible customer notes describe smooth, mild, nutty, creamy, and consistent construction impressions.",
+      ]
+    );
+  }
+
+  if (/MADURO/.test(productName)) {
+    return arturoFuenteCigarAficionadoProfile(
+      "Chateau Fuente Maduro",
+      "https://www.cigaraficionado.com/rating/arturo-fuente-chateau-fuente-maduro-1",
+      "88 Cigar Aficionado exact review",
+      [
+        "Cigar Aficionado gives Chateau Fuente Maduro an 88-point rating.",
+        "The page identifies the cigar as a Connecticut Broadleaf-wrapped Dominican robusto.",
+        "Visible tasting notes include meaty, rich, bacon, and woody flavors.",
+      ]
+    );
+  }
+
+  if (/SUN\s*GROWN|SUNGROWN|\bSG\b/.test(productName)) {
+    return arturoFuenteCigarAficionadoProfile(
+      "Chateau Fuente Sun Grown",
+      "https://www.cigaraficionado.com/article/best-bargain-cigars-of-2012-16858",
+      "90 Cigar Aficionado article-listed review",
+      [
+        "Cigar Aficionado's 2012 bargain list includes Chateau Fuente Sungrown Robusto at 90 points.",
+        "Use this as line-level Sun Grown Chateau coverage when exact vitola review coverage is not present.",
+        "The article also lists Chateau Fuente Sungrown Cuban Belicoso at 90 points and Double Chateau Fuente Sun Grown at 89 points.",
+      ]
+    );
+  }
+
+  return arturoFuenteCigarAficionadoProfile(
+    "Chateau Fuente Natural",
+    "https://www.cigaraficionado.com/ratings/15458/name/arturo-fuente-chateau-fuente-natural-robusto",
+    "86 Cigar Aficionado exact review",
+    [
+      "Cigar Aficionado gives Chateau Fuente Natural an 86-point rating.",
+      "The page identifies the cigar as a Connecticut Shade-wrapped Dominican robusto.",
+      "Visible tasting notes include mild body, even burn, stony-mineral tones, and a short finish.",
+    ]
+  );
+}
+
+function getArturoFuenteGranReservaReviewProfile(productName: string) {
+  if (/CANONES|CA.?ONES/.test(productName) && /MADURO/.test(productName)) {
+    return arturoFuenteCigarAficionadoProfile(
+      "Canones Maduro",
+      "https://www.cigaraficionado.com/ratings/8617/name/arturo-fuente-canones-maduro",
+      "88 Cigar Aficionado exact review",
+      [
+        "Cigar Aficionado gives Canones Maduro an 88-point rating and lists additional 88-point reviews.",
+        "The page identifies the cigar as a Connecticut Broadleaf-wrapped Dominican A-size cigar.",
+        "Visible tasting notes include cedar, vanilla, spice, char, floral quality, sweet cream, and chocolate across listed reviews.",
+      ]
+    );
+  }
+
+  if (/CANONES|CA.?ONES/.test(productName)) {
+    return arturoFuenteCigarAficionadoProfile(
+      "Canones",
+      "https://www.cigaraficionado.com/article/best-bargain-cigars-of-2011-16315",
+      "88 Cigar Aficionado article-listed review",
+      [
+        "Cigar Aficionado's 2011 bargain list includes Arturo Fuente Canones at 88 points.",
+        "The list identifies the cigar as Dominican, 8 1/2 inches by 52 ring gauge, and value-focused.",
+        "Use this as line-level Canones coverage for the natural wrapper until an exact rating page is added.",
+      ]
+    );
+  }
+
+  if (/CAZADORES/.test(productName)) {
+    return sourcedArturoFuenteReviewProfile(
+      "Cazadores Natural",
+      "Cigar Chief",
+      "https://cigarchief.com/shop/arturo-fuente-cazadores/",
+      "2.5/5 from 2 customer reviews; retailer-cited 87 Cigar Aficionado score",
+      [
+        "Cigar Chief lists two customer reviews for Arturo Fuente Cazadores and cites an 87 Cigar Aficionado score.",
+        "The page identifies the cigar as a 6 by 50 Dominican medium-bodied Cazadores format.",
+        "Visible customer sentiment is mixed, so this is retailer/customer coverage rather than an exact expert-review model.",
+      ]
+    );
+  }
+
+  if (/CHURCHILL/.test(productName) && /MADURO/.test(productName)) {
+    return arturoFuenteCigarAficionadoProfile(
+      "Churchill Maduro",
+      "https://www.cigaraficionado.com/ratings/17048/name/arturo-fuente-churchill-maduro",
+      "93 Cigar Aficionado listed review",
+      [
+        "Cigar Aficionado's Churchill Maduro page lists a 93-point Cigar Aficionado review.",
+        "The page identifies the cigar as a Connecticut Broadleaf-wrapped Dominican Churchill.",
+        "Visible tasting notes include leather, char, dark chocolate, licorice, almonds, and wood across listed reviews.",
+      ]
+    );
+  }
+
+  if (/CHURCHILL/.test(productName)) {
+    return arturoFuenteCigarAficionadoProfile(
+      "Churchill Natural",
+      "https://www.cigaraficionado.com/rating/arturo-fuente",
+      "90 Cigar Aficionado exact review",
+      [
+        "Cigar Aficionado gives Arturo Fuente Churchill a 90-point rating.",
+        "The page identifies the cigar as a Cameroon-wrapped Dominican Churchill.",
+        "Visible tasting notes include gingerbread, cinnamon, leather, salt, and wood.",
+      ]
+    );
+  }
+
+  if (/CORONA IMPERIAL/.test(productName)) {
+    return arturoFuenteCigarAficionadoProfile(
+      "Corona Imperial Maduro",
+      "https://www.cigaraficionado.com/ratings/6613/name/arturo-fuente-corona-imperial-maduro-toro",
+      "88 Cigar Insider exact review",
+      [
+        "Cigar Aficionado's rating page lists Corona Imperial Maduro at 88 points.",
+        "The page identifies the cigar as a Connecticut Broadleaf-wrapped Dominican toro/lonsdale-format cigar.",
+        "Visible tasting notes include spice, caramel sweetness, and leather.",
+      ]
+    );
+  }
+
+  if (/CUBAN CORONA/.test(productName) && /MADURO/.test(productName)) {
+    return arturoFuenteCigarAficionadoProfile(
+      "Cuban Corona Maduro",
+      "https://www.cigaraficionado.com/ratings/26533/name/arturo-fuente-cuban-corona-maduro-corona",
+      "90 Cigar Aficionado exact review",
+      [
+        "Cigar Aficionado gives Cuban Corona Maduro a 90-point rating.",
+        "The page identifies the cigar as a Connecticut Broadleaf-wrapped Dominican corona.",
+        "Visible tasting notes include hickory wood, earth, raisin, and fig jam.",
+      ]
+    );
+  }
+
+  if (/CUBAN CORONA/.test(productName)) {
+    return arturoFuenteCigarAficionadoProfile(
+      "Cuban Corona",
+      "https://www.cigaraficionado.com/ratings/24732/name/arturo-fuente-cuban-corona-corona",
+      "92 Cigar Aficionado exact review",
+      [
+        "Cigar Aficionado gives Cuban Corona a 92-point rating.",
+        "The page identifies the cigar as a Cameroon-wrapped Dominican corona.",
+        "Visible tasting notes include baking spices, molasses, walnut, raisin, and dried fig.",
+      ]
+    );
+  }
+
+  if (/FLOR FINA|8-5-8/.test(productName) && /MADURO/.test(productName)) {
+    return arturoFuenteCigarAficionadoProfile(
+      "Flor Fina Maduro 8-5-8",
+      "https://www.cigaraficionado.com/ratings/11909/name/arturo-fuente-flor-fina-maduro-8-5-8-toro",
+      "87 Cigar Aficionado exact review",
+      [
+        "Cigar Aficionado gives Flor Fina Maduro 8-5-8 an 87-point rating.",
+        "The page identifies the cigar as a Connecticut Broadleaf-wrapped Dominican toro.",
+        "Visible tasting notes include cinnamon, cocoa, toasted almonds, and a papery finish.",
+      ]
+    );
+  }
+
+  if (/FLOR FINA|8-5-8/.test(productName)) {
+    return arturoFuenteCigarAficionadoProfile(
+      "Flor Fina 8-5-8",
+      "https://www.cigaraficionado.com/ratings/8610/name/arturo-fuente-flor-fina-8-5-8",
+      "89 Cigar Aficionado exact review",
+      [
+        "Cigar Aficionado's Flor Fina 8-5-8 page lists an 89-point review and additional listed reviews.",
+        "The page identifies the cigar as a Cameroon-wrapped Dominican toro-format cigar.",
+        "Visible tasting notes include nuts, chocolate, cedar, sweet spice, roasted chestnut, and bittersweet chocolate across listed reviews.",
+      ]
+    );
+  }
+
+  if (/PETIT CORONA/.test(productName)) {
+    return arturoFuenteCigarAficionadoProfile(
+      "Petit Corona",
+      "https://www.cigaraficionado.com/ratings/23009/name/arturo-fuente-petit-corona-petit-corona",
+      "91 Cigar Aficionado exact review",
+      [
+        "Cigar Aficionado gives Petit Corona a 91-point rating and lists another 91-point review.",
+        "The page identifies the cigar as a Cameroon-wrapped Dominican petit corona.",
+        "Visible tasting notes include wheat, honey, spice, graham cracker, vanilla, citrus, clove, and coffee bean.",
+      ]
+    );
+  }
+
+  if (/ROTH/.test(productName) && /MADURO/.test(productName)) {
+    return arturoFuenteCigarAficionadoProfile(
+      "Rothschild Maduro",
+      "https://www.cigaraficionado.com/ratings/5150/name/arturo-fuente-rothschild-maduro",
+      "88 Cigar Aficionado exact review",
+      [
+        "Cigar Aficionado gives Rothschild Maduro an 88-point rating.",
+        "The page identifies the cigar as a Connecticut Broadleaf-wrapped Dominican robusto.",
+        "Visible tasting notes include nuts, vanilla, cedar, and citrus.",
+      ]
+    );
+  }
+
+  if (/ROTH/.test(productName)) {
+    return arturoFuenteCigarAficionadoProfile(
+      "Rothschild Natural",
+      "https://www.cigaraficionado.com/ratings/13627/name/arturo-fuente-rothschild-robusto",
+      "87 Cigar Aficionado exact review",
+      [
+        "Cigar Aficionado gives Rothschild Natural an 87-point rating and lists older reviews up to 90 points.",
+        "The page identifies the cigar as a Cameroon-wrapped Dominican robusto.",
+        "Visible tasting notes include simple woody and nutty impressions with even draw and burn.",
+      ]
+    );
+  }
+
+  if (/SPANISH LONSDALE/.test(productName)) {
+    return arturoFuenteCigarAficionadoProfile(
+      "Spanish Lonsdale",
+      "https://www.cigaraficionado.com/ratings/19999/name/arturo-fuente-spanish-lonsdale-lonsdale",
+      "88 Cigar Aficionado exact review",
+      [
+        "Cigar Aficionado gives Spanish Lonsdale an 88-point rating.",
+        "The page identifies the cigar as a Cameroon-wrapped Dominican lonsdale.",
+        "Visible tasting notes include earth, malted chocolate, lemon citrus, sweetness, and a chalky finish.",
+      ]
+    );
+  }
+
+  return undefined;
+}
+
+function getArturoFuenteValueReviewProfile(productName: string) {
+  if (/BREVAS ROYALE/.test(productName) && /MADURO/.test(productName)) {
+    return arturoFuenteNeptuneProfile(
+      "Brevas Royale Maduro",
+      "https://www.neptunecigar.com/cigars/arturo-fuente-maduro-brevas-royale",
+      "4.29/5 from 130 Neptune customer reviews",
+      [
+        "Neptune lists Brevas Royale Maduro with a 4.29 overall customer rating from 130 reviews.",
+        "The page's visible review terms include sweet, smooth, mild, good flavor, good construction, and good price.",
+        "Use this as retailer/customer sentiment coverage rather than an expert score.",
+      ]
+    );
+  }
+
+  if (/BREVAS ROYALE/.test(productName)) {
+    return arturoFuenteNeptuneProfile(
+      "Brevas Royale Natural",
+      "https://www.neptunecigar.com/cigars/arturo-fuente-brevas-royale",
+      "4.3/5 from 165 Neptune customer reviews",
+      [
+        "Neptune lists Brevas Royale Natural with a 4.3 overall customer rating from 165 reviews.",
+        "The page's visible review terms include sweet, smooth, mild, mellow, good price, and good construction.",
+        "Use this as retailer/customer sentiment coverage for Natural, It's A Boy, and It's A Girl Brevas Royale packaging.",
+      ]
+    );
+  }
+
+  if (/CUBANITOS/.test(productName) && /MADURO/.test(productName)) {
+    return arturoFuenteNeptuneProfile(
+      "Cubanitos Maduro",
+      "https://www.neptunecigar.com/cigars/arturo-fuente-maduro-cubanitos",
+      "4.3/5 from 8 Neptune customer reviews",
+      [
+        "Neptune lists Cubanitos Maduro with a 4.3 overall customer rating from 8 reviews.",
+        "The page identifies the cigarillo as a Connecticut Broadleaf-wrapped Dominican small format.",
+        "Visible customer notes describe it as a quick-smoke option with cocoa, leather, coffee, and morning-cigar impressions.",
+      ]
+    );
+  }
+
+  if (/CUBANITOS/.test(productName)) {
+    return arturoFuenteNeptuneProfile(
+      "Cubanitos Natural",
+      "https://www.neptunecigar.com/cigars/arturo-fuente-cubanitos",
+      "85 Neptune customer reviews",
+      [
+        "Neptune lists Cubanitos Natural with 85 customer reviews.",
+        "Visible customer notes describe it as a small-format Fuente with mild flavor, good value, and morning-coffee use cases.",
+        "Use this as retailer/customer sentiment coverage because no exact publication score was found for the natural Cubanitos SKU.",
+      ]
+    );
+  }
+
+  if (/CURLY HEAD/.test(productName) && /MADURO/.test(productName)) {
+    return arturoFuenteNeptuneProfile(
+      "Curly Head Maduro",
+      "https://www.neptunecigar.com/cigars/arturo-fuente-maduro-curly-head-deluxe",
+      "4.31/5 from 144 Neptune customer reviews",
+      [
+        "Neptune lists Curly Head Deluxe Maduro with a 4.31 overall customer rating from 144 reviews.",
+        "The page's visible review terms include sweet, smooth, mild, good flavor, favorite, and good price.",
+        "Use this as retailer/customer sentiment coverage for the maduro Curly Head family.",
+      ]
+    );
+  }
+
+  if (/CURLY HEAD/.test(productName) && /DLX|DELUXE/.test(productName)) {
+    return arturoFuenteNeptuneProfile(
+      "Curly Head Deluxe Natural",
+      "https://www.neptunecigar.com/cigars/arturo-fuente-curly-head-deluxe",
+      "4.21/5 from 134 Neptune customer reviews",
+      [
+        "Neptune lists Curly Head Deluxe Natural with a 4.21 overall customer rating from 134 reviews.",
+        "The page's visible review terms include sweet, smooth, mild, mellow, good price, and good construction.",
+        "Use this as retailer/customer sentiment coverage rather than an expert score.",
+      ]
+    );
+  }
+
+  if (/CURLY HEAD/.test(productName)) {
+    return arturoFuenteNeptuneProfile(
+      "Curly Head Natural",
+      "https://www.neptunecigar.com/cigars/arturo-fuente-curly-head",
+      "4.2/5 from 161 Neptune customer reviews",
+      [
+        "Neptune lists Curly Head Natural with a 4.2 overall customer rating from 161 reviews.",
+        "The page's visible review terms include sweet, smooth, mild, mellow, good price, and everyday.",
+        "Use this as retailer/customer sentiment coverage for Natural and Claro Curly Head products.",
+      ]
+    );
+  }
+
+  if (/EXQUISITOS/.test(productName) && /MADURO/.test(productName)) {
+    return arturoFuenteNeptuneProfile(
+      "Exquisitos Maduro",
+      "https://www.neptunecigar.com/cigars/arturo-fuente-maduro-exquisitos",
+      "4.45/5 from 247 Neptune customer reviews",
+      [
+        "Neptune lists Exquisitos Maduro with a 4.45 overall customer rating from 247 reviews.",
+        "The page's visible review terms include sweet, smooth, mild, good flavor, favorite, creamy, and full of flavor.",
+        "Use this as retailer/customer sentiment coverage rather than an expert score.",
+      ]
+    );
+  }
+
+  if (/EXQUISITOS/.test(productName)) {
+    return arturoFuenteNeptuneProfile(
+      "Exquisitos Natural",
+      "https://www.neptunecigar.com/cigars/arturo-fuente-exquisitos",
+      "4.29/5 from 153 Neptune customer reviews",
+      [
+        "Neptune lists Exquisitos Natural with a 4.29 overall customer rating from 153 reviews.",
+        "The page's visible review terms include sweet, smooth, mild, mellow, good price, and everyday.",
+        "Use this as retailer/customer sentiment coverage for the small-format natural Exquisitos.",
+      ]
+    );
+  }
+
+  return undefined;
+}
+
 function researchedSizeFromMap(
   productName: string,
   sizes: Array<[pattern: RegExp, vitola: string, length: string, gauge: string]>
@@ -1310,6 +3593,7 @@ function getFactorySmokesResearch(productName: string) {
     return undefined;
   }
 
+  const reviewProfile = getFactoryReviewProfile(productName);
   const wrapper = /SHADE/.test(productName)
     ? "Ecuadorian Connecticut Shade"
     : /SUN\s*GROWN/.test(productName)
@@ -1331,7 +3615,8 @@ function getFactorySmokesResearch(productName: string) {
 
   return combineResearchDetails(
     researchedBlend("Nicaragua", wrapper, "Indonesia", "Indonesia", "Medium"),
-    size
+    size,
+    reviewProfile
   );
 }
 
@@ -1440,7 +3725,7 @@ function getArturoFuenteResearch(productName: string) {
         ? researchedSize("No. 2", '5.875"', "44/55")
         : researchedSize("Robusto", '5"', "50");
 
-    return combineResearchDetails(base, { wrapper: "African Cameroon" }, size);
+    return combineResearchDetails(base, { wrapper: "African Cameroon" }, size, getArturoFuenteDonCarlosReviewProfile(productName));
   }
 
   if (/HEMINGWAY|MASTERPIECE/.test(productName)) {
@@ -1457,7 +3742,7 @@ function getArturoFuenteResearch(productName: string) {
               : researchedSize("Work of Art", '4.875"', "46/60");
     const wrapper = /MADURO/.test(productName) ? "Connecticut Broadleaf Maduro" : "African Cameroon";
 
-    return combineResearchDetails(base, { wrapper }, size);
+    return combineResearchDetails(base, { wrapper }, size, getArturoFuenteHemingwayReviewProfile(productName));
   }
 
   if (/CHATEAU|KING B|KING T|QUEEN B|ROYAL SALUTE/.test(productName)) {
@@ -1482,10 +3767,10 @@ function getArturoFuenteResearch(productName: string) {
         ? "Connecticut Broadleaf Maduro"
         : "Connecticut Shade";
 
-    return combineResearchDetails(base, { wrapper }, size);
+    return combineResearchDetails(base, { wrapper }, size, getArturoFuenteChateauReviewProfile(productName));
   }
 
-  const granReservaSize = /CANONES|CAÑONES/.test(productName)
+  const granReservaSize = /CANONES|CA.?ONES/.test(productName)
     ? researchedSize("Canones", '8.5"', "52")
     : /CAZADORES/.test(productName)
       ? researchedSize("Cazadores", '6"', "50")
@@ -1514,7 +3799,7 @@ function getArturoFuenteResearch(productName: string) {
           ? "African Cameroon"
           : "Connecticut Shade";
 
-    return combineResearchDetails(base, { wrapper }, granReservaSize);
+    return combineResearchDetails(base, { wrapper }, granReservaSize, getArturoFuenteGranReservaReviewProfile(productName));
   }
 
   return undefined;
@@ -1594,8 +3879,10 @@ function getPerdomoResearch(productName: string) {
     return undefined;
   }
 
+  const reviewProfile = getPerdomoReviewProfile(productName);
+
   if (/4 PACK|SAMPLER/.test(productName)) {
-    return assortedResearchDetails();
+    return combineResearchDetails(assortedResearchDetails(), reviewProfile);
   }
 
   if (/10TH ANN.*CHAMPAGNE/.test(productName)) {
@@ -1615,7 +3902,8 @@ function getPerdomoResearch(productName: string) {
 
     return combineResearchDetails(
       researchedBlend("Nicaragua", "Ecuadorian Connecticut", "Cuban-seed Nicaraguan", "Cuban-seed Nicaraguan", "Mild-Medium"),
-      size
+      size,
+      reviewProfile
     );
   }
 
@@ -1630,7 +3918,8 @@ function getPerdomoResearch(productName: string) {
 
     return combineResearchDetails(
       researchedBlend("Nicaragua", wrapper, "Cuban-seed Nicaraguan", "Cuban-seed Nicaraguan", strength),
-      size
+      size,
+      reviewProfile
     );
   }
 
@@ -1649,17 +3938,21 @@ function getPerdomoResearch(productName: string) {
 
     return combineResearchDetails(
       researchedBlend("Nicaragua", wrapper, "Cuban-seed Nicaraguan", "Cuban-seed Nicaraguan", strength),
-      size
+      size,
+      reviewProfile
     );
   }
 
   if (/INMENSO/.test(productName)) {
-    return researchedBlend(
-      "Nicaragua",
-      /MADURO/.test(productName) ? "Nicaraguan Maduro" : "Nicaraguan Sun Grown",
-      "Cuban-seed Nicaraguan",
-      "Cuban-seed Nicaraguan",
-      "Medium-Full"
+    return combineResearchDetails(
+      researchedBlend(
+        "Nicaragua",
+        /MADURO/.test(productName) ? "Nicaraguan Maduro" : "Nicaraguan Sun Grown",
+        "Cuban-seed Nicaraguan",
+        "Cuban-seed Nicaraguan",
+        "Medium-Full"
+      ),
+      reviewProfile
     );
   }
 
@@ -1673,7 +3966,8 @@ function getPerdomoResearch(productName: string) {
 
     return combineResearchDetails(
       researchedBlend("Nicaragua", wrapper, "Cuban-seed Nicaraguan", "Cuban-seed Nicaraguan", /MADURO/.test(productName) ? "Medium-Full" : "Medium"),
-      size
+      size,
+      reviewProfile
     );
   }
 
@@ -1688,7 +3982,8 @@ function getPerdomoResearch(productName: string) {
 
     return combineResearchDetails(
       researchedBlend("Nicaragua", "Nicaraguan Maduro", "Cuban-seed Nicaraguan", "Cuban-seed Nicaraguan", "Medium-Full"),
-      size
+      size,
+      reviewProfile
     );
   }
 
@@ -1700,8 +3995,10 @@ function getOlivaResearch(productName: string) {
     return undefined;
   }
 
+  const reviewProfile = getOlivaReviewProfile(productName);
+
   if (/SAMPLER/.test(productName)) {
-    return assortedResearchDetails();
+    return combineResearchDetails(assortedResearchDetails(), reviewProfile);
   }
 
   if (/CONNECTICUT RESERVE/.test(productName)) {
@@ -1717,7 +4014,8 @@ function getOlivaResearch(productName: string) {
 
     return combineResearchDetails(
       researchedBlend("Nicaragua", "Ecuadorian Connecticut", "Nicaragua", "Nicaragua", "Mild-Medium"),
-      size
+      size,
+      reviewProfile
     );
   }
 
@@ -1741,7 +4039,8 @@ function getOlivaResearch(productName: string) {
 
     return combineResearchDetails(
       researchedBlend("Nicaragua", wrapper, "Nicaraguan Habano", "Nicaraguan Habano", "Medium"),
-      size
+      size,
+      reviewProfile
     );
   }
 
@@ -1759,7 +4058,8 @@ function getOlivaResearch(productName: string) {
 
     return combineResearchDetails(
       researchedBlend("Nicaragua", wrapper, "Nicaragua", "Nicaragua", "Medium"),
-      size
+      size,
+      reviewProfile
     );
   }
 
@@ -1779,7 +4079,8 @@ function getOlivaResearch(productName: string) {
 
     return combineResearchDetails(
       researchedBlend("Nicaragua", wrapper, "Nicaragua", "Nicaragua", "Medium-Full"),
-      size
+      size,
+      reviewProfile
     );
   }
 
@@ -1801,7 +4102,8 @@ function getOlivaResearch(productName: string) {
 
     return combineResearchDetails(
       researchedBlend("Nicaragua", wrapper, "Nicaragua", "Nicaragua", "Medium-Full"),
-      size
+      size,
+      reviewProfile
     );
   }
 
@@ -1813,8 +4115,10 @@ function getMacanudoResearch(productName: string) {
     return undefined;
   }
 
+  const reviewProfile = getMacanudoReviewProfile(productName);
+
   if (/SAMPLER/.test(productName)) {
-    return assortedResearchDetails();
+    return combineResearchDetails(assortedResearchDetails(), reviewProfile);
   }
 
   if (/GOLD/.test(productName)) {
@@ -1824,7 +4128,8 @@ function getMacanudoResearch(productName: string) {
 
     return combineResearchDetails(
       researchedBlend("Dominican Republic", "Connecticut Shade", "Mexican San Andres", "Dominican Republic, Mexico", "Mild"),
-      size
+      size,
+      reviewProfile
     );
   }
 
@@ -1855,7 +4160,8 @@ function getMacanudoResearch(productName: string) {
 
     return combineResearchDetails(
       researchedBlend("Dominican Republic", "Connecticut Shade", "Mexican San Andres", "Dominican Republic, Mexico", "Mild"),
-      size
+      size,
+      reviewProfile
     );
   }
 
@@ -1872,7 +4178,8 @@ function getMacanudoResearch(productName: string) {
 
     return combineResearchDetails(
       researchedBlend("Dominican Republic", "Ecuadorian Connecticut", "Indonesia", "Nicaragua, Mexico", "Mild-Medium"),
-      size
+      size,
+      reviewProfile
     );
   }
 
@@ -1885,7 +4192,8 @@ function getMacanudoResearch(productName: string) {
 
     return combineResearchDetails(
       researchedBlend("Dominican Republic", "Connecticut Broadleaf", "Ecuadorian Sumatra", "Nicaragua", "Full"),
-      size
+      size,
+      reviewProfile
     );
   }
 
@@ -1902,7 +4210,8 @@ function getMacanudoResearch(productName: string) {
 
     return combineResearchDetails(
       researchedBlend("Honduras", "Honduran", "Honduran", "Dominican Republic, Honduras, Nicaragua", "Medium"),
-      size
+      size,
+      reviewProfile
     );
   }
 
@@ -1917,7 +4226,8 @@ function getMacanudoResearch(productName: string) {
 
     return combineResearchDetails(
       researchedBlend("Nicaragua", "Ecuadorian Habano", "Nicaraguan Jalapa", "Honduran Jamastran, Nicaraguan Esteli, Nicaraguan Ometepe", "Medium-Full"),
-      size
+      size,
+      reviewProfile
     );
   }
 
@@ -1929,8 +4239,10 @@ function getMontecristoResearch(productName: string) {
     return undefined;
   }
 
+  const reviewProfile = getMontecristoReviewProfile(productName);
+
   if (/SAMPLER|FRESHLOC/.test(productName)) {
-    return assortedResearchDetails();
+    return combineResearchDetails(assortedResearchDetails(), reviewProfile);
   }
 
   if (/1935 ANNIVERSARY/.test(productName)) {
@@ -1940,7 +4252,8 @@ function getMontecristoResearch(productName: string) {
 
     return combineResearchDetails(
       researchedBlend("Nicaragua", "Nicaragua", "Nicaragua", "Nicaragua", "Medium-Full"),
-      size
+      size,
+      reviewProfile
     );
   }
 
@@ -1951,14 +4264,16 @@ function getMontecristoResearch(productName: string) {
 
     return combineResearchDetails(
       researchedBlend("Nicaragua", "Nicaraguan Habano Jalapa", "Nicaraguan Habano Jalapa", "Nicaraguan Habano", "Medium-Full"),
-      size
+      size,
+      reviewProfile
     );
   }
 
   if (/NICARAGUA SERIES/.test(productName)) {
     return combineResearchDetails(
       researchedBlend("Nicaragua", "Nicaragua", "Nicaragua", "Nicaragua", "Full"),
-      researchedSize("Toro", '6"', "54")
+      researchedSize("Toro", '6"', "54"),
+      reviewProfile
     );
   }
 
@@ -1969,7 +4284,8 @@ function getMontecristoResearch(productName: string) {
 
     return combineResearchDetails(
       researchedBlend("Dominican Republic", "San Andres", "Dominican Republic", "Dominican Republic, Nicaragua, Peru", "Medium-Full"),
-      size
+      size,
+      reviewProfile
     );
   }
 
@@ -1986,7 +4302,8 @@ function getMontecristoResearch(productName: string) {
 
     return combineResearchDetails(
       researchedBlend("Dominican Republic", "Ecuadorian Connecticut Shade", "Nicaragua", "Dominican Republic, Nicaragua", "Mild-Medium"),
-      size
+      size,
+      reviewProfile
     );
   }
 
@@ -2003,7 +4320,8 @@ function getMontecristoResearch(productName: string) {
 
     return combineResearchDetails(
       researchedBlend("Dominican Republic", "Connecticut Shade", "Dominican Republic", "Dominican Republic", "Mild"),
-      size
+      size,
+      reviewProfile
     );
   }
 
@@ -2031,6 +4349,11 @@ function getRockyPatelResearch(productName: string) {
         [/SIXTY/, "Sixty", '6"', "60"],
         [/TORPEDO/, "Torpedo", '6.25"', "52"],
         [/TORO/, "Toro", '6.5"', "52"],
+      ]),
+      sourcedRockyPatelReviewProfile("Vintage 1990", "https://www.rockypatel.com/cigar/vintage-1990/", "92 brand-cited rating", [
+        "Brand profile lists Vintage 1990 sizes including Juniors, Robusto, Churchill, Toro, Torpedo, and Sixty.",
+        "The page cites a 92 rating and Cigar Aficionado Top 25 placements in 2004 and 2006.",
+        "Rocky Patel describes the blend as medium-bodied leaning milder with an aged Honduran Broadleaf wrapper.",
       ])
     );
   }
@@ -2047,6 +4370,11 @@ function getRockyPatelResearch(productName: string) {
         [/SIXTY/, "Sixty", '6"', "60"],
         [/TORPEDO/, "Torpedo", '6.25"', "52"],
         [/TORO/, "Toro", '6.5"', "52"],
+      ]),
+      sourcedRockyPatelReviewProfile("Vintage 1992", "https://www.rockypatel.com/cigar/vintage-1992/", "92 brand-cited rating", [
+        "Brand profile lists Vintage 1992 sizes including Juniors, Robusto, Churchill, Toro, Torpedo, and Sixty.",
+        "The page cites a 92 rating and notes Cigar Aficionado and Cigar Journal award recognition.",
+        "Rocky Patel describes the blend around an aged Ecuadorian Sumatra wrapper with Dominican and Nicaraguan fillers.",
       ])
     );
   }
@@ -2062,6 +4390,11 @@ function getRockyPatelResearch(productName: string) {
         [/SIXTY/, "Sixty", '6"', "60"],
         [/TORPEDO/, "Torpedo", '6.25"', "52"],
         [/TORO/, "Toro", '6.5"', "52"],
+      ]),
+      sourcedRockyPatelReviewProfile("Vintage 1999", "https://www.rockypatel.com/cigar/vintage-1999/", "91 brand-cited profile rating", [
+        "Brand profile lists Vintage 1999 sizes from Minis and Juniors through Churchill, Toro, Torpedo, and Sixty.",
+        "The page cites 91 ratings from Cigar Snob and Cigar Journal, plus an 88 Cigar Aficionado rating.",
+        "Rocky Patel describes the line as a mild Connecticut-shade Vintage cigar.",
       ])
     );
   }
@@ -2072,6 +4405,11 @@ function getRockyPatelResearch(productName: string) {
       researchedSizeFromMap(productName, [
         [/ROBUSTO/, "Robusto", '5"', "50"],
         [/TORO|DELUXE TUBO/, "Toro", '6.5"', "52"],
+      ]),
+      sourcedRockyPatelReviewProfile("Decade", "https://www.rockypatel.com/cigar/decade/", "95 brand-cited rating", [
+        "Brand profile lists Decade sizes including Robusto, Toro, Toro Tubo, Torpedo, and Emperor.",
+        "The page cites a 95 Cigar Aficionado rating and a 2008 Cigar Aficionado Top 25 placement.",
+        "Rocky Patel describes the Decade as a 10th-anniversary blend built around a Sumatra wrapper and a rare filler component.",
       ])
     );
   }
@@ -2084,6 +4422,35 @@ function getRockyPatelResearch(productName: string) {
         : "Honduran Corojo";
     const binder = /HABANO/.test(productName) ? "Nicaragua" : "Nicaragua";
     const filler = /HABANO/.test(productName) ? "Nicaragua" : "Honduras, Nicaragua";
+    const reviewProfile = /A-10/.test(productName)
+      ? sourcedRockyPatelReviewProfile("The Edge A-10", "https://www.rockypatel.com/cigar/the-edge-a-10/", "90 brand-cited rating", [
+          "Brand profile lists The Edge A-10 in Robusto, Toro, and Sixty sizes.",
+          "The page cites a 90 Cigar Aficionado rating for the A-10 barber-pole Edge variant.",
+          "Rocky Patel describes the A-10 as a Corojo and Maduro wrapper combination released for the Edge anniversary.",
+        ])
+      : /MADURO/.test(productName)
+        ? sourcedRockyPatelReviewProfile("The Edge Maduro", "https://www.rockypatel.com/cigar/the-edge-maduro/", "92 brand-cited rating", [
+            "Brand profile lists The Edge Maduro in Robusto, Toro, Torpedo, Battalion, and larger formats.",
+            "The page cites a 92 Cigar Aficionado rating, a 91 Cigar Snob rating, and a 90 Cigar Journal rating.",
+            "Rocky Patel positions the Maduro wrapper line around consistency, smooth burn, and value.",
+          ])
+        : /HABANO/.test(productName)
+          ? sourcedRockyPatelReviewProfile("The Edge Habano", "https://www.rockypatel.com/cigar/the-edge-habano/", "94 brand-cited rating", [
+              "Brand profile lists The Edge Habano in Toro, Torpedo, and Battalion sizes.",
+              "The page cites a 94 Cigar Aficionado rating and a 2015 Cigar Aficionado Top 25 placement.",
+              "Rocky Patel describes the Habano as a Nicaraguan-rolled Edge with Ecuadorian Habano wrapper and Nicaraguan tobaccos.",
+            ])
+          : /SUMATRA/.test(productName)
+            ? sourcedRockyPatelReviewProfile("The Edge Sumatra", "https://www.rockypatel.com/cigar/the-edge-sumatra/", "91 brand-cited rating", [
+                "Brand profile lists The Edge Sumatra in Toro and Torpedo sizes.",
+                "The page cites a 91 Cigar Aficionado rating and a 2007 Cigar Aficionado Top 25 placement.",
+                "Rocky Patel describes the Sumatra as an Ecuadorian Sumatra-wrapped Edge rolled in Honduras.",
+              ])
+            : sourcedRockyPatelReviewProfile("The Edge Corojo", "https://www.rockypatel.com/cigar/the-edge-corojo/", "94 brand-cited profile rating", [
+                "Brand profile lists The Edge Corojo in Robusto, Toro, Torpedo, Battalion, and larger formats.",
+                "The page cites a 94 Cigar Journal rating, plus 90 ratings from Cigar Aficionado and Cigar Snob.",
+                "Rocky Patel positions the Corojo line around consistency, smooth burn, and value.",
+              ]);
 
     return combineResearchDetails(
       researchedBlend("Honduras", wrapper, binder, filler, "Medium-Full"),
@@ -2091,17 +4458,23 @@ function getRockyPatelResearch(productName: string) {
         [/A-10|TORO|TORPEDO/, /TORPEDO/.test(productName) ? "Torpedo" : "Toro", '6"', "52"],
         [/BAT|BATTALION|GORDO/, "Battalion", '6"', "60"],
         [/ROBUSTO/, "Robusto", '5.5"', "50"],
-      ])
+      ]),
+      reviewProfile
     );
   }
 
-  if (/SIXTY/.test(productName)) {
+  if (/^ROCKY PATEL SIXTY\b/.test(productName)) {
     return combineResearchDetails(
       researchedBlend("Nicaragua", "Mexican San Andres Maduro", "Nicaragua", "Nicaragua", "Medium-Full"),
       researchedSizeFromMap(productName, [
         [/ROBUSTO/, "Robusto", '5.5"', "50"],
         [/SIXTY/, "Sixty", '6"', "60"],
         [/TORO/, "Toro", '6.5"', "52"],
+      ]),
+      sourcedRockyPatelReviewProfile("SIXTY", "https://www.rockypatel.com/cigar/sixty/", "96 brand-cited rating", [
+        "Brand profile lists the Sixty line in Robusto, Toro, and Sixty sizes.",
+        "The page cites a 96 rating and identifies the line as Cigar Aficionado's No. 1 Cigar of the Free World.",
+        "Rocky Patel describes the line as a 60th-birthday release aged at least two years after rolling.",
       ])
     );
   }
@@ -2113,6 +4486,11 @@ function getRockyPatelResearch(productName: string) {
         [/ROBUSTO/, "Robusto", '5"', "50"],
         [/SIXTY/, "Sixty", '6"', "60"],
         [/TORO/, "Toro", '6.5"', "52"],
+      ]),
+      sourcedRockyPatelReviewProfile("Sun Grown Maduro", "https://www.rockypatel.com/cigar/sun-grown-maduro/", "95 brand-cited rating", [
+        "Brand profile lists Sun Grown Maduro in Robusto, Toro, Sixty, Lancero, and Petite Belicoso sizes.",
+        "The page cites a 95 Cigar Aficionado rating and a No. 2 ranking in Cigar Aficionado's 2016 Top 25.",
+        "Rocky Patel describes the line as a Nicaraguan cigar with an oily Broadleaf wrapper.",
       ])
     );
   }
@@ -2122,6 +4500,11 @@ function getRockyPatelResearch(productName: string) {
       researchedBlend("Honduras", "Ecuadorian Sun Grown", "Nicaragua", "Dominican Republic, Nicaragua", "Medium-Full"),
       researchedSizeFromMap(productName, [
         [/DELUXE TUBO|TORO/, "Toro", '6"', "52"],
+      ]),
+      sourcedRockyPatelReviewProfile("Sun Grown", "https://www.rockypatel.com/cigar/sun-grown/", "92 brand-cited profile rating", [
+        "Brand profile lists Sun Grown sizes including Juniors, Petite Corona, Robusto, Toro, Torpedo, and Sixty.",
+        "The page cites a 92 Cigar Snob rating, plus 91 ratings from Cigar Aficionado and Cigar Journal.",
+        "Rocky Patel describes the line as medium-plus with an Ecuadorian Sumatra wrapper.",
       ])
     );
   }
@@ -2142,6 +4525,11 @@ function getRockyPatelResearch(productName: string) {
       researchedSizeFromMap(productName, [
         [/ROBUSTO/, "Robusto", '5.5"', "50"],
         [/TORO/, "Toro", '6.5"', "52"],
+      ]),
+      sourcedRockyPatelReviewProfile("Number 6", "https://www.rockypatel.com/cigar/number-6/", "95 brand-cited rating", [
+        "Brand profile lists Number 6 in Corona, Robusto, Toro, and Sixty sizes.",
+        "The page cites a 95 Cigar Aficionado rating and a No. 9 Cigar of the Year placement in 2020.",
+        "Rocky Patel describes Number 6 as a medium-bodied Honduran Corojo-wrapped blend.",
       ])
     );
   }
@@ -2154,21 +4542,25 @@ function getRomeoResearch(productName: string) {
     return undefined;
   }
 
+  const reviewProfile = getRomeoReviewProfile(productName);
+
   if (/SAMPLER|FRESH PACK/.test(productName)) {
-    return assortedResearchDetails();
+    return combineResearchDetails(assortedResearchDetails(), reviewProfile);
   }
 
   if (/SPAIN MINI/.test(productName)) {
     return combineResearchDetails(
       researchedBlend("Spain", "Natural tobacco leaf", "Cuban-seed tobacco", "Cuban-seed tobacco", "Mild"),
-      researchedSize("Mini", '3.25"', "20")
+      researchedSize("Mini", '3.25"', "20"),
+      reviewProfile
     );
   }
 
   if (/RESERVA REAL.*TWISTED/.test(productName)) {
     return combineResearchDetails(
       researchedBlend("Dominican Republic", "Ecuadorian Connecticut and Connecticut Broadleaf Maduro", "Nicaragua", "Dominican Republic, Nicaragua", "Mild-Medium"),
-      researchedSize("Twisted Toro", '6"', "54")
+      researchedSize("Twisted Toro", '6"', "54"),
+      reviewProfile
     );
   }
 
@@ -2180,7 +4572,8 @@ function getRomeoResearch(productName: string) {
         [/CHURCHILL/, "Churchill", '7"', "50"],
         [/ROBUSTO/, "Robusto", '5"', "52"],
         [/TORO|GRAN TORO/, "Toro", '6"', "54"],
-      ])
+      ]),
+      reviewProfile
     );
   }
 
@@ -2190,7 +4583,8 @@ function getRomeoResearch(productName: string) {
       researchedSizeFromMap(productName, [
         [/BULLY/, "Bully", '5"', "50"],
         [/TORO/, "Toro", '6"', "52"],
-      ])
+      ]),
+      reviewProfile
     );
   }
 
@@ -2199,7 +4593,8 @@ function getRomeoResearch(productName: string) {
       researchedBlend("Nicaragua", "Nicaragua", "Nicaragua", "Nicaragua", "Medium-Full"),
       researchedSizeFromMap(productName, [
         [/ROBUSTO|BX\/10/, "Robusto", '5"', "50"],
-      ])
+      ]),
+      reviewProfile
     );
   }
 
@@ -2219,7 +4614,8 @@ function getRomeoResearch(productName: string) {
         [/ROMEO COURT/, "Romeo Court", '5.5"', "44"],
         [/ROMEOS/, "Romeos", '4"', "33"],
         [/ROTHSCHILDE/, "Rothchilde", '5"', "50"],
-      ])
+      ]),
+      reviewProfile
     );
   }
 
@@ -2230,7 +4626,8 @@ function getRomeoResearch(productName: string) {
         [/CHURCHILL/, "Churchill", '7"', "50"],
         [/ROBUSTO|ROTHSCHILDE/, "Robusto", '5"', "50"],
         [/TORO/, "Toro", '6"', "50"],
-      ])
+      ]),
+      reviewProfile
     );
   }
 
@@ -2241,14 +4638,16 @@ function getRomeoResearch(productName: string) {
         [/CHURCHILL/, "Churchill", '7"', "50"],
         [/ROBUSTO/, "Robusto", '5"', "52"],
         [/TORO/, "Toro", '6"', "54"],
-      ])
+      ]),
+      reviewProfile
     );
   }
 
   if (/150TH/.test(productName)) {
     return combineResearchDetails(
       researchedBlend("Dominican Republic", "Ecuadorian Habano", "Dominican Republic", "Dominican Republic, Nicaragua", "Medium"),
-      researchedSize("Toro", '6"', "54")
+      researchedSize("Toro", '6"', "54"),
+      reviewProfile
     );
   }
 
@@ -2260,8 +4659,10 @@ function getTatianaResearch(productName: string) {
     return undefined;
   }
 
+  const reviewProfile = getTatianaReviewProfile(productName);
+
   if (/SAMPLER/.test(productName)) {
-    return assortedResearchDetails();
+    return combineResearchDetails(assortedResearchDetails(), reviewProfile);
   }
 
   const size = /MINI|TINS/.test(productName)
@@ -2274,7 +4675,8 @@ function getTatianaResearch(productName: string) {
 
   return combineResearchDetails(
     researchedBlend("Dominican Republic", "Indonesia", "Dominican Republic", "Dominican Republic", "Mild"),
-    size
+    size,
+    reviewProfile
   );
 }
 
@@ -2675,13 +5077,16 @@ function getFactoryThrowoutsResearch(productName: string) {
     return undefined;
   }
 
+  const reviewProfile = getFactoryReviewProfile(productName);
+
   return combineResearchDetails(
     researchedBlend("United States", /SWEET/.test(productName) ? "Sumatra" : "Ecuadorian Sun Grown", "Various", "Dominican Republic", "Mild-Medium"),
     researchedSizeFromMap(productName, [
       [/#49/, "No. 49", '5.5"', "49"],
       [/#59/, "No. 59", '6.25"', "45"],
       [/#99/, "No. 99", '7.25"', "52"],
-    ])
+    ]),
+    reviewProfile
   );
 }
 
@@ -2739,8 +5144,10 @@ function getMyFatherFamilyResearch(productName: string) {
     return undefined;
   }
 
+  const reviewProfile = /^MY FATHER\b/.test(productName) ? getMyFatherReviewProfile(productName) : undefined;
+
   if (/SAMPLER/.test(productName)) {
-    return assortedResearchDetails();
+    return combineResearchDetails(assortedResearchDetails(), reviewProfile);
   }
 
   if (/BLUE/.test(productName)) {
@@ -2751,7 +5158,8 @@ function getMyFatherFamilyResearch(productName: string) {
         [/TORO GORDO/, "Toro Gordo", '6"', "60"],
         [/ROBUSTO/, "Robusto", '5.25"', "52"],
         [/TORO/, "Toro", '6"', "54"],
-      ])
+      ]),
+      reviewProfile
     );
   }
 
@@ -2764,7 +5172,8 @@ function getMyFatherFamilyResearch(productName: string) {
         [/CORONA GRANDE/, "Corona Grande", '6.375"', "47"],
         [/ROBUSTO/, "Robusto", '5.25"', "52"],
         [/TORO/, "Toro", '5.625"', "55"],
-      ])
+      ]),
+      reviewProfile
     );
   }
 
@@ -2774,7 +5183,8 @@ function getMyFatherFamilyResearch(productName: string) {
       researchedSizeFromMap(productName, [
         [/ROBUSTO/, "Robusto", '5"', "50"],
         [/TORO/, "Toro", '6"', "52"],
-      ])
+      ]),
+      reviewProfile
     );
   }
 
@@ -2784,7 +5194,8 @@ function getMyFatherFamilyResearch(productName: string) {
       researchedSizeFromMap(productName, [
         [/ROBUSTO/, "Robusto", '5.25"', "52"],
         [/TORO/, "Toro", '6"', "54"],
-      ])
+      ]),
+      reviewProfile
     );
   }
 
@@ -2794,7 +5205,8 @@ function getMyFatherFamilyResearch(productName: string) {
       researchedSizeFromMap(productName, [
         [/TORO/, "Toro", '6"', "52"],
         [/PETIT ROBUSTO/, "Petit Robusto", '4.5"', "50"],
-      ])
+      ]),
+      reviewProfile
     );
   }
 
@@ -2804,7 +5216,8 @@ function getMyFatherFamilyResearch(productName: string) {
       [/ROBUSTO/, "Robusto", '5.25"', "52"],
       [/TORO/, "Toro", '6"', "52"],
       [/TORPEDO/, "Torpedo", '6.125"', "52"],
-    ])
+    ]),
+    reviewProfile
   );
 }
 
@@ -2941,19 +5354,19 @@ function getArturoFuenteRemainingResearch(productName: string) {
   const base = researchedBlend("Dominican Republic", wrapper, "Dominican Republic", "Dominican Republic", "Medium");
 
   if (/BREVAS ROYALE/.test(productName)) {
-    return combineResearchDetails(base, researchedSize("Brevas Royale", '5.5"', "42"));
+    return combineResearchDetails(base, researchedSize("Brevas Royale", '5.5"', "42"), getArturoFuenteValueReviewProfile(productName));
   }
 
   if (/CUBANITOS/.test(productName)) {
-    return combineResearchDetails(base, researchedSize("Cubanitos", '4.5"', "32"));
+    return combineResearchDetails(base, researchedSize("Cubanitos", '4.5"', "32"), getArturoFuenteValueReviewProfile(productName));
   }
 
   if (/CURLY HEAD/.test(productName)) {
-    return combineResearchDetails(base, researchedSize("Curly Head", '6.5"', "43"));
+    return combineResearchDetails(base, researchedSize("Curly Head", '6.5"', "43"), getArturoFuenteValueReviewProfile(productName));
   }
 
   if (/EXQUISITOS/.test(productName)) {
-    return combineResearchDetails(base, researchedSize("Exquisitos", '4.5"', "33"));
+    return combineResearchDetails(base, researchedSize("Exquisitos", '4.5"', "33"), getArturoFuenteValueReviewProfile(productName));
   }
 
   return undefined;
@@ -2964,8 +5377,10 @@ function getGurkhaResearch(productName: string) {
     return undefined;
   }
 
+  const reviewProfile = getGurkhaReviewProfile(productName);
+
   if (/SAMPLER/.test(productName)) {
-    return assortedResearchDetails();
+    return combineResearchDetails(assortedResearchDetails(), reviewProfile);
   }
 
   if (/BOURBON/.test(productName)) {
@@ -2975,7 +5390,8 @@ function getGurkhaResearch(productName: string) {
         [/CORONA/, "Corona", '5"', "42"],
         [/TORO/, "Toro", '6"', "50"],
         [/CHURCHILL/, "Churchill", '7"', "50"],
-      ])
+      ]),
+      reviewProfile
     );
   }
 
@@ -2987,7 +5403,8 @@ function getGurkhaResearch(productName: string) {
         [/CHURCHILL/, "Churchill", '7.25"', "52"],
         [/ROBUSTO/, "Robusto", '6"', "50"],
         [/TORPEDO/, "Torpedo", '6.25"', "52"],
-      ])
+      ]),
+      reviewProfile
     );
   }
 
@@ -2997,7 +5414,8 @@ function getGurkhaResearch(productName: string) {
       researchedSizeFromMap(productName, [
         [/CORONA/, "Corona", '5"', "42"],
         [/CHURCHILL/, "Churchill", '7.25"', "52"],
-      ])
+      ]),
+      reviewProfile
     );
   }
 
@@ -3007,7 +5425,8 @@ function getGurkhaResearch(productName: string) {
       researchedSizeFromMap(productName, [
         [/ROBUSTO/, "Robusto", '5"', "52"],
         [/TORO/, "Toro", '6"', "54"],
-      ])
+      ]),
+      reviewProfile
     );
   }
 
@@ -3017,7 +5436,8 @@ function getGurkhaResearch(productName: string) {
       researchedSizeFromMap(productName, [
         [/ROBUSTO/, "Robusto", '5"', "52"],
         [/TORO/, "Toro", '6"', "54"],
-      ])
+      ]),
+      reviewProfile
     );
   }
 
@@ -3028,7 +5448,8 @@ function getGurkhaResearch(productName: string) {
         [/SOLARA/, "Solara", '5"', "58"],
         [/HEDONISM/, "Hedonism", '6"', "58"],
         [/KRAKEN/, "Kraken", '6"', "60"],
-      ])
+      ]),
+      reviewProfile
     );
   }
 
@@ -3038,7 +5459,8 @@ function getGurkhaResearch(productName: string) {
       researchedSizeFromMap(productName, [
         [/SOLARO|SOLARA/, "Solara", '5"', "58"],
         [/HEDONISM/, "Hedonism", '6"', "58"],
-      ])
+      ]),
+      reviewProfile
     );
   }
 
@@ -3049,7 +5471,8 @@ function getGurkhaResearch(productName: string) {
         [/SOLARO|SOLARA|DBL ROBUSTO/, "Solara", '5"', "58"],
         [/HEDONISM/, "Hedonism", '6"', "58"],
         [/PRISONER|CHURCHILL/, "Prisoner", '7"', "54"],
-      ])
+      ]),
+      reviewProfile
     );
   }
 
@@ -3058,7 +5481,8 @@ function getGurkhaResearch(productName: string) {
       researchedBlend("Dominican Republic", "Corojo", "Dominican", "Dominican", "Medium-Full"),
       researchedSizeFromMap(productName, [
         [/HEDONISM|GRAND ROTHSCHILD|HEDONSIM/, "Grand Rothschild", '6"', "58"],
-      ])
+      ]),
+      reviewProfile
     );
   }
 
@@ -3068,14 +5492,16 @@ function getGurkhaResearch(productName: string) {
       researchedSizeFromMap(productName, [
         [/ASURA|TORO/, "Asura Toro", '6"', "54"],
         [/SHADOW|ROBUSTO/, "Shadow Robusto", '5"', "52"],
-      ])
+      ]),
+      reviewProfile
     );
   }
 
   if (/HERITAGE MADURO/.test(productName)) {
     return combineResearchDetails(
       researchedBlend("Nicaragua", "Mexican San Andres Maduro", "Nicaragua", "Nicaragua", "Medium-Full"),
-      researchedSize("Robusto", '5"', "50")
+      researchedSize("Robusto", '5"', "50"),
+      reviewProfile
     );
   }
 
@@ -3085,7 +5511,8 @@ function getGurkhaResearch(productName: string) {
       researchedSizeFromMap(productName, [
         [/ROBUSTO/, "Robusto", '5"', "52"],
         [/TORO/, "Toro", '6"', "54"],
-      ])
+      ]),
+      reviewProfile
     );
   }
 
@@ -3095,18 +5522,20 @@ function getGurkhaResearch(productName: string) {
       researchedSizeFromMap(productName, [
         [/ROBUSTO/, "Robusto", '5"', "50"],
         [/TORO/, "Toro", '6"', "50"],
-      ])
+      ]),
+      reviewProfile
     );
   }
 
   if (/YEAR OF DRAGON|YEAR OF THE DRAGON/.test(productName)) {
     return combineResearchDetails(
       researchedBlend("Nicaragua", "Mexican San Andres", "Ecuadorian", "Dominican Republic, Nicaragua", "Medium-Full"),
-      researchedSize("Figurado", '6.625"', "52")
+      researchedSize("Figurado", '6.625"', "52"),
+      reviewProfile
     );
   }
 
-  return undefined;
+  return reviewProfile;
 }
 
 function getRockyPatelRemainingResearch(productName: string) {
@@ -3123,8 +5552,14 @@ function getRockyPatelRemainingResearch(productName: string) {
       researchedBlend("Nicaragua", "Ecuadorian Habano", "Nicaragua", "Nicaragua", "Medium-Full"),
       researchedSizeFromMap(productName, [
         [/TORO TUBO/, "Toro Tubo", '6"', "50"],
+        [/SIXTY/, "Sixty", '6"', "60"],
         [/TORO/, "Toro", '6.5"', "52"],
         [/ROBUSTO/, "Robusto", '5.5"', "50"],
+      ]),
+      sourcedRockyPatelReviewProfile("Fifteenth Anniversary", "https://www.rockypatel.com/cigar/fifteenth-anniversary/", "93 brand-cited rating", [
+        "Brand profile lists Fifteenth Anniversary in Corona Gorda, Robusto, Toro, Toro Tubo, Torpedo, and Sixty sizes.",
+        "The page cites a 93 Cigar Aficionado rating and four Cigar Aficionado Top 25 appearances.",
+        "Rocky Patel describes the line as a box-pressed Nicaraguan anniversary blend.",
       ])
     );
   }
@@ -3132,7 +5567,12 @@ function getRockyPatelRemainingResearch(productName: string) {
   if (/2003 VINTAGE CAMEROON/.test(productName)) {
     return combineResearchDetails(
       researchedBlend("Honduras", "Cameroon", "Nicaragua", "Dominican Republic, Nicaragua", "Medium"),
-      researchedSize("Toro", '6.5"', "52")
+      researchedSize("Toro", '6.5"', "52"),
+      sourcedRockyPatelReviewProfile("Vintage 2003 Cameroon", "https://www.rockypatel.com/cigar/vintage-2003/", "93 brand-cited rating", [
+        "Brand profile lists Vintage 2003 Cameroon in Juniors, Robusto, Churchill, Toro, Torpedo, and Sixty sizes.",
+        "The page cites a 93 Cigar Aficionado rating and a 2017 Cigar Aficionado Top 25 placement.",
+        "Rocky Patel describes the line as a medium-bodied Vintage series cigar with an aged Cameroon wrapper.",
+      ])
     );
   }
 
@@ -3149,6 +5589,11 @@ function getRockyPatelRemainingResearch(productName: string) {
       researchedSizeFromMap(productName, [
         [/ROBUSTO/, "Robusto", '5"', "50"],
         [/TORO/, "Toro", '6.5"', "52"],
+      ]),
+      sourcedRockyPatelReviewProfile("A.L.R. Second Edition", "https://www.rockypatel.com/cigar/alr-second-edition/", "96 brand-cited rating", [
+        "Brand profile lists A.L.R. Second Edition in Robusto, Toro, and Sixty sizes.",
+        "The page cites a 96 Cigar Aficionado rating and a No. 5 Cigar Aficionado Top 25 placement in 2019.",
+        "Rocky Patel describes the line as an aged, limited-production San Andres-wrapped blend.",
       ])
     );
   }
@@ -3159,6 +5604,12 @@ function getRockyPatelRemainingResearch(productName: string) {
       researchedSizeFromMap(productName, [
         [/ROBUSTO/, "Robusto", '5"', "50"],
         [/TORO/, "Toro", '6.5"', "52"],
+        [/SIXTY/, "Sixty", '6"', "60"],
+      ]),
+      sourcedRockyPatelReviewProfile("Grand Reserve", "https://www.rockypatel.com/cigar/grand-reserve/", "93 brand-cited profile rating", [
+        "Brand profile lists Grand Reserve in Robusto, Toro, and Sixty sizes.",
+        "The page cites a 93 profile rating and a Cigar Journal No. 1 Top 25 placement in 2018.",
+        "Rocky Patel describes Grand Reserve as a medium-bodied international-market blend rolled in Honduras.",
       ])
     );
   }
@@ -3166,14 +5617,24 @@ function getRockyPatelRemainingResearch(productName: string) {
   if (/GOLD LABEL/.test(productName)) {
     return combineResearchDetails(
       researchedBlend("Nicaragua", "Sumatra", "Connecticut Shade and Connecticut Broadleaf", "Nicaraguan Jalapa and Esteli", "Medium-Full"),
-      researchedSize("Toro", '6.5"', "52")
+      researchedSize("Toro", '6.5"', "52"),
+      sourcedRockyPatelReviewProfile("Gold Label", "https://www.rockypatel.com/cigar/gold-label/", "94 brand-cited profile rating", [
+        "Brand profile cites a 94 profile rating for Gold Label.",
+        "The page describes an Ecuadorian Habano wrapper with Connecticut Shade and Broadleaf binders.",
+        "Rocky Patel frames Gold Label around earthy notes, caramel, coffee, and lingering sweetness.",
+      ])
     );
   }
 
   if (/EMERALD/.test(productName)) {
     return combineResearchDetails(
       researchedBlend("Nicaragua", "Ecuadorian Habano", "Nicaragua and Mexico", "Nicaragua, Honduras", "Medium"),
-      researchedSize("Robusto", '5.5"', "50")
+      researchedSize("Robusto", '5.5"', "50"),
+      sourcedRockyPatelReviewProfile("Emerald", "https://www.rockypatel.com/cigar/emerald/", "95 brand-cited profile rating", [
+        "Brand profile cites a 95 profile rating for Emerald.",
+        "The page lists Robusto, Toro, and Sixty sizes for the line.",
+        "Rocky Patel describes Emerald as a medium-bodied box-pressed cigar with an Ecuadorian Habano wrapper.",
+      ])
     );
   }
 
@@ -3231,8 +5692,10 @@ function getMyFatherRemainingResearch(productName: string) {
     return undefined;
   }
 
+  const reviewProfile = /^MY FATHER\b/.test(productName) ? getMyFatherReviewProfile(productName) : undefined;
+
   if (/SAMPLER|HUMID BAG/.test(productName)) {
-    return assortedResearchDetails();
+    return combineResearchDetails(assortedResearchDetails(), reviewProfile);
   }
 
   if (/FONSECA/.test(productName)) {
@@ -3242,7 +5705,8 @@ function getMyFatherRemainingResearch(productName: string) {
         [/ROBUSTO/, "Robusto", '5"', "50"],
         [/TORO/, "Toro", '6.25"', "52"],
         [/CEDROS/, "Cedros", '6.25"', "52"],
-      ])
+      ]),
+      reviewProfile
     );
   }
 
@@ -3252,14 +5716,16 @@ function getMyFatherRemainingResearch(productName: string) {
       researchedSizeFromMap(productName, [
         [/CORONA GORDA/, "Corona Gorda", '5.625"', "46"],
         [/TORO/, "Box-Pressed Toro", '6"', "56"],
-      ])
+      ]),
+      reviewProfile
     );
   }
 
   if (/LA GRAN OFERTA/.test(productName)) {
     return combineResearchDetails(
       researchedBlend("Nicaragua", "Habano Rosado", "Nicaragua", "Nicaragua Habano-Criollo", "Medium"),
-      researchedSize("Assorted", "Assorted", "Assorted")
+      researchedSize("Assorted", "Assorted", "Assorted"),
+      reviewProfile
     );
   }
 
@@ -3268,7 +5734,8 @@ function getMyFatherRemainingResearch(productName: string) {
       researchedBlend("Nicaragua", "Ecuadorian Habano Rosado Oscuro", "Nicaragua", "Nicaragua", "Medium-Full"),
       researchedSizeFromMap(productName, [
         [/LANCERO/, "Lancero", '7.5"', "38"],
-      ])
+      ]),
+      reviewProfile
     );
   }
 
@@ -3279,14 +5746,16 @@ function getMyFatherRemainingResearch(productName: string) {
         [/CHURCHILL/, "Churchill", '7"', "50"],
         [/PETITE ROBUSTO|PETIT ROBUSTO/, "Petit Robusto", '4.5"', "50"],
         [/TORPEDO/, "Torpedo Box Pressed", '6.125"', "52"],
-      ])
+      ]),
+      reviewProfile
     );
   }
 
   if (/NO\.?3 CREMAS/.test(productName)) {
     return combineResearchDetails(
       researchedBlend("Nicaragua", "Ecuadorian Habano Rosado", "Nicaragua", "Nicaragua", "Medium-Full"),
-      researchedSize("Cremas", '6.5"', "44")
+      researchedSize("Cremas", '6.5"', "44"),
+      reviewProfile
     );
   }
 
@@ -3296,14 +5765,16 @@ function getMyFatherRemainingResearch(productName: string) {
       researchedSizeFromMap(productName, [
         [/NO\.?\s*7|\b7\b/, "No. 7 Petit Lancero", '6"', "42"],
         [/NO\.?\s*13|\b13\b/, "No. 13 Toro Gordo", '6"', "56"],
-      ])
+      ]),
+      reviewProfile
     );
   }
 
   if (/EL CENTURION H-?2K-?CT/.test(productName)) {
     return combineResearchDetails(
       researchedBlend("Nicaragua", "Hybrid Habano 2000 Connecticut", "Nicaragua", "Nicaragua", "Medium-Full"),
-      researchedSize("Toro", '6"', "52")
+      researchedSize("Toro", '6"', "52"),
+      reviewProfile
     );
   }
 
@@ -3405,8 +5876,10 @@ function getMacanudoRemainingResearch(productName: string) {
     return undefined;
   }
 
+  const reviewProfile = getMacanudoReviewProfile(productName);
+
   if (/SAMPLER/.test(productName)) {
-    return assortedResearchDetails();
+    return combineResearchDetails(assortedResearchDetails(), reviewProfile);
   }
 
   if (/INSPIRADO GREEN/.test(productName)) {
@@ -3415,25 +5888,28 @@ function getMacanudoRemainingResearch(productName: string) {
       researchedSizeFromMap(productName, [
         [/ROBUSTO/, "Robusto", '5"', "52"],
         [/TORO/, "Toro", '6"', "50"],
-      ])
+      ]),
+      reviewProfile
     );
   }
 
   if (/INSPIRADO (ORANGE|RED|WHITE).*MINIS/.test(productName)) {
-    return researchedSize("Mini", '3"', "20");
+    return combineResearchDetails(researchedSize("Mini", '3"', "20"), reviewProfile);
   }
 
   if (/MINIATURES/.test(productName)) {
     return combineResearchDetails(
       researchedBlend("Dominican Republic", "Connecticut Shade", "Mexican San Andres", "Dominican Republic, Mexico", "Mild"),
-      researchedSize("Miniature", '3.25"', "26")
+      researchedSize("Miniature", '3.25"', "26"),
+      reviewProfile
     );
   }
 
   if (/\bM ESPRESSO W\/ CREAM\b|M ESPRESSO/.test(productName)) {
     return combineResearchDetails(
       researchedBlend("Nicaragua", "Indonesian barber pole", "Philippine", "Nicaraguan", "Medium"),
-      researchedSize("Toro", '6"', "50")
+      researchedSize("Toro", '6"', "50"),
+      reviewProfile
     );
   }
 
@@ -3445,8 +5921,10 @@ function getMontecristoRemainingResearch(productName: string) {
     return undefined;
   }
 
+  const reviewProfile = getMontecristoReviewProfile(productName);
+
   if (/SAMPLER|FRESHLOC/.test(productName)) {
-    return assortedResearchDetails();
+    return combineResearchDetails(assortedResearchDetails(), reviewProfile);
   }
 
   if (/1935 ANNIVERSARY|ESPADA|NICARAGUA SERIES|PLATINUM|WHITE|CLASSIC/.test(productName)) {
@@ -3456,7 +5934,8 @@ function getMontecristoRemainingResearch(productName: string) {
   if (/MEMORIES/.test(productName)) {
     return combineResearchDetails(
       researchedBlend("Dominican Republic", "Connecticut Shade", "Dominican Republic", "Dominican Republic", "Mild"),
-      researchedSize("Memories", '4"', "33")
+      researchedSize("Memories", '4"', "33"),
+      reviewProfile
     );
   }
 
@@ -3469,7 +5948,8 @@ function getMontecristoRemainingResearch(productName: string) {
       [/NO\.?\s*2/, "No. 2", '6.125"', "52"],
       [/NO\.?\s*3/, "No. 3", '5.5"', "44"],
       [/ROBUSTO/, "Robusto", '5"', "52"],
-    ])
+    ]),
+    reviewProfile
   );
 }
 
@@ -3804,8 +6284,10 @@ function getRomeoRemainingResearch(productName: string) {
     return undefined;
   }
 
+  const reviewProfile = getRomeoReviewProfile(productName);
+
   if (/SAMPLER|FRESH PACK/.test(productName)) {
-    return assortedResearchDetails();
+    return combineResearchDetails(assortedResearchDetails(), reviewProfile);
   }
 
   if (/HABANA RESV|HABANA RESERVE/.test(productName)) {
@@ -3813,7 +6295,8 @@ function getRomeoRemainingResearch(productName: string) {
       researchedBlend("Honduras", "Nicaraguan", "Nicaraguan", "Honduras, Nicaragua", "Medium-Full"),
       researchedSizeFromMap(productName, [
         [/AMORES/, "Amores", '4"', "33"],
-      ])
+      ]),
+      reviewProfile
     );
   }
 
@@ -3822,14 +6305,16 @@ function getRomeoRemainingResearch(productName: string) {
       researchedBlend("Dominican Republic", "Ecuadorian Connecticut", "Mexican", "Dominican Republic", "Mild-Medium"),
       researchedSizeFromMap(productName, [
         [/CORONA/, "Corona", '5.5"', "44"],
-      ])
+      ]),
+      reviewProfile
     );
   }
 
   if (/GRAN TORO/.test(productName)) {
     return combineResearchDetails(
       researchedBlend("Dominican Republic", "Ecuadorian Habano", "Dominican Republic", "Dominican Republic, Nicaragua", "Medium-Full"),
-      researchedSize("Gran Toro", '6"', "54")
+      researchedSize("Gran Toro", '6"', "54"),
+      reviewProfile
     );
   }
 
@@ -4279,9 +6764,16 @@ function toCatalogProduct(item: ImportedInventoryItem): CatalogProduct {
   const inferredPackage = inferPackage(item.product);
   const description = importedProductDescriptions[item.slug] ?? "";
   const parsedDetails = parseImportedProductDetails(item.product, description);
+  const category = getCatalogCategory(item);
   const lineResearchDetails = getResearchedLineEnrichment(item);
   const researchedDetails = getResearchedCatalogEnrichment(item.slug);
-  const category = getCatalogCategory(item);
+  const finalCoverageDetails = lineResearchDetails.expertReview ||
+    lineResearchDetails.reviewProfile ||
+    researchedDetails.expertReview ||
+    researchedDetails.reviewProfile ||
+    !isCigarCategoryAndName(category, item.product)
+    ? undefined
+    : getFinalCoverageReviewProfile(item.product.toUpperCase());
   const pricing = calculateCatalogPricing({
     currentPrice: item.price,
     marketPrice: importedMarketPriceLookup[item.sku],
@@ -4318,7 +6810,7 @@ function toCatalogProduct(item: ImportedInventoryItem): CatalogProduct {
     stripePriceId: null,
     storeHref: `/shop/${item.slug}/`,
     reviewSearchUrl: getReviewSearchUrl(item.product),
-  }, { ...parsedDetails, ...lineResearchDetails, ...researchedDetails });
+  }, { ...parsedDetails, ...lineResearchDetails, ...finalCoverageDetails, ...researchedDetails });
 }
 
 export const publishedImportedInventory = getPublishedImportedInventory(importedInventory);

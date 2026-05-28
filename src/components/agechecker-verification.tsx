@@ -90,7 +90,22 @@ export function AgeCheckerVerification(props: AgeCheckerVerificationProps) {
 
   async function exchangeVerificationUuid(uuid: string) {
     try {
-      const result = await createCheckoutAgeVerificationToken({ vendorTransactionId: uuid });
+      const result = await createCheckoutAgeVerificationToken({
+        vendorTransactionId: uuid,
+        customer: {
+          email: props.email,
+          phone: props.phone || "",
+          fullName: props.fullName,
+        },
+        shippingAddress: {
+          address1: props.address1,
+          address2: "",
+          city: props.city,
+          state: props.state,
+          postalCode: props.postalCode,
+          country: props.country || "US",
+        },
+      });
       persistStoredVerification(result.ageVerificationToken, identityKey);
       setVerifiedIdentityKey(identityKey);
       setStatusMessage("AgeChecker.Net verification is ready for checkout.");
@@ -239,6 +254,7 @@ function splitFullName(fullName: string) {
 function createIdentityKey(input: AgeCheckerVerificationProps) {
   return [
     input.email,
+    input.phone || "",
     input.fullName,
     input.address1,
     input.city,

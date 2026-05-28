@@ -13,6 +13,7 @@ const expectedRouteAuth = new Map([
   ["GET /news/stories", "NONE"],
   ["POST /news/story-drafts", "JWT"],
   ["POST /news/stories", "JWT"],
+  ["POST /support/contact", "NONE"],
   ["POST /commerce/checkout-session", "NONE"],
   ["POST /commerce/age-verification-token", "NONE"],
   ["POST /commerce/membership-session", "NONE"],

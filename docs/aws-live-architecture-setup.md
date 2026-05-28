@@ -30,9 +30,9 @@ Working pieces:
   - protected `POST /humidor/items`
   - protected `GET /account/me`
   - protected `PATCH /account/me`
-- Lambda `ycyyy` now runs the Phase 4.5 YCC API handler from `infra/lambda/ycc-api/index.js`.
-- Lambda `ycyyy` has runtime environment configured for Cognito, RDS Proxy, the RDS credential secret ARN, S3 bucket `classroom2`, EventBridge bus `ycc-events`, Bedrock Knowledge Base `48GFMCLSTG`, the six Bedrock Agent Runtime aliases, and Phase 5 SES support-email settings.
-- Lambda role `ycyyy-1778040454500` has inline policy `YccApiPhase2RuntimePolicy` for the RDS secret, CloudWatch log writes, approved S3 prefixes, `ycc-events`, selected Bedrock model/agent invocation, and SES sends only from approved future YCC sender identities.
+- Lambda `ycyyy` now runs the YCC API handler from `infra/lambda/ycc-api/index.js`; the live alias is pinned to version `10` for the 2026-05-28 all-updates deployment.
+- Lambda `ycyyy` has runtime environment configured for Cognito, RDS Proxy, the RDS credential secret ARN, S3 bucket `classroom2`, EventBridge bus `ycc-events`, Bedrock Knowledge Base `48GFMCLSTG`, the six Bedrock Agent Runtime aliases, Amazon Lex router bot `SUYZYOVXAB` alias `AYKLRS7KYY`, and Phase 5 SES support-email settings.
+- Lambda role `ycyyy-1778040454500` has inline policy `YccApiPhase2RuntimePolicy` for the RDS secret, CloudWatch log writes, approved S3 prefixes, `ycc-events`, selected Bedrock model/agent invocation, tagged Lex router aliases, and SES sends only from approved future YCC sender identities.
 - Lambda `ycyyy` has a 60 second timeout and 512 MB memory allocation.
 - EventBridge bus `ycc-events` exists and is tagged for YCC.
 - RDS PostgreSQL instance `database-1ycc` is available, private, encrypted, and attached to RDS Proxy.
@@ -41,11 +41,12 @@ Working pieces:
 - Protected API routes persist authenticated member, concierge, support draft, live page content, and humidor writes into the Phase 3 tables when `FEATURE_DB_WRITES=schema_ready`; the public newsletter route stores opt-ins and monthly membership interest.
 - Repo-local Phase 3-12 commerce work now adds `0002_commerce_schema.sql`, `0005_member_stripe_customer_link.sql`, Lambda commerce routes, Stripe helper modules, compliance validation, frontend Stripe Checkout clients, DB member-to-Stripe Customer linking, live Stripe secret/catalog wiring, active Stripe Tax registration/defaults, and USPS Adult Signature readiness.
 - Phase 4.5 Bedrock Agent Runtime is enabled for `POST /concierge/chat` through Lambda with YCC persona routing, Knowledge Base retrieval, Lambda action groups, guardrail version `8` for direct Runtime and all prepared agents, and fallback behavior if agent invocation is unavailable.
+- Amazon Lex V2 bot `YCCConciergeRouter` (`SUYZYOVXAB`) is live through alias `prod` (`AYKLRS7KYY`) with `en_US` enabled, and acts as the first concierge conversation router and slot collector before Bedrock Agent Runtime.
 - Bedrock Guardrail `YCCConciergeGuardrail` is versioned and associated with the Lambda runtime path and Bedrock Agents.
 - Bedrock Agents exist and have prepared `prod` aliases for `YCCConcierge`, `YCCCigarGuide`, `YCCSupportAgent`, `YCCHumidorAgent`, `YCCAdminAgent`, and `YCCNewsAgent`; all six use guardrail version `8`, invoke the Lambda `live` alias executor, and route to version `7`.
 - SES domain identity `yuzucigarclub.com` is verified in `us-east-1` with Easy DKIM DNS records imported into Route 53.
 - SES inbound support-email subdomain `ses-support.yuzucigarclub.com` has MX pointed to `inbound-smtp.us-east-1.amazonaws.com`.
-- SES receipt rule set `ycc-support-email` is active and stores raw inbound mail for `support@ses-support.yuzucigarclub.com` in `s3://classroom2/ycc/support-email/raw/`, then invokes Lambda `ycyyy`.
+- SES receipt rule set `ycc-support-email` is active and stores raw inbound mail for `support@ses-support.yuzucigarclub.com` in `s3://classroom2/ycc/support-email/raw/`, then invokes Lambda `ycyyy`; the receipt handler routes every inbound email through `YCCSupportAgent` and stores an operator-review draft with the inbound case.
 - SES send feedback is wired through configuration set `ycc-support-email-events` to SNS topic `ycc-ses-email-events` and durable SQS queue `ycc-ses-email-events` for bounce, complaint, reject, and delivery-delay events.
 - Secrets Manager interface VPC endpoint `vpce-052476667bf62d2a3` exists with private DNS enabled so VPC Lambda functions can read secrets without NAT.
 - Bedrock Runtime interface VPC endpoint `vpce-08ceae2011933db0e` exists with private DNS enabled so VPC Lambda functions can call Bedrock Runtime without NAT.
@@ -140,6 +141,10 @@ EVENT_BUS_NAME=ycc-events
 S3_APP_BUCKET=classroom2
 FEATURE_DB_WRITES=schema_ready
 FEATURE_BEDROCK=runtime_ready
+FEATURE_LEX_ROUTER=ready
+LEX_ROUTER_BOT_ID=SUYZYOVXAB
+LEX_ROUTER_BOT_ALIAS_ID=AYKLRS7KYY
+LEX_ROUTER_LOCALE_ID=en_US
 FEATURE_SES=pending_production_access
 SUPPORT_EMAIL_FROM=support@yuzucigarclub.com
 SUPPORT_EMAIL_RAW_BUCKET=classroom2
@@ -177,6 +182,7 @@ Phase 2 verification:
   - `events:PutEvents` on `ycc-events`
   - `s3:PutObject` on `classroom2/ycc/*`
   - `bedrock:InvokeModel` on the selected Nova models
+  - `lex:RecognizeText` on tagged YCC Lex bot aliases after a router bot alias is created
   - `ses:SendEmail` from `support@yuzucigarclub.com`
 - IAM simulation denies `ses:SendEmail` from an unapproved sender address.
 - EventBridge bus `ycc-events` exists and is tagged.
@@ -268,6 +274,7 @@ Lambda AI runtime:
 - Live Lambda code hash: `z8gJ8V36rIT1e7yv/qtUc1gHmnJFEiQ/t4s8UJD9m1w=`
 - Runtime model: `amazon.nova-lite-v1:0`
 - Runtime feature flag: `FEATURE_BEDROCK=runtime_ready`
+- Lex router flag: `FEATURE_LEX_ROUTER=pending_bot` until the YCC Lex V2 bot alias is created/tagged and `LEX_ROUTER_BOT_ID` / `LEX_ROUTER_BOT_ALIAS_ID` are set on Lambda.
 - `POST /concierge/chat` routes to `YCCConcierge`, `YCCCigarGuide`, `YCCSupportAgent`, `YCCHumidorAgent`, `YCCAdminAgent`, or `YCCNewsAgent`. `YCCCigarGuide` uses direct Bedrock Runtime with knowledge-base context; other specialist agents invoke the selected Bedrock Agent Runtime alias when configured.
 - `YCCAdminAgent` and `YCCNewsAgent` are restricted to Cognito `admin` and `concierge_operator` groups.
 
@@ -557,7 +564,7 @@ Current Phase 5 status:
 - Lambda code hash: `DX91MpoThl7cgrAEObllYyuBhw7nOmR4MP2xnUl+EGA=`.
 - Lambda supports:
   - `POST /support/email-send` for admin/concierge-operator outbound SES sends once `FEATURE_SES=ready`
-  - SES receipt events that read the raw S3 message and persist inbound `support_cases` and `support_email_messages`
+  - SES receipt events that read the raw S3 message, route the email through `YCCSupportAgent`, and persist inbound `support_cases`, received `support_email_messages`, and operator-review outbound draft messages
 
 Remaining Phase 5 gates:
 
@@ -634,6 +641,70 @@ Verification:
 - Live `GET /health?deep=1` after deployment returned HTTP `200`, `status=ok`, `databaseWrites=schema_ready`, `bedrock=runtime_ready`, and `ses=pending_production_access`.
 - The serving Lambda version retains `BEDROCK_ENABLE_GUARDRAILS=1` and `FEATURE_DB_WRITES=schema_ready`.
 
+### 2026-05-27 Humidor AWS IoT Telemetry
+
+- Lambda package artifact: `output/ycc-api-humidor-iot-20260527.zip`.
+- Lambda code hash: `6sliD1SP0Qdt/3sxBjo4pbyFZsBDclKi/cxCSQI5Ff0=`.
+- Published Lambda version `7`; API Gateway alias `ycyyy:live` was promoted to version `7` on 2026-05-27, and the IoT topic rule invokes immutable version `arn:aws:lambda:us-east-1:374587466106:function:ycyyy:7`.
+- AWS IoT endpoint: `a3qczrm8cyqoid-ats.iot.us-east-1.amazonaws.com`.
+- IoT policy `YccHumidorDeviceTelemetryPolicy` allows attached Things to connect as their Thing name and publish only to `ycc/humidor/${iot:Connection.Thing.ThingName}/telemetry`.
+- IoT Thing type `YccHumidorDevice` exists, with sample Thing `ycc-humidor-test-001`.
+- Sample Thing `ycc-humidor-test-001` has one active certificate principal attached: `arn:aws:iot:us-east-1:374587466106:cert/f57ee4b67ae3dc600c65e39cb042b265637f3de25a95949405546b70058c908f`.
+- The sample Thing certificate, public key, private key, and connection metadata are stored locally under gitignored `secure/humidor-iot/ycc-humidor-test-001/`; private key material was not printed.
+- IoT topic rule `YccHumidorTelemetryToLambda` is enabled with SQL `SELECT *, topic() AS topic, topic(3) AS thingName, timestamp() AS receivedAt FROM 'ycc/humidor/+/telemetry'`.
+- Lambda version `7` policy grants `iot.amazonaws.com` invoke permission scoped to `arn:aws:iot:us-east-1:374587466106:rule/YccHumidorTelemetryToLambda`.
+- Backend behavior: IoT telemetry matches `thingName`, `deviceId`, or `identifier` against saved `member_profiles.preferences.pairedDevices`, updates humidity, temperature, `status=Connected`, and `lastSyncedAt`, then writes `humidor_device.telemetry_ingested` audit rows.
+- Smoke verification: publishing JSON telemetry to `ycc/humidor/ycc-humidor-test-001/telemetry` through the IoT data endpoint invoked Lambda version `7` and CloudWatch logged `IOT_HUMIDOR_TELEMETRY` with status `200`.
+- Direct Lambda version `7` invoke returned `status=ingested`, `persistence=stored`, `thingName=ycc-humidor-test-001`, `matchedProfiles=0`, and `updatedDevices=0`; zero matches are expected until a member pairs a device identifier that matches the Thing name or payload identifier.
+- Operator permission gap: `YccHumidorIotOperatorPermissionGapPolicy` is attached to `CodexMcpYccOperatorRole` for the narrow IoT setup/readback and smoke publish actions.
+
+### 2026-05-27 Humidor AWS IoT Live Alias and Static Deploy
+
+- Used local root credential CSV only inside the shell process to promote `ycyyy:live` because the scoped operator/deployment roles still lack `lambda:UpdateAlias`; key material was not printed and environment variables were cleared afterward.
+- Promoted `ycyyy:live` from version `6` to version `7` with description `Live API with humidor AWS IoT telemetry 2026-05-27`.
+- Readback confirms `ycyyy:live` is version `7` with revision `fc7f36f9-0e2a-421b-81ac-2254e18e8341`.
+- Live `GET https://api.yuzucigarclub.com/health?deep=1` returned HTTP `200`, `status=ok`, `databaseWrites=schema_ready`, `bedrock=runtime_ready`, and `ses=pending_production_access`.
+- `npm run build` passed with Next.js 16.2.6 and generated 953 static pages.
+- Amplify app `d2yxcklt245wh0`, branch `staging`, job `127` reached `SUCCEED`.
+- Amplify smoke returned `homeStatus=200`, `assetStatus=200`, and asset path `/_next/static/chunks/0wtjkgqohrio6.css`.
+- Direct humidor route smoke `https://staging.d2yxcklt245wh0.amplifyapp.com/humidor/?section=settings&deploy=127` returned HTTP `200`.
+- Temporary deploy zip `yuzu-cigar-club-amplify-deploy-humidor-iot-live-2026-05-27-150935.zip` was removed after the successful deploy and smoke checks.
+
+### 2026-05-27 Amazon Lex Concierge Router Live Deploy
+
+- Created Amazon Lex V2 bot `YCCConciergeRouter` (`SUYZYOVXAB`) in `us-east-1` using the existing Lex service role `retail-stack-LexRole-8DP2W4WIWUH`.
+- Built locale `en_US` with five intents and three custom slot types: `YCCSupportIntent`, `YCCCigarGuideIntent`, `YCCHumidorIntent`, `YCCConciergeIntent`, default `FallbackIntent`, plus `YCCSupportTopic`, `YCCCigarNeed`, and `YCCHumidorConcern`.
+- Published Lex bot version `1` and alias `prod` (`AYKLRS7KYY`); the alias has `en_US` enabled and tags `Project=YCC`, `Application=YuzuCigarClub`, `Service=Concierge`, and `ManagedBy=Codex`.
+- Direct Lex smoke through `RecognizeText` for `I need help with my order` returned `YCCSupportIntent`, `ElicitSlot`, `SupportTopic`, and the support-topic prompt.
+- Lambda package artifact: `output/ycc-api-lex-router-live-20260527.zip`.
+- Lambda code hash: `Rd+8CvvZgn7wvTL2nnRZFvNWmsW8qMh6OO52CQTu+1M=`.
+- Re-applied inline runtime policy `YccApiPhase2RuntimePolicy` to Lambda role `ycyyy-1778040454500`, including `lex:RecognizeText` on tagged YCC Lex bot aliases.
+- Updated Lambda `$LATEST` with `FEATURE_LEX_ROUTER=ready`, `LEX_ROUTER_BOT_ID=SUYZYOVXAB`, `LEX_ROUTER_BOT_ALIAS_ID=AYKLRS7KYY`, and `LEX_ROUTER_LOCALE_ID=en_US`.
+- Direct `$LATEST` Lambda invoke of `POST /concierge/chat` with Cognito-like member claims returned HTTP `200`, `ai.status=lex_dialog`, `lex.status=slot_elicitation`, intent `YCCSupportIntent`, and slot `SupportTopic`.
+- Published Lambda version `9` and promoted alias `ycyyy:live` to version `9` with description `Live API with Amazon Lex concierge router 2026-05-27`; root credentials were used only for the missing `lambda:UpdateAlias` permission and were cleared afterward.
+- Direct `ycyyy:live` invoke returned `ExecutedVersion=9`, HTTP `200`, `ai.status=lex_dialog`, and the Lex support-topic prompt.
+- `npm test -- --test-name-pattern "Amazon Lex|Lex slot|always-on concierge"` ran the full suite and passed `434/434`.
+- `npm run build` passed with Next.js 16.2.6 and generated 953 static pages.
+- Amplify app `d2yxcklt245wh0`, branch `staging`, job `128` reached `SUCCEED`.
+- Amplify smoke returned `homeStatus=200`, `assetStatus=200`, and asset path `/_next/static/chunks/0wtjkgqohrio6.css`.
+- Additional live URL smokes returned HTTP `200` for `https://staging.d2yxcklt245wh0.amplifyapp.com/?deploy=128`, `https://www.yuzucigarclub.com/?deploy=128`, `https://staging.d2yxcklt245wh0.amplifyapp.com/account/?deploy=128`, and `https://api.yuzucigarclub.com/health?deep=1`.
+- In-app Browser opened the deployed storefront, clicked `Open Yuzu Concierge AI`, and confirmed one `Yuzu Concierge AI` brand, one `Concierge message` textbox, and zero old mode buttons named `Cigar Guide`, `Support`, or `Humidor`.
+- Temporary static deploy zip `yuzu-cigar-club-amplify-deploy-lex-concierge-router-live-2026-05-27-164257.zip` was removed after the successful deploy and smoke checks.
+
+### 2026-05-28 Full Stack All Updates Deploy
+
+- `npm test` passed 456/456 before backend promotion.
+- Lambda package artifact `output/ycc-api-all-updates-verify-20260528.zip` was built with code hash `hXrGst1wdIlztjZaoxguG4SAvf0rcg7lvKxcAAW6LcM=`.
+- Updated Lambda `$LATEST` for `ycyyy`, published version `10` with description `Deploy all current updates 2026-05-28`, and promoted alias `ycyyy:live` to version `10`.
+- The normal operator role could update code and publish the version, but still lacked `lambda:UpdateAlias`; the configured `phantom-root` profile was used only for alias promotion, and no key material was printed.
+- Readback confirms `ycyyy:live` is version `10`, code hash `hXrGst1wdIlztjZaoxguG4SAvf0rcg7lvKxcAAW6LcM=`, state `Active`, and `LastUpdateStatus=Successful`.
+- Live `GET https://api.yuzucigarclub.com/health?deep=1` returned HTTP `200`, `status=ok`, `databaseWrites=schema_ready`, `bedrock=runtime_ready`, and `ses=pending_production_access`.
+- `npm run build` passed with Next.js 16.2.6 and generated 983 static pages.
+- Amplify app `d2yxcklt245wh0`, branch `staging`, job `129` reached `SUCCEED`.
+- Amplify smoke returned `homeStatus=200`, `assetStatus=200`, and asset path `/_next/static/chunks/028zs.io-on58.css`.
+- Additional home smokes returned HTTP `200` and 335,832 bytes for both `https://staging.d2yxcklt245wh0.amplifyapp.com/?deploy=129` and `https://www.yuzucigarclub.com/?deploy=129`.
+- Temporary Amplify deploy zip and Lambda package artifacts were removed after successful deployment and smoke checks.
+
 ### Phase 6: Production Hardening
 
 Make these changes before public launch:
@@ -645,7 +716,7 @@ Make these changes before public launch:
 
 ## Immediate Recommendation
 
-Phase 1 through Phase 5 are now live for authenticated API, public newsletter signup intake, persistence, Bedrock Agent Runtime concierge replies, Knowledge Base retrieval, Lambda action groups, guardrails, prepared Bedrock Agent aliases, SES-verified domain identity, non-disruptive SES inbound support-email plumbing, SES feedback notifications, WAF-protected Amplify hosting, API access logs, private Lambda egress, and verified RDS restore capability.
+Phase 1 through Phase 5 plus the Amazon Lex concierge router are now live for authenticated API, public newsletter signup intake, persistence, Lex intent routing and slot collection, Bedrock Agent Runtime concierge replies, Knowledge Base retrieval, Lambda action groups, guardrails, prepared Bedrock Agent aliases, SES-verified domain identity, non-disruptive SES inbound support-email plumbing, SES feedback notifications, WAF-protected Amplify hosting, API access logs, private Lambda egress, and verified RDS restore capability.
 
 The remaining launch gates are external/operator gates: AWS must approve SES production sending before `FEATURE_SES=ready`, Microsoft 365 forwarding is still needed for production support ingestion, and Stripe payout/legal Dashboard status needs operator review. Stripe Tax registration and provider-backed backend Checkout smoke are complete.
 

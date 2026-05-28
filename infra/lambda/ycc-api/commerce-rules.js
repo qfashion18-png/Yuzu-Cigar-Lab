@@ -1,13 +1,16 @@
 "use strict";
 
 const requiredShippingCarrier = "USPS";
+const nonMemberShippingHandlingFeeCents = 1000;
 const adultSignatureRequiredStates = new Set(["AR", "CA", "DE", "FL", "GA", "MA", "MN", "ND", "RI", "SC", "WY"]);
 const checkoutShippingMethods = new Map([
   [
     "usps-ground-advantage",
     {
       id: "usps-ground-advantage",
+      title: "USPS Ground Advantage",
       carrier: requiredShippingCarrier,
+      deliveryAmountCents: 900,
       adultSignatureRequired: false,
     },
   ],
@@ -15,7 +18,9 @@ const checkoutShippingMethods = new Map([
     "usps-priority-mail",
     {
       id: "usps-priority-mail",
+      title: "USPS Priority Mail",
       carrier: requiredShippingCarrier,
+      deliveryAmountCents: 1500,
       adultSignatureRequired: false,
     },
   ],
@@ -23,7 +28,9 @@ const checkoutShippingMethods = new Map([
     "usps-adult-signature-ground",
     {
       id: "usps-adult-signature-ground",
+      title: "USPS Adult Signature Ground",
       carrier: requiredShippingCarrier,
+      deliveryAmountCents: 1800,
       adultSignatureRequired: true,
     },
   ],
@@ -31,7 +38,9 @@ const checkoutShippingMethods = new Map([
     "usps-adult-signature-priority",
     {
       id: "usps-adult-signature-priority",
+      title: "USPS Adult Signature Priority",
       carrier: requiredShippingCarrier,
+      deliveryAmountCents: 3200,
       adultSignatureRequired: true,
     },
   ],
@@ -39,7 +48,9 @@ const checkoutShippingMethods = new Map([
     "adult-signature-ground",
     {
       id: "usps-adult-signature-ground",
+      title: "USPS Adult Signature Ground",
       carrier: requiredShippingCarrier,
+      deliveryAmountCents: 1800,
       adultSignatureRequired: true,
       legacyId: "adult-signature-ground",
     },
@@ -48,7 +59,9 @@ const checkoutShippingMethods = new Map([
     "adult-signature-express",
     {
       id: "usps-adult-signature-priority",
+      title: "USPS Adult Signature Priority",
       carrier: requiredShippingCarrier,
+      deliveryAmountCents: 3200,
       adultSignatureRequired: true,
       legacyId: "adult-signature-express",
     },
@@ -189,12 +202,20 @@ function validateCheckoutReadiness(input = {}) {
     pushError(errors, "empty_cart", "Add at least one item before checkout.");
   }
 
+  const handlingFeeCents = normalizedItems.length > 0 && !membership.trusted ? nonMemberShippingHandlingFeeCents : 0;
+
   if (input.quote && typeof input.quote === "object") {
     const expectedSubtotal = roundCurrency(normalizedItems.reduce((sum, item) => sum + (item.unitAmountCents / 100) * item.quantity, 0));
     const submittedSubtotal = Number(input.quote.subtotal);
     if (Number.isFinite(submittedSubtotal) && roundCurrency(submittedSubtotal) !== expectedSubtotal) {
       pushError(errors, "quote_mismatch", "Cart totals changed. Refresh the cart before checkout.");
     }
+
+    const submittedHandling = getOptionalCurrency(input.quote.handling ?? input.quote.shippingHandlingFee);
+    if (submittedHandling !== null && currencyToCents(submittedHandling) !== handlingFeeCents) {
+      pushError(errors, "quote_mismatch", "Cart totals changed. Refresh the cart before checkout.");
+    }
+
   }
 
   if (!isAgeVerified(input.ageVerification)) {
@@ -222,6 +243,9 @@ function validateCheckoutReadiness(input = {}) {
     pushError(errors, "tax_provider_unavailable", "Tax calculation is unavailable for this checkout.", holdReasons);
   }
 
+  const deliveryAmountCents = shippingMethod?.deliveryAmountCents || 0;
+  const shippingAmountCents = shippingMethod ? deliveryAmountCents + handlingFeeCents : handlingFeeCents;
+
   return {
     ok: errors.length === 0,
     errors,
@@ -230,9 +254,13 @@ function validateCheckoutReadiness(input = {}) {
     shipping: {
       methodId: shippingMethod?.id || normalizeShippingMethodId(input.shippingMethodId),
       submittedMethodId: normalizeShippingMethodId(input.shippingMethodId),
+      title: shippingMethod?.title || "",
       carrier: shippingMethod?.carrier || requiredShippingCarrier,
       adultSignatureRequired: requiresAdultSignature || Boolean(shippingMethod?.adultSignatureRequired),
       adultSignatureRequiredState: adultSignatureRequiredStates.has(getDestinationState(input.destination)),
+      deliveryAmountCents,
+      handlingFeeCents,
+      amountCents: shippingAmountCents,
     },
   };
 }
@@ -340,6 +368,15 @@ function currencyToCents(value) {
   return Math.round(roundCurrency(value) * 100);
 }
 
+function getOptionalCurrency(value) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+
+  const amount = Number(value);
+  return Number.isFinite(amount) ? amount : null;
+}
+
 function roundCurrency(value) {
   return Math.round(Number(value) * 100) / 100;
 }
@@ -349,6 +386,7 @@ module.exports = {
   adultSignatureShippingMethodIds,
   checkoutShippingMethods,
   invalidAgeVerificationTokens,
+  nonMemberShippingHandlingFeeCents,
   requiredShippingCarrier,
   restrictedDestinationStates,
   requiresAdultSignatureDelivery,

@@ -2,10 +2,13 @@
 
 import Link from "@/components/static-link";
 import NextImage from "next/image";
-import { useCallback, useEffect, useMemo, useState, type ChangeEvent, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
   Bell,
   Bot,
   Box,
@@ -82,6 +85,16 @@ import {
 } from "@/lib/humidor-aging";
 import { demoHumidorItems } from "@/lib/humidor-demo";
 import {
+  defaultHumidorTableSort,
+  formatHumidorTableSortValue,
+  humidorTableSortOptions,
+  parseHumidorTableSortValue,
+  sortHumidorItems,
+  toggleHumidorTableSort,
+  type HumidorTableColumnSortKey,
+  type HumidorTableSort,
+} from "@/lib/humidor-table-sort";
+import {
   createHumidorItem,
   updateHumidorItem,
   fetchHumidorDashboardBootstrap,
@@ -105,6 +118,21 @@ import { cn } from "@/lib/utils";
 
 type SectionId = "overview" | "tools" | "locations" | "cigars" | "aging" | "alerts" | "settings";
 type IconComponent = typeof Box;
+
+type HumidorProfileLocationKind = "humidor" | "other";
+
+type HumidorProfileLocation = {
+  name: string;
+  kind: HumidorProfileLocationKind;
+  trays: string[];
+};
+
+type HumidorStorageLocationOption = {
+  key: string;
+  label: string;
+  humidorLocation: string;
+  tray: string;
+};
 
 type HumidorForm = {
   name: string;
@@ -199,35 +227,110 @@ const defaultHumidorAlerts: HumidorAlertPreferences = {
   humidorProfile: defaultHumidorLocationProfile,
 };
 
-function normalizeHumidorProfileLocations(value: unknown): string[] {
+function normalizeHumidorProfileTextList(value: unknown): string[] {
+  const rawValues = Array.isArray(value)
+    ? value
+    : typeof value === "string" && value.trim()
+      ? value.split(/\r?\n|,/)
+      : [];
+  const values: string[] = [];
+  const seen = new Set<string>();
+
+  for (const rawValue of rawValues) {
+    const text = String(rawValue ?? "").trim();
+    const key = text.toLowerCase();
+
+    if (!text || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    values.push(text);
+  }
+
+  return values;
+}
+
+function normalizeHumidorProfileLocationKind(value: unknown): HumidorProfileLocationKind {
+  return String(value ?? "").trim().toLowerCase() === "humidor" ? "humidor" : "other";
+}
+
+function normalizeHumidorProfileLocation(value: unknown): HumidorProfileLocation | null {
+  if (typeof value === "string") {
+    const name = value.trim();
+    return name ? { name, kind: "other", trays: [] } : null;
+  }
+
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const raw = value as Record<string, unknown>;
+  const name = String(raw.name ?? raw.location ?? raw.label ?? "").trim();
+  if (!name) {
+    return null;
+  }
+
+  const kind = normalizeHumidorProfileLocationKind(raw.kind ?? raw.type ?? raw.locationType);
+  const trays = kind === "humidor" ? normalizeHumidorProfileTextList(raw.trays ?? raw.trayNames ?? raw.trayOptions) : [];
+
+  return { name, kind, trays };
+}
+
+function normalizeHumidorProfileLocations(value: unknown): HumidorProfileLocation[] {
   const rawLocations = Array.isArray(value)
     ? value
     : typeof value === "string" && value.trim()
       ? value.split(/\r?\n|,/)
       : [];
-  const locations: string[] = [];
-  const seen = new Set<string>();
+  const locations: HumidorProfileLocation[] = [];
+  const locationsByKey = new Map<string, HumidorProfileLocation>();
 
   for (const rawLocation of rawLocations) {
-    const location = String(rawLocation ?? "").trim();
-    const key = location.toLowerCase();
-
-    if (!location || seen.has(key)) {
+    const location = normalizeHumidorProfileLocation(rawLocation);
+    if (!location) {
       continue;
     }
 
-    seen.add(key);
-    locations.push(location);
+    const key = location.name.toLowerCase();
+    const existing = locationsByKey.get(key);
+
+    if (!existing) {
+      locationsByKey.set(key, location);
+      locations.push(location);
+      continue;
+    }
+
+    if (location.kind === "humidor") {
+      existing.kind = "humidor";
+      existing.trays = normalizeHumidorProfileTextList([...existing.trays, ...location.trays]);
+    }
   }
 
-  return locations;
+  return locations.map((location) => ({
+    ...location,
+    trays: location.kind === "humidor" ? normalizeHumidorProfileTextList(location.trays) : [],
+  }));
+}
+
+function getPrimaryHumidorProfileLocationName(locations: HumidorProfileLocation[]) {
+  for (const location of locations) {
+    const name = location.name.trim();
+    if (name) {
+      return name;
+    }
+  }
+
+  return "";
 }
 
 function normalizeHumidorLocationProfile(profile: Partial<HumidorLocationProfile> | null | undefined): HumidorLocationProfile {
+  const locations = normalizeHumidorProfileLocations(profile?.locations);
+
   return {
     humidorName: profile?.humidorName?.trim() ?? "",
-    defaultLocation: profile?.defaultLocation?.trim() ?? "",
-    locations: normalizeHumidorProfileLocations(profile?.locations),
+    defaultLocation: getPrimaryHumidorProfileLocationName(locations) || profile?.defaultLocation?.trim() || "",
+    locations,
   };
 }
 
@@ -259,20 +362,47 @@ function applyDefaultHumidorLocationToDeviceForm(form: HumidorDeviceInput, profi
   };
 }
 
+function buildHumidorStorageOptionKey(humidorLocation: string, tray = "") {
+  return `${humidorLocation.trim().toLowerCase()}\u001f${tray.trim().toLowerCase()}`;
+}
+
 function getHumidorStorageLocationOptions(profile: HumidorLocationProfile, items: HumidorItem[]) {
-  const options: string[] = [];
+  const options: HumidorStorageLocationOption[] = [];
   const seen = new Set<string>();
 
-  for (const rawLocation of [profile.defaultLocation, ...profile.locations, ...items.map((item) => item.humidorLocation)]) {
-    const location = rawLocation.trim();
-    const key = location.toLowerCase();
+  function addOption(rawLocation: string, rawTray = "") {
+    const humidorLocation = rawLocation.trim();
+    const tray = rawTray.trim();
+    const key = buildHumidorStorageOptionKey(humidorLocation, tray);
 
-    if (!location || seen.has(key)) {
-      continue;
+    if (!humidorLocation || seen.has(key)) {
+      return;
     }
 
     seen.add(key);
-    options.push(location);
+    options.push({
+      key,
+      label: tray ? `${humidorLocation} / ${tray}` : humidorLocation,
+      humidorLocation,
+      tray,
+    });
+  }
+
+  addOption(profile.defaultLocation);
+
+  for (const location of profile.locations) {
+    if (location.kind === "humidor" && location.trays.length) {
+      for (const tray of location.trays) {
+        addOption(location.name, tray);
+      }
+      continue;
+    }
+
+    addOption(location.name);
+  }
+
+  for (const item of items) {
+    addOption(item.humidorLocation, item.tray);
   }
 
   return options;
@@ -311,6 +441,8 @@ export function HumidorDashboard() {
   const [bulkImportStatus, setBulkImportStatus] = useState("");
   const [isBulkImporting, setIsBulkImporting] = useState(false);
   const [selectedHumidorItem, setSelectedHumidorItem] = useState<HumidorItem | null>(null);
+  const [pendingHumidorDetailScrollItemId, setPendingHumidorDetailScrollItemId] = useState("");
+  const humidorDetailCardRef = useRef<HTMLDivElement | null>(null);
   const [updatingHumidorItemId, setUpdatingHumidorItemId] = useState("");
   const [humidorItemUpdateStatus, setHumidorItemUpdateStatus] = useState("");
   const [humidorItemUpdateStatusItemId, setHumidorItemUpdateStatusItemId] = useState("");
@@ -323,6 +455,8 @@ export function HumidorDashboard() {
   const [isSearchingHumidorDevices, setIsSearchingHumidorDevices] = useState(false);
   const [humidorLocationProfile, setHumidorLocationProfile] = useState<HumidorLocationProfile>(defaultHumidorLocationProfile);
   const [newHumidorLocationDraft, setNewHumidorLocationDraft] = useState("");
+  const [newHumidorLocationKind, setNewHumidorLocationKind] = useState<HumidorProfileLocationKind>("humidor");
+  const [newHumidorTrayDraft, setNewHumidorTrayDraft] = useState("");
   const [humidorLocationProfileStatus, setHumidorLocationProfileStatus] = useState("");
   const [humidorAlerts, setHumidorAlerts] = useState<HumidorAlertPreferences>(defaultHumidorAlerts);
   const [humidorAlertsStatus, setHumidorAlertsStatus] = useState("");
@@ -349,6 +483,7 @@ export function HumidorDashboard() {
     setHumidorDevices(pairedDevices);
     setHumidorLocationProfile(profile);
     setNewHumidorLocationDraft("");
+    setNewHumidorTrayDraft("");
     setItemForm((current) => applyDefaultHumidorLocationToForm(current, profile));
     setHumidorDeviceForm((current) => applyDefaultHumidorLocationToDeviceForm(current, profile));
     setAiIdentifiedForm((current) => (current ? applyDefaultHumidorLocationToForm(current, profile) : current));
@@ -368,6 +503,7 @@ export function HumidorDashboard() {
         setHumidorDevices([]);
         setHumidorLocationProfile(defaultHumidorLocationProfile);
         setNewHumidorLocationDraft("");
+        setNewHumidorTrayDraft("");
         setHumidorLocationProfileStatus("");
       });
 
@@ -420,6 +556,7 @@ export function HumidorDashboard() {
           setHumidorDevices([]);
           setHumidorLocationProfile(defaultHumidorLocationProfile);
           setNewHumidorLocationDraft("");
+          setNewHumidorTrayDraft("");
           setHumidorLocationProfileStatus("");
         }
         setHumidorAlertsStatus(bootstrap.alertsError || "");
@@ -433,6 +570,7 @@ export function HumidorDashboard() {
         setHumidorDevices([]);
         setHumidorLocationProfile(defaultHumidorLocationProfile);
         setNewHumidorLocationDraft("");
+        setNewHumidorTrayDraft("");
         setHumidorLocationProfileStatus(errorMessage);
         setHumidorAlertsStatus(errorMessage);
         setLiveState({
@@ -480,6 +618,24 @@ export function HumidorDashboard() {
   const readyCount = agingItems.filter(({ snapshot }) => snapshot.readiness === "Ready Now").length;
   const reorderCount = items.filter((item) => Boolean(item.reorderReminder)).length;
   const liveApiConfigured = Boolean(process.env.NEXT_PUBLIC_YCC_API_BASE_URL);
+
+  function handleSelectHumidorItem(item: HumidorItem) {
+    setSelectedHumidorItem(item);
+    setPendingHumidorDetailScrollItemId(item.id);
+  }
+
+  useEffect(() => {
+    if (!pendingHumidorDetailScrollItemId || activeSection !== "cigars" || selectedHumidorItem?.id !== pendingHumidorDetailScrollItemId) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      humidorDetailCardRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+      setPendingHumidorDetailScrollItemId("");
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeSection, pendingHumidorDetailScrollItemId, selectedHumidorItem?.id]);
 
   useEffect(() => {
     const searchParams = new URLSearchParams(window.location.search);
@@ -531,16 +687,22 @@ export function HumidorDashboard() {
     return normalizeHumidorProfileLocations(locations);
   }
 
-  function updateHumidorLocationProfile(field: "humidorName" | "defaultLocation", value: string) {
-    setHumidorLocationProfile((current) => ({
-      ...current,
-      [field]: value,
-    }));
-    setHumidorLocationProfileStatus("");
+  function buildHumidorProfileLocationInput() {
+    const name = newHumidorLocationDraft.trim();
+
+    if (!name) {
+      return null;
+    }
+
+    return {
+      name,
+      kind: newHumidorLocationKind,
+      trays: newHumidorLocationKind === "humidor" ? normalizeHumidorProfileTextList(newHumidorTrayDraft) : [],
+    };
   }
 
   function handleAddHumidorProfileLocation() {
-    const location = newHumidorLocationDraft.trim();
+    const location = buildHumidorProfileLocationInput();
 
     if (!location) {
       setHumidorLocationProfileStatus("Enter a location before adding it.");
@@ -552,44 +714,71 @@ export function HumidorDashboard() {
 
       return {
         ...current,
-        defaultLocation: current.defaultLocation.trim() || location,
+        defaultLocation: getPrimaryHumidorProfileLocationName(nextLocations),
         locations: nextLocations,
       };
     });
     setNewHumidorLocationDraft("");
-    setHumidorLocationProfileStatus("Location added. Save Humidor Profile to persist it.");
+    setNewHumidorTrayDraft("");
+    setHumidorLocationProfileStatus("Location added. Save Locations to persist it.");
   }
 
   function handleEditHumidorProfileLocation(index: number, value: string) {
     setHumidorLocationProfile((current) => {
-      const previousLocation = current.locations[index] ?? "";
-      const updates = current.locations.map((location, locationIndex) => (locationIndex === index ? value : location));
+      const locations = current.locations.map((location, locationIndex) => (locationIndex === index ? { ...location, name: value } : location));
 
       return {
         ...current,
-        defaultLocation:
-          previousLocation.trim() && current.defaultLocation.trim().toLowerCase() === previousLocation.trim().toLowerCase()
-            ? value
-            : current.defaultLocation,
-        locations: updates,
+        defaultLocation: getPrimaryHumidorProfileLocationName(locations),
+        locations,
       };
     });
     setHumidorLocationProfileStatus("");
   }
 
+  function handleEditHumidorProfileLocationKind(index: number, value: string) {
+    const kind = normalizeHumidorProfileLocationKind(value);
+    setHumidorLocationProfile((current) => ({
+      ...current,
+      locations: current.locations.map((location, locationIndex) =>
+        locationIndex === index
+          ? {
+              ...location,
+              kind,
+              trays: kind === "humidor" ? location.trays : [],
+            }
+          : location,
+      ),
+    }));
+    setHumidorLocationProfileStatus("");
+  }
+
+  function handleEditHumidorProfileLocationTrays(index: number, value: string) {
+    setHumidorLocationProfile((current) => ({
+      ...current,
+      locations: current.locations.map((location, locationIndex) =>
+        locationIndex === index
+          ? {
+              ...location,
+              trays: location.kind === "humidor" ? normalizeHumidorProfileTextList(value) : [],
+            }
+          : location,
+      ),
+    }));
+    setHumidorLocationProfileStatus("");
+  }
+
   function handleRemoveHumidorProfileLocation(index: number) {
     setHumidorLocationProfile((current) => {
-      const removedLocation = current.locations[index] ?? "";
       const locations = current.locations.filter((_, locationIndex) => locationIndex !== index);
-      const removedDefault = removedLocation.trim() && current.defaultLocation.trim().toLowerCase() === removedLocation.trim().toLowerCase();
 
       return {
         ...current,
-        defaultLocation: removedDefault ? locations[0]?.trim() ?? "" : current.defaultLocation,
+        defaultLocation: getPrimaryHumidorProfileLocationName(locations),
         locations,
       };
     });
-    setHumidorLocationProfileStatus("Location removed. Save Humidor Profile to persist it.");
+    setHumidorLocationProfileStatus("Location removed. Save Locations to persist it.");
   }
 
   function updateDeviceForm(field: keyof HumidorDeviceInput, value: string) {
@@ -1103,8 +1292,10 @@ export function HumidorDashboard() {
     const updatePayload: HumidorItemUpdateInput = {};
     const hasHumidorLocationUpdate = input.humidorLocation !== undefined;
     const hasAgingStartDateUpdate = input.agingStartDate !== undefined;
+    const hasTrayUpdate = input.tray !== undefined;
     const humidorLocation = input.humidorLocation?.trim() ?? "";
     const agingStartDate = input.agingStartDate?.trim() ?? "";
+    const tray = input.tray?.trim() ?? "";
     setHumidorItemUpdateStatusItemId(item.id);
 
     if (hasHumidorLocationUpdate && !humidorLocation) {
@@ -1117,7 +1308,7 @@ export function HumidorDashboard() {
       return;
     }
 
-    if (!hasHumidorLocationUpdate && !hasAgingStartDateUpdate) {
+    if (!hasHumidorLocationUpdate && !hasAgingStartDateUpdate && !hasTrayUpdate) {
       setHumidorItemUpdateStatus("Choose a saved cigar field to update.");
       return;
     }
@@ -1129,6 +1320,10 @@ export function HumidorDashboard() {
 
     if (hasHumidorLocationUpdate) {
       updatePayload.humidorLocation = humidorLocation;
+    }
+
+    if (hasTrayUpdate) {
+      updatePayload.tray = tray;
     }
 
     if (hasAgingStartDateUpdate) {
@@ -1151,6 +1346,7 @@ export function HumidorDashboard() {
       setSelectedHumidorItem(response.item);
       const updatedFieldLabel = [
         hasHumidorLocationUpdate ? "Humidor location" : "",
+        hasTrayUpdate ? "Tray" : "",
         hasAgingStartDateUpdate ? "Aging start date" : "",
       ].filter(Boolean).join(" and ");
       setHumidorItemUpdateStatus(
@@ -1335,21 +1531,24 @@ export function HumidorDashboard() {
       return;
     }
 
-    const pendingLocation = newHumidorLocationDraft.trim();
-    const previousProfile = normalizeHumidorLocationProfileForm(humidorAlerts.humidorProfile);
-    let nextProfile = normalizeHumidorLocationProfileForm({
-      ...humidorLocationProfile,
-      locations: normalizeHumidorProfileLocations([...humidorLocationProfile.locations, pendingLocation]),
-    });
+    const hasNewHumidorLocationDraft = Boolean(newHumidorLocationDraft.trim());
+    const hasNewHumidorTrayDraft = Boolean(newHumidorTrayDraft.trim());
 
-    if (!nextProfile.defaultLocation && nextProfile.locations.length) {
-      nextProfile = {
-        ...nextProfile,
-        defaultLocation: nextProfile.locations[0],
-      };
+    if (!hasNewHumidorLocationDraft && hasNewHumidorTrayDraft) {
+      setHumidorLocationProfileStatus("Enter a location name before saving tray names.");
+      return;
     }
 
-    if (!nextProfile.defaultLocation && !nextProfile.locations.length) {
+    const pendingLocation = buildHumidorProfileLocationInput();
+    const previousProfile = normalizeHumidorLocationProfileForm(humidorAlerts.humidorProfile);
+    const nextLocations = normalizeHumidorProfileLocations([...humidorLocationProfile.locations, pendingLocation].filter(Boolean));
+    const nextProfile = normalizeHumidorLocationProfileForm({
+      ...humidorLocationProfile,
+      defaultLocation: getPrimaryHumidorProfileLocationName(nextLocations),
+      locations: nextLocations,
+    });
+
+    if (!nextProfile.locations.length) {
       setHumidorLocationProfileStatus("Add at least one humidor location before saving.");
       return;
     }
@@ -1361,6 +1560,7 @@ export function HumidorDashboard() {
 
     setHumidorLocationProfile(nextProfile);
     setNewHumidorLocationDraft("");
+    setNewHumidorTrayDraft("");
 
     const saved = await saveHumidorAlertPreferences(profilePreferences);
     setItemForm((current) => getFormWithDefaultHumidorLocation(current, nextProfile, previousProfile.defaultLocation));
@@ -1368,8 +1568,8 @@ export function HumidorDashboard() {
     setAiIdentifiedForm((current) => (current ? getFormWithDefaultHumidorLocation(current, nextProfile, previousProfile.defaultLocation) : current));
     setHumidorLocationProfileStatus(
       saved
-        ? "Humidor location profile saved."
-        : "Humidor location profile is ready in this session, but persistence is still pending.",
+        ? "Locations saved."
+        : "Locations are ready in this session, but persistence is still pending.",
     );
   }
 
@@ -1470,6 +1670,7 @@ export function HumidorDashboard() {
           setHumidorDevices([]);
           setHumidorLocationProfile(defaultHumidorLocationProfile);
           setNewHumidorLocationDraft("");
+          setNewHumidorTrayDraft("");
         }
         setHumidorAlertsStatus(bootstrap.alertsError || "");
       } catch (error) {
@@ -1478,6 +1679,7 @@ export function HumidorDashboard() {
         setHumidorDevices([]);
         setHumidorLocationProfile(defaultHumidorLocationProfile);
         setNewHumidorLocationDraft("");
+        setNewHumidorTrayDraft("");
         setHumidorLocationProfileStatus(errorMessage);
         setHumidorAlertsStatus(errorMessage);
         setLiveState({
@@ -1676,7 +1878,7 @@ export function HumidorDashboard() {
                 agingNow={agingNow}
                 selectedItemId={selectedHumidorItem?.id ?? null}
                 onSelectItem={(item) => {
-                  setSelectedHumidorItem(item);
+                  handleSelectHumidorItem(item);
                   setActiveSection("cigars");
                 }}
               />
@@ -2121,7 +2323,7 @@ export function HumidorDashboard() {
           </CardHeader>
           <CardContent className="grid gap-4">
             <div className="border border-yuzu-line bg-yuzu-night/60 p-4 text-sm leading-6 text-yuzu-muted">
-              Sign in to save your humidor name and default location for new cigar rows and paired devices.
+              Sign in to manage saved locations and trays for new cigar rows and paired devices.
             </div>
             <Button className="h-11 w-fit border-yuzu-line text-yuzu-cream" render={<Link href="/account" />} variant="outline">
               Sign In
@@ -2156,7 +2358,7 @@ export function HumidorDashboard() {
           </CardHeader>
           <CardContent>
             {items.length ? (
-              <HumidorTable items={items} agingNow={agingNow} selectedItemId={selectedHumidorItem?.id ?? null} onSelectItem={setSelectedHumidorItem} />
+              <HumidorTable items={items} agingNow={agingNow} selectedItemId={selectedHumidorItem?.id ?? null} onSelectItem={handleSelectHumidorItem} />
             ) : (
               <p className="text-sm text-yuzu-muted">
                 {isAnonymousDemo ? "No demo humidor records are configured." : "No live humidor records have been returned yet."}
@@ -2166,20 +2368,25 @@ export function HumidorDashboard() {
         </Card>
 
         {selectedHumidorItem ? (
-          <HumidorDetailCard
-            key={selectedHumidorItem.id}
-            item={selectedHumidorItem}
-            agingNow={agingNow}
-            enrichmentStatus={humidorEnrichmentStatus}
-            itemUpdateStatus={humidorItemUpdateStatusItemId === selectedHumidorItem.id ? humidorItemUpdateStatus : ""}
-            isDemo={isAnonymousDemo}
-            isEnriching={enrichingHumidorItemId === selectedHumidorItem.id}
-            isUpdating={updatingHumidorItemId === selectedHumidorItem.id}
-            storageLocationOptions={storageLocationOptions}
-            onClose={() => setSelectedHumidorItem(null)}
-            onEnrich={isAnonymousDemo ? undefined : handleRequestHumidorEnrichment}
-            onUpdate={isAnonymousDemo ? undefined : handleUpdateHumidorItem}
-          />
+          <div ref={humidorDetailCardRef} className="scroll-mt-24" data-humidor-detail-card="top">
+            <HumidorDetailCard
+              key={selectedHumidorItem.id}
+              item={selectedHumidorItem}
+              agingNow={agingNow}
+              enrichmentStatus={humidorEnrichmentStatus}
+              itemUpdateStatus={humidorItemUpdateStatusItemId === selectedHumidorItem.id ? humidorItemUpdateStatus : ""}
+              isDemo={isAnonymousDemo}
+              isEnriching={enrichingHumidorItemId === selectedHumidorItem.id}
+              isUpdating={updatingHumidorItemId === selectedHumidorItem.id}
+              storageLocationOptions={storageLocationOptions}
+              onClose={() => {
+                setSelectedHumidorItem(null);
+                setPendingHumidorDetailScrollItemId("");
+              }}
+              onEnrich={isAnonymousDemo ? undefined : handleRequestHumidorEnrichment}
+              onUpdate={isAnonymousDemo ? undefined : handleUpdateHumidorItem}
+            />
+          </div>
         ) : null}
       </div>
     );
@@ -2268,6 +2475,35 @@ export function HumidorDashboard() {
             {humidorAlerts.pushEnabled && !humidorAlerts.pushSubscription ? (
               <p className="text-sm text-yuzu-amber">No valid push subscription was saved. Re-enable alerts to refresh the device subscription.</p>
             ) : null}
+            <div className="grid gap-3 border border-yuzu-gold/30 bg-yuzu-ink/50 p-4">
+              <div className="grid gap-1">
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-yuzu-gold">iPhone setup guide</p>
+                <p className="text-sm leading-6 text-yuzu-muted">
+                  iPhone push alerts require iOS 16.4 or later and the Yuzu web app saved to the Home Screen.
+                </p>
+              </div>
+              <ol className="grid gap-2 text-sm leading-6 text-yuzu-muted sm:grid-cols-2">
+                <li>
+                  <span className="font-semibold text-yuzu-cream">1. Install Yuzu.</span> In Safari, open the Humidor, use Share, choose Add to Home Screen,
+                  then confirm.
+                </li>
+                <li>
+                  <span className="font-semibold text-yuzu-cream">2. Launch the app.</span> Open Yuzu from the Home Screen icon and sign in
+                  before returning to Alerts.
+                </li>
+                <li>
+                  <span className="font-semibold text-yuzu-cream">3. Enable alerts.</span> Tap Enable Push Alerts here and allow notifications
+                  when iOS asks.
+                </li>
+                <li>
+                  <span className="font-semibold text-yuzu-cream">4. Unblock permission.</span> If alerts were denied, open iOS{" "}
+                  <span className="whitespace-nowrap">{"Settings > Notifications > Yuzu"}</span> and allow notifications.
+                </li>
+              </ol>
+              <p className="text-xs leading-5 text-yuzu-amber">
+                Safari tab alone cannot receive iPhone push alerts. Open Yuzu from the Home Screen before enabling alerts.
+              </p>
+            </div>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-3">
@@ -2570,86 +2806,143 @@ export function HumidorDashboard() {
 
   function renderHumidorLocationProfile() {
     const savedLocations = getNormalizedHumidorProfileLocations();
-    const canSaveHumidorProfile = Boolean(humidorLocationProfile.defaultLocation.trim() || savedLocations.length || newHumidorLocationDraft.trim());
+    const hasNewHumidorLocationDraft = Boolean(newHumidorLocationDraft.trim());
+    const hasNewHumidorTrayDraft = Boolean(newHumidorTrayDraft.trim());
+    const pendingHumidorProfileLocation = buildHumidorProfileLocationInput();
+    const hasIncompleteNewHumidorLocation = !hasNewHumidorLocationDraft && hasNewHumidorTrayDraft;
+    const canAddHumidorProfileLocation = Boolean(pendingHumidorProfileLocation);
+    const canSaveHumidorProfile = !hasIncompleteNewHumidorLocation && Boolean(savedLocations.length || hasNewHumidorLocationDraft);
 
     return (
       <div className="grid gap-4 border border-yuzu-line bg-yuzu-night/60 p-4">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-          <div className="grid gap-1">
-            <p className="text-xs uppercase tracking-[0.16em] text-yuzu-gold">Humidor Location Profile</p>
-            <p className="text-sm leading-6 text-yuzu-muted">Primary member humidor details for new cigar rows and paired devices.</p>
-          </div>
-          <Badge className="w-fit border-yuzu-line text-yuzu-muted" variant="outline">
-            {humidorLocationProfile.defaultLocation || "Location not set"}
-          </Badge>
-        </div>
-
         <form className="grid gap-4" onSubmit={handleSaveHumidorLocationProfile}>
-          <div className="grid gap-4 md:grid-cols-2">
-            <Field label="Humidor name">
-              <Input value={humidorLocationProfile.humidorName} onChange={(event: ChangeEvent<HTMLInputElement>) => updateHumidorLocationProfile("humidorName", event.currentTarget.value)} />
-            </Field>
-            <Field label="Default location">
-              <Input value={humidorLocationProfile.defaultLocation} onChange={(event: ChangeEvent<HTMLInputElement>) => updateHumidorLocationProfile("defaultLocation", event.currentTarget.value)} />
-            </Field>
-          </div>
-          <div className="grid gap-3 border border-yuzu-line/70 bg-yuzu-ink/35 p-3">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <p className="text-xs uppercase tracking-[0.16em] text-yuzu-gold">Saved Locations</p>
-              <Badge className="w-fit border-yuzu-line text-yuzu-muted" variant="outline">
-                {savedLocations.length ? `${savedLocations.length} saved` : "None saved"}
-              </Badge>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
-              <Input
-                aria-label="New humidor location"
-                value={newHumidorLocationDraft}
-                onChange={(event: ChangeEvent<HTMLInputElement>) => {
-                  setNewHumidorLocationDraft(event.currentTarget.value);
-                  setHumidorLocationProfileStatus("");
-                }}
-              />
-              <Button
-                className="h-11 border-yuzu-line text-yuzu-cream"
-                disabled={!newHumidorLocationDraft.trim()}
-                type="button"
-                variant="outline"
-                onClick={handleAddHumidorProfileLocation}
-              >
-                <Plus data-icon="inline-start" />
-                Add Location
-              </Button>
-            </div>
-            {humidorLocationProfile.locations.length ? (
-              <div className="grid gap-2">
-                {humidorLocationProfile.locations.map((location, index) => (
-                  <div key={`saved-location-${index}`} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-                    <Input
-                      aria-label={`Edit saved location ${index + 1}`}
-                      value={location}
-                      onChange={(event: ChangeEvent<HTMLInputElement>) => handleEditHumidorProfileLocation(index, event.currentTarget.value)}
-                    />
-                    <Button
-                      aria-label={`Remove saved location ${index + 1}`}
-                      className="h-11 border-yuzu-line text-yuzu-cream"
-                      type="button"
-                      variant="outline"
-                      onClick={() => handleRemoveHumidorProfileLocation(index)}
-                    >
-                      <X data-icon="inline-start" />
-                      Remove
-                    </Button>
-                  </div>
-                ))}
+          <div className="grid gap-4 border border-yuzu-line/70 bg-yuzu-ink/35 p-3 xl:grid-cols-[minmax(240px,0.7fr)_minmax(0,1.3fr)]">
+            <div className="grid gap-3 border border-yuzu-line/60 bg-yuzu-night/55 p-3">
+              <p className="text-xs uppercase tracking-[0.16em] text-yuzu-gold">Add a location</p>
+              <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_170px] xl:grid-cols-1">
+                <Field label="Location name">
+                  <Input
+                    aria-label="New humidor location"
+                    className="h-11 rounded-sm border-yuzu-line bg-yuzu-night text-sm text-yuzu-cream"
+                    value={newHumidorLocationDraft}
+                    onChange={(event: ChangeEvent<HTMLInputElement>) => {
+                      setNewHumidorLocationDraft(event.currentTarget.value);
+                      setHumidorLocationProfileStatus("");
+                    }}
+                  />
+                </Field>
+                <Field label="Location type">
+                  <select
+                    aria-label="New humidor location type"
+                    className="h-11 w-full rounded-sm border border-yuzu-line bg-yuzu-night px-3 text-sm text-yuzu-cream outline-none focus:border-yuzu-gold"
+                    value={newHumidorLocationKind}
+                    onChange={(event: ChangeEvent<HTMLSelectElement>) => {
+                      const nextKind = normalizeHumidorProfileLocationKind(event.currentTarget.value);
+                      setNewHumidorLocationKind(nextKind);
+                      if (nextKind !== "humidor") {
+                        setNewHumidorTrayDraft("");
+                      }
+                      setHumidorLocationProfileStatus("");
+                    }}
+                  >
+                    <option value="humidor">Humidor</option>
+                    <option value="other">Other</option>
+                  </select>
+                </Field>
+                <Field label="Tray names">
+                  <Input
+                    aria-invalid={hasIncompleteNewHumidorLocation}
+                    aria-label="New humidor tray names"
+                    className="h-11 rounded-sm border-yuzu-line bg-yuzu-night text-sm text-yuzu-cream"
+                    disabled={newHumidorLocationKind !== "humidor"}
+                    placeholder="Top Tray, Bottom Tray"
+                    value={newHumidorTrayDraft}
+                    onChange={(event: ChangeEvent<HTMLInputElement>) => {
+                      setNewHumidorTrayDraft(event.currentTarget.value);
+                      setHumidorLocationProfileStatus("");
+                    }}
+                  />
+                </Field>
+                <Button
+                  className="h-11 border-yuzu-line text-yuzu-cream sm:col-span-2 xl:col-span-1"
+                  disabled={!canAddHumidorProfileLocation}
+                  type="button"
+                  variant="outline"
+                  onClick={handleAddHumidorProfileLocation}
+                >
+                  <Plus data-icon="inline-start" />
+                  Add Location
+                </Button>
               </div>
-            ) : (
-              <p className="text-sm leading-6 text-yuzu-muted">No saved locations yet.</p>
-            )}
+              <p className="min-h-5 text-xs text-yuzu-gold" aria-live="polite">
+                {hasIncompleteNewHumidorLocation ? "Enter a location name before saving tray names." : ""}
+              </p>
+            </div>
+
+            <div className="grid gap-3">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-xs uppercase tracking-[0.16em] text-yuzu-gold">Saved Locations</p>
+                <Badge className="w-fit border-yuzu-line text-yuzu-muted" variant="outline">
+                  {savedLocations.length ? `${savedLocations.length} saved` : "None saved"}
+                </Badge>
+              </div>
+              {humidorLocationProfile.locations.length ? (
+                <div className="grid gap-2">
+                  <div
+                    aria-label="Location columns"
+                    className="hidden gap-2 text-[0.68rem] uppercase tracking-[0.14em] text-yuzu-muted lg:grid lg:grid-cols-[minmax(0,1fr)_150px_minmax(0,1fr)_112px]"
+                  >
+                    <span>Location</span>
+                    <span>Type</span>
+                    <span>Tray names</span>
+                    <span>Action</span>
+                  </div>
+                  {humidorLocationProfile.locations.map((location, index) => (
+                    <div key={`saved-location-${index}`} className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_150px_minmax(0,1fr)_112px] lg:items-center">
+                      <Input
+                        aria-label={`Edit saved location ${index + 1}`}
+                        className="h-11 rounded-sm border-yuzu-line bg-yuzu-night text-sm text-yuzu-cream"
+                        value={location.name}
+                        onChange={(event: ChangeEvent<HTMLInputElement>) => handleEditHumidorProfileLocation(index, event.currentTarget.value)}
+                      />
+                      <select
+                        aria-label={`Edit type for saved location ${index + 1}`}
+                        className="h-11 w-full rounded-sm border border-yuzu-line bg-yuzu-night px-3 text-sm text-yuzu-cream outline-none focus:border-yuzu-gold"
+                        value={location.kind}
+                        onChange={(event: ChangeEvent<HTMLSelectElement>) => handleEditHumidorProfileLocationKind(index, event.currentTarget.value)}
+                      >
+                        <option value="humidor">Humidor</option>
+                        <option value="other">Other</option>
+                      </select>
+                      <Input
+                        aria-label={`Edit trays for saved location ${index + 1}`}
+                        className="h-11 rounded-sm border-yuzu-line bg-yuzu-night text-sm text-yuzu-cream"
+                        disabled={location.kind !== "humidor"}
+                        value={location.trays.join(", ")}
+                        onChange={(event: ChangeEvent<HTMLInputElement>) => handleEditHumidorProfileLocationTrays(index, event.currentTarget.value)}
+                      />
+                      <Button
+                        aria-label={`Remove saved location ${index + 1}`}
+                        className="h-11 border-yuzu-line text-yuzu-cream"
+                        type="button"
+                        variant="outline"
+                        onClick={() => handleRemoveHumidorProfileLocation(index)}
+                      >
+                        <X data-icon="inline-start" />
+                        Remove
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm leading-6 text-yuzu-muted">No saved locations yet.</p>
+              )}
+            </div>
           </div>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             <Button className="h-11 bg-yuzu-gold text-yuzu-ink hover:bg-yuzu-gold-light" disabled={isHumidorAlertsSaving || !canSaveHumidorProfile} type="submit">
               {isHumidorAlertsSaving ? <LoaderCircle className="animate-spin" data-icon="inline-start" /> : <MapPin data-icon="inline-start" />}
-              Save Humidor Profile
+              Save Locations
             </Button>
             <p className="min-h-5 text-sm text-yuzu-gold" aria-live="polite">
               {humidorLocationProfileStatus}
@@ -3157,87 +3450,148 @@ function HumidorTable({
   selectedItemId: string | null;
   onSelectItem: (item: HumidorItem) => void;
 }) {
-  return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Cigar</TableHead>
-          <TableHead>Qty</TableHead>
-          <TableHead>Collection Value</TableHead>
-          <TableHead>Location</TableHead>
-          <TableHead>Aging</TableHead>
-          <TableHead>Rating</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {items.map((item) => {
-          const snapshot = getAgingSnapshotForItem(item, agingNow);
-          const unitValue = getHumidorUnitValue(item);
-          const itemValue = getHumidorItemValue(item);
-          const cigarImageSrc = getHumidorCigarImageSrc(item);
-          const enrichmentGaps = getHumidorEnrichmentGaps(item);
+  const [sort, setSort] = useState(defaultHumidorTableSort);
+  const sortedItems = useMemo(() => sortHumidorItems(items, sort, agingNow), [agingNow, items, sort]);
 
-          return (
-            <TableRow
-              key={item.id}
-              aria-label={`Open details for ${item.name}`}
-              className="cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yuzu-gold/70 data-[state=selected]:bg-yuzu-gold/10"
-              data-state={selectedItemId === item.id ? "selected" : undefined}
-              role="button"
-              tabIndex={0}
-              onClick={() => onSelectItem(item)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  onSelectItem(item);
-                }
-              }}
-            >
-              <TableCell>
-                <div className="flex min-w-52 items-center gap-3">
-                  {cigarImageSrc ? (
-                    <NextImage
-                      alt={`${item.name} cigar photo`}
-                      className="size-14 shrink-0 object-cover"
-                      height={80}
-                      src={cigarImageSrc}
-                      unoptimized
-                      width={80}
-                    />
-                  ) : null}
-                  <div className="grid gap-1">
-                    <span className="font-medium text-yuzu-cream">{item.name}</span>
-                    <span className="text-xs text-yuzu-muted">{formatItemDetails(item) || "No brand details"}</span>
-                    {enrichmentGaps.length ? (
-                      <span className="text-[0.68rem] uppercase tracking-[0.14em] text-yuzu-gold">
-                        Missing: {formatHumidorEnrichmentGapLabels(enrichmentGaps)}
-                      </span>
+  return (
+    <div className="grid gap-3">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <span className="text-xs uppercase tracking-[0.16em] text-yuzu-muted">{items.length} saved cigars</span>
+        <label className="flex w-full flex-col gap-1 text-xs uppercase tracking-[0.16em] text-yuzu-muted sm:w-64">
+          Sort by
+          <select
+            aria-label="Sort My Cigars"
+            className="h-10 rounded-sm border border-yuzu-line bg-yuzu-night px-3 text-sm normal-case tracking-normal text-yuzu-cream outline-none focus:border-yuzu-gold"
+            value={formatHumidorTableSortValue(sort)}
+            onChange={(event: ChangeEvent<HTMLSelectElement>) => setSort(parseHumidorTableSortValue(event.currentTarget.value))}
+          >
+            {humidorTableSortOptions.map((option) => (
+              <option key={formatHumidorTableSortValue(option.sort)} value={formatHumidorTableSortValue(option.sort)}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <SortableHumidorTableHead label="Cigar" sort={sort} sortKey="cigar" onSortChange={setSort} />
+            <SortableHumidorTableHead label="Qty" sort={sort} sortKey="quantity" onSortChange={setSort} />
+            <SortableHumidorTableHead label="Collection Value" sort={sort} sortKey="collectionValue" onSortChange={setSort} />
+            <SortableHumidorTableHead label="Location" sort={sort} sortKey="location" onSortChange={setSort} />
+            <SortableHumidorTableHead label="Aging" sort={sort} sortKey="aging" onSortChange={setSort} />
+            <SortableHumidorTableHead label="Rating" sort={sort} sortKey="rating" onSortChange={setSort} />
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {sortedItems.map((item) => {
+            const snapshot = getAgingSnapshotForItem(item, agingNow);
+            const unitValue = getHumidorUnitValue(item);
+            const itemValue = getHumidorItemValue(item);
+            const cigarImageSrc = getHumidorCigarImageSrc(item);
+            const enrichmentGaps = getHumidorEnrichmentGaps(item);
+
+            return (
+              <TableRow
+                key={item.id}
+                aria-label={`Open details for ${item.name}`}
+                className="cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yuzu-gold/70 data-[state=selected]:bg-yuzu-gold/10"
+                data-state={selectedItemId === item.id ? "selected" : undefined}
+                role="button"
+                tabIndex={0}
+                onClick={() => onSelectItem(item)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    onSelectItem(item);
+                  }
+                }}
+              >
+                <TableCell>
+                  <div className="flex min-w-52 items-center gap-3">
+                    {cigarImageSrc ? (
+                      <NextImage
+                        alt={`${item.name} cigar photo`}
+                        className="size-14 shrink-0 object-cover"
+                        height={80}
+                        src={cigarImageSrc}
+                        unoptimized
+                        width={80}
+                      />
                     ) : null}
+                    <div className="grid gap-1">
+                      <span className="font-medium text-yuzu-cream">{item.name}</span>
+                      <span className="text-xs text-yuzu-muted">{formatItemDetails(item) || "No brand details"}</span>
+                      {enrichmentGaps.length ? (
+                        <span className="text-[0.68rem] uppercase tracking-[0.14em] text-yuzu-gold">
+                          Missing: {formatHumidorEnrichmentGapLabels(enrichmentGaps)}
+                        </span>
+                      ) : null}
+                    </div>
                   </div>
-                </div>
-              </TableCell>
-              <TableCell>{item.quantity}</TableCell>
-              <TableCell>
-                {itemValue === null || unitValue === null ? (
-                  "Not set"
-                ) : (
-                  <div className="grid gap-1">
-                    <span className="text-yuzu-cream">{formatHumidorValue(itemValue, item.estimatedValueCurrency)}</span>
-                    <span className="text-xs text-yuzu-muted">
-                      {formatHumidorValue(unitValue, item.estimatedValueCurrency)} each | {formatHumidorValueSource(item.estimatedValueSource)}
-                    </span>
-                  </div>
-                )}
-              </TableCell>
-              <TableCell>{item.humidorLocation || "Not set"}</TableCell>
-              <TableCell>{snapshot ? <ReadinessBadge readiness={snapshot.readiness} /> : "Not set"}</TableCell>
-              <TableCell>{typeof item.rating === "number" ? item.rating : "Not set"}</TableCell>
-            </TableRow>
-          );
-        })}
-      </TableBody>
-    </Table>
+                </TableCell>
+                <TableCell>{item.quantity}</TableCell>
+                <TableCell>
+                  {itemValue === null || unitValue === null ? (
+                    "Not set"
+                  ) : (
+                    <div className="grid gap-1">
+                      <span className="text-yuzu-cream">{formatHumidorValue(itemValue, item.estimatedValueCurrency)}</span>
+                      <span className="text-xs text-yuzu-muted">
+                        {formatHumidorValue(unitValue, item.estimatedValueCurrency)} each | {formatHumidorValueSource(item.estimatedValueSource)}
+                      </span>
+                    </div>
+                  )}
+                </TableCell>
+                <TableCell>{item.humidorLocation || "Not set"}</TableCell>
+                <TableCell>{snapshot ? <ReadinessBadge readiness={snapshot.readiness} /> : "Not set"}</TableCell>
+                <TableCell>{typeof item.rating === "number" ? item.rating : "Not set"}</TableCell>
+              </TableRow>
+            );
+          })}
+        </TableBody>
+      </Table>
+    </div>
   );
+}
+
+function SortableHumidorTableHead({
+  label,
+  sort,
+  sortKey,
+  onSortChange,
+}: {
+  label: string;
+  sort: HumidorTableSort;
+  sortKey: HumidorTableColumnSortKey;
+  onSortChange: (sort: HumidorTableSort) => void;
+}) {
+  const isActive = sort.key === sortKey;
+  const SortIcon = isActive ? (sort.direction === "asc" ? ArrowUp : ArrowDown) : ArrowUpDown;
+
+  return (
+    <TableHead aria-sort={getHumidorTableAriaSort(sort, sortKey)}>
+      <button
+        aria-label={`Sort by ${label}`}
+        className="flex h-10 items-center gap-1.5 text-left text-yuzu-cream transition-colors hover:text-yuzu-gold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yuzu-gold/70"
+        type="button"
+        onClick={() => onSortChange(toggleHumidorTableSort(sort, sortKey))}
+      >
+        <span>{label}</span>
+        <SortIcon aria-hidden="true" className={cn("size-3.5", isActive ? "text-yuzu-gold" : "text-yuzu-muted")} />
+      </button>
+    </TableHead>
+  );
+}
+
+function getHumidorTableAriaSort(sort: HumidorTableSort, sortKey: HumidorTableColumnSortKey) {
+  if (sort.key !== sortKey) {
+    return "none";
+  }
+
+  return sort.direction === "asc" ? "ascending" : "descending";
 }
 
 function HumidorDetailCard({
@@ -3260,7 +3614,7 @@ function HumidorDetailCard({
   isDemo: boolean;
   isEnriching: boolean;
   isUpdating: boolean;
-  storageLocationOptions: string[];
+  storageLocationOptions: HumidorStorageLocationOption[];
   onClose: () => void;
   onEnrich?: (item: HumidorItem) => void;
   onUpdate?: (item: HumidorItem, input: HumidorItemUpdateInput) => void;
@@ -3271,8 +3625,17 @@ function HumidorDetailCard({
   const itemValue = getHumidorItemValue(item);
   const cigarImageSrc = getHumidorCigarImageSrc(item);
   const enrichmentGaps = getHumidorEnrichmentGaps(item);
-  const [humidorLocationDraft, setHumidorLocationDraft] = useState(item.humidorLocation || storageLocationOptions[0] || "");
-  const selectedHumidorLocation = humidorLocationDraft || storageLocationOptions[0] || "";
+  const currentStorageLocationKey = buildHumidorStorageOptionKey(item.humidorLocation, item.tray);
+  const initialStorageLocation = storageLocationOptions.find((option) => option.key === currentStorageLocationKey) ?? storageLocationOptions[0] ?? null;
+  const [selectedStorageLocationKey, setSelectedStorageLocationKey] = useState(initialStorageLocation?.key ?? "");
+  const selectedStorageLocation =
+    storageLocationOptions.find((option) => option.key === selectedStorageLocationKey) ??
+    initialStorageLocation ?? {
+      key: "",
+      label: "",
+      humidorLocation: "",
+      tray: "",
+    };
   const cigarDetails = [
     { label: "Brand", value: item.brand },
     { label: "Line", value: item.line },
@@ -3385,7 +3748,7 @@ function HumidorDetailCard({
           className="grid gap-3 border border-yuzu-line bg-yuzu-night/60 p-4"
           onSubmit={(event: FormEvent<HTMLFormElement>) => {
             event.preventDefault();
-            onUpdate?.(item, { humidorLocation: selectedHumidorLocation });
+            onUpdate?.(item, { humidorLocation: selectedStorageLocation.humidorLocation, tray: selectedStorageLocation.tray });
           }}
         >
           <p className="flex items-center gap-2 text-xs uppercase tracking-[0.16em] text-yuzu-gold">
@@ -3397,13 +3760,13 @@ function HumidorDetailCard({
               aria-label="Humidor location update"
               className="h-11 w-full rounded-sm border border-yuzu-line bg-yuzu-night px-3 text-sm text-yuzu-cream outline-none focus:border-yuzu-gold disabled:cursor-not-allowed disabled:opacity-60"
               disabled={!onUpdate || isUpdating}
-              value={selectedHumidorLocation}
-              onChange={(event: ChangeEvent<HTMLSelectElement>) => setHumidorLocationDraft(event.currentTarget.value)}
+              value={selectedStorageLocation.key}
+              onChange={(event: ChangeEvent<HTMLSelectElement>) => setSelectedStorageLocationKey(event.currentTarget.value)}
             >
               {storageLocationOptions.length ? (
-                storageLocationOptions.map((location) => (
-                  <option key={location} value={location}>
-                    {location}
+                storageLocationOptions.map((option) => (
+                  <option key={option.key} value={option.key}>
+                    {option.label}
                   </option>
                 ))
               ) : (
@@ -3412,7 +3775,7 @@ function HumidorDetailCard({
             </select>
             <Button
               className="h-11 bg-yuzu-gold text-yuzu-ink hover:bg-yuzu-gold-light"
-              disabled={!onUpdate || isUpdating || !selectedHumidorLocation.trim() || !storageLocationOptions.length}
+              disabled={!onUpdate || isUpdating || !selectedStorageLocation.humidorLocation.trim() || !storageLocationOptions.length}
               type="submit"
             >
               {isUpdating ? <LoaderCircle className="animate-spin" data-icon="inline-start" /> : <MapPin data-icon="inline-start" />}

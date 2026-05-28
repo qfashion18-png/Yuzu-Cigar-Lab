@@ -9,6 +9,7 @@ const knowledgeBaseArn = `arn:aws:bedrock:${region}:${accountId}:knowledge-base/
 const guardrailArn = `arn:aws:bedrock:${region}:${accountId}:guardrail/xczjnv3f1wzs`;
 const novaLiteModelArn = `arn:aws:bedrock:${region}::foundation-model/amazon.nova-lite-v1:0`;
 const novaMicroModelArn = `arn:aws:bedrock:${region}::foundation-model/amazon.nova-micro-v1:0`;
+const lexBotAliasWildcardArn = `arn:aws:lex:${region}:${accountId}:bot-alias/*/*`;
 const productionAgentArns = [
   `arn:aws:bedrock:${region}:${accountId}:agent/NDIEDXNZAV`,
   `arn:aws:bedrock:${region}:${accountId}:agent/EJI2VA7AVF`,
@@ -54,6 +55,24 @@ test("Lambda runtime policy allows explicit YCC knowledge base retrieval", () =>
   );
 });
 
+test("Lambda runtime policy allows tagged Amazon Lex router aliases", () => {
+  const policy = readJson("infra/ycc-phase2-lambda-runtime-policy.json");
+  const recognizeTextStatements = statementsForAction(policy, "lex:RecognizeText");
+
+  assert.ok(recognizeTextStatements.length > 0, "lex:RecognizeText should be granted to the Lambda role policy");
+  assert.ok(
+    recognizeTextStatements.some((statement) => resources(statement).includes(lexBotAliasWildcardArn)),
+    "lex:RecognizeText should be scoped to Lex V2 bot aliases in the YCC account",
+  );
+  assert.ok(
+    recognizeTextStatements.some((statement) => {
+      const condition = JSON.stringify(statement.Condition);
+      return condition.includes("aws:ResourceTag/Project") && condition.includes('"YCC"');
+    }),
+    "lex:RecognizeText should require the tagged YCC bot alias",
+  );
+});
+
 test("Bedrock Agent Runtime endpoint policy allows Lambda to invoke aliases and retrieve KB context", () => {
   const policy = readJson("infra/ycc-phase45-bedrock-agent-runtime-vpce-policy.json");
   const invokeAgentStatements = statementsForAction(policy, "bedrock:InvokeAgent");
@@ -93,6 +112,8 @@ test("Bedrock direct Runtime guardrails are enabled by default in environment ex
   const envExample = readText(".env.example");
 
   assert.match(envExample, /^BEDROCK_ENABLE_GUARDRAILS=1$/m);
+  assert.match(envExample, /^FEATURE_LEX_ROUTER=pending_bot$/m);
+  assert.match(envExample, /^LEX_ROUTER_LOCALE_ID=en_US$/m);
 });
 
 test("operator prepare-agent policy covers all production YCC Bedrock agents", () => {

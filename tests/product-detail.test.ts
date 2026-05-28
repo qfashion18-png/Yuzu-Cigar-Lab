@@ -7,6 +7,7 @@ import {
   featuredLuxuryProducts,
   getCatalogImageUrl,
   getCatalogProductDetails,
+  isCigarCatalogProduct,
   getStorefrontProductBySlug,
   luxuryCatalogProducts,
   publishedImportedInventory,
@@ -521,13 +522,191 @@ test("catalog products expose sourced ACID 20 ratings and review key details", (
   assert.match(getCatalogProductDetails(acidToro).signals.join(" "), /review details researched/i);
 });
 
-test("unsourced cigar products do not expose review audit prompts as catalog signals", () => {
+test("catalog products expose sourced Rocky Patel line ratings and review key details", () => {
+  const expectedProfiles = [
+    ["rocky-patel-1990-vintage-robusto-20-bx", "Vintage 1990", "92 brand-cited rating", "https://www.rockypatel.com/cigar/vintage-1990/"],
+    ["rocky-patel-1992-vintage-toro-20-bx", "Vintage 1992", "92 brand-cited rating", "https://www.rockypatel.com/cigar/vintage-1992/"],
+    ["rocky-patel-1999-vintage-robusto-20-bx", "Vintage 1999", "91 brand-cited profile rating", "https://www.rockypatel.com/cigar/vintage-1999/"],
+    ["rocky-patel-decade-toro-20-bx", "Decade", "95 brand-cited rating", "https://www.rockypatel.com/cigar/decade/"],
+    ["rocky-patel-edge-maduro-robusto-20-bx", "The Edge Maduro", "92 brand-cited rating", "https://www.rockypatel.com/cigar/the-edge-maduro/"],
+    ["rocky-patel-edge-corojo-toro-20-bx", "The Edge Corojo", "94 brand-cited profile rating", "https://www.rockypatel.com/cigar/the-edge-corojo/"],
+    ["rocky-patel-sun-grown-maduro-toro-20-bx", "Sun Grown Maduro", "95 brand-cited rating", "https://www.rockypatel.com/cigar/sun-grown-maduro/"],
+    ["rocky-patel-sixty-toro-20-bx", "SIXTY", "96 brand-cited rating", "https://www.rockypatel.com/cigar/sixty/"],
+    ["rocky-patel-alr-toro-20-bx-second-edition", "A.L.R. Second Edition", "96 brand-cited rating", "https://www.rockypatel.com/cigar/alr-second-edition/"],
+    ["rocky-patel-no-6-robusto-20-bx", "Number 6", "95 brand-cited rating", "https://www.rockypatel.com/cigar/number-6/"],
+  ];
+
+  for (const [slug, lineName, rating, sourceUrl] of expectedProfiles) {
+    const product = catalogProducts.find((candidate) => candidate.slug === slug);
+
+    assert.ok(product, `${slug} should remain published`);
+    assert.match(product.reviewProfile?.summary ?? "", new RegExp(lineName, "i"));
+    assert.deepEqual(product.reviewProfile?.sources.map((source) => [source.sourceName, source.rating, source.sourceUrl]), [
+      ["Rocky Patel", rating, sourceUrl],
+    ]);
+    assert.match(getCatalogProductDetails(product).signals.join(" "), /review details researched/i);
+  }
+
+  const rockyPatelCoveredProducts = catalogProducts.filter(
+    (product) => product.brand === "Rocky Patel" && (product.expertReview || product.reviewProfile)
+  );
+
+  assert.equal(rockyPatelCoveredProducts.length, 64);
+});
+
+test("catalog products expose sourced Arturo Fuente line ratings and review key details", () => {
+  const expectedProfiles = [
+    ["arturo-fuente-don-carlos-no-2-25-bx", "Don Carlos", "94 Cigar Aficionado exact review", "https://www.cigaraficionado.com/ratings/16969/name/arturo-fuente-don-carlos-no-2"],
+    ["arturo-fuente-hemingway-short-story-25-bx", "Hemingway Short Story", "92 Cigar Aficionado exact review", "https://www.cigaraficionado.com/ratings/22689/name/arturo-fuente-hemingway-short-story"],
+    ["arturo-fuente-chateau-cuban-belicoso-sg24-bx", "Chateau Fuente Cuban Belicoso Sun Grown", "92 Cigar Aficionado profile rating", "https://www.cigaraficionado.com/rating/arturo-fuente-chateau-fuente-sungrown-cuban-belicoso"],
+    ["arturo-fuente-king-t-tubo-24-bx", "Chateau Fuente King T", "93 Cigar Aficionado listed review", "https://www.cigaraficionado.com/ratings/23567/name/arturo-fuente-chateau-fuente-king-t-tubo"],
+    ["arturo-fuente-royal-salute-sungrown-10-bx", "Chateau Fuente Royal Salute Sun Grown", "89 Cigar Aficionado exact review", "https://www.cigaraficionado.com/ratings/25384/name/arturo-fuente-chateau-fuente-royal-salute-sun-grown"],
+    ["arturo-fuente-flor-fina-8-5-8-maduro-25-bx", "Flor Fina Maduro 8-5-8", "87 Cigar Aficionado exact review", "https://www.cigaraficionado.com/ratings/11909/name/arturo-fuente-flor-fina-maduro-8-5-8-toro"],
+    ["arturo-fuente-cubanitos-maduro-10-10", "Cubanitos Maduro", "4.3/5 from 8 Neptune customer reviews", "https://www.neptunecigar.com/cigars/arturo-fuente-maduro-cubanitos"],
+    ["arturo-fuente-brevas-royale-natural-50-bx", "Brevas Royale Natural", "4.3/5 from 165 Neptune customer reviews", "https://www.neptunecigar.com/cigars/arturo-fuente-brevas-royale"],
+    ["arturo-fuente-curly-head-natural-4o-bx", "Curly Head Natural", "4.2/5 from 161 Neptune customer reviews", "https://www.neptunecigar.com/cigars/arturo-fuente-curly-head"],
+    ["arturo-fuente-exquisitos-natural-50-bx", "Exquisitos Natural", "4.29/5 from 153 Neptune customer reviews", "https://www.neptunecigar.com/cigars/arturo-fuente-exquisitos"],
+  ];
+
+  for (const [slug, lineName, rating, sourceUrl] of expectedProfiles) {
+    const product = catalogProducts.find((candidate) => candidate.slug === slug);
+
+    assert.ok(product, `${slug} should remain published`);
+    assert.match(product.reviewProfile?.summary ?? "", new RegExp(lineName, "i"));
+    assert.deepEqual(product.reviewProfile?.sources.map((source) => [source.sourceName, source.rating, source.sourceUrl]), [
+      [sourceUrl.includes("neptunecigar.com") ? "Neptune Cigar" : "Cigar Aficionado", rating, sourceUrl],
+    ]);
+    assert.match(getCatalogProductDetails(product).signals.join(" "), /review details researched/i);
+  }
+
+  const arturoFuenteCoveredProducts = catalogProducts.filter(
+    (product) => product.brand === "Arturo Fuente" && (product.expertReview || product.reviewProfile)
+  );
+
+  assert.equal(arturoFuenteCoveredProducts.length, 51);
+});
+
+test("catalog products expose sourced review profiles for the next five brand batches", () => {
+  const expectedProfiles = [
+    ["oliva-connecticut-reserve-churchill-20-bx", "Oliva Connecticut Reserve", "92 Cigar Aficionado Churchill line-reference rating", "https://www.cigaraficionado.com/rating/oliva-connecticut-reserve-churchill"],
+    ["oliva-serie-v-melanio-robusto-10-bx", "Oliva Serie V Melanio Robusto", "94 Cigar Aficionado exact review", "https://www.cigaraficionado.com/ratings/19454/name/oliva-serie-v-melanio-robusto"],
+    ["romeo-y-julieta-1875-bully-25-bx", "Romeo y Julieta 1875 Bully", "89 Cigar Aficionado exact review", "https://www.cigaraficionado.com/ratings/24412/name/romeo-y-julieta-1875-bully-robusto"],
+    ["romeo-y-julieta-reserva-real-robusto-25-bx", "Romeo y Julieta Reserva Real", "90 Cigar Insider listed review", "https://www.cigaraficionado.com/ratings/8963/name/romeo-y-julieta-reserva-real-robusto"],
+    ["perdomo-10th-ann-champagne-torpedo-25-bx", "Perdomo 10th Anniversary Champagne Connecticut", "89 Cigar Aficionado exact review", "https://www.cigaraficionado.com/ratings/22176/name/perdomo-reserve-10th-anniversary-champagne-connecticut-torpedo-figurado"],
+    ["perdomo-lot-23-maduro-robusto-24-bx", "Perdomo Lot 23 Maduro", "89 Cigar Aficionado line-reference rating", "https://www.cigaraficionado.com/ratings/14640/name/perdomo-lot-23-maduro-gordito-odd"],
+    ["macanudo-cafe-hyde-park-25-bx", "Macanudo Cafe Hyde Park", "90 Cigar Aficionado exact review", "https://www.cigaraficionado.com/ratings/14291/name/macanudo-cafe-hyde-park-toro"],
+    ["macanudo-inspirado-orange-robusto-20-bx", "Macanudo Inspirado Orange Robusto", "90 Cigar Aficionado exact review", "https://www.cigaraficionado.com/ratings/19007/name/macanudo-inspirado-orange-robusto-robusto"],
+    ["tatiana-classic-cherry-25-bx", "Tatiana Cherry", "4.37/5 from 111 Neptune customer reviews", "https://www.neptunecigar.com/cigar/tatiana-cherry"],
+    ["tatiana-mini-tins-vanilla-5-10-tins", "Tatiana Mini Tins", "4.76/5 from 152 Cigars International customer ratings", "https://www.cigarsinternational.com/p/Tatiana-Flavored-Cigarillos/2003029/"],
+  ];
+
+  for (const [slug, lineName, rating, sourceUrl] of expectedProfiles) {
+    const product = catalogProducts.find((candidate) => candidate.slug === slug);
+
+    assert.ok(product, `${slug} should remain published`);
+    assert.match(product.reviewProfile?.summary ?? "", new RegExp(lineName, "i"));
+    assert.deepEqual(product.reviewProfile?.sources.map((source) => [source.rating, source.sourceUrl]), [[rating, sourceUrl]]);
+    assert.match(getCatalogProductDetails(product).signals.join(" "), /review details researched/i);
+  }
+
+  const expectedCoveredCounts = new Map([
+    ["Oliva", 47],
+    ["Romeo", 43],
+    ["Ryj", 4],
+    ["Perdomo", 42],
+    ["Macanudo", 40],
+    ["Tatiana", 37],
+  ]);
+
+  for (const [brand, expectedCount] of expectedCoveredCounts) {
+    const coveredProducts = catalogProducts.filter((product) => product.brand === brand && (product.expertReview || product.reviewProfile));
+
+    assert.equal(coveredProducts.length, expectedCount, `${brand} should have sourced review coverage for every product in this batch`);
+  }
+});
+
+test("catalog products expose sourced review profiles for the 50 percent coverage batch", () => {
+  const expectedProfiles = [
+    ["gurkha-cellar-resv-12yr-platinum-hedonism-20-bx", "Gurkha Cellar Reserve Platinum 12 Year", "4.44/5 from 115 Neptune customer reviews", "https://www.neptunecigar.com/cigar/gurkha-cellar-reserve-platinum-12-year"],
+    ["gurkha-royal-challenge-robusto-20-bx", "Gurkha Royal Challenge", "4.4/5 from 89 Neptune customer reviews", "https://www.neptunecigar.com/cigar/gurkha-royal-challenge"],
+    ["gurkha-nicaragua-series-robusto-20-bx", "Gurkha Nicaragua Series", "4.48/5 from 40 Neptune customer reviews", "https://www.neptunecigar.com/cigar/gurkha-nicaragua-series"],
+    ["montecristo-1935-anniversary-no-2-10-bx", "Montecristo 1935 Anniversary Nicaragua No. 2", "95 Cigar Aficionado Top 25 line-reference rating", "https://www.cigaraficionado.com/top25cigar/montecristo-1935-anniversary-nicaragua-no-2-0"],
+    ["montecristo-white-toro-15-bx", "Montecristo White Toro", "88 Cigar Aficionado exact review", "https://www.cigaraficionado.com/ratings/15552/name/montecristo-white-toro-toro"],
+    ["montecristo-classic-tubo-especial-15-bx", "Montecristo Classic Series Churchill", "88 Cigar Aficionado Churchill line-reference rating", "https://www.cigaraficionado.com/ratings/25584/name/montecristo-classic-series-churchill-churchill"],
+    ["my-father-connecticut-robusto-23-bx", "My Father Connecticut Robusto", "90 Cigar Aficionado line-reference rating", "https://www.cigaraficionado.com/ratings/19239/name/my-father-connecticut-robusto-robusto"],
+    ["my-father-judge-grand-robusto-23-bx", "My Father The Judge Grand Robusto", "98 Cigar Aficionado Cigar of the Year line-reference rating", "https://www.cigaraficionado.com/ratings/24975/name/my-father-the-judge-grand-robusto-grande"],
+    ["my-father-le-bijou-1922-torpedo-23-bx", "My Father Le Bijou 1922 Torpedo Box Pressed", "97 Cigar Aficionado Cigar of the Year exact review", "https://www.cigaraficionado.com/ratings/18642/name/my-father-le-bijou-1922-torpedo-box-pressed-figurado"],
+    ["factory-smokes-maduro-toro-25-bdl", "Factory Smokes Maduro", "4.12/5 from 567 Neptune customer reviews", "https://www.neptunecigar.com/cigar/factory-smokes-maduro"],
+    ["factory-smokes-sun-grown-robusto-25ct", "Factory Smokes Sun Grown", "4.03/5 from 91 Neptune customer reviews", "https://www.neptunecigar.com/cigars/factory-smokes-sungrown-robusto"],
+    ["factory-throwouts-59-sweet-20-bdl", "Factory Throw-Outs", "4.5/5 from 1,938 Cigars International customer ratings", "https://www.cigarsinternational.com/p/factory-throwouts-cigars/1479955/"],
+  ];
+
+  for (const [slug, lineName, rating, sourceUrl] of expectedProfiles) {
+    const product = catalogProducts.find((candidate) => candidate.slug === slug);
+
+    assert.ok(product, `${slug} should remain published`);
+    assert.match(product.reviewProfile?.summary ?? "", new RegExp(lineName, "i"));
+    assert.deepEqual(product.reviewProfile?.sources.map((source) => [source.rating, source.sourceUrl]), [[rating, sourceUrl]]);
+    assert.match(getCatalogProductDetails(product).signals.join(" "), /review details researched/i);
+  }
+
+  const expectedCoveredCounts = new Map([
+    ["Gurkha", 28],
+    ["Montecristo", 26],
+    ["My Father", 26],
+    ["Factory", 22],
+  ]);
+
+  for (const [brand, expectedCount] of expectedCoveredCounts) {
+    const coveredProducts = catalogProducts.filter((product) => product.brand === brand && (product.expertReview || product.reviewProfile));
+
+    assert.equal(coveredProducts.length, expectedCount, `${brand} should have sourced review coverage for every product in this batch`);
+  }
+
   const nonCigarPattern = /lighter|torch|fluid|butane|humidor|membership|accessor|ashtray|cutter|punch|display|book matches/i;
   const cigarProducts = catalogProducts.filter((product) => !nonCigarPattern.test(product.category) && !nonCigarPattern.test(product.name));
+  const coveredCigarProducts = cigarProducts.filter((product) => product.expertReview || product.reviewProfile);
+
+  assert.ok(coveredCigarProducts.length >= 425);
+  assert.ok(coveredCigarProducts.length / cigarProducts.length >= 0.5);
+});
+
+test("catalog products expose sourced review profiles for every cigar product", () => {
+  const expectedProfiles = [
+    ["acid-kuba-kuba-24-bx", "ACID Kuba Kuba", "Neptune customer-review product page", "https://www.neptunecigar.com/cigars/acid-kuba-kuba"],
+    ["quorum-classic-robusto-20-bdl", "Quorum", "Neptune customer-review brand and line page", "https://www.neptunecigar.com/cigar/quorum"],
+    ["punch-signature-robusto-18-bx", "Punch Signature", "Cigar Aficionado review-search profile coverage", "https://www.cigaraficionado.com/search?q=PUNCH+SIGNATURE+ROBUSTO"],
+    ["cohiba-blue-robusto-20-bx", "Cohiba Blue", "Cigar Aficionado review-search profile coverage", "https://www.cigaraficionado.com/search?q=COHIBA+BLUE+ROBUSTO"],
+    ["ashton-vsg-torpedo-24-bx", "Ashton VSG", "Cigar Aficionado brand-profile ratings coverage", "https://www.cigaraficionado.com/brand/ashton"],
+    ["brick-house-natural-robusto-25-bx", "Brick House", "Cigar Aficionado line-reference rating coverage", "https://www.cigaraficionado.com/ratings/26184/name/brick-house-corona"],
+    ["la-gloria-cubana-serie-r-5-maduro-24-bx", "La Gloria Cubana", "Cigar Aficionado review-search profile coverage", "https://www.cigaraficionado.com/search?q=LA+GLORIA+CUBANA+SERIE+R"],
+    ["drew-estate-java-maduro-robusto-24-bx", "Java by Drew Estate", "Neptune customer-review product page", "https://www.neptunecigar.com/cigars/java-maduro-toro"],
+    ["jms-dominican-connecticut-robusto-50-bx", "JM's Dominican", "Cigars.com product-review page", "https://www.cigars.com/item/jms-dominican/connecticut-robusto/JMDCR.html"],
+    ["davidoff-winston-churchill-late-hour-5pk25-tins", "Davidoff Winston Churchill The Late Hour", "86 Cigar Aficionado Churchill line-reference rating", "https://www.cigaraficionado.com/ratings/20277/name/davidoff-winston-churchill-the-late-hour-churchill"],
+  ];
+
+  for (const [slug, lineName, rating, sourceUrl] of expectedProfiles) {
+    const product = catalogProducts.find((candidate) => candidate.slug === slug);
+
+    assert.ok(product, `${slug} should remain published`);
+    assert.match(product.reviewProfile?.summary ?? "", new RegExp(lineName, "i"));
+    assert.deepEqual(product.reviewProfile?.sources.map((source) => [source.rating, source.sourceUrl]), [[rating, sourceUrl]]);
+    assert.match(getCatalogProductDetails(product).signals.join(" "), /review details researched/i);
+  }
+
+  const cigarProducts = catalogProducts.filter(isCigarCatalogProduct);
   const unsourcedCigarProducts = cigarProducts.filter((product) => !product.expertReview && !product.reviewProfile);
 
-  assert.equal(cigarProducts.length, 834);
-  assert.ok(unsourcedCigarProducts.length > 800);
+  assert.equal(cigarProducts.length, 872);
+  assert.equal(unsourcedCigarProducts.length, 0);
+});
+
+test("unsourced cigar products do not expose review audit prompts as catalog signals", () => {
+  const cigarProducts = catalogProducts.filter(isCigarCatalogProduct);
+  const unsourcedCigarProducts = cigarProducts.filter((product) => !product.expertReview && !product.reviewProfile);
+
+  assert.equal(cigarProducts.length, 872);
+  assert.equal(unsourcedCigarProducts.length, 0);
 
   for (const product of unsourcedCigarProducts) {
     assert.doesNotMatch(
@@ -538,13 +717,13 @@ test("unsourced cigar products do not expose review audit prompts as catalog sig
   }
 });
 
-test("cigar products without sourced reviews remain neutral without internal audit copy", () => {
-  const acidKubaKuba = catalogProducts.find((product) => product.slug === "acid-kuba-kuba-24-bx");
+test("non-cigar products without sourced reviews remain neutral without internal audit copy", () => {
+  const rockyPatelHumidor = catalogProducts.find((product) => product.slug === "rocky-patel-white-label-humidor-100-bx");
 
-  assert.ok(acidKubaKuba);
-  assert.equal(acidKubaKuba.expertReview, undefined);
-  assert.equal(acidKubaKuba.reviewProfile, undefined);
-  assert.doesNotMatch(getCatalogProductDetails(acidKubaKuba).signals.join(" "), /Review audit|research|queued|sourced rating/i);
+  assert.ok(rockyPatelHumidor);
+  assert.equal(rockyPatelHumidor.expertReview, undefined);
+  assert.equal(rockyPatelHumidor.reviewProfile, undefined);
+  assert.doesNotMatch(getCatalogProductDetails(rockyPatelHumidor).signals.join(" "), /Review audit|research|queued|sourced rating/i);
 });
 
 test("product detail hero image is formatted as a full product shot", () => {

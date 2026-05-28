@@ -77,6 +77,17 @@
       "Resource": "*"
     },
     {
+      "Sid": "RecognizeTextForTaggedYccLexRouterAliases",
+      "Effect": "Allow",
+      "Action": "lex:RecognizeText",
+      "Resource": "arn:aws:lex:us-east-1:374587466106:bot-alias/*/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/Project": "YCC"
+        }
+      }
+    },
+    {
       "Sid": "InvokeSelectedBedrockFoundationModels",
       "Effect": "Allow",
       "Action": [
@@ -87,6 +98,12 @@
         "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-micro-v1:0",
         "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-lite-v1:0"
       ]
+    },
+    {
+      "Sid": "DetectTextForAiCigarAdderImages",
+      "Effect": "Allow",
+      "Action": "rekognition:DetectText",
+      "Resource": "*"
     },
     {
       "Sid": "ApplyYccConciergeGuardrail",

@@ -73,6 +73,8 @@ $envJson = @'
     "S3_APP_BUCKET": "classroom2",
     "FEATURE_DB_WRITES": "pending_schema",
     "FEATURE_BEDROCK": "pending_agent",
+    "FEATURE_LEX_ROUTER": "pending_bot",
+    "LEX_ROUTER_LOCALE_ID": "en_US",
     "FEATURE_CONCIERGE_VOICE": "pending_services",
     "CONCIERGE_TRANSCRIBE_LANGUAGE_CODE": "en-US",
     "CONCIERGE_VOICE_BUCKET": "classroom2",

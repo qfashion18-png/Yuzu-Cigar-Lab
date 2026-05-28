@@ -7,6 +7,19 @@ type TokenStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
 export type CheckoutAgeVerificationTokenRequest = {
   vendorTransactionId: string;
+  customer: {
+    email: string;
+    phone?: string;
+    fullName?: string;
+  };
+  shippingAddress: {
+    address1: string;
+    address2?: string;
+    city: string;
+    state: string;
+    postalCode: string;
+    country?: string;
+  };
 };
 
 export type CheckoutAgeVerificationTokenResponse = {
@@ -83,6 +96,19 @@ export async function createCheckoutAgeVerificationToken(input: CheckoutAgeVerif
     },
     body: JSON.stringify({
       vendorTransactionId: input.vendorTransactionId,
+      customer: {
+        email: input.customer.email,
+        phone: input.customer.phone ?? "",
+        fullName: input.customer.fullName ?? "",
+      },
+      shippingAddress: {
+        address1: input.shippingAddress.address1,
+        address2: input.shippingAddress.address2 ?? "",
+        city: input.shippingAddress.city,
+        state: input.shippingAddress.state,
+        postalCode: input.shippingAddress.postalCode,
+        country: input.shippingAddress.country ?? "US",
+      },
     }),
   });
   const payload = (await response.json().catch(() => ({}))) as Partial<CheckoutAgeVerificationTokenResponse> & {

@@ -5,21 +5,17 @@ import { ProductCard } from "@/components/product-card";
 import { ReferenceImage } from "@/components/reference-image";
 import { SectionHeading } from "@/components/section-heading";
 import { luxuryCatalogProducts } from "@/lib/catalog";
+import { buildPageMetadata } from "@/lib/seo";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = buildPageMetadata({
   title: "New Arrivals | Yuzu Cigar Club",
   description:
     "Browse newly released premium cigar boxes selected for freshness, aging potential, and member value.",
-  alternates: {
-    canonical: "/new-arrivals",
-  },
-  openGraph: {
-    title: "New Arrivals | Yuzu Cigar Club",
-    description:
-      "Browse newly released premium cigar boxes selected for freshness, aging potential, and member value.",
-    url: "/new-arrivals",
-  },
-};
+  path: "/new-arrivals",
+  image: "/assets/shop-hero.png",
+  imageAlt: "New premium cigar boxes in the Yuzu catalog",
+  keywords: ["new cigar arrivals", "fresh cigar boxes", "premium cigar releases"],
+});
 
 export default function NewArrivalsPage() {
   const arrivals = luxuryCatalogProducts.slice(0, 8);

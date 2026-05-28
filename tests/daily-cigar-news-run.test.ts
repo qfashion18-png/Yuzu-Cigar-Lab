@@ -14,6 +14,7 @@ type DraftCall = {
 
 type PublishCall = {
   images?: Array<{ sourceUrl?: string }>;
+  sourceNotes?: Array<{ label?: string; url?: string; note?: string }>;
 };
 
 test("daily cigar flow writer retries draft generation with another official source batch", async () => {
@@ -260,6 +261,100 @@ test("daily cigar flow writer includes press-release search sources in draft req
     assert.ok(draftCalls[0].sourceNotes?.some((note) => /daily cigar press-release search/i.test(note)));
     assert.ok(draftCalls[0].sourceNotes?.some((note) => /write stories/i.test(note)));
     assert.match(draftCalls[0].angle ?? "", /press releases/i);
+  } finally {
+    server.close();
+    await once(server, "close").catch(() => undefined);
+  }
+});
+
+test("daily cigar flow writer carries primary source notes into publish when draft omits them", async () => {
+  const draftCalls: DraftCall[] = [];
+  const publishCalls: PublishCall[] = [];
+  const server = createServer(async (request, response) => {
+    if (request.method === "POST" && request.url === "/news/story-drafts") {
+      const payload = JSON.parse(await readRequestBody(request)) as DraftCall;
+      draftCalls.push(payload);
+
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          draft: {
+            title: "Cigar Flow Update: Primary Source Carryover",
+            dek: "A source-safe daily update for adult Yuzu readers.",
+            category: "Cigar Flow Update",
+            bodyMarkdown: "## Release desk\nAn official source batch produced a publication-ready daily story.",
+            sections: [
+              {
+                heading: "Release desk",
+                body: "An official source batch produced a publication-ready daily story.",
+              },
+            ],
+          },
+          prompt: {
+            acceptedSourceCount: payload.sourceUrls.length,
+          },
+        }),
+      );
+      return;
+    }
+
+    if (request.method === "POST" && request.url === "/news/stories") {
+      const payload = JSON.parse(await readRequestBody(request)) as PublishCall;
+      publishCalls.push(payload);
+
+      if (!payload.sourceNotes?.some((note) => draftCalls[0]?.sourceUrls.includes(note.url ?? ""))) {
+        response.writeHead(400, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({
+            error: "official_source_required",
+            message: "At least one primary source note is required before publishing.",
+          }),
+        );
+        return;
+      }
+
+      response.writeHead(201, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          story: {
+            title: "Cigar Flow Update: Primary Source Carryover",
+            slug: "cigar-flow-update-primary-source-carryover",
+            status: "published",
+          },
+          persistence: {
+            status: "stored",
+            table: "news_stories",
+          },
+        }),
+      );
+      return;
+    }
+
+    response.writeHead(404, { "content-type": "application/json" });
+    response.end(JSON.stringify({ error: "not_found" }));
+  });
+
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+
+    const result = await runDailyWriter({
+      NEXT_PUBLIC_YCC_API_BASE_URL: `http://127.0.0.1:${address.port}`,
+      YCC_NEWSROOM_BEARER_TOKEN: "test-token",
+      YCC_DAILY_NEWSROOM_AUTO_PUBLISH: "true",
+      YCC_DAILY_NEWSROOM_SOURCE_LIMIT: "3",
+      YCC_DAILY_NEWSROOM_MAX_ATTEMPTS: "1",
+    });
+
+    assert.equal(result.code, 0, result.stderr || result.stdout);
+    assert.equal(draftCalls.length, 1);
+    assert.equal(publishCalls.length, 1);
+    assert.ok(
+      publishCalls[0].sourceNotes?.some((note) => draftCalls[0].sourceUrls.includes(note.url ?? "")),
+      "publish should retain at least one source URL from the draft request",
+    );
   } finally {
     server.close();
     await once(server, "close").catch(() => undefined);

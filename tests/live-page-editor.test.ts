@@ -89,6 +89,11 @@ test("public chrome owns the always-on concierge and its voice controls", () => 
   assert.ok(floatingConciergeSource.includes("SpeechRecognition"), "voice messages should capture a transcript hint when available");
   assert.ok(floatingConciergeSource.includes("sendConciergeVoiceMessage"), "voice messages should use the live voice API helper");
   assert.ok(floatingConciergeSource.includes("voiceOutput: voiceEnabled"), "text replies should be able to request spoken audio");
+  assert.ok(floatingConciergeSource.includes("Yuzu Concierge AI"), "the visible widget should present one concierge AI surface");
+  assert.equal(floatingConciergeSource.includes("conciergeModes"), false, "specialist mode buttons should not render in the widget");
+  assert.equal(floatingConciergeSource.includes("setMode"), false, "the widget should not maintain a manually selected specialist mode");
+  assert.equal(floatingConciergeSource.includes("agent: mode"), false, "the widget should let the backend Lex router choose the agent");
+  assert.equal(floatingConciergeSource.includes("cigar_guide"), false, "cigar guide should not be exposed as a UI mode");
   assert.equal(packageSource.includes("amazon-chime-sdk"), false, "speech input/output should not depend on Amazon Chime SDK");
 });
 

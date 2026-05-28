@@ -84,6 +84,27 @@ test("calculates checkout totals with delivery, tax, and member promotion on eli
   assert.equal(totals.total, 511.34);
 });
 
+test("adds a shipping and handling fee to non-member checkout totals", () => {
+  const cart = addCartItem(createEmptyShoppingCart(), lighterItem, 1);
+  const nonMemberTotals = calculateCartTotals(cart, {
+    deliveryPrice: 9,
+    isMember: false,
+    taxRate: 0.066,
+  });
+  const memberTotals = calculateCartTotals(cart, {
+    deliveryPrice: 9,
+    isMember: true,
+    taxRate: 0.066,
+  });
+
+  assert.equal((nonMemberTotals as { handling?: number }).handling, 10);
+  assert.equal(nonMemberTotals.shipping, 9);
+  assert.equal(nonMemberTotals.total, 44.58);
+  assert.equal((memberTotals as { handling?: number }).handling, 0);
+  assert.equal(memberTotals.shipping, 9);
+  assert.equal(memberTotals.total, 34.58);
+});
+
 test("checkout exposes only payment methods backed by Stripe Checkout", () => {
   assert.deepEqual(
     checkoutPaymentMethods.map((method) => method.id),

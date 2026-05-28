@@ -11,21 +11,17 @@ import { SectionHeading } from "@/components/section-heading";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { benefits, membershipPrepaidPricing, tiers, welcomeKitRecommendations, wholesaleCostDefinition } from "@/lib/data";
+import { buildPageMetadata } from "@/lib/seo";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = buildPageMetadata({
   title: "Membership | Yuzu Cigar Club",
   description:
     "Compare Yuzu Cigar Club membership tiers for curated monthly cigars, member-cost box access, private allocations, and digital humidor tools.",
-  alternates: {
-    canonical: "/membership",
-  },
-  openGraph: {
-    title: "Membership | Yuzu Cigar Club",
-    description:
-      "Compare Yuzu Cigar Club membership tiers for curated monthly cigars, member-cost box access, private allocations, and digital humidor tools.",
-    url: "/membership",
-  },
-};
+  path: "/membership",
+  image: "/assets/membership-boxes.png",
+  imageAlt: "Yuzu Cigar Club membership cigar boxes",
+  keywords: ["cigar membership", "member-cost cigar boxes", "curated monthly cigars"],
+});
 
 export default function MembershipPage() {
   const featuredTier = tiers.find((tier) => tier.featured) ?? tiers[0];

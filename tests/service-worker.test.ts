@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const serviceWorker = readFileSync("public/sw.js", "utf8");
+const pwaRegister = readFileSync("src/components/pwa-register.tsx", "utf8");
 
 test("service worker uses a fresh cache version for the deployment", () => {
   assert.match(serviceWorker, /CACHE_NAME = "yuzu-cigar-club-v3"/);
@@ -22,4 +23,10 @@ test("service worker constrains notification click targets to same-origin paths"
   assert.match(serviceWorker, /function getSafeNotificationTargetUrl/);
   assert.match(serviceWorker, /target\.origin !== self\.location\.origin/);
   assert.match(serviceWorker, /return self\.clients\.openWindow\(targetUrl\)/);
+});
+
+test("PWA registration scopes the service worker for mobile push", () => {
+  assert.match(pwaRegister, /navigator\.serviceWorker\s*\.\s*register\("\/sw\.js",\s*{/);
+  assert.match(pwaRegister, /scope:\s*"\/"/);
+  assert.match(pwaRegister, /updateViaCache:\s*"none"/);
 });

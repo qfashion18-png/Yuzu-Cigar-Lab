@@ -56,6 +56,7 @@ const defaultCriticalRoutes = [
   "/education/",
   "/cigar-flow/",
   "/humidor/",
+  "/contact/",
   "/cart/",
   "/checkout/",
   "/checkout/cancel/",

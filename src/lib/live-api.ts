@@ -375,6 +375,15 @@ export type ConciergeChatResponse = {
   ai: {
     status: string;
   };
+  lex?: {
+    status: string;
+    intentName: string | null;
+    confidence: number | null;
+    dialogActionType: string | null;
+    slotToElicit: string | null;
+    slots: Record<string, string>;
+    sessionId: string;
+  };
   reply: string;
   input: {
     accepted: boolean;
@@ -455,10 +464,18 @@ export type HumidorPushSubscription = {
   };
 };
 
+export type HumidorProfileLocationKind = "humidor" | "other";
+
+export type HumidorProfileLocation = {
+  name: string;
+  kind: HumidorProfileLocationKind;
+  trays: string[];
+};
+
 export type HumidorLocationProfile = {
   humidorName: string;
   defaultLocation: string;
-  locations: string[];
+  locations: HumidorProfileLocation[];
 };
 
 export type HumidorAlertPreferences = {
@@ -497,6 +514,7 @@ export type HumidorItemInput = Partial<Omit<HumidorItem, "id" | "createdAt">> & 
 export type HumidorItemUpdateInput = {
   agingStartDate?: string;
   humidorLocation?: string;
+  tray?: string;
 };
 
 export type CigarImageIdentifyInput = {
@@ -543,6 +561,15 @@ export type CigarImageIdentifyResponse = {
     status: string;
     modelId?: string;
     stopReason?: string | null;
+    rekognition?: {
+      status: string;
+      minConfidence: number;
+      textCount: number;
+      textLines: Array<{
+        text: string;
+        confidence: number;
+      }>;
+    };
   };
   input: {
     accepted: boolean;
@@ -585,6 +612,12 @@ export type HumidorItemEnrichmentResponse = {
     agentAliasId?: string;
     knowledgeBaseStatus?: string;
     retrievedContextCount?: number;
+    browserSearch?: {
+      status: "requested";
+      query: string;
+      missingFields: HumidorEnrichmentField[];
+      sourcePolicy: string[];
+    };
     stopReason?: string | null;
   };
   persistence: {

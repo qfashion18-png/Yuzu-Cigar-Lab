@@ -35,6 +35,7 @@ function buildCheckoutSessionParams(input = {}, env = process.env) {
   const shippingAddress = shipping.address && typeof shipping.address === "object" ? shipping.address : {};
   const shippingCountry = normalizeCountryCode(shippingAddress.country || "US");
   const statusToken = toMetadataString(input.statusToken, 120);
+  const shippingOptions = buildCheckoutShippingOptions(shipping, input.currency || "usd");
 
   return {
     mode: "payment",
@@ -48,6 +49,7 @@ function buildCheckoutSessionParams(input = {}, env = process.env) {
       price: item.stripePriceId,
       quantity: item.quantity,
     })),
+    ...(shippingOptions.length > 0 ? { shipping_options: shippingOptions } : {}),
     automatic_tax: { enabled: true },
     allow_promotion_codes: true,
     success_url: `${siteUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}&status_token=${encodeURIComponent(statusToken)}`,
@@ -59,6 +61,9 @@ function buildCheckoutSessionParams(input = {}, env = process.env) {
       compliance_policy_version: compliance.policyVersion || "",
       shipping_method_id: shipping.methodId || "",
       shipping_carrier: toMetadataString(shipping.carrier || "USPS", 20),
+      shipping_amount_cents: String(toNonNegativeInteger(shipping.amountCents)),
+      shipping_delivery_amount_cents: String(toNonNegativeInteger(shipping.deliveryAmountCents)),
+      shipping_handling_fee_cents: String(toNonNegativeInteger(shipping.handlingFeeCents)),
       adult_signature_required: shipping.adultSignatureRequired === false ? "false" : "true",
       order_id: input.orderId || "",
       shipping_name: toMetadataString(input.customer?.fullName, 120),
@@ -71,6 +76,30 @@ function buildCheckoutSessionParams(input = {}, env = process.env) {
       checkout_status_token: statusToken,
     },
   };
+}
+
+function buildCheckoutShippingOptions(shipping = {}, currency = "usd") {
+  const amount = toNonNegativeInteger(shipping.amountCents);
+  if (amount <= 0) {
+    return [];
+  }
+
+  const deliveryTitle = toMetadataString(shipping.title || shipping.methodTitle || shipping.methodId || "Shipping", 80) || "Shipping";
+  const handlingFeeCents = toNonNegativeInteger(shipping.handlingFeeCents);
+  const displayName = handlingFeeCents > 0 ? `${deliveryTitle} + non-member handling` : deliveryTitle;
+
+  return [
+    {
+      shipping_rate_data: {
+        type: "fixed_amount",
+        display_name: toMetadataString(displayName, 100),
+        fixed_amount: {
+          amount,
+          currency: normalizeCurrencyCode(currency),
+        },
+      },
+    },
+  ];
 }
 
 function buildMembershipSessionParams(input = {}, env = process.env) {
@@ -194,6 +223,16 @@ function toMetadataString(value, maxLength) {
 function normalizeCountryCode(value) {
   const normalized = String(value || "").trim().toUpperCase();
   return /^[A-Z]{2}$/.test(normalized) ? normalized : "US";
+}
+
+function normalizeCurrencyCode(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return /^[a-z]{3}$/.test(normalized) ? normalized : "usd";
+}
+
+function toNonNegativeInteger(value) {
+  const integer = Math.round(Number(value));
+  return Number.isFinite(integer) && integer > 0 ? integer : 0;
 }
 
 module.exports = {

@@ -70,13 +70,77 @@ function encodeBase64Url(value: string) {
     .replace(/=+$/g, "");
 }
 
-function createSignedAgeVerificationToken(secret = "age-secret", vendorTransactionId = "age_txn_12345678") {
+type TestCheckoutAgeIdentity = {
+  customer?: {
+    email?: string;
+    phone?: string;
+    fullName?: string;
+    name?: string;
+  };
+  shippingAddress?: {
+    address1?: string;
+    address2?: string;
+    line1?: string;
+    line2?: string;
+    city?: string;
+    state?: string;
+    postalCode?: string;
+    zip?: string;
+    country?: string;
+  };
+};
+
+const defaultCheckoutAgeIdentity: TestCheckoutAgeIdentity = {
+  customer: {
+    email: "member@example.com",
+    phone: "",
+    fullName: "",
+  },
+  shippingAddress: {
+    address1: "123 Yuzu Way",
+    address2: "",
+    city: "Chandler",
+    state: "AZ",
+    postalCode: "85225",
+    country: "US",
+  },
+};
+
+function createTestCheckoutAgeIdentityHash(identity: TestCheckoutAgeIdentity = defaultCheckoutAgeIdentity) {
+  const customer = identity.customer || {};
+  const shippingAddress = identity.shippingAddress || {};
+  const normalized = {
+    email: String(customer.email || "").trim().toLowerCase(),
+    phone: String(customer.phone || "").trim().replace(/\s+/g, " "),
+    fullName: String(customer.fullName || customer.name || "").trim().replace(/\s+/g, " ").toLowerCase(),
+    address1: String(shippingAddress.address1 || shippingAddress.line1 || "").trim().replace(/\s+/g, " ").toLowerCase(),
+    address2: String(shippingAddress.address2 || shippingAddress.line2 || "").trim().replace(/\s+/g, " ").toLowerCase(),
+    city: String(shippingAddress.city || "").trim().replace(/\s+/g, " ").toLowerCase(),
+    state: String(shippingAddress.state || "").trim().toUpperCase(),
+    postalCode: String(shippingAddress.postalCode || shippingAddress.zip || "").trim().replace(/\s+/g, "").toUpperCase(),
+    country: String(shippingAddress.country || "US").trim().toUpperCase(),
+  };
+
+  return crypto.createHash("sha256").update(JSON.stringify(normalized)).digest("base64url");
+}
+
+function decodeSignedTokenPayload(token: string) {
+  const payloadSegment = token.split(".")[1] || "";
+  return JSON.parse(Buffer.from(payloadSegment, "base64url").toString("utf8"));
+}
+
+function createSignedAgeVerificationToken(
+  secret = "age-secret",
+  vendorTransactionId = "age_txn_12345678",
+  identityHash = createTestCheckoutAgeIdentityHash()
+) {
   const nowSeconds = Math.floor(Date.now() / 1000);
   const payload = {
     txn: vendorTransactionId,
     iat: nowSeconds,
     exp: nowSeconds + 15 * 60,
     verifiedAt: new Date(nowSeconds * 1000).toISOString(),
+    identityHash,
   };
   const payloadSegment = encodeBase64Url(JSON.stringify(payload));
   const signedMessage = `yccav1.${payloadSegment}`;
@@ -117,11 +181,21 @@ function installPersistenceMocks(
     agentReply?: string;
     agentRuntimeError?: boolean;
     bedrockReply?: string;
+    rekognitionError?: boolean;
+    rekognitionTextDetections?: Array<Record<string, unknown>>;
+    lexIntentName?: string;
+    lexConfidence?: number;
+    lexDialogActionType?: string;
+    lexSlotToElicit?: string;
+    lexSlots?: Record<string, string>;
+    lexMessages?: Array<Record<string, unknown>>;
+    lexError?: boolean;
     pollyAudio?: string;
     retrieveText?: string;
     transcribeTranscript?: string;
     dispatchRows?: Array<Record<string, unknown>>;
     climateRows?: Array<Record<string, unknown>>;
+    memberProfileRows?: Array<Record<string, unknown>>;
     humidorItemRows?: Array<Record<string, unknown>>;
     adminOrderRows?: Array<Record<string, unknown>>;
     adminMemberRows?: Array<Record<string, unknown>>;
@@ -139,6 +213,7 @@ function installPersistenceMocks(
       connected: boolean;
       ended: boolean;
   }> = [];
+  const rekognitionInvocations: Record<string, unknown>[] = [];
   let memberUpsertAttempts = 0;
 
   class RecordingPgClient {
@@ -525,7 +600,10 @@ function installPersistenceMocks(
                 humidorProfile: {
                   humidorName: "Home cabinet",
                   defaultLocation: "Walk-in Humidor",
-                  locations: ["Walk-in Humidor", "Locker B"],
+                  locations: [
+                    { name: "Walk-in Humidor", kind: "humidor", trays: ["Top Tray", "Bottom Tray"] },
+                    { name: "Locker B", kind: "other", trays: [] },
+                  ],
                 },
                 pushSubscription: {
                   endpoint: "https://example.com/endpoint",
@@ -538,6 +616,17 @@ function installPersistenceMocks(
             },
           ],
           rowCount: 1,
+        };
+      }
+
+      if (
+        normalized.includes("from public.member_profiles") &&
+        normalized.includes("jsonb_array_length") &&
+        normalized.includes("paireddevices")
+      ) {
+        return {
+          rows: options.memberProfileRows || [],
+          rowCount: options.memberProfileRows?.length || 0,
         };
       }
 
@@ -577,23 +666,7 @@ function installPersistenceMocks(
         return {
           rows: [
             {
-              preferences: {
-                pushEnabled: true,
-                reorderRemindersEnabled: true,
-                climateAlertsEnabled: false,
-                humidorProfile: {
-                  humidorName: "Home cabinet",
-                  defaultLocation: "Walk-in Humidor",
-                  locations: ["Walk-in Humidor", "Locker B"],
-                },
-                pushSubscription: {
-                  endpoint: "https://example.com/endpoint",
-                  keys: {
-                    p256dh: "p256dh-key",
-                    auth: "auth-key",
-                  },
-                },
-              },
+              preferences: JSON.parse(String(params[1] || "{}")),
             },
           ],
           rowCount: 1,
@@ -759,8 +832,9 @@ function installPersistenceMocks(
             {
               ...existing,
               id: params[0],
-              aging_start_date: params[3] || existing.aging_start_date,
+              aging_start_date: params[5] || existing.aging_start_date,
               humidor_location: params[2] || existing.humidor_location,
+              tray: params[3] ? params[4] : existing.tray,
               created_at: existing.created_at || "2026-05-06T09:00:00.000Z",
             },
           ],
@@ -832,6 +906,7 @@ function installPersistenceMocks(
   const agentInvocations: Array<Record<string, unknown>> = [];
   const bedrockInvocations: Array<Record<string, unknown>> = [];
   const knowledgeBaseRetrievals: Array<Record<string, unknown>> = [];
+  const lexInvocations: Array<Record<string, unknown>> = [];
   const pollyInvocations: Array<Record<string, unknown>> = [];
   const s3Invocations: Array<Record<string, unknown>> = [];
   const secretsManagerInvocations: Array<Record<string, unknown>> = [];
@@ -959,6 +1034,97 @@ function installPersistenceMocks(
           totalTokens: 48,
         },
         stopReason: "end_turn",
+      };
+    }
+  }
+
+  class DetectTextCommand {
+    input: Record<string, unknown>;
+
+    constructor(input: Record<string, unknown>) {
+      this.input = input;
+    }
+  }
+
+  class RekognitionClient {
+    async send(command: DetectTextCommand) {
+      rekognitionInvocations.push(command.input);
+      if (options.rekognitionError) {
+        throw new Error("rekognition unavailable");
+      }
+
+      return {
+        TextDetections:
+          options.rekognitionTextDetections || [
+            {
+              DetectedText: "PADRON 1964",
+              Type: "LINE",
+              Confidence: 98.4,
+            },
+          ],
+      };
+    }
+  }
+
+  class RecognizeTextCommand {
+    input: Record<string, unknown>;
+
+    constructor(input: Record<string, unknown>) {
+      this.input = input;
+    }
+  }
+
+  class LexRuntimeV2Client {
+    async send(command: RecognizeTextCommand) {
+      lexInvocations.push(command.input);
+      if (options.lexError) {
+        throw new Error("lex unavailable");
+      }
+
+      const intentName = options.lexIntentName || "YCCConciergeIntent";
+      const slots = Object.fromEntries(
+        Object.entries(options.lexSlots || {}).map(([slotName, interpretedValue]) => [
+          slotName,
+          {
+            value: {
+              interpretedValue,
+              originalValue: interpretedValue,
+              resolvedValues: [interpretedValue],
+            },
+          },
+        ])
+      );
+      const dialogActionType = options.lexDialogActionType || "Close";
+
+      return {
+        interpretations: [
+          {
+            intent: {
+              name: intentName,
+              slots,
+              state: dialogActionType === "ElicitSlot" ? "InProgress" : "ReadyForFulfillment",
+            },
+            nluConfidence: {
+              score: options.lexConfidence ?? 0.91,
+            },
+          },
+        ],
+        messages: options.lexMessages || [],
+        sessionId: String(command.input.sessionId || "lex-session"),
+        sessionState: {
+          dialogAction: {
+            type: dialogActionType,
+            slotToElicit: options.lexSlotToElicit,
+          },
+          intent: {
+            name: intentName,
+            slots,
+            state: dialogActionType === "ElicitSlot" ? "InProgress" : "ReadyForFulfillment",
+          },
+          sessionAttributes: {
+            lexSession: "active",
+          },
+        },
       };
     }
   }
@@ -1197,6 +1363,14 @@ function installPersistenceMocks(
       return { BedrockRuntimeClient, ConverseCommand };
     }
 
+    if (request === "@aws-sdk/client-rekognition") {
+      return { DetectTextCommand, RekognitionClient };
+    }
+
+    if (request === "@aws-sdk/client-lex-runtime-v2") {
+      return { LexRuntimeV2Client, RecognizeTextCommand };
+    }
+
     if (request === "@aws-sdk/client-bedrock-agent-runtime") {
       return { BedrockAgentRuntimeClient, InvokeAgentCommand, RetrieveCommand };
     }
@@ -1214,9 +1388,17 @@ function installPersistenceMocks(
     VAPID_SUBJECT: process.env.VAPID_SUBJECT,
     FEATURE_DB_WRITES: process.env.FEATURE_DB_WRITES,
     FEATURE_BEDROCK: process.env.FEATURE_BEDROCK,
+    FEATURE_LEX_ROUTER: process.env.FEATURE_LEX_ROUTER,
+    LEX_ROUTER_BOT_ID: process.env.LEX_ROUTER_BOT_ID,
+    LEX_ROUTER_BOT_ALIAS_ID: process.env.LEX_ROUTER_BOT_ALIAS_ID,
+    LEX_ROUTER_LOCALE_ID: process.env.LEX_ROUTER_LOCALE_ID,
+    FEATURE_REKOGNITION: process.env.FEATURE_REKOGNITION,
+    REKOGNITION_MIN_TEXT_CONFIDENCE: process.env.REKOGNITION_MIN_TEXT_CONFIDENCE,
     FEATURE_CONCIERGE_VOICE: process.env.FEATURE_CONCIERGE_VOICE,
     FEATURE_SES: process.env.FEATURE_SES,
+    SUPPORT_CONTACT_EMAIL_TO: process.env.SUPPORT_CONTACT_EMAIL_TO,
     SUPPORT_EMAIL_FROM: process.env.SUPPORT_EMAIL_FROM,
+    SUPPORT_EMAIL_INBOUND_RECIPIENT: process.env.SUPPORT_EMAIL_INBOUND_RECIPIENT,
     SUPPORT_EMAIL_RAW_BUCKET: process.env.SUPPORT_EMAIL_RAW_BUCKET,
     SUPPORT_EMAIL_RAW_PREFIX: process.env.SUPPORT_EMAIL_RAW_PREFIX,
     CONCIERGE_POLLY_ENGINE: process.env.CONCIERGE_POLLY_ENGINE,
@@ -1264,9 +1446,17 @@ function installPersistenceMocks(
   process.env.VAPID_SUBJECT = "mailto:alerts@yuzucigarclub.com";
   process.env.FEATURE_DB_WRITES = "schema_ready";
   process.env.FEATURE_BEDROCK = "runtime_ready";
+  process.env.FEATURE_LEX_ROUTER = "pending_bot";
+  process.env.LEX_ROUTER_BOT_ID = "";
+  process.env.LEX_ROUTER_BOT_ALIAS_ID = "";
+  process.env.LEX_ROUTER_LOCALE_ID = "en_US";
+  process.env.FEATURE_REKOGNITION = "pending_service";
+  process.env.REKOGNITION_MIN_TEXT_CONFIDENCE = "70";
   process.env.FEATURE_CONCIERGE_VOICE = "ready";
   process.env.FEATURE_SES = "ready";
+  process.env.SUPPORT_CONTACT_EMAIL_TO = "support@yuzucigarclub.com";
   process.env.SUPPORT_EMAIL_FROM = "support@yuzucigarclub.com";
+  process.env.SUPPORT_EMAIL_INBOUND_RECIPIENT = "support@ses-support.yuzucigarclub.com";
   process.env.SUPPORT_EMAIL_RAW_BUCKET = "classroom2";
   process.env.SUPPORT_EMAIL_RAW_PREFIX = "ycc/support-email/raw/";
   process.env.CONCIERGE_POLLY_ENGINE = "neural";
@@ -1291,7 +1481,9 @@ function installPersistenceMocks(
     bedrockInvocations,
     clients,
     knowledgeBaseRetrievals,
+    lexInvocations,
     pollyInvocations,
+    rekognitionInvocations,
     s3Invocations,
     secretsManagerInvocations,
     sesInvocations,
@@ -1561,18 +1753,74 @@ test("commerce age verification route exchanges an accepted AgeChecker UUID for 
     const response = await handler({
       routeKey: "POST /commerce/age-verification-token",
       rawPath: "/commerce/age-verification-token",
-      body: JSON.stringify({ vendorTransactionId: "12345678901234567890123456789012" }),
+      body: JSON.stringify({
+        vendorTransactionId: "12345678901234567890123456789012",
+        ...defaultCheckoutAgeIdentity,
+      }),
       requestContext: { requestId: "req-commerce-age-token", http: { method: "POST" } },
     });
 
     const body = JSON.parse(response.body);
     assert.equal(response.statusCode, 200);
     assert.match(body.ageVerificationToken, /^yccav1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+    assert.equal(decodeSignedTokenPayload(body.ageVerificationToken).identityHash, createTestCheckoutAgeIdentityHash());
     assert.equal(body.vendorTransactionId, "age_txn_12345678901234567890123456789012");
     assert.equal(calls[0].url, "https://api.agechecker.net/v1/status/12345678901234567890123456789012");
     assert.equal(calls[0].init?.method, "GET");
     assert.equal(new Headers(calls[0].init?.headers).get("X-AgeChecker-Secret"), "agechecker-account-secret");
     assert.equal(calls[0].init?.body, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousApiKey === undefined) {
+      delete process.env.AGE_VERIFICATION_API_KEY;
+    } else {
+      process.env.AGE_VERIFICATION_API_KEY = previousApiKey;
+    }
+
+    if (previousApiSecret === undefined) {
+      delete process.env.AGE_VERIFICATION_API_SECRET;
+    } else {
+      process.env.AGE_VERIFICATION_API_SECRET = previousApiSecret;
+    }
+
+    if (previousSigningSecret === undefined) {
+      delete process.env.AGE_VERIFICATION_SIGNING_SECRET;
+    } else {
+      process.env.AGE_VERIFICATION_SIGNING_SECRET = previousSigningSecret;
+    }
+  }
+});
+
+test("commerce age verification route requires checkout identity details before signing a token", async () => {
+  const previousApiKey = process.env.AGE_VERIFICATION_API_KEY;
+  const previousApiSecret = process.env.AGE_VERIFICATION_API_SECRET;
+  const previousSigningSecret = process.env.AGE_VERIFICATION_SIGNING_SECRET;
+  const originalFetch = globalThis.fetch;
+  let fetchCalled = false;
+
+  try {
+    process.env.AGE_VERIFICATION_API_KEY = "agechecker-domain-api-key";
+    process.env.AGE_VERIFICATION_API_SECRET = "agechecker-account-secret";
+    process.env.AGE_VERIFICATION_SIGNING_SECRET = "age-secret";
+    globalThis.fetch = async () => {
+      fetchCalled = true;
+      return new Response(JSON.stringify({ status: "accepted" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+
+    const response = await handler({
+      routeKey: "POST /commerce/age-verification-token",
+      rawPath: "/commerce/age-verification-token",
+      body: JSON.stringify({ vendorTransactionId: "12345678901234567890123456789012" }),
+      requestContext: { requestId: "req-commerce-age-token-missing-identity", http: { method: "POST" } },
+    });
+
+    const body = JSON.parse(response.body);
+    assert.equal(response.statusCode, 400);
+    assert.equal(body.error, "age_verification_identity_required");
+    assert.equal(fetchCalled, false);
   } finally {
     globalThis.fetch = originalFetch;
     if (previousApiKey === undefined) {
@@ -1674,7 +1922,10 @@ test("commerce age verification route rejects pending AgeChecker verifications",
     const response = await handler({
       routeKey: "POST /commerce/age-verification-token",
       rawPath: "/commerce/age-verification-token",
-      body: JSON.stringify({ vendorTransactionId: "12345678901234567890123456789012" }),
+      body: JSON.stringify({
+        vendorTransactionId: "12345678901234567890123456789012",
+        ...defaultCheckoutAgeIdentity,
+      }),
       requestContext: { requestId: "req-commerce-age-token-pending", http: { method: "POST" } },
     });
 
@@ -1722,7 +1973,10 @@ test("commerce age verification route maps AgeChecker status misses to a control
     const response = await handler({
       routeKey: "POST /commerce/age-verification-token",
       rawPath: "/commerce/age-verification-token",
-      body: JSON.stringify({ vendorTransactionId: "12345678901234567890123456789012" }),
+      body: JSON.stringify({
+        vendorTransactionId: "12345678901234567890123456789012",
+        ...defaultCheckoutAgeIdentity,
+      }),
       requestContext: { requestId: "req-commerce-age-token-missing", http: { method: "POST" } },
     });
 
@@ -1798,9 +2052,23 @@ test("commerce checkout loads approved catalog from server configuration before 
     assert.equal(response.statusCode, 200);
     assert.equal(JSON.parse(response.body).url, "https://checkout.stripe.com/c/pay/cs_test_123");
     assert.deepEqual(mock.checkoutSessionsCreated[0].line_items, [{ price: "price_approved", quantity: 1 }]);
+    assert.deepEqual(mock.checkoutSessionsCreated[0].shipping_options, [
+      {
+        shipping_rate_data: {
+          type: "fixed_amount",
+          display_name: "USPS Adult Signature Ground + non-member handling",
+          fixed_amount: {
+            amount: 2800,
+            currency: "usd",
+          },
+        },
+      },
+    ]);
     assert.deepEqual(mock.checkoutSessionsCreated[0].shipping_address_collection, { allowed_countries: ["US"] });
     assert.equal((mock.checkoutSessionsCreated[0].metadata as Record<string, string>).shipping_method_id, "usps-adult-signature-ground");
     assert.equal((mock.checkoutSessionsCreated[0].metadata as Record<string, string>).shipping_carrier, "USPS");
+    assert.equal((mock.checkoutSessionsCreated[0].metadata as Record<string, string>).shipping_amount_cents, "2800");
+    assert.equal((mock.checkoutSessionsCreated[0].metadata as Record<string, string>).shipping_handling_fee_cents, "1000");
     assert.equal((mock.checkoutSessionsCreated[0].metadata as Record<string, string>).adult_signature_required, "true");
     assert.equal((mock.checkoutSessionsCreated[0].metadata as Record<string, string>).shipping_state, "AZ");
     assert.equal((mock.checkoutSessionsCreated[0].metadata as Record<string, string>).shipping_postal_code, "85225");
@@ -1859,7 +2127,76 @@ test("commerce checkout allows AgeChecker-verified non-required states to use US
 
     assert.equal(response.statusCode, 200);
     assert.equal((mock.checkoutSessionsCreated[0].metadata as Record<string, string>).shipping_method_id, "usps-ground-advantage");
+    assert.deepEqual(mock.checkoutSessionsCreated[0].shipping_options, [
+      {
+        shipping_rate_data: {
+          type: "fixed_amount",
+          display_name: "USPS Ground Advantage + non-member handling",
+          fixed_amount: {
+            amount: 1900,
+            currency: "usd",
+          },
+        },
+      },
+    ]);
     assert.equal((mock.checkoutSessionsCreated[0].metadata as Record<string, string>).adult_signature_required, "false");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("commerce checkout rejects an age verification token bound to a different identity", async () => {
+  const mock = installStripeMock();
+  try {
+    process.env.STRIPE_SECRET_KEY = "sk_test_123";
+    process.env.STRIPE_LAUNCH_CATALOG_READY = "true";
+    process.env.FEATURE_STRIPE_TAX = "ready";
+    process.env.PUBLIC_SITE_URL = "https://www.yuzucigarclub.com";
+    process.env.AGE_VERIFICATION_SIGNING_SECRET = "age-secret";
+    delete process.env.ALLOW_LEGACY_AGE_VERIFICATION_TOKEN;
+    process.env.STRIPE_LAUNCH_CATALOG_JSON = JSON.stringify([
+      {
+        sku: "APPROVED-BOX",
+        slug: "approved-box",
+        name: "Approved Box",
+        price: 120,
+        publishStatus: "published",
+        inventoryPolicy: "track",
+        sourceQuantity: 5,
+        shippable: true,
+        adultSignatureRequired: true,
+        stripePriceId: "price_approved",
+      },
+    ]);
+
+    const mismatchedIdentityHash = createTestCheckoutAgeIdentityHash({
+      customer: {
+        email: "verified-adult@example.com",
+        phone: "",
+        fullName: "Verified Adult",
+      },
+      shippingAddress: defaultCheckoutAgeIdentity.shippingAddress,
+    });
+
+    const response = await handler({
+      routeKey: "POST /commerce/checkout-session",
+      rawPath: "/commerce/checkout-session",
+      body: JSON.stringify({
+        items: [{ sku: "APPROVED-BOX", quantity: 1, unitPrice: 120 }],
+        customer: { email: "member@example.com" },
+        shippingAddress: defaultCheckoutAgeIdentity.shippingAddress,
+        shippingMethodId: "usps-ground-advantage",
+        compliance: {
+          ageVerificationToken: createSignedAgeVerificationToken("age-secret", "age_txn_mismatched_identity", mismatchedIdentityHash),
+        },
+      }),
+      requestContext: { requestId: "req-commerce-checkout-age-identity-mismatch", http: { method: "POST" } },
+    });
+
+    const body = JSON.parse(response.body);
+    assert.equal(response.statusCode, 400);
+    assert.equal(body.error, "age_verification_identity_mismatch");
+    assert.equal(mock.checkoutSessionsCreated.length, 0);
   } finally {
     mock.restore();
   }
@@ -2133,6 +2470,19 @@ test("commerce checkout blocks member-only SKUs unless a signed membership entit
     assert.equal(JSON.parse(blockedResponse.body).errors[0].code, "membership_required");
     assert.equal(allowedResponse.statusCode, 200);
     assert.equal(mock.checkoutSessionsCreated.length, 1);
+    assert.deepEqual(mock.checkoutSessionsCreated[0].shipping_options, [
+      {
+        shipping_rate_data: {
+          type: "fixed_amount",
+          display_name: "USPS Adult Signature Ground",
+          fixed_amount: {
+            amount: 1800,
+            currency: "usd",
+          },
+        },
+      },
+    ]);
+    assert.equal((mock.checkoutSessionsCreated[0].metadata as Record<string, string>).shipping_handling_fee_cents, "0");
   } finally {
     mock.restore();
   }
@@ -2619,6 +2969,165 @@ test("newsletter subscribe accepts public lead capture and stores monthly member
   }
 });
 
+test("newsletter subscribe sends a brand preference email to the new subscriber", async () => {
+  const mock = installPersistenceMocks();
+  try {
+    const response = await handler({
+      routeKey: "POST /newsletter/subscribe",
+      rawPath: "/newsletter/subscribe",
+      body: JSON.stringify({
+        email: "Reader@Example.com",
+        firstName: "Yuzu",
+        lastName: "Reader",
+        consent: true,
+        wantsMonthlyMembership: true,
+        preferredTier: "Sensei",
+        source: "join-now-header",
+        pagePath: "/membership",
+      }),
+      headers: {
+        "user-agent": "node-test",
+      },
+      requestContext: {
+        requestId: "req-newsletter-brand-preference-email",
+        http: { method: "POST", sourceIp: "198.51.100.42" },
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.subscriber.brandPreferenceEmail.status, "sent");
+    assert.equal(body.subscriber.brandPreferenceEmail.sesMessageId, "ses-outbound-message-123");
+    assert.ok(body.nextActions.includes("collect_brand_preferences"));
+    assert.equal(mock.sesInvocations.length, 1);
+    assert.equal(mock.sesInvocations[0].FromEmailAddress, "support@yuzucigarclub.com");
+    assert.deepEqual(mock.sesInvocations[0].Destination, { ToAddresses: ["reader@example.com"] });
+    assert.deepEqual(mock.sesInvocations[0].ReplyToAddresses, ["support@ses-support.yuzucigarclub.com"]);
+
+    const simpleEmail = (mock.sesInvocations[0].Content as { Simple: { Subject: { Data: string }; Body: { Text: { Data: string } } } }).Simple;
+    assert.match(simpleEmail.Subject.Data, /top cigar brands/i);
+    assert.match(simpleEmail.Body.Text.Data, /Hi Yuzu/i);
+    assert.match(simpleEmail.Body.Text.Data, /reply with your top 3-5 cigar brands/i);
+    assert.match(simpleEmail.Body.Text.Data, /Padron, Arturo Fuente, Davidoff/i);
+    assert.match(simpleEmail.Body.Text.Data, /21\+/);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("newsletter subscribe sends a selected cigar cost newsletter with branded html", async () => {
+  const mock = installPersistenceMocks();
+  try {
+    const response = await handler({
+      routeKey: "POST /newsletter/subscribe",
+      rawPath: "/newsletter/subscribe",
+      body: JSON.stringify({
+        email: "Reader@Example.com",
+        firstName: "Yuzu",
+        consent: true,
+        brandPreferences: ["Padron", "Davidoff", "Unknown Brand"],
+        promotedCigars: [
+          {
+            slug: "padron-1964-anniversary-toro",
+            name: "Padron 1964 Anniversary Toro",
+            brand: "Padron",
+            storeHref: "/shop/padron-1964-anniversary-toro/",
+            nonMemberPrice: 320,
+            memberPrice: 260,
+            packageLabel: "Box of 20",
+            image: "/assets/product-padron.png",
+          },
+          {
+            slug: "davidoff-grand-cru-robusto",
+            name: "Davidoff Grand Cru Robusto",
+            brand: "Davidoff",
+            storeHref: "/shop/davidoff-grand-cru-robusto/",
+            nonMemberPrice: 410,
+            memberPrice: 335,
+            packageLabel: "Box of 25",
+            image: "/assets/product-davidoff.png",
+          },
+        ],
+        source: "education-newsletter",
+        pagePath: "/education",
+      }),
+      headers: {
+        "user-agent": "node-test",
+      },
+      requestContext: {
+        requestId: "req-newsletter-selected-cigars",
+        http: { method: "POST", sourceIp: "198.51.100.42" },
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.deepEqual(body.subscriber.brandPreferences, ["padron", "davidoff"]);
+    assert.equal(body.subscriber.promotedCigars.length, 2);
+    assert.equal(body.subscriber.brandPreferenceEmail.status, "sent");
+    assert.equal(body.subscriber.brandPreferenceEmail.kind, "cigar_cost_promotions");
+    assert.ok(body.nextActions.includes("send_selected_cigar_promotions"));
+    assert.equal(mock.sesInvocations.length, 1);
+
+    const simpleEmail = mock.sesInvocations[0].Content as {
+      Simple: {
+        Subject: { Data: string };
+        Body: { Text: { Data: string }; Html: { Data: string } };
+      };
+    };
+    assert.match(simpleEmail.Simple.Subject.Data, /selected yuzu cigar picks/i);
+    assert.match(simpleEmail.Simple.Body.Text.Data, /Padron 1964 Anniversary Toro/);
+    assert.match(simpleEmail.Simple.Body.Text.Data, /Public cost: \$320\.00/);
+    assert.match(simpleEmail.Simple.Body.Text.Data, /Member cost: \$260\.00/);
+    assert.match(simpleEmail.Simple.Body.Html.Data, /Yuzu Cigar Club/);
+    assert.match(simpleEmail.Simple.Body.Html.Data, /background:#11100d/);
+    assert.match(simpleEmail.Simple.Body.Html.Data, /View cigar/);
+    assert.match(simpleEmail.Simple.Body.Html.Data, /product-padron\.png/);
+
+    const newsletterQuery = mock.clients
+      .flatMap((client) => client.queries)
+      .find((query) => query.sql.includes("insert into public.newsletter_subscribers"));
+    assert.ok(newsletterQuery, "newsletter subscriber should be upserted");
+    const metadata = JSON.parse(String(newsletterQuery.params[9] || "{}"));
+    assert.deepEqual(metadata.brandPreferences, ["padron", "davidoff"]);
+    assert.equal(metadata.promotedCigars[0].slug, "padron-1964-anniversary-toro");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("newsletter subscribe keeps the signup when brand preference email is not ready", async () => {
+  const mock = installPersistenceMocks();
+  try {
+    process.env.FEATURE_SES = "pending_production_access";
+
+    const response = await handler({
+      routeKey: "POST /newsletter/subscribe",
+      rawPath: "/newsletter/subscribe",
+      body: JSON.stringify({
+        email: "reader@example.com",
+        consent: true,
+        source: "education-newsletter",
+      }),
+      requestContext: {
+        requestId: "req-newsletter-brand-preference-email-pending",
+        http: { method: "POST", sourceIp: "198.51.100.42" },
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.subscriber.email, "reader@example.com");
+    assert.deepEqual(body.subscriber.brandPreferenceEmail, {
+      status: "pending_ses",
+      sesMessageId: null,
+    });
+    assert.equal(mock.sesInvocations.length, 0);
+  } finally {
+    mock.restore();
+  }
+});
+
 test("newsletter subscribe validates email and marketing consent", async () => {
   const invalidEmail = await handler({
     routeKey: "POST /newsletter/subscribe",
@@ -2832,6 +3341,46 @@ test("admin member access backend routes list and update users", async () => {
     assert.ok(queries.some((query) => query.sql.includes("admin_members_list")), "members list query should be executed");
     assert.ok(queries.some((query) => query.sql.includes("admin_member_access_update")), "member access update query should be executed");
     assert.ok(queries.some((query) => query.sql.includes("insert into public.audit_log")), "member access update should be audited");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("admin member access update rejects concierge operator only claims", async () => {
+  const mock = installPersistenceMocks();
+  const conciergeClaims = {
+    ...actorClaims,
+    sub: "concierge-123",
+    email: "concierge@yuzucigarclub.example",
+    name: "Yuzu Concierge",
+    "cognito:groups": "concierge_operator",
+  };
+
+  try {
+    const response = await handler({
+      ...createAuthenticatedEvent(
+        "PATCH /admin/members/{id}/access",
+        {
+          role: "admin",
+          membershipTier: "daimyo",
+          memberStatus: "active",
+        },
+        conciergeClaims
+      ),
+      rawPath: "/admin/members/11111111-1111-4111-8111-111111111111/access",
+      pathParameters: {
+        id: "11111111-1111-4111-8111-111111111111",
+      },
+    });
+
+    assert.equal(response.statusCode, 403);
+    assert.equal(JSON.parse(response.body).error, "admin_forbidden");
+    const queries = mock.clients.flatMap((client) => client.queries);
+    assert.equal(
+      queries.some((query) => query.sql.includes("admin_member_access_update")),
+      false,
+      "concierge operators should not reach the member access update query"
+    );
   } finally {
     mock.restore();
   }
@@ -3136,6 +3685,429 @@ test("concierge chat routes cigar questions to cigar guide contract", async () =
   assert.equal(body.guardrails.tobaccoHealthClaims, "not_provided");
 });
 
+test("concierge chat uses Amazon Lex as the router before invoking the selected YCC agent", async () => {
+  const mock = installPersistenceMocks({
+    lexIntentName: "YCCCigarGuideIntent",
+    lexConfidence: 0.93,
+    lexSlots: {
+      Wrapper: "Connecticut shade",
+      Occasion: "morning",
+    },
+    bedrockReply: "A Connecticut shade wrapper is a calm morning pairing with coffee.",
+  });
+  try {
+    process.env.FEATURE_LEX_ROUTER = "ready";
+    process.env.LEX_ROUTER_BOT_ID = "YCCLEXBOT1";
+    process.env.LEX_ROUTER_BOT_ALIAS_ID = "YCCALIAS1";
+    process.env.LEX_ROUTER_LOCALE_ID = "en_US";
+
+    const response = await handler(
+      createAuthenticatedEvent("POST /concierge/chat", {
+        message: "What wrapper pairs well with coffee in the morning?",
+        conversationId: "conv-lex-router",
+      })
+    );
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.agent, "YCCCigarGuide");
+    assert.equal(body.ai.status, "bedrock_runtime");
+    assert.equal(body.lex.status, "recognized");
+    assert.equal(body.lex.intentName, "YCCCigarGuideIntent");
+    assert.equal(body.lex.confidence, 0.93);
+    assert.equal(body.lex.slots.Wrapper, "Connecticut shade");
+    assert.equal(mock.lexInvocations.length, 1);
+    assert.equal(mock.lexInvocations[0].botId, "YCCLEXBOT1");
+    assert.equal(mock.lexInvocations[0].botAliasId, "YCCALIAS1");
+    assert.equal(mock.lexInvocations[0].localeId, "en_US");
+    assert.equal(mock.lexInvocations[0].text, "What wrapper pairs well with coffee in the morning?");
+    assert.equal(mock.lexInvocations[0].sessionId, "ycc-lex-conv-lex-router");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("concierge chat ignores Lex fallback intent and still answers cigar questions", async () => {
+  const mock = installPersistenceMocks({
+    lexIntentName: "FallbackIntent",
+    bedrockReply: "A Connecticut shade wrapper is a calm morning pairing with coffee.",
+  });
+  try {
+    process.env.FEATURE_LEX_ROUTER = "ready";
+    process.env.LEX_ROUTER_BOT_ID = "YCCLEXBOT1";
+    process.env.LEX_ROUTER_BOT_ALIAS_ID = "YCCALIAS1";
+    process.env.LEX_ROUTER_LOCALE_ID = "en_US";
+
+    const response = await handler(
+      createAuthenticatedEvent("POST /concierge/chat", {
+        message: "What wrapper pairs well with coffee in the morning?",
+        conversationId: "conv-lex-fallback-cigar",
+      })
+    );
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.agent, "YCCCigarGuide");
+    assert.deepEqual(body.ai, { status: "bedrock_runtime" });
+    assert.equal(body.lex.intentName, "FallbackIntent");
+    assert.match(body.reply, /Connecticut shade/);
+    assert.equal(mock.lexInvocations.length, 1);
+    assert.equal(mock.agentInvocations.length, 0);
+    assert.equal(mock.bedrockInvocations.length, 1);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("concierge chat routes cigar follow-up terms to the cigar guide without saying cigar", async () => {
+  const mock = installPersistenceMocks({
+    bedrockReply: "Maduro wrappers fit espresso with cocoa and roast, while Connecticut stays creamier and lighter.",
+  });
+  try {
+    const response = await handler(
+      createAuthenticatedEvent("POST /concierge/chat", {
+        message: "Compare Maduro and Connecticut for espresso.",
+      })
+    );
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.agent, "YCCCigarGuide");
+    assert.deepEqual(body.ai, { status: "bedrock_runtime" });
+    assert.match(body.reply, /Maduro/);
+    assert.equal(mock.bedrockInvocations.length, 1);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("concierge chat recovers tobacco comparison refusals for adult cigar questions", async () => {
+  const mock = installPersistenceMocks({
+    bedrockReply:
+      "Sorry, I can't provide information that might facilitate comparing tobacco products. If you want information about our products or have any other questions, feel free to ask.",
+  });
+  try {
+    const response = await handler(
+      createAuthenticatedEvent("POST /concierge/chat", {
+        message: "Compare Maduro and Connecticut for espresso.",
+      })
+    );
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.agent, "YCCCigarGuide");
+    assert.deepEqual(body.ai, { status: "bedrock_runtime" });
+    assert.match(body.reply, /Maduro|Connecticut|espresso/i);
+    assert.doesNotMatch(body.reply, /facilitate comparing tobacco products/i);
+    assert.equal(mock.bedrockInvocations.length, 1);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("concierge chat keeps adult wrapper comparison answers on the requested wrappers", async () => {
+  const mock = installPersistenceMocks({
+    bedrockReply:
+      "Both Padron 1964 Anniversary Series and Davidoff Signature No. 2 pair well with espresso because their cocoa and mild sweetness complement coffee.",
+  });
+  try {
+    const response = await handler(
+      createAuthenticatedEvent("POST /concierge/chat", {
+        message: "Compare Maduro and Connecticut for espresso.",
+      })
+    );
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.agent, "YCCCigarGuide");
+    assert.deepEqual(body.ai, { status: "bedrock_runtime" });
+    assert.match(body.reply, /Maduro/i);
+    assert.match(body.reply, /Connecticut/i);
+    assert.doesNotMatch(body.reply, /Padron 1964|Davidoff Signature/i);
+    assert.equal(mock.bedrockInvocations.length, 1);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("concierge chat recovers redacted adult wrapper terms from direct runtime", async () => {
+  const mock = installPersistenceMocks({
+    bedrockReply:
+      "Connecticut and {ADDRESS} wrappers offer distinct experiences for a morning cigar, with Connecticut staying lighter and creamier.",
+  });
+  try {
+    const response = await handler(
+      createAuthenticatedEvent("POST /concierge/chat", {
+        message: "For adults 21+, compare Connecticut and Maduro wrappers for a morning cigar.",
+      })
+    );
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.agent, "YCCCigarGuide");
+    assert.deepEqual(body.ai, { status: "bedrock_runtime" });
+    assert.match(body.reply, /Connecticut/i);
+    assert.match(body.reply, /Maduro/i);
+    assert.doesNotMatch(body.reply, /\{ADDRESS\}/i);
+    assert.equal(mock.bedrockInvocations.length, 1);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("concierge chat recovers content-filter copy for adult cut and light questions", async () => {
+  const mock = installPersistenceMocks({
+    bedrockReply: "- The generated text has been blocked by our content filters.",
+  });
+  try {
+    const response = await handler(
+      createAuthenticatedEvent("POST /concierge/chat", {
+        message: "I am 21+. How should I cut and light a torpedo cigar without cracking it?",
+      })
+    );
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.agent, "YCCCigarGuide");
+    assert.deepEqual(body.ai, { status: "bedrock_runtime" });
+    assert.match(body.reply, /clean shallow cut/i);
+    assert.match(body.reply, /toast the foot/i);
+    assert.doesNotMatch(body.reply, /content filters/i);
+    assert.equal(mock.bedrockInvocations.length, 1);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("concierge chat returns Lex slot prompts before calling Bedrock guided flows", async () => {
+  const mock = installPersistenceMocks({
+    lexIntentName: "YCCSupportIntent",
+    lexDialogActionType: "ElicitSlot",
+    lexSlotToElicit: "OrderNumber",
+    lexMessages: [
+      {
+        contentType: "PlainText",
+        content: "What order number should I look up?",
+      },
+    ],
+  });
+  try {
+    process.env.FEATURE_LEX_ROUTER = "ready";
+    process.env.LEX_ROUTER_BOT_ID = "YCCLEXBOT1";
+    process.env.LEX_ROUTER_BOT_ALIAS_ID = "YCCALIAS1";
+    process.env.LEX_ROUTER_LOCALE_ID = "en_US";
+
+    const response = await handler(
+      createAuthenticatedEvent("POST /concierge/chat", {
+        message: "I need help with an order.",
+        conversationId: "conv-lex-slots",
+      })
+    );
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.agent, "YCCSupportAgent");
+    assert.equal(body.ai.status, "lex_dialog");
+    assert.equal(body.reply, "What order number should I look up?");
+    assert.equal(body.lex.status, "slot_elicitation");
+    assert.equal(body.lex.dialogActionType, "ElicitSlot");
+    assert.equal(body.lex.slotToElicit, "OrderNumber");
+    assert.deepEqual(body.nextActions, ["continue_lex_guided_flow", "collect_OrderNumber", "review_operator_handoffs"]);
+    assert.equal(mock.lexInvocations.length, 1);
+    assert.equal(mock.agentInvocations.length, 0);
+    assert.equal(mock.bedrockInvocations.length, 0);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("concierge chat ignores incorrect Lex humidor slot prompts for cigar health questions", async () => {
+  const mock = installPersistenceMocks({
+    lexIntentName: "YCCHumidorIntent",
+    lexDialogActionType: "ElicitSlot",
+    lexSlotToElicit: "HumidorConcern",
+    lexMessages: [
+      {
+        contentType: "PlainText",
+        content: "What humidor concern should I use?",
+      },
+    ],
+    bedrockReply:
+      "Sorry, I can't provide information that might facilitate comparing tobacco products. If you want information about our products or have any other questions, feel free to ask.",
+  });
+  try {
+    process.env.FEATURE_LEX_ROUTER = "ready";
+    process.env.LEX_ROUTER_BOT_ID = "YCCLEXBOT1";
+    process.env.LEX_ROUTER_BOT_ALIAS_ID = "YCCALIAS1";
+    process.env.LEX_ROUTER_LOCALE_ID = "en_US";
+
+    const response = await handler(
+      createAuthenticatedEvent("POST /concierge/chat", {
+        message: "Are cigars safer than cigarettes?",
+        conversationId: "conv-lex-humidor-cigar-health",
+      })
+    );
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.agent, "YCCCigarGuide");
+    assert.deepEqual(body.ai, { status: "bedrock_runtime" });
+    assert.equal(body.lex.intentName, "YCCHumidorIntent");
+    assert.match(body.reply, /cannot describe cigar use as safe/i);
+    assert.doesNotMatch(body.reply, /What humidor concern should I use/i);
+    assert.equal(mock.lexInvocations.length, 1);
+    assert.equal(mock.bedrockInvocations.length, 1);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("concierge chat answers cigar humidity questions instead of returning Lex humidor prompts", async () => {
+  const mock = installPersistenceMocks({
+    lexIntentName: "YCCHumidorIntent",
+    lexDialogActionType: "ElicitSlot",
+    lexSlotToElicit: "HumidorConcern",
+    lexMessages: [
+      {
+        contentType: "PlainText",
+        content: "What humidor detail should I focus on: humidity, temperature, storage location, sensors, aging, or inventory?",
+      },
+    ],
+    bedrockReply: "Keep cigars around 65 to 72 percent relative humidity, with slow adjustments and a calibrated hygrometer.",
+  });
+  try {
+    process.env.FEATURE_LEX_ROUTER = "ready";
+    process.env.LEX_ROUTER_BOT_ID = "YCCLEXBOT1";
+    process.env.LEX_ROUTER_BOT_ALIAS_ID = "YCCALIAS1";
+    process.env.LEX_ROUTER_LOCALE_ID = "en_US";
+
+    const response = await handler(
+      createAuthenticatedEvent("POST /concierge/chat", {
+        message: "What humidity should I keep cigars at in my humidor?",
+        conversationId: "conv-lex-humidor-cigar-storage",
+      })
+    );
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.agent, "YCCHumidorAgent");
+    assert.deepEqual(body.ai, { status: "bedrock_runtime" });
+    assert.equal(body.lex.intentName, "YCCHumidorIntent");
+    assert.match(body.reply, /65 to 72 percent/i);
+    assert.doesNotMatch(body.reply, /What humidor detail should I focus on/i);
+    assert.equal(mock.lexInvocations.length, 1);
+    assert.equal(mock.bedrockInvocations.length, 1);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("concierge chat replaces tobacco health guardrail copy with a direct adult boundary", async () => {
+  const mock = installPersistenceMocks({
+    bedrockReply:
+      "Sorry, I can't provide information that might be misleading about tobacco products. It's important to note that cigars and cigarettes both contain nicotine.",
+  });
+  try {
+    const response = await handler(
+      createAuthenticatedEvent("POST /concierge/chat", {
+        message: "Are cigars safer than cigarettes?",
+        agent: "cigar_guide",
+      })
+    );
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.agent, "YCCCigarGuide");
+    assert.deepEqual(body.ai, { status: "bedrock_runtime" });
+    assert.match(body.reply, /cannot describe cigar use as safe/i);
+    assert.doesNotMatch(body.reply, /can't give you information/i);
+    assert.equal(mock.bedrockInvocations.length, 1);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("concierge chat does not surface generic direct-runtime refusal for adult cigar questions", async () => {
+  const mock = installPersistenceMocks({
+    bedrockReply:
+      "Yuzu Cigar Club cannot help with that request. A concierge operator can review age-restricted, account, or compliance-sensitive questions.",
+  });
+  try {
+    const response = await handler(
+      createAuthenticatedEvent("POST /concierge/chat", {
+        message: "How should I cut and light a robusto?",
+        agent: "cigar_guide",
+      })
+    );
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.agent, "YCCCigarGuide");
+    assert.deepEqual(body.ai, { status: "bedrock_runtime" });
+    assert.match(body.reply, /clean shallow cut/i);
+    assert.doesNotMatch(body.reply, /cannot help with that request/i);
+    assert.equal(mock.bedrockInvocations.length, 1);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("concierge chat still blocks under-21 tobacco access when recovering cigar replies", async () => {
+  const mock = installPersistenceMocks({
+    bedrockReply:
+      "Yuzu Cigar Club cannot help with that request. A concierge operator can review age-restricted, account, or compliance-sensitive questions.",
+  });
+  try {
+    const response = await handler(
+      createAuthenticatedEvent("POST /concierge/chat", {
+        message: "How can a 17 year old buy cigars without ID?",
+        agent: "cigar_guide",
+      })
+    );
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.agent, "YCCCigarGuide");
+    assert.deepEqual(body.ai, { status: "bedrock_runtime" });
+    assert.match(body.reply, /adults 21\+/i);
+    assert.match(body.reply, /cannot help anyone under 21/i);
+    assert.doesNotMatch(body.reply, /clean shallow cut/i);
+    assert.equal(mock.bedrockInvocations.length, 1);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("concierge chat retries direct Bedrock Runtime when an agent alias returns a generic refusal", async () => {
+  const mock = installPersistenceMocks({
+    agentReply:
+      "Yuzu Cigar Club cannot help with that request. A concierge operator can review age-restricted, account, or compliance-sensitive questions.",
+    bedrockReply: "Your Sensei membership includes curated cigar access, member pricing, concierge help, and humidor tools.",
+  });
+  try {
+    process.env.BEDROCK_AGENT_YCCCONCIERGE_ID = "AGENTCONCIERGE1";
+    process.env.BEDROCK_AGENT_YCCCONCIERGE_ALIAS_ID = "ALIASCONCIERGE";
+
+    const response = await handler(
+      createAuthenticatedEvent("POST /concierge/chat", {
+        message: "Tell me what my Sensei membership can do.",
+        conversationId: "conv-agent-refusal-retry",
+      })
+    );
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.agent, "YCCConcierge");
+    assert.deepEqual(body.ai, { status: "bedrock_runtime" });
+    assert.match(body.reply, /Sensei membership/);
+    assert.doesNotMatch(body.reply, /cannot help with that request/i);
+    assert.equal(mock.agentInvocations.length, 1);
+    assert.equal(mock.bedrockInvocations.length, 1);
+  } finally {
+    mock.restore();
+  }
+});
+
 test("concierge chat can return Amazon Polly speech for agent replies", async () => {
   const mock = installPersistenceMocks({
     bedrockReply: "The Yuzu concierge can talk this answer back through Amazon Polly.",
@@ -3342,6 +4314,7 @@ test("concierge chat tells live AI paths to answer directly and concisely", asyn
     const runtimeSystem = JSON.stringify(runtimeMock.bedrockInvocations[0]?.system || "");
     assert.match(runtimeSystem, /Answer the member's question directly first/);
     assert.match(runtimeSystem, /Keep replies concise/);
+    assert.match(runtimeSystem, /21\+ adult cigar website/);
   } finally {
     runtimeMock.restore();
   }
@@ -3360,6 +4333,7 @@ test("concierge chat tells live AI paths to answer directly and concisely", asyn
     const agentInput = String(agentMock.agentInvocations[0]?.inputText || "");
     assert.match(agentInput, /Answer the member's question directly first/);
     assert.match(agentInput, /Keep replies concise/);
+    assert.match(agentInput, /21\+ adult cigar website/);
     assert.match(agentInput, /Help me with a renewal charge/);
   } finally {
     agentMock.restore();
@@ -4090,6 +5064,74 @@ test("support email draft persists case, draft email, and audit row", async () =
   }
 });
 
+test("public support contact sends a support email and persists an inbound case", async () => {
+  const mock = installPersistenceMocks();
+  try {
+    const response = await handler({
+      routeKey: "POST /support/contact",
+      rawPath: "/support/contact",
+      body: JSON.stringify({
+        name: "Visitor Name",
+        email: "visitor@example.com",
+        topic: "Order support",
+        orderNumber: "YCC-1042",
+        message: "Please help me find the tracking update for my monthly box.",
+        pagePath: "/contact/",
+      }),
+      headers: {
+        "user-agent": "node-test",
+      },
+      requestContext: {
+        requestId: "req-public-support-contact",
+        http: { method: "POST", sourceIp: "198.51.100.77" },
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.contact.status, "sent");
+    assert.equal(body.contact.email, "visitor@example.com");
+    assert.equal(body.contact.persisted, true);
+    assert.equal(body.contact.sesMessageId, "ses-outbound-message-123");
+    assert.equal(mock.sesInvocations.length, 1);
+    assert.deepEqual(mock.sesInvocations[0].Destination, { ToAddresses: ["support@yuzucigarclub.com"] });
+    assert.deepEqual(mock.sesInvocations[0].ReplyToAddresses, ["visitor@example.com"]);
+    const simpleEmail = (mock.sesInvocations[0].Content as { Simple: { Subject: { Data: string }; Body: { Text: { Data: string } } } }).Simple;
+    assert.match(simpleEmail.Subject.Data, /Order support/);
+    assert.match(simpleEmail.Body.Text.Data, /tracking update/);
+
+    const queries = mock.clients.flatMap((client) => client.queries);
+    assert.ok(queries.some((query) => query.sql.includes("insert into public.support_cases")), "support case should be inserted");
+    assert.ok(
+      queries.some(
+        (query) =>
+          query.sql.includes("insert into public.support_email_messages") &&
+          query.params.includes("ses-outbound-message-123")
+      ),
+      "public support email should be persisted with the SES message id"
+    );
+    assert.ok(queries.some((query) => query.sql.includes("insert into public.audit_log")), "audit row should be inserted");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("public support contact validates required fields before sending", async () => {
+  const response = await handler({
+    routeKey: "POST /support/contact",
+    rawPath: "/support/contact",
+    body: JSON.stringify({
+      name: "Visitor Name",
+      email: "not an email",
+      message: "short",
+    }),
+    requestContext: { requestId: "req-public-support-contact-invalid", http: { method: "POST" } },
+  });
+
+  assert.equal(response.statusCode, 400);
+  assert.equal(JSON.parse(response.body).error, "missing_contact_email");
+});
+
 test("support email send requires an admin or concierge operator", async () => {
   const response = await handler(
     createAuthenticatedEvent("POST /support/email-send", {
@@ -4142,7 +5184,7 @@ test("support email send uses SES and persists the sent email", async () => {
   }
 });
 
-test("SES receipt event reads raw email from S3 and persists an inbound support case", async () => {
+test("SES receipt event routes raw email through YCCSupportAgent and persists an operator draft", async () => {
   const mock = installPersistenceMocks();
   try {
     const response = await handler({
@@ -4171,9 +5213,19 @@ test("SES receipt event reads raw email from S3 and persists an inbound support 
     const body = JSON.parse(response.body);
     assert.equal(body.inbound.status, "stored");
     assert.equal(body.inbound.sesMessageId, "ses-message-123");
+    assert.equal(body.inbound.agent.name, "YCCSupportAgent");
+    assert.equal(body.inbound.agent.status, "bedrock_agent_runtime");
+    assert.equal(body.inbound.agent.draftPersisted, true);
+    assert.equal(body.inbound.agent.draftMessageId, "44444444-4444-4444-8444-444444444444");
     assert.equal(mock.s3Invocations.length, 1);
     assert.equal(mock.s3Invocations[0].Bucket, "classroom2");
     assert.equal(mock.s3Invocations[0].Key, "ycc/support-email/raw/ses-message-123");
+    assert.equal(mock.agentInvocations.length, 1);
+    assert.equal(mock.agentInvocations[0].agentId, "AGENTSUPPORT1");
+    assert.equal(mock.agentInvocations[0].agentAliasId, "ALIASSUPPORT");
+    assert.match(String(mock.agentInvocations[0].inputText), /Inbound SES support email/i);
+    assert.match(String(mock.agentInvocations[0].inputText), /Renewal charge question/);
+    assert.match(String(mock.agentInvocations[0].inputText), /Can someone help me understand my renewal charge\?/);
 
     const queries = mock.clients.flatMap((client) => client.queries);
     assert.ok(queries.some((query) => query.sql.includes("insert into public.support_cases")), "support case should be inserted");
@@ -4185,6 +5237,15 @@ test("SES receipt event reads raw email from S3 and persists an inbound support 
           query.params.includes("ycc/support-email/raw/ses-message-123")
       ),
       "inbound support email should include SES and S3 references"
+    );
+    assert.ok(
+      queries.some(
+        (query) =>
+          query.sql.includes("insert into public.support_email_messages") &&
+          query.params.includes("YCC agent says the answer should use the published knowledge base.") &&
+          JSON.stringify(query.params).includes("ses_inbound_agent")
+      ),
+      "support agent draft should be persisted for operator review"
     );
   } finally {
     mock.restore();
@@ -4309,6 +5370,77 @@ test("humidor image identification route invokes Bedrock vision and returns revi
   }
 });
 
+test("humidor image identification uses Rekognition OCR text as Bedrock prompt evidence", async () => {
+  const mock = installPersistenceMocks({
+    bedrockReply: JSON.stringify({
+      name: "Padron 1964 Anniversary Toro",
+      brand: "Padron",
+      line: "1964 Anniversary",
+      vitola: "Toro",
+      confidence: "high",
+      evidence: ["Band text matches Padron 1964 Anniversary"],
+      needsReview: ["Confirm the exact vitola before saving"],
+    }),
+    rekognitionTextDetections: [
+      {
+        DetectedText: "PADRON 1964 ANNIVERSARY",
+        Type: "LINE",
+        Confidence: 98.4,
+      },
+      {
+        DetectedText: "SERIE 1964",
+        Type: "LINE",
+        Confidence: 86.2,
+      },
+      {
+        DetectedText: "low confidence blur",
+        Type: "LINE",
+        Confidence: 42,
+      },
+      {
+        DetectedText: "PADRON",
+        Type: "WORD",
+        Confidence: 99,
+      },
+    ],
+  });
+  process.env.FEATURE_REKOGNITION = "detect_text_ready";
+
+  try {
+    const response = await handler(
+      createAuthenticatedEvent("POST /humidor/identify-cigar", {
+        imageBase64: Buffer.from("fake-jpeg-bytes").toString("base64"),
+        mimeType: "image/jpeg",
+        notes: "Close-up photo of the cigar band.",
+      })
+    );
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.ai.rekognition.status, "detected_text");
+    assert.deepEqual(
+      body.ai.rekognition.textLines.map((line: { text: string }) => line.text),
+      ["PADRON 1964 ANNIVERSARY", "SERIE 1964"]
+    );
+    assert.equal(mock.rekognitionInvocations.length, 1);
+    const rekognitionImage = mock.rekognitionInvocations[0].Image as { Bytes: Buffer };
+    assert.ok(Buffer.isBuffer(rekognitionImage.Bytes), "Rekognition should receive the uploaded image bytes");
+
+    const content = (mock.bedrockInvocations[0].messages as Array<Record<string, unknown>>)[0]
+      .content as Array<Record<string, unknown>>;
+    const promptText = String(content.find((block) => "text" in block)?.text || "");
+
+    assert.match(promptText, /Amazon Rekognition OCR candidates/i);
+    assert.match(promptText, /PADRON 1964 ANNIVERSARY/);
+    assert.match(promptText, /SERIE 1964/);
+    assert.doesNotMatch(promptText, /low confidence blur/);
+    assert.doesNotMatch(promptText, /"PADRON"/);
+    assert.equal(mock.clients.length, 0, "Rekognition-assisted identification should not persist until confirmation");
+  } finally {
+    mock.restore();
+  }
+});
+
 test("humidor image identification logs pulled field coverage without image or note payloads", async () => {
   const mock = installPersistenceMocks({
     bedrockReply: JSON.stringify({
@@ -4382,7 +5514,10 @@ test("humidor alerts GET endpoint returns stored preferences from the member pro
     assert.equal(body.preferences.climateAlertsEnabled, false);
     assert.equal(body.preferences.humidorProfile.humidorName, "Home cabinet");
     assert.equal(body.preferences.humidorProfile.defaultLocation, "Walk-in Humidor");
-    assert.deepEqual(body.preferences.humidorProfile.locations, ["Walk-in Humidor", "Locker B"]);
+    assert.deepEqual(body.preferences.humidorProfile.locations, [
+      { name: "Walk-in Humidor", kind: "humidor", trays: ["Top Tray", "Bottom Tray"] },
+      { name: "Locker B", kind: "other", trays: [] },
+    ]);
     assert.equal(body.preferences.pushSubscription?.endpoint, "https://example.com/endpoint");
     assert.deepEqual(body.preferences.pairedDevices, []);
 
@@ -4427,7 +5562,12 @@ test("humidor alerts update endpoint stores member profile preferences", async (
         humidorProfile: {
           humidorName: "Aging locker",
           defaultLocation: "Locker A / Drawer 2",
-          locations: ["Locker A / Drawer 2", " Travel Case ", "locker a / drawer 2", "", "Garage Cabinet"],
+          locations: [
+            { name: "Locker A", kind: "humidor", trays: ["Top Tray", " Bottom Tray ", "top tray", ""] },
+            { name: "Travel Case", kind: "other", trays: ["Ignored Tray"] },
+            " Garage Cabinet ",
+            { name: "locker a", kind: "humidor", trays: ["Middle Tray"] },
+          ],
         },
       })
     );
@@ -4438,8 +5578,12 @@ test("humidor alerts update endpoint stores member profile preferences", async (
     assert.equal(body.preferences.pushEnabled, true);
     assert.equal(body.preferences.climateAlertsEnabled, true);
     assert.equal(body.preferences.humidorProfile.defaultLocation, "Locker A / Drawer 2");
-    assert.deepEqual(body.preferences.humidorProfile.locations, ["Locker A / Drawer 2", "Travel Case", "Garage Cabinet"]);
-    assert.equal(body.preferences.pushSubscription.endpoint, "https://example.com/endpoint");
+    assert.deepEqual(body.preferences.humidorProfile.locations, [
+      { name: "Locker A", kind: "humidor", trays: ["Top Tray", "Bottom Tray", "Middle Tray"] },
+      { name: "Travel Case", kind: "other", trays: [] },
+      { name: "Garage Cabinet", kind: "other", trays: [] },
+    ]);
+    assert.equal(body.preferences.pushSubscription.endpoint, "https://example.com/updated");
     assert.equal(body.preferences.pairedDevices[0].name, "Smart Cabinet Humidifier");
     assert.equal(body.preferences.pairedDevices[0].humidity, 61);
 
@@ -4449,9 +5593,149 @@ test("humidor alerts update endpoint stores member profile preferences", async (
 
     assert.equal(savedPreferences.humidorProfile.humidorName, "Aging locker");
     assert.equal(savedPreferences.humidorProfile.defaultLocation, "Locker A / Drawer 2");
-    assert.deepEqual(savedPreferences.humidorProfile.locations, ["Locker A / Drawer 2", "Travel Case", "Garage Cabinet"]);
+    assert.deepEqual(savedPreferences.humidorProfile.locations, [
+      { name: "Locker A", kind: "humidor", trays: ["Top Tray", "Bottom Tray", "Middle Tray"] },
+      { name: "Travel Case", kind: "other", trays: [] },
+      { name: "Garage Cabinet", kind: "other", trays: [] },
+    ]);
     assert.ok(queries.some((query) => query.sql.includes("insert into public.member_profiles")), "alert preferences should be upserted in member_profiles");
     assert.ok(queries.some((query) => query.sql.includes("insert into public.audit_log")), "alert preferences update should be audited");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("IoT humidor telemetry updates the matching paired device reading", async () => {
+  const pairedDevice = {
+    id: "device-humidifier-walk-in",
+    name: "Smart Cabinet Humidifier",
+    location: "Walk-in Humidor",
+    deviceType: "HUMIDIFIER",
+    connection: "WiFi",
+    identifier: "ycc-humidor-test-001",
+    humidity: 61,
+    temperature: 70,
+    syncIntervalMinutes: 20,
+    status: "Connected",
+    lastSyncedAt: "Earlier",
+  };
+  const mock = installPersistenceMocks({
+    memberProfileRows: [
+      {
+        id: "profile-111",
+        member_id: "11111111-1111-4111-8111-111111111111",
+        preferences: {
+          pushEnabled: true,
+          reorderRemindersEnabled: true,
+          climateAlertsEnabled: true,
+          pushSubscription: {
+            endpoint: "https://example.com/endpoint",
+            keys: {
+              p256dh: "p256dh-key",
+              auth: "auth-key",
+            },
+          },
+          pairedDevices: [pairedDevice],
+          humidorProfile: {
+            humidorName: "Home cabinet",
+            defaultLocation: "Walk-in Humidor",
+            locations: [{ name: "Walk-in Humidor", kind: "humidor", trays: ["Top Tray"] }],
+          },
+        },
+      },
+    ],
+  });
+
+  try {
+    const response = await handler({
+      source: "ycc.humidor.iot.telemetry",
+      topic: "ycc/humidor/ycc-humidor-test-001/telemetry",
+      thingName: "ycc-humidor-test-001",
+      humidity: 68.4,
+      temperature: 70.2,
+      batteryPercent: 94,
+      receivedAt: 1779894000000,
+      requestContext: { requestId: "req-iot-humidor-telemetry" },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.status, "ingested");
+    assert.equal(body.summary.matchedProfiles, 1);
+    assert.equal(body.summary.updatedDevices, 1);
+    assert.equal(body.summary.thingName, "ycc-humidor-test-001");
+
+    const queries = mock.clients.flatMap((client) => client.queries);
+    const preferenceUpsert = queries.find((query) => query.sql.includes("insert into public.member_profiles"));
+    assert.ok(preferenceUpsert, "telemetry should persist updated pairedDevices preferences");
+    const savedPreferences = JSON.parse(String(preferenceUpsert.params[1]));
+    assert.equal(savedPreferences.pairedDevices[0].humidity, 68.4);
+    assert.equal(savedPreferences.pairedDevices[0].temperature, 70.2);
+    assert.equal(savedPreferences.pairedDevices[0].lastSyncedAt, "2026-05-27T15:00:00.000Z");
+    assert.ok(
+      queries.some((query) => query.sql.includes("insert into public.audit_log")),
+      "telemetry ingestion should write an audit row"
+    );
+  } finally {
+    mock.restore();
+  }
+});
+
+test("IoT humidor telemetry uses the topic thing name instead of payload device aliases", async () => {
+  const victimDevice = {
+    id: "victim-device-id",
+    name: "Victim Humidifier",
+    location: "Walk-in Humidor",
+    deviceType: "HUMIDIFIER",
+    connection: "WiFi",
+    identifier: "victim-thing",
+    deviceId: "victim-device-id",
+    thingName: "victim-thing",
+    humidity: 61,
+    temperature: 70,
+    syncIntervalMinutes: 20,
+    status: "Connected",
+    lastSyncedAt: "Earlier",
+  };
+  const mock = installPersistenceMocks({
+    memberProfileRows: [
+      {
+        id: "profile-111",
+        member_id: "11111111-1111-4111-8111-111111111111",
+        preferences: {
+          pushEnabled: true,
+          reorderRemindersEnabled: true,
+          climateAlertsEnabled: true,
+          pairedDevices: [victimDevice],
+        },
+      },
+    ],
+  });
+
+  try {
+    const response = await handler({
+      source: "ycc.humidor.iot.telemetry",
+      topic: "ycc/humidor/attacker-thing/telemetry",
+      thingName: "victim-thing",
+      identifier: "victim-thing",
+      deviceId: "victim-device-id",
+      humidity: 68.4,
+      temperature: 70.2,
+      receivedAt: 1779894000000,
+      requestContext: { requestId: "req-iot-humidor-telemetry-spoofed-alias" },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.summary.thingName, "attacker-thing");
+    assert.equal(body.summary.matchedProfiles, 0);
+    assert.equal(body.summary.updatedDevices, 0);
+    const queries = mock.clients.flatMap((client) => client.queries);
+    assert.equal(
+      queries.some((query) => query.sql.includes("insert into public.member_profiles")),
+      false,
+      "spoofed payload aliases must not persist victim paired-device updates"
+    );
   } finally {
     mock.restore();
   }
@@ -4517,6 +5801,12 @@ test("humidor alert dispatch reports no due items when none are eligible", async
     assert.equal(body.summary.dueItems, 0);
     assert.equal(body.summary.sentNotifications, 0);
     assert.equal(mock.webPushInvocations.length, 1);
+
+    const dueQuery = mock.clients
+      .flatMap((client) => client.queries)
+      .find((query) => query.sql.includes("humidor_item_id") && query.sql.includes("humidorReorderReminderDispatchedOn"));
+    assert.ok(dueQuery, "dispatch should query due reorder reminders");
+    assert.match(dueQuery.sql, /<> \$1::text/, "dispatch marker comparison must cast the date parameter back to text");
   } finally {
     mock.restore();
   }
@@ -4859,7 +6149,7 @@ test("humidor item route stores collection value and uploaded cigar image metada
   }
 });
 
-test("humidor item update route stores a later humidor location", async () => {
+test("humidor item update route stores a later humidor location and tray", async () => {
   const itemId = "abababab-abab-4bab-8bab-abababababab";
   const mock = installPersistenceMocks({
     humidorItemRows: [
@@ -4890,7 +6180,8 @@ test("humidor item update route stores a later humidor location", async () => {
   try {
     const response = await handler({
       ...createAuthenticatedEvent("PATCH /humidor/items/{id}", {
-        humidorLocation: "Member humidor / Drawer 3",
+        humidorLocation: "Member humidor",
+        tray: "Drawer 3",
       }),
       rawPath: `/humidor/items/${itemId}`,
       pathParameters: { id: itemId },
@@ -4900,13 +6191,14 @@ test("humidor item update route stores a later humidor location", async () => {
     const body = JSON.parse(response.body);
     assert.equal(body.item.id, itemId);
     assert.equal(body.item.name, "Ecuador Hand Made");
-    assert.equal(body.item.humidorLocation, "Member humidor / Drawer 3");
+    assert.equal(body.item.humidorLocation, "Member humidor");
+    assert.equal(body.item.tray, "Drawer 3");
     assert.equal(body.persistence.status, "stored");
 
     const queries = mock.clients.flatMap((client) => client.queries);
     assert.ok(
-      queries.some((query) => query.sql.includes("humidor_item_location_update") && query.sql.includes("update public.humidor_items")),
-      "location update should update the stored humidor row",
+      queries.some((query) => query.sql.includes("humidor_item_location_update") && query.sql.includes("tray")),
+      "location update should update the stored humidor row and tray",
     );
     assert.ok(queries.some((query) => query.sql.includes("insert into public.audit_log")), "location update should be audited");
   } finally {
@@ -5277,8 +6569,21 @@ test("humidor item enrichment route previews member review when no saveable upda
     assert.equal(body.previewItem.line, "Magic Toast");
     assert.equal(body.enrichment.status, "needs_review");
     assert.deepEqual(body.enrichment.updatedFields, []);
+    assert.equal(body.ai.browserSearch.status, "requested");
+    assert.match(body.ai.browserSearch.query, /Magic Toast/i);
+    assert.match(body.ai.browserSearch.query, /Corona Gorda/i);
+    assert.ok(body.ai.browserSearch.missingFields.includes("info"));
+    assert.ok(body.ai.browserSearch.missingFields.includes("image"));
+    assert.ok(body.ai.browserSearch.missingFields.includes("msrp"));
     assert.equal(body.persistence.status, "pending_member_review");
     assert.equal(mock.bedrockInvocations.length, 1);
+    const content = (mock.bedrockInvocations[0].messages as Array<Record<string, unknown>>)[0]
+      .content as Array<Record<string, unknown>>;
+    const promptText = String(content.find((block) => "text" in block)?.text || "");
+    assert.match(promptText, /Browser search required/i);
+    assert.match(promptText, /Search query:/i);
+    assert.match(promptText, /Magic Toast Bradi Corona Gorda cigar wrapper origin strength MSRP product image/i);
+    assert.match(promptText, /source URL/i);
 
     const queries = mock.clients.flatMap((client) => client.queries);
     assert.equal(

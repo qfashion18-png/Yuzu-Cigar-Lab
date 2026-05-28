@@ -3,7 +3,13 @@ import { request as httpsRequest } from "node:https";
 
 import { cigarFlowItems, cigarPressReleaseSearchSources } from "../src/lib/cigar-flow";
 import { resolveNewsroomAutomationAuth } from "../src/lib/newsroom-automation-auth";
-import { isPlaceholderNewsBodyMarkdown, officialCigarNewsSources, type NewsStoryImage } from "../src/lib/newsroom";
+import {
+  isPlaceholderNewsBodyMarkdown,
+  normalizeNewsSourceCandidate,
+  officialCigarNewsSources,
+  type NewsSourceNote,
+  type NewsStoryImage,
+} from "../src/lib/newsroom";
 
 type NewsStoryDraftResponse = {
   draft: {
@@ -12,7 +18,7 @@ type NewsStoryDraftResponse = {
     category: string;
     bodyMarkdown: string;
     images?: NewsStoryImage[];
-    sourceNotes: { url: string; label?: string; note?: string }[];
+    sourceNotes?: NewsSourceNote[];
     sections: Array<{ heading: string; body: string }>;
   };
   prompt?: {
@@ -56,6 +62,7 @@ async function runDailyCigarFlow() {
   let draftResult: NewsStoryDraftResponse | null = null;
   let lastDraftError: unknown = null;
   let publishImages: NewsStoryImage[] = [];
+  let publishSourceNotes: NewsSourceNote[] = [];
 
   for (const [index, sourceBatch] of sourceBatches.entries()) {
     const storyImages = buildDailyCigarFlowStoryImages(sourceBatch.sourceUrls);
@@ -68,6 +75,7 @@ async function runDailyCigarFlow() {
         throw new Error("Draft generation returned placeholder scaffold copy instead of a real story.");
       }
       publishImages = selectSourceAlignedStoryImages(draftResult.draft.images, draftInput.sourceUrls, storyImages);
+      publishSourceNotes = buildDailyCigarFlowPublishSourceNotes(draftResult.draft.sourceNotes, sourceBatch);
       break;
     } catch (error) {
       lastDraftError = error;
@@ -97,6 +105,7 @@ async function runDailyCigarFlow() {
   const publishPayload = {
     ...draftResult.draft,
     images: publishImages,
+    sourceNotes: publishSourceNotes,
     operatorApproved: true,
     publishStatus: "published",
     status: "published",
@@ -186,6 +195,82 @@ function selectSourceAlignedStoryImages(
   const alignedDraftImages = (draftImages ?? []).filter((image) => isHttpUrl(image.image) && isSourceAlignedUrl(image.sourceUrl ?? "", sourceUrls));
 
   return alignedDraftImages.length ? alignedDraftImages : fallbackImages;
+}
+
+function buildDailyCigarFlowPublishSourceNotes(
+  draftNotes: NewsSourceNote[] | undefined,
+  sourceBatch: DailyCigarFlowSourceBatch,
+): NewsSourceNote[] {
+  const sourceBatchNotes = sourceBatch.sourceUrls.map((sourceUrl, index) => {
+    const source = normalizeNewsSourceCandidate(sourceUrl);
+    const label = sourceBatch.sourceNames[index] || source.domain || `Source ${index + 1}`;
+
+    return {
+      label,
+      url: source.url || sourceUrl,
+      note: `${label} selected by the daily Cigar Flow automation as a primary source for this story.`,
+      sourceType: source.sourceType,
+      domain: source.domain,
+      reviewNote: source.reviewNote,
+    } satisfies NewsSourceNote;
+  });
+
+  return uniqueNewsSourceNotes([...normalizeDailyPublishSourceNotes(draftNotes), ...sourceBatchNotes]);
+}
+
+function normalizeDailyPublishSourceNotes(value: unknown): NewsSourceNote[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item): NewsSourceNote | null => {
+      const record = typeof item === "string" ? { url: item } : item && typeof item === "object" ? (item as Record<string, unknown>) : null;
+
+      if (!record) {
+        return null;
+      }
+
+      const source = normalizeNewsSourceCandidate(String(record.url || ""));
+      if (!source.url) {
+        return null;
+      }
+
+      return {
+        label: cleanDailySourceNoteText(record.label, 80) || source.domain || "Source",
+        url: source.url,
+        note: cleanDailySourceNoteText(record.note, 320) || source.reviewNote,
+        sourceType: source.sourceType,
+        domain: source.domain,
+        reviewNote: source.reviewNote,
+      };
+    })
+    .filter((source): source is NewsSourceNote => Boolean(source));
+}
+
+function uniqueNewsSourceNotes(notes: readonly NewsSourceNote[]) {
+  const seen = new Set<string>();
+
+  return notes.filter((note) => {
+    if (!isHttpUrl(note.url)) {
+      return false;
+    }
+
+    const key = note.url.toLowerCase();
+    if (seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
+}
+
+function cleanDailySourceNoteText(value: unknown, maxLength: number) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLength);
 }
 
 async function postJson<TResponse>(url: string, body: unknown, token: string, insecureTls: boolean): Promise<TResponse> {

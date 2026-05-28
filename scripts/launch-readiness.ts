@@ -43,6 +43,13 @@ const requiredPublicKeys = [
   "NEXT_PUBLIC_COGNITO_LOGOUT_PATH",
 ];
 
+const requiredPushKeys = [
+  "NEXT_PUBLIC_VAPID_PUBLIC_KEY",
+  "VAPID_PUBLIC_KEY",
+  "VAPID_PRIVATE_KEY",
+  "VAPID_SUBJECT",
+];
+
 const stripePriceKeys = [
   "STRIPE_PRICE_BOX_ACCESS_PASS_MONTHLY",
   "STRIPE_PRICE_BOX_ACCESS_PASS_QUARTERLY",
@@ -120,6 +127,12 @@ export function assessLaunchReadiness(env: EnvMap, options: LaunchReadinessOptio
     const alwaysStrict = key === "NEXT_PUBLIC_ADMIN_APP_URL" ? strictExternal : true;
     checks.push(requiredValueCheck(`${key.toLowerCase().replaceAll("_", "-")}-configured`, key, env[key], alwaysStrict));
   }
+
+  for (const key of requiredPushKeys) {
+    checks.push(requiredValueCheck(`${key.toLowerCase().replaceAll("_", "-")}-configured`, key, env[key], strictExternal));
+  }
+
+  checks.push(vapidPublicKeyMatchCheck(env, strictExternal));
 
   const adminAppUrl = resolveAdminAppUrl(env);
   const adminAppUrlStrict = strictExternal || process.env.CI === "1";
@@ -201,6 +214,25 @@ function requiredValueCheck(id: string, key: string, value: string | undefined, 
     id,
     status: configured ? "pass" : alwaysStrict ? "fail" : "warn",
     message: configured ? `${key} is configured.` : `${key} is missing or still a placeholder.`,
+  };
+}
+
+function vapidPublicKeyMatchCheck(env: EnvMap, strictExternal: boolean): ReadinessCheck {
+  const browserPublicKey = env.NEXT_PUBLIC_VAPID_PUBLIC_KEY?.trim() ?? "";
+  const serverPublicKey = env.VAPID_PUBLIC_KEY?.trim() ?? "";
+  const configured =
+    Boolean(browserPublicKey) &&
+    Boolean(serverPublicKey) &&
+    !isPlaceholderValue(browserPublicKey) &&
+    !isPlaceholderValue(serverPublicKey);
+  const matches = configured && browserPublicKey === serverPublicKey;
+
+  return {
+    id: "vapid-public-key-match",
+    status: matches ? "pass" : strictExternal ? "fail" : "warn",
+    message: matches
+      ? "Browser and Lambda VAPID public keys match."
+      : "NEXT_PUBLIC_VAPID_PUBLIC_KEY must match VAPID_PUBLIC_KEY so mobile push subscriptions can be delivered.",
   };
 }
 

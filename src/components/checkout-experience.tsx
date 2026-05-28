@@ -79,9 +79,10 @@ function CheckoutExperienceContent({ accountSession }: { accountSession: BackupA
     () =>
       calculateCartTotals(cart, {
         deliveryPrice: selectedDelivery.price,
+        isMember: auth.isMember,
         taxRate,
       }),
-    [cart, selectedDelivery.price]
+    [auth.isMember, cart, selectedDelivery.price]
   );
 
   useEffect(() => {
@@ -136,7 +137,7 @@ function CheckoutExperienceContent({ accountSession }: { accountSession: BackupA
 
     try {
       let membershipEntitlementToken: string | undefined;
-      if (hasMemberOnlyItems) {
+      if (auth.isMember || hasMemberOnlyItems) {
         const authHeaders = await auth.createApiHeaders();
         if (!authHeaders.Authorization) {
           setError("Sign in with Cognito so Yuzu can verify your active membership before checkout.");
@@ -370,6 +371,7 @@ function CheckoutExperienceContent({ accountSession }: { accountSession: BackupA
           <SummaryRow label="Subtotal" value={formatCurrency(totals.subtotal)} />
           {totals.discount > 0 && <SummaryRow label={`Promotion ${cart.promotionCode}`} value={`-${formatCurrency(totals.discount)}`} tone="gold" />}
           <SummaryRow label={selectedDelivery.title} value={formatCurrency(totals.shipping)} />
+          {totals.handling > 0 && <SummaryRow label="Non-member shipping/handling" value={formatCurrency(totals.handling)} />}
           <SummaryRow label="Estimated tax" value={formatCurrency(totals.tax)} />
           <SummaryRow label="Payment" value={selectedPayment.title} />
           <div className="mt-2 flex justify-between border-t border-yuzu-line pt-4 font-heading text-3xl text-yuzu-gold">

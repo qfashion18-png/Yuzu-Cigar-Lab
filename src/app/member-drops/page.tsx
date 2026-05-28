@@ -10,21 +10,17 @@ import { SectionHeading } from "@/components/section-heading";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { featuredLuxuryProducts } from "@/lib/catalog";
+import { buildPageMetadata } from "@/lib/seo";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = buildPageMetadata({
   title: "Member Drops | Yuzu Cigar Club",
   description:
     "Preview rare Yuzu Cigar Club member-only cigar drops, allocation windows, and waitlist releases.",
-  alternates: {
-    canonical: "/member-drops",
-  },
-  openGraph: {
-    title: "Member Drops | Yuzu Cigar Club",
-    description:
-      "Preview rare Yuzu Cigar Club member-only cigar drops, allocation windows, and waitlist releases.",
-    url: "/member-drops",
-  },
-};
+  path: "/member-drops",
+  image: "/assets/shop-hero.png",
+  imageAlt: "Rare member-only cigar box drop",
+  keywords: ["member cigar drops", "rare cigar boxes", "cigar allocation windows"],
+});
 
 export default function MemberDropsPage() {
   const drops = featuredLuxuryProducts;

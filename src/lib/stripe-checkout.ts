@@ -1,5 +1,5 @@
 import { getCatalogProductBySkuOrId } from "@/lib/catalog";
-import { isMemberOnlyCart, type ShoppingCart } from "@/lib/shopping-cart";
+import { calculateCartTotals, isMemberOnlyCart, type ShoppingCart } from "@/lib/shopping-cart";
 
 export type CheckoutCustomerInput = {
   email: string;
@@ -27,6 +27,8 @@ export type CheckoutSessionRequest = {
   };
   quote: {
     subtotal: number;
+    handling: number;
+    total: number;
     currency: "USD";
   };
   membership?: {
@@ -100,6 +102,17 @@ export function buildCheckoutSessionRequest(input: {
     );
   }
 
+  if (isMember && !input.membershipEntitlementToken) {
+    throw createCommerceError(
+      "membership_entitlement_required",
+      "A server membership entitlement is required before checking out as a member."
+    );
+  }
+
+  const totals = calculateCartTotals(input.cart, {
+    isMember,
+  });
+
   const request: CheckoutSessionRequest = {
     cartId: input.cart.id,
     items: input.cart.items.map((item) => ({
@@ -121,7 +134,9 @@ export function buildCheckoutSessionRequest(input: {
       ageVerificationToken: input.complianceToken,
     },
     quote: {
-      subtotal: roundCurrency(input.cart.items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0)),
+      subtotal: totals.subtotal,
+      handling: totals.handling,
+      total: totals.total,
       currency: "USD",
     },
   };
@@ -279,8 +294,4 @@ function getCommerceErrorCode(error: unknown) {
   }
 
   return "";
-}
-
-function roundCurrency(value: number) {
-  return Math.round(Number(value) * 100) / 100;
 }

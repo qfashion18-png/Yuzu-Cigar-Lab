@@ -29,7 +29,9 @@ const migrationFiles = [
 const lambdaDependencies = [
   "@aws-sdk/client-bedrock-agent-runtime",
   "@aws-sdk/client-bedrock-runtime",
+  "@aws-sdk/client-lex-runtime-v2",
   "@aws-sdk/client-polly",
+  "@aws-sdk/client-rekognition",
   "@aws-sdk/client-s3",
   "@aws-sdk/client-secrets-manager",
   "@aws-sdk/client-sesv2",
@@ -121,7 +123,9 @@ function validateStage() {
     ...migrationFiles.map((file) => `migrations/${file}`),
     "node_modules/pg/package.json",
     "node_modules/stripe/package.json",
+    "node_modules/@aws-sdk/client-lex-runtime-v2/package.json",
     "node_modules/@aws-sdk/client-secrets-manager/package.json",
+    "node_modules/@aws-sdk/client-rekognition/package.json",
   ];
   const missing = requiredEntries.filter((entry) => !existsSync(join(stageDir, ...entry.split("/"))));
 

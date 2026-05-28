@@ -2,21 +2,17 @@ import type { Metadata } from "next";
 import { Newspaper, ShieldCheck } from "lucide-react";
 
 import { NewsStoryFeed } from "@/components/news-story-feed";
+import { buildPageMetadata } from "@/lib/seo";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = buildPageMetadata({
   title: "Cigar News | Yuzu Cigar Club",
   description:
     "Original Yuzu Cigar Club cigar-industry news stories drafted from official brand, company, event, regulator, and wire sources.",
-  alternates: {
-    canonical: "/news",
-  },
-  openGraph: {
-    title: "Cigar News | Yuzu Cigar Club",
-    description:
-      "Original Yuzu Cigar Club cigar-industry news stories drafted from official brand, company, event, regulator, and wire sources.",
-    url: "/news",
-  },
-};
+  path: "/news",
+  image: "/assets/about-lounge.png",
+  imageAlt: "Yuzu Cigar Club newsroom and cigar lounge",
+  keywords: ["cigar news", "cigar industry updates", "cigar manufacturer news"],
+});
 
 export default function NewsPage() {
   return (
