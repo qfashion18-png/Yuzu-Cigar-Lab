@@ -76,6 +76,24 @@ Everything else in the published cigar/sampler set is missing sourced Ratings & 
 - Sourced cigar coverage is now 100.00%.
 - Verification passed: `node --import tsx --test tests\product-detail.test.ts`, `npx eslint src\lib\catalog.ts tests\product-detail.test.ts`, and `npx tsc --noEmit --pretty false`.
 
+2026-05-28 Ratings & Reviews Only Correction:
+
+- Removed the placeholder fallback that treated Cigar Aficionado search pages, broad brand profiles, and community/profile pages as public Ratings & Reviews data.
+- Updated the product detail Ratings & Reviews panel to render only source name, rating text, and source link for sourced review profiles.
+- The previous 100% claim is superseded; honest concrete sourced coverage is now 558 of 872 corrected cigar/sampler products, or 63.99%.
+- Products without concrete review sources remain neutral, with no public audit/research prompts.
+- Verification passed: `node --import tsx --test tests\product-detail.test.ts`, `npx eslint src\lib\catalog.ts src\app\shop\[slug]\page.tsx tests\product-detail.test.ts`, and `npx tsc --noEmit --pretty false`.
+
+2026-05-28 Sub-Agent Ratings & Reviews Completion:
+
+- Dispatched read-only sub-agent research batches for Punch/Cohiba, ACID/Drew Estate/CAO, My Father/Tatuaje/EPC, Ashton/AVO/Joya/Aladino, and value/long-tail brands, plus a hard-leftovers pass.
+- Integrated only exact-product, exact-line, customer-review, or rated line-reference URLs into `getFinalCoverageReviewProfile`; generic search/profile fallbacks remain removed.
+- Coverage moved from 558 of 872 concrete/nonblank rows to 872 of 872 nonblank Ratings & Reviews panels.
+- 868 corrected cigar/sampler products now have public rating/review source rows.
+- 4 products have an explicit no-public-rating status instead of an invented rating: the three `Cactus Joe Coffee` formats and `Cojimar Honey Blueberry`.
+- Blank corrected cigar/sampler Ratings & Reviews panels moved from 314 to 0.
+- Verification passed: `node --import tsx --test tests\product-detail.test.ts`, `npx eslint src\lib\catalog.ts src\app\shop\[slug]\page.tsx tests\product-detail.test.ts`, and `npx tsc --noEmit --pretty false`.
+
 ## Files
 
 - Modify: `src/lib/catalog.ts`
@@ -105,6 +123,8 @@ After the Arturo Fuente batch: `{ catalog: 921, cigars: 834, missing: 723 }`.
 Current after the next five batch: `{ catalog: 921, cigars: 834, missing: 510 }`.
 Current after the 50 percent coverage batch: `{ catalog: 921, cigars: 834, missing: 409 }`.
 Current after the 100 percent final pass and corrected cigar predicate: `{ catalog: 921, cigars: 872, missing: 0 }`.
+Current after the Ratings & Reviews-only correction: `{ catalog: 921, cigars: 872, missing: 314 }`.
+Current after the sub-agent Ratings & Reviews completion: `{ catalog: 921, cigars: 872, missing: 0, noPublicReviewStatus: 4 }`.
 
 - [x] Export or paste the missing queue for the active batch into the audit doc before editing source data.
 - [x] Keep the public empty review state unchanged for products that are still missing during the batch.
@@ -141,18 +161,18 @@ Expected reduction: up to 324 products if each high-volume brand can be source-m
 
 - [x] Work the remaining brands in descending missing-count order.
 - [x] For sample packs, source included cigar lines or clearly label the profile as pack/line-level; do not invent a single pack score.
-- [x] For products without exact/line/customer pages mapped in this pass, use clearly labeled Cigar Aficionado review-search profile coverage rather than an invented score.
+- [x] For products without exact/line/customer pages mapped in this pass, avoid search/profile fallbacks; use an explicit no-public-rating status only when no responsible public review source can be found.
 - [x] Run `node --import tsx --test tests/product-detail.test.ts`.
 - [x] Rerun the audit command and record the final missing count.
 
 ## Task 6: Final Verification
 
-- [ ] Run `npx tsc --noEmit --pretty false`.
+- [x] Run `npx tsc --noEmit --pretty false`.
 - [ ] Run `npm run lint`.
 - [ ] Run `npm run build`.
 - [ ] Spot-check one exact expert review product, one line-level review profile product, and one no-source neutral product in a browser/static preview.
-- [ ] Update `docs/cigar-ratings-review-audit-2026-05-26.md` with final coverage counts and any no-source exceptions.
-- [ ] Update `docs/codex-worktree-tracking.md` with files changed, tests run, and remaining gaps.
+- [x] Update `docs/cigar-ratings-review-audit-2026-05-26.md` with final coverage counts and any no-source exceptions.
+- [x] Update `docs/codex-worktree-tracking.md` with files changed, tests run, and remaining gaps.
 
 ## Acceptance Criteria
 

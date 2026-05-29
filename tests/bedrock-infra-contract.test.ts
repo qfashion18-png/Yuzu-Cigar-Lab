@@ -73,6 +73,19 @@ test("Lambda runtime policy allows tagged Amazon Lex router aliases", () => {
   );
 });
 
+test("Lambda runtime policy allows Rekognition text and label analysis for AI Cigar Adder images", () => {
+  const policy = readJson("infra/ycc-phase2-lambda-runtime-policy.json");
+  const detectTextStatements = statementsForAction(policy, "rekognition:DetectText");
+  const detectLabelsStatements = statementsForAction(policy, "rekognition:DetectLabels");
+
+  assert.ok(detectTextStatements.length > 0, "rekognition:DetectText should be granted for OCR evidence");
+  assert.ok(detectLabelsStatements.length > 0, "rekognition:DetectLabels should be granted for visual label evidence");
+  assert.ok(
+    [...detectTextStatements, ...detectLabelsStatements].every((statement) => resources(statement).includes("*")),
+    "Rekognition byte-image APIs should use Resource=* because uploaded bytes are not resource-scoped",
+  );
+});
+
 test("Bedrock Agent Runtime endpoint policy allows Lambda to invoke aliases and retrieve KB context", () => {
   const policy = readJson("infra/ycc-phase45-bedrock-agent-runtime-vpce-policy.json");
   const invokeAgentStatements = statementsForAction(policy, "bedrock:InvokeAgent");

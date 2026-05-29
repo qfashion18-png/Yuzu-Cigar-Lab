@@ -250,5 +250,89 @@
     "originalHeight": 1776,
     "width": 1545,
     "height": 1776
+  },
+  {
+    "sku": "777293",
+    "title": "My Father Don Pepin Clasicos 20th Anniversary 20/BX",
+    "handle": "my-father-don-pepin-clasicos-20th-20-bx",
+    "productUrl": "https://www.cigarsdirect.com/products/don-pepin-garcia-clasicos-20th-anniversary",
+    "sourceImage": "https://www.cigarsdirect.com/cdn/shop/files/don-pepin-garcia-clasicos-20th-anniversary-open-box.jpg?v=1777585542",
+    "asset": "/assets/inventory/cigars/my-father-don-pepin-clasicos-20th-20-bx.jpg",
+    "originalWidth": 1024,
+    "originalHeight": 1024,
+    "width": 1024,
+    "height": 1024
+  },
+  {
+    "sku": "777292",
+    "title": "Oliva Serie V Melanio Soccer Edition 24/BX",
+    "handle": "oliva-serie-v-melanio-soccer-edition-24-bx",
+    "productUrl": "https://atlanticcigar.com/oliva-serie-v-melanio-gran-reserva-ltd-world-cup-2026-edition/",
+    "sourceImage": "https://cdn11.bigcommerce.com/s-2ooutu2zpl/images/stencil/1280w/products/47665/60544/Oliva_Serie_V_Melanio_Gran_Reserva_Ltd_World_Cup_2026_Edition_1__86431.1777304932.jpg?c=2",
+    "asset": "/assets/inventory/cigars/oliva-serie-v-melanio-soccer-edition-24-bx.jpg",
+    "originalWidth": 1280,
+    "originalHeight": 1280,
+    "width": 1280,
+    "height": 1280
+  },
+  {
+    "sku": "777297",
+    "title": "Olmec Maduro Toro 12/BX",
+    "handle": "olmec-maduro-toro-12-bx",
+    "productUrl": "https://www.coronacigar.com/foundation-olmec-maduro-toro/",
+    "sourceImage": "https://cdn11.bigcommerce.com/s-vxa3db55ks/images/stencil/1280x1280/products/9579/16847/foundation_olmec_mad_toro_box_open__45260.1729795147.jpg?c=1",
+    "asset": "/assets/inventory/cigars/olmec-maduro-toro-12-bx.jpg",
+    "originalWidth": 600,
+    "originalHeight": 600,
+    "width": 600,
+    "height": 600
+  },
+  {
+    "sku": "777296",
+    "title": "Montecristo 1935 Winners Club Sampler 6/PK",
+    "handle": "montecristo-1935-winners-club-sampler-6-pk",
+    "productUrl": "https://mikescigars.com/cigars/brands/montecristo/montecristo-1935-anniversary-edicion-diamante/montecristo-1935-anniversary-winners-club-assortment-sampler",
+    "sourceImage": "https://i0.wp.com/www.cubanlous.com/wp-content/uploads/2026/04/montecristo-cigar-sampler-bestseller-2025.jpg?fit=1083%2C1447&ssl=1",
+    "asset": "/assets/inventory/cigars/montecristo-1935-winners-club-sampler-6-pk.jpg",
+    "originalWidth": 1083,
+    "originalHeight": 1447,
+    "width": 1083,
+    "height": 1447
+  },
+  {
+    "sku": "777303",
+    "title": "Plasencia Alma Fuerte Salomon 10/BX",
+    "handle": "plasencia-alma-fuerte-salomon-10-bx",
+    "productUrl": "https://atlanticcigar.com/plasencia-alma-fuerte-generacion-v-solomon-7x58/",
+    "sourceImage": "https://cdn11.bigcommerce.com/s-2ooutu2zpl/images/stencil/1280w/products/41250/49215/PLC-01-003CM__37159.1595344592.jpg?c=2",
+    "asset": "/assets/inventory/cigars/plasencia-alma-fuerte-salomon-10-bx.jpg",
+    "originalWidth": 800,
+    "originalHeight": 800,
+    "width": 800,
+    "height": 800
+  },
+  {
+    "sku": "777287",
+    "title": "Plasencia Explorer Sampler 6/BX",
+    "handle": "plasencia-explorer-sampler-6-bx",
+    "productUrl": "https://70cigars.com/products/plasencia-explorer-collection-sampler",
+    "sourceImage": "https://70cigars.com/cdn/shop/files/photo_2026-03-26_12-37-52.jpg?v=1774543172",
+    "asset": "/assets/inventory/cigars/plasencia-explorer-sampler-6-bx.jpg",
+    "originalWidth": 1280,
+    "originalHeight": 1280,
+    "width": 1280,
+    "height": 1280
+  },
+  {
+    "sku": "777295",
+    "title": "Plasencia Triunfal 2026 10/BX",
+    "handle": "plasencia-triunfal-2026-10-bx",
+    "productUrl": "https://luxurycigarclub.com/products/plasencia-triunfal-world-cup-2026",
+    "sourceImage": "https://luxurycigarclub.com/cdn/shop/files/Plasencia-Triunfal-World-Cup-2026-Toro-Extra-Cigars-Online_800x.jpg?v=1775588223",
+    "asset": "/assets/inventory/cigars/plasencia-triunfal-2026-10-bx.jpg",
+    "originalWidth": 800,
+    "originalHeight": 800,
+    "width": 800,
+    "height": 800
   }
 ]

@@ -33,6 +33,8 @@ const DEFAULT_SUPPORT_EMAIL_RAW_PREFIX = "ycc/support-email/raw/";
 const DEFAULT_BEDROCK_MODEL_ID = "amazon.nova-lite-v1:0";
 const DEFAULT_CONCIERGE_POLLY_VOICE_ID = "Joanna";
 const DEFAULT_CONCIERGE_VOICE_PREFIX = "ycc/concierge-voice/";
+const DEFAULT_HUMIDOR_IMAGE_PREFIX = "ycc/humidor-images/";
+const HUMIDOR_IMAGE_SIGNED_URL_EXPIRES_SECONDS = 60 * 60;
 const DEFAULT_LEX_ROUTER_LOCALE_ID = "en_US";
 const CONCIERGE_RESPONSE_STYLE_INSTRUCTION =
   "Answer the member's question directly first. Keep replies concise: one short paragraph or up to three bullets. Do not include broad background, internal implementation details, or extra next steps unless the member asks or a safety, compliance, or account handoff requires it.";
@@ -45,10 +47,20 @@ const CIGAR_IMAGE_MIME_FORMATS = new Map([
   ["image/gif", "gif"],
   ["image/webp", "webp"],
 ]);
+const HUMIDOR_ENRICHMENT_MAX_AUTO_UNIT_VALUE = 75;
+const HUMIDOR_RENDERABLE_REFERENCE_IMAGE_PATHS = [
+  ["classroom2.s3.us-east-1.amazonaws.com", "/ycc/humidor-images/"],
+  ["swwest.com", "/Images/SunsetItems/"],
+  ["halfwheel.com", "/wp-content/uploads/"],
+  ["cigardojo.com", "/wp-content/uploads/"],
+];
 const REKOGNITION_TEXT_IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/jpg", "image/png"]);
-const REKOGNITION_FEATURE_READY_VALUE = "detect_text_ready";
+const REKOGNITION_TEXT_READY_VALUES = new Set(["detect_text_ready", "image_understanding_ready", "ready"]);
+const REKOGNITION_LABEL_READY_VALUES = new Set(["detect_labels_ready", "image_understanding_ready", "ready"]);
 const DEFAULT_REKOGNITION_MIN_TEXT_CONFIDENCE = 70;
+const DEFAULT_REKOGNITION_MIN_LABEL_CONFIDENCE = 70;
 const MAX_REKOGNITION_TEXT_LINES = 12;
+const MAX_REKOGNITION_LABELS = 10;
 const VOICE_AUDIO_MIME_FORMATS = new Map([
   ["audio/webm", "webm"],
   ["audio/ogg", "ogg"],
@@ -66,10 +78,12 @@ const VOICE_AUDIO_MIME_FORMATS = new Map([
 const LIVE_PAGE_ROUTES = new Set(["/", "/membership", "/education"]);
 const HUMIDOR_ROUTES = new Set([
   "GET /humidor/items",
+  "GET /humidor/smokes",
   "GET /humidor/alerts",
   "POST /humidor/identify-cigar",
   "POST /humidor/alerts",
   "POST /humidor/items",
+  "POST /humidor/smokes",
   "PATCH /humidor/items/{id}",
   "PATCH /humidor/items/{id}/enrich",
 ]);
@@ -191,6 +205,32 @@ const CIGAR_GUIDE_TERMS = [
   "smoke",
 ];
 const HUMIDOR_AGENT_TERMS = ["humidor", "humidity", "hygrometer", "temperature", "aging", "reorder", "inventory"];
+const HUMIDOR_WEB_SEARCH_READY_VALUES = new Set(["1", "true", "ready", "enabled", "on"]);
+const HUMIDOR_WEB_SEARCH_BLOCKED_DOMAINS = new Set([
+  "duckduckgo.com",
+  "google.com",
+  "bing.com",
+  "yahoo.com",
+  "facebook.com",
+  "instagram.com",
+  "x.com",
+  "twitter.com",
+  "reddit.com",
+  "pinterest.com",
+  "youtube.com",
+]);
+const HUMIDOR_VITOLA_TERMS = [
+  "Toro Box Press",
+  "Corona Gorda",
+  "Churchill",
+  "Robusto",
+  "Belicoso",
+  "Torpedo",
+  "Lonsdale",
+  "Corona",
+  "Gordo",
+  "Toro",
+];
 const LEX_DIALOG_ACTION_TYPES = new Set(["ElicitIntent", "ElicitSlot", "ConfirmIntent"]);
 const DEFAULT_HUMIDOR_ALERT_PREFERENCES = Object.freeze({
   pushEnabled: false,
@@ -255,6 +295,12 @@ exports.handler = async function handler(event = {}, context = {}) {
     ) {
       const response = await handlePhase3Migration(event, requestId);
       logCompleted(event, routeKey, response.statusCode, startedAt, requestId);
+      return response;
+    }
+
+    if (isCognitoPostConfirmationSignUpEvent(event)) {
+      const response = await handleCognitoPostConfirmationSignUp(event, requestId);
+      logCompleted(event, `COGNITO ${event.triggerSource}`, 200, startedAt, requestId);
       return response;
     }
 
@@ -412,6 +458,8 @@ exports.handler = async function handler(event = {}, context = {}) {
         response = json(403, requestId, humidorMembershipDenied);
       } else if (routeKey === "GET /humidor/items") {
         response = await handleHumidorItems(event, actor, requestId);
+      } else if (routeKey === "GET /humidor/smokes") {
+        response = await handleHumidorSmokeLogs(event, actor, requestId);
       } else if (routeKey === "GET /humidor/alerts") {
         response = await handleHumidorAlertPreferences(event, actor, requestId);
       } else if (routeKey === "POST /humidor/identify-cigar") {
@@ -424,6 +472,8 @@ exports.handler = async function handler(event = {}, context = {}) {
         response = await handleHumidorItemEnrichment(event, actor, requestId);
       } else if (routeKey === "POST /humidor/items") {
         response = await handleHumidorItem(event, actor, requestId);
+      } else if (routeKey === "POST /humidor/smokes") {
+        response = await handleHumidorSmokeLog(event, actor, requestId);
       }
     } else {
       response = json(404, requestId, {
@@ -498,6 +548,235 @@ async function handleHealth(event, requestId) {
       publicSupportContact: true,
     },
   });
+}
+
+async function handleCognitoPostConfirmationSignUp(event, requestId) {
+  await maybeSendCognitoWelcomeEmail(event, requestId);
+  return event;
+}
+
+async function maybeSendCognitoWelcomeEmail(event, requestId) {
+  if (process.env.FEATURE_SES !== "ready") {
+    console.info(
+      JSON.stringify({
+        level: "info",
+        event: "cognito_welcome_email_pending_ses",
+        requestId,
+        featureSes: process.env.FEATURE_SES || "pending_identity",
+      })
+    );
+    return {
+      status: "pending_ses",
+      sesMessageId: null,
+    };
+  }
+
+  const details = getCognitoWelcomeEmailDetails(event);
+  if (!details.email) {
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        event: "cognito_welcome_email_missing_email",
+        requestId,
+        userPoolId: sanitizeText(event.userPoolId, 120),
+      })
+    );
+    return {
+      status: "skipped",
+      sesMessageId: null,
+    };
+  }
+
+  try {
+    const emailContent = buildCognitoWelcomeEmailContent(details, requestId);
+    const sesMessageId = await sendSupportEmail({
+      bodyHtml: emailContent.bodyHtml,
+      bodyText: emailContent.bodyText,
+      fromAddress: getSupportEmailFrom(),
+      replyToAddresses: [getSupportInboundReplyToAddress()],
+      subject: emailContent.subject,
+      toAddresses: [details.email],
+    });
+
+    return {
+      status: "sent",
+      sesMessageId,
+    };
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        level: "warn",
+        event: "cognito_welcome_email_failed",
+        requestId,
+        name: error instanceof Error ? error.name : null,
+        message: error instanceof Error ? error.message : String(error),
+      })
+    );
+
+    return {
+      status: "failed",
+      sesMessageId: null,
+    };
+  }
+}
+
+function getCognitoWelcomeEmailDetails(event) {
+  const attrs = event.request?.userAttributes && typeof event.request.userAttributes === "object" ? event.request.userAttributes : {};
+  const email = normalizeEmailAddresses(attrs.email || event.userName, 1)[0] || "";
+  const displayName = sanitizeText(
+    attrs.name || [attrs.given_name, attrs.family_name].filter(Boolean).join(" ") || attrs.nickname || "",
+    160
+  );
+  const rawMemberStatus = sanitizeText(attrs["custom:member_status"] || attrs.member_status, 80);
+  const rawMembershipTier = sanitizeText(attrs["custom:membership_tier"] || attrs.membership_tier, 80);
+
+  return {
+    email,
+    displayName,
+    username: sanitizeText(event.userName, 160),
+    memberStatus: formatWelcomeAccountLabel(rawMemberStatus || "non_member"),
+    membershipTier: rawMembershipTier ? formatWelcomeAccountLabel(rawMembershipTier) : "",
+    accountUrl: resolveNewsletterEmailUrl("/account/"),
+    membershipUrl: resolveNewsletterEmailUrl("/membership/"),
+    shopUrl: resolveNewsletterEmailUrl("/shop/"),
+    humidorUrl: resolveNewsletterEmailUrl("/humidor/"),
+  };
+}
+
+function buildCognitoWelcomeEmailContent(details, requestId) {
+  return {
+    subject: "Welcome to Yuzu Cigar Club",
+    bodyText: buildCognitoWelcomeEmailText(details, requestId),
+    bodyHtml: buildCognitoWelcomeEmailHtml(details, requestId),
+  };
+}
+
+function buildCognitoWelcomeEmailText(details, requestId) {
+  const greetingName = splitFirstName(details.displayName);
+  const greeting = greetingName ? `Hi ${greetingName},` : "Hi there,";
+  const accountLines = [
+    "Account details",
+    `Email: ${details.email}`,
+    `Display name: ${details.displayName || "Not set yet"}`,
+    `Membership status: ${details.memberStatus}`,
+  ];
+
+  if (details.membershipTier) {
+    accountLines.push(`Membership tier: ${details.membershipTier}`);
+  }
+
+  if (details.username && details.username !== details.email) {
+    accountLines.push(`Cognito username: ${details.username}`);
+  }
+
+  const lines = [
+    greeting,
+    "",
+    "Welcome to Yuzu Cigar Club. Your account is ready.",
+    "",
+    ...accountLines,
+    "",
+    "What to try next:",
+    `- Review and complete your profile: ${details.accountUrl}`,
+    `- Explore the digital humidor for saved cigars, notes, aging, and reorder reminders: ${details.humidorUrl}`,
+    `- Browse current cigar boxes, samplers, and member drops: ${details.shopUrl}`,
+    `- Compare memberships for member pricing, early access, and curated monthly allocations: ${details.membershipUrl}`,
+    "",
+    "Yuzu Cigar Club is for adults 21+. Product availability, pricing, membership benefits, shipping, and compliance checks can vary by location and inventory.",
+    "You can reply to this email for support or preference changes.",
+    `Request ID: ${requestId}`,
+  ];
+
+  return sanitizeMultilineText(lines.join("\n"), MAX_EMAIL_BODY_LENGTH);
+}
+
+function buildCognitoWelcomeEmailHtml(details, requestId) {
+  const greetingName = splitFirstName(details.displayName);
+  const greeting = greetingName ? `Hi ${greetingName},` : "Hi there,";
+  const logoUrl = resolveNewsletterEmailUrl("/assets/yuzu-logo.png");
+  const tierRow = details.membershipTier
+    ? `<tr><td style="padding:10px 0;color:#b7aa96;">Membership tier</td><td align="right" style="padding:10px 0;color:#f8f0df;font-weight:700;">${escapeHtml(details.membershipTier)}</td></tr>`
+    : "";
+  const usernameRow =
+    details.username && details.username !== details.email
+      ? `<tr><td style="padding:10px 0;color:#b7aa96;">Cognito username</td><td align="right" style="padding:10px 0;color:#f8f0df;font-weight:700;">${escapeHtml(details.username)}</td></tr>`
+      : "";
+  const html = `
+<!doctype html>
+<html>
+  <body style="margin:0;padding:0;background:#11100d;color:#f8f0df;font-family:Arial,Helvetica,sans-serif;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#11100d;">
+      <tr>
+        <td align="center" style="padding:32px 18px;">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:680px;border:1px solid #4f3b21;background:#18130f;">
+            <tr>
+              <td style="padding:28px 28px 22px;border-bottom:1px solid #4f3b21;background:#1d1711;">
+                <img src="${escapeHtmlAttribute(logoUrl)}" width="88" alt="Yuzu Cigar Club" style="display:block;margin:0 0 18px;border:0;outline:none;text-decoration:none;">
+                <p style="margin:0 0 10px;color:#d8a84f;font-size:11px;font-weight:700;letter-spacing:0.16em;text-transform:uppercase;">Yuzu Cigar Club</p>
+                <h1 style="margin:0;color:#f8f0df;font-size:34px;line-height:1.08;font-weight:800;">Your account is ready</h1>
+                <p style="margin:16px 0 0;color:#d9cfbd;font-size:16px;line-height:1.6;">${escapeHtml(greeting)} Welcome in. Your profile, humidor, shop access, and membership options are ready when you are.</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:24px 28px 8px;">
+                <h2 style="margin:0 0 8px;color:#f8f0df;font-size:20px;line-height:1.3;">Account details</h2>
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="font-size:14px;line-height:1.5;border-top:1px solid #352719;">
+                  <tr><td style="padding:10px 0;color:#b7aa96;">Email</td><td align="right" style="padding:10px 0;color:#f8f0df;font-weight:700;">${escapeHtml(details.email)}</td></tr>
+                  <tr><td style="padding:10px 0;color:#b7aa96;">Display name</td><td align="right" style="padding:10px 0;color:#f8f0df;font-weight:700;">${escapeHtml(details.displayName || "Not set yet")}</td></tr>
+                  <tr><td style="padding:10px 0;color:#b7aa96;">Membership status</td><td align="right" style="padding:10px 0;color:#f8f0df;font-weight:700;">${escapeHtml(details.memberStatus)}</td></tr>
+                  ${tierRow}
+                  ${usernameRow}
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:16px 28px 28px;">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                  <tr>
+                    <td style="padding:18px 0;border-top:1px solid #352719;">
+                      <h3 style="margin:0 0 8px;color:#d8a84f;font-size:15px;line-height:1.35;">Digital humidor</h3>
+                      <p style="margin:0 0 12px;color:#d9cfbd;font-size:14px;line-height:1.6;">Save cigars, tasting notes, aging dates, locations, and reorder reminders.</p>
+                      <a href="${escapeHtmlAttribute(details.humidorUrl)}" style="color:#d8a84f;font-weight:700;">Open humidor</a>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="padding:18px 0;border-top:1px solid #352719;">
+                      <h3 style="margin:0 0 8px;color:#d8a84f;font-size:15px;line-height:1.35;">Member drops and pricing</h3>
+                      <p style="margin:0 0 12px;color:#d9cfbd;font-size:14px;line-height:1.6;">Browse current cigar boxes, samplers, early-access drops, and member pricing options.</p>
+                      <a href="${escapeHtmlAttribute(details.shopUrl)}" style="color:#d8a84f;font-weight:700;">Browse shop</a>
+                      <span style="color:#6f6252;"> | </span>
+                      <a href="${escapeHtmlAttribute(details.membershipUrl)}" style="color:#d8a84f;font-weight:700;">Compare memberships</a>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:22px 28px 28px;background:#211911;border-top:1px solid #4f3b21;">
+                <p style="margin:0 0 10px;color:#f8f0df;font-size:14px;line-height:1.6;">Need to adjust account details? Visit <a href="${escapeHtmlAttribute(details.accountUrl)}" style="color:#d8a84f;">your account</a> or reply to this email.</p>
+                <p style="margin:0;color:#b7aa96;font-size:12px;line-height:1.6;">Yuzu Cigar Club is for adults 21+. Availability, pricing, shipping, and compliance checks can vary. Request ID: ${escapeHtml(requestId)}</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+
+  return sanitizeEmailHtml(html);
+}
+
+function formatWelcomeAccountLabel(value) {
+  const text = sanitizeText(value, 120).replace(/[_-]+/g, " ");
+  if (!text) {
+    return "";
+  }
+
+  return text
+    .toLowerCase()
+    .replace(/\b[a-z]/g, (letter) => letter.toUpperCase())
+    .replace(/\bNon Member\b/g, "Non-member");
 }
 
 async function handleNewsletterSubscribe(event, requestId) {
@@ -1498,6 +1777,24 @@ function normalizeLaunchCatalogProduct(product) {
     sku,
     slug: slugify(product.slug || product.name || sku),
     name: sanitizeText(product.name || sku, 200) || sku,
+    brand: sanitizeText(product.brand || product.vendor || product.manufacturer, 120),
+    category: sanitizeText(product.category || product.productCategory || product.product_category, 140),
+    description: sanitizeText(product.description || product.summary || product.shortDescription, 400),
+    imageUrl: sanitizeHumidorImageUrl(
+      product.imageUrl ||
+        product.image_url ||
+        product.productImageUrl ||
+        product.product_image_url ||
+        product.primaryImageUrl ||
+        product.primary_image_url ||
+        product.thumbnailUrl ||
+        product.thumbnail_url ||
+        product.image
+    ),
+    wrapper: sanitizeText(product.wrapper || product.wrapperType || product.wrapper_type, 120),
+    origin: sanitizeText(product.origin || product.country || product.countryOfOrigin || product.country_of_origin, 120),
+    strength: sanitizeText(product.strength || product.body, 120),
+    vitola: sanitizeText(product.vitola || product.shape || product.size, 120),
     price,
     publishStatus: sanitizeText(product.publishStatus || product.status || "published", 40),
     inventoryPolicy: sanitizeText(product.inventoryPolicy || (product.managedStock === false ? "manual" : "track"), 40),
@@ -3728,7 +4025,10 @@ async function buildConciergeExchange(event, actor, requestId, details) {
       reply: adminSummary.reply,
     };
   } else {
-    bedrock = await maybeBuildBedrockReply(agent, actor, message, conversationId);
+    bedrock = await maybeBuildBedrockReply(agent, actor, message, conversationId, {
+      includeMemberHumidorContext: true,
+      requestId,
+    });
 
     if (agent === "YCCAdminAgent" && isAdminGuardrailReply(bedrock.reply)) {
       adminSummary = await buildAdminQueueSummarySnapshot(getAdminQueueFromMessage(message));
@@ -3740,6 +4040,8 @@ async function buildConciergeExchange(event, actor, requestId, details) {
     } else if (bedrock.status === "bedrock_agent_runtime" && isAgentGuardrailRefusalReply(bedrock.reply)) {
       bedrock = await maybeBuildBedrockReply(agent, actor, message, conversationId, {
         forceDirectRuntime: true,
+        includeMemberHumidorContext: true,
+        requestId,
       });
     }
   }
@@ -4306,10 +4608,12 @@ async function handleHumidorItem(event, actor, requestId) {
     return json(400, requestId, cigarImage.error);
   }
 
-  const item = normalizeHumidorItem({
-    ...body.value,
-    cigarImage: cigarImage.value,
-  });
+  const normalizedInput = { ...body.value };
+  if (cigarImage.value) {
+    normalizedInput.cigarImage = cigarImage.value;
+  }
+
+  let item = normalizeHumidorItem(normalizedInput);
   if (!item.name) {
     return json(400, requestId, {
       error: "missing_humidor_item_name",
@@ -4317,17 +4621,23 @@ async function handleHumidorItem(event, actor, requestId) {
     });
   }
 
+  item = {
+    ...item,
+    cigarImage: await prepareHumidorCigarImageForStorage(cigarImage.value || item.cigarImage, actor, requestId, item.name),
+  };
+
   let persistedItem = null;
   if (shouldPersistDatabaseWrites()) {
     persistedItem = await persistHumidorItem(event, actor, requestId, item);
   }
+  const clientImage = await resolveHumidorCigarImageForClient(item.cigarImage);
 
   return json(persistedItem ? 201 : 202, requestId, {
     item: {
       id: persistedItem?.itemId || `humidor_${crypto.randomUUID()}`,
       ownerSub: actor.sub,
       ...item,
-      cigarImage: summarizeStoredHumidorCigarImage(item.cigarImage),
+      cigarImage: clientImage,
       createdAt: persistedItem?.createdAt || new Date().toISOString(),
     },
     persistence: {
@@ -4338,6 +4648,110 @@ async function handleHumidorItem(event, actor, requestId) {
       "support_photo_intake",
       "generate_reorder_and_aging_recommendations",
     ],
+  });
+}
+
+async function handleHumidorSmokeLog(event, actor, requestId) {
+  const body = parseJsonBody(event);
+  if (body.error) {
+    return body.error;
+  }
+
+  const smokeLog = normalizeHumidorSmokeLog(body.value);
+  if (!smokeLog.humidorItemId && !smokeLog.cigarName) {
+    return json(400, requestId, {
+      error: "missing_smoke_log_cigar",
+      message: "Choose a saved humidor cigar or send a cigar name before logging a smoke.",
+    });
+  }
+
+  if (smokeLog.invalidRating) {
+    return json(400, requestId, {
+      error: "invalid_smoke_log_rating",
+      message: "Smoke ratings must be a number between 0 and 100.",
+    });
+  }
+
+  if (smokeLog.invalidDuration) {
+    return json(400, requestId, {
+      error: "invalid_smoke_duration",
+      message: "Smoke duration must be a positive number of minutes.",
+    });
+  }
+
+  if (smokeLog.invalidSmokedAt) {
+    return json(400, requestId, {
+      error: "invalid_smoked_at",
+      message: "Send a valid smoked-at date and time.",
+    });
+  }
+
+  if (!shouldPersistDatabaseWrites()) {
+    return json(202, requestId, {
+      log: {
+        id: `smoke_${crypto.randomUUID()}`,
+        ...mapHumidorSmokeLogForResponse({
+          ...smokeLog,
+          id: "",
+          createdAt: new Date().toISOString(),
+        }),
+      },
+      persistence: {
+        status: getDatabasePersistenceStatus(),
+        table: "smoke_logs",
+      },
+    });
+  }
+
+  return withDatabaseTransaction("ycc-api-humidor-smoke-log", async (client) => {
+    const member = await upsertMember(client, actor, requestId);
+    let linkedHumidorItem = null;
+    if (smokeLog.humidorItemId) {
+      linkedHumidorItem = await loadHumidorItemRowForMember(client, smokeLog.humidorItemId, member.id);
+      if (!linkedHumidorItem) {
+        return json(404, requestId, {
+          error: "humidor_item_not_found",
+          message: "The selected humidor cigar was not found or is not visible to this member.",
+        });
+      }
+    }
+
+    const logToPersist = {
+      ...smokeLog,
+      cigarName: linkedHumidorItem?.name || smokeLog.cigarName,
+    };
+    const row = await insertHumidorSmokeLog(client, {
+      actor,
+      log: logToPersist,
+      memberId: member.id,
+      requestId,
+    });
+    const log = mapHumidorSmokeLogRow(row);
+
+    await insertAuditLog(client, event, {
+      action: "smoke_log.created",
+      actor,
+      afterData: {
+        cigarName: log.cigarName,
+        drinkPairing: log.drinkPairing,
+        durationMinutes: log.durationMinutes,
+        humidorItemId: log.humidorItemId,
+        rating: log.rating,
+        smokedAt: log.smokedAt,
+      },
+      memberId: member.id,
+      requestId,
+      resourceId: log.id,
+      resourceType: "smoke_log",
+    });
+
+    return json(201, requestId, {
+      log,
+      persistence: {
+        status: "stored",
+        table: "smoke_logs",
+      },
+    });
   });
 }
 
@@ -4360,14 +4774,35 @@ async function handleHumidorItemUpdate(event, actor, requestId) {
     Object.prototype.hasOwnProperty.call(body.value, "location");
   const hasAgingStartDateUpdate = Object.prototype.hasOwnProperty.call(body.value, "agingStartDate");
   const hasTrayUpdate = Object.prototype.hasOwnProperty.call(body.value, "tray");
+  const action = sanitizeText(body.value.action, 40).toLowerCase();
+  const hasArchiveUpdate = action === "delete" || body.value.archived === true || body.value.deleted === true;
+  const rawSharedQuantity = body.value.sharedQuantity ?? body.value.shareQuantity ?? body.value.quantityShared;
+  const hasSharedUpdate = action === "share" || rawSharedQuantity !== undefined;
   const humidorLocation = sanitizeText(body.value.humidorLocation || body.value.location, MAX_FIELD_LENGTH);
   const agingStartDate = hasAgingStartDateUpdate ? normalizeDateOnly(body.value.agingStartDate) : undefined;
   const tray = hasTrayUpdate ? sanitizeText(body.value.tray, MAX_FIELD_LENGTH) : undefined;
+  const sharedQuantity = hasSharedUpdate ? normalizeHumidorSharedQuantity(rawSharedQuantity) : 0;
+  const sharedWith = sanitizeText(body.value.sharedWith || body.value.recipient, MAX_FIELD_LENGTH);
+  const sharedNotes = sanitizeText(body.value.sharedNotes || body.value.notes, 1000);
 
-  if (!hasHumidorLocationUpdate && !hasAgingStartDateUpdate && !hasTrayUpdate) {
+  if (!hasHumidorLocationUpdate && !hasAgingStartDateUpdate && !hasTrayUpdate && !hasArchiveUpdate && !hasSharedUpdate) {
     return json(400, requestId, {
       error: "missing_humidor_item_update",
-      message: "Send a humidor location, tray, or aging start date before updating this saved cigar.",
+      message: "Send a humidor location, tray, aging start date, shared action, or delete action before updating this saved cigar.",
+    });
+  }
+
+  if ((hasArchiveUpdate || hasSharedUpdate) && (hasHumidorLocationUpdate || hasAgingStartDateUpdate || hasTrayUpdate)) {
+    return json(400, requestId, {
+      error: "invalid_humidor_item_update",
+      message: "Inventory share and delete actions must be saved separately from location or aging edits.",
+    });
+  }
+
+  if (hasArchiveUpdate && hasSharedUpdate) {
+    return json(400, requestId, {
+      error: "invalid_humidor_item_update",
+      message: "Choose either shared or delete for this inventory action.",
     });
   }
 
@@ -4382,6 +4817,13 @@ async function handleHumidorItemUpdate(event, actor, requestId) {
     return json(400, requestId, {
       error: "invalid_aging_start_date",
       message: "Send a valid aging start date before updating this saved cigar.",
+    });
+  }
+
+  if (hasSharedUpdate && !sharedQuantity) {
+    return json(400, requestId, {
+      error: "invalid_shared_quantity",
+      message: "Shared cigar quantity must be at least 1.",
     });
   }
 
@@ -4404,7 +4846,117 @@ async function handleHumidorItemUpdate(event, actor, requestId) {
       });
     }
 
-    const currentItem = mapHumidorItemRow(currentRow);
+    const currentItem = await mapHumidorItemRowForClient(client, currentRow, member.id, actor, requestId);
+
+    if (hasArchiveUpdate) {
+      const archivedRow = await archiveHumidorItem(client, {
+        actor,
+        itemId,
+        memberId: member.id,
+        requestId,
+      });
+      const archivedItem = await mapHumidorItemRowForClient(client, archivedRow, member.id, actor, requestId);
+
+      await insertAuditLog(client, event, {
+        action: "humidor_item.deleted",
+        actor,
+        afterData: {
+          archived: true,
+          itemId,
+          quantity: 0,
+        },
+        beforeData: {
+          quantity: currentItem.quantity,
+        },
+        memberId: member.id,
+        requestId,
+        resourceId: itemId,
+        resourceType: "humidor_item",
+      });
+
+      return json(200, requestId, {
+        item: archivedItem,
+        inventoryAction: {
+          type: "deleted",
+          quantityBefore: currentItem.quantity,
+          quantityAfter: 0,
+          archived: true,
+        },
+        persistence: {
+          status: "stored",
+          table: "humidor_items",
+        },
+      });
+    }
+
+    if (hasSharedUpdate) {
+      if (sharedQuantity > currentItem.quantity) {
+        return json(400, requestId, {
+          error: "shared_quantity_exceeds_inventory",
+          message: "You cannot share more cigars than are currently in this humidor record.",
+        });
+      }
+
+      const sharedRow = await updateHumidorItemSharedQuantity(client, {
+        actor,
+        itemId,
+        memberId: member.id,
+        quantity: sharedQuantity,
+        requestId,
+      });
+      const updatedItem = await mapHumidorItemRowForClient(client, sharedRow, member.id, actor, requestId);
+      const logRow = await insertHumidorSmokeLog(client, {
+        actor,
+        log: buildHumidorSharedInventoryLog(currentItem, {
+          quantity: sharedQuantity,
+          sharedNotes,
+          sharedWith,
+        }),
+        memberId: member.id,
+        requestId,
+      });
+      const log = mapHumidorSmokeLogRow(logRow);
+
+      await insertAuditLog(client, event, {
+        action: "humidor_item.shared",
+        actor,
+        afterData: {
+          archived: updatedItem.quantity <= 0,
+          itemId,
+          quantity: updatedItem.quantity,
+          sharedLogId: log.id,
+          sharedQuantity,
+          sharedWith,
+        },
+        beforeData: {
+          quantity: currentItem.quantity,
+        },
+        memberId: member.id,
+        requestId,
+        resourceId: itemId,
+        resourceType: "humidor_item",
+      });
+
+      return json(200, requestId, {
+        item: updatedItem,
+        log,
+        inventoryAction: {
+          type: "shared",
+          quantityBefore: currentItem.quantity,
+          quantityAfter: updatedItem.quantity,
+          archived: updatedItem.quantity <= 0,
+        },
+        persistence: {
+          status: "stored",
+          table: "humidor_items",
+        },
+        tracking: {
+          status: "stored",
+          table: "smoke_logs",
+        },
+      });
+    }
+
     const updatedRow = await updateHumidorItemLocation(client, {
       agingStartDate,
       actor,
@@ -4415,7 +4967,7 @@ async function handleHumidorItemUpdate(event, actor, requestId) {
       tray,
       updateTray: hasTrayUpdate,
     });
-    const updatedItem = mapHumidorItemRow(updatedRow);
+    const updatedItem = await mapHumidorItemRowForClient(client, updatedRow, member.id, actor, requestId);
 
     await insertAuditLog(client, event, {
       action:
@@ -4494,7 +5046,7 @@ async function handleHumidorItemEnrichment(event, actor, requestId) {
       });
     }
 
-    const currentItem = mapHumidorItemRow(currentRow);
+    const currentItem = await mapHumidorItemRowForClient(client, currentRow, member.id, actor, requestId);
     const missingFields = getMissingHumidorEnrichmentFields(currentItem);
     const fieldsToEnrich = requestedFields.value.length
       ? requestedFields.value.filter((field) => missingFields.includes(field))
@@ -4599,7 +5151,7 @@ async function handleHumidorItemEnrichment(event, actor, requestId) {
       requestId,
       updatedFields: merge.updatedFields,
     });
-    const updatedItem = mapHumidorItemRow(updatedRow);
+    const updatedItem = await mapHumidorItemRowForClient(client, updatedRow, member.id, actor, requestId);
 
     await insertAuditLog(client, event, {
       action: "humidor_item.enriched",
@@ -5338,29 +5890,94 @@ async function maybeIdentifyCigarFromImage(actor, image, notes) {
 
 async function maybeEnrichHumidorItem(item, requestedFields, actor, requestId) {
   const conversationId = `humidor_enrich_${item.id}_${requestId}`;
+  const rekognition = await maybeAnalyzeHumidorItemImageForEnrichment(item);
   const knowledgeBaseRetrieval =
     process.env.FEATURE_BEDROCK === "runtime_ready"
       ? await maybeRetrieveKnowledgeBaseContext(
           process.env.BEDROCK_KNOWLEDGE_BASE_ID || null,
-          buildHumidorEnrichmentRetrievalQuery(item, requestedFields)
+          buildHumidorEnrichmentRetrievalQuery(item, requestedFields, rekognition)
         )
       : null;
-  const browserSearch = buildHumidorEnrichmentBrowserSearchPlan(item, requestedFields);
-  const prompt = buildHumidorEnrichmentPrompt(item, requestedFields, browserSearch);
-  const bedrock = await maybeBuildBedrockReply("YCCHumidorAgent", actor, prompt, conversationId, {
+  const browserSearch = buildHumidorEnrichmentBrowserSearchPlan(item, requestedFields, rekognition);
+  const prompt = buildHumidorEnrichmentPrompt(item, requestedFields, browserSearch, rekognition);
+  let bedrock = await maybeBuildBedrockReply("YCCHumidorAgent", actor, prompt, conversationId, {
     knowledgeBaseRetrieval,
     maxTokens: 1400,
     temperature: 0.2,
   });
+  let suggestion = parseHumidorEnrichmentReply(bedrock.reply || "", item, requestedFields);
+  let webSearch = {
+    status: "not_run",
+    query: browserSearch.query,
+    resultCount: 0,
+    sources: [],
+  };
+
+  if (shouldRetryHumidorEnrichmentWithDirectRuntime(item, bedrock.reply, suggestion, requestedFields)) {
+    const directBedrock = await maybeBuildBedrockReply("YCCHumidorAgent", actor, prompt, `${conversationId}_direct`, {
+      forceDirectRuntime: true,
+      knowledgeBaseRetrieval,
+      maxTokens: 1400,
+      temperature: 0.2,
+    });
+    const directSuggestion = parseHumidorEnrichmentReply(directBedrock.reply || "", item, requestedFields);
+    if (hasSaveableHumidorEnrichmentSuggestion(item, directSuggestion, requestedFields) || isAgentGuardrailRefusalReply(bedrock.reply)) {
+      bedrock = directBedrock;
+      suggestion = directSuggestion;
+    }
+  }
+
+  if (!hasSaveableHumidorEnrichmentSuggestion(item, suggestion, requestedFields)) {
+    const webReference = await maybeBuildHumidorWebEnrichmentSuggestion(item, requestedFields, browserSearch);
+    webSearch = summarizeHumidorWebSearchResult(webReference, browserSearch);
+    if (webReference.suggestion && hasSaveableHumidorEnrichmentSuggestion(item, webReference.suggestion, requestedFields)) {
+      suggestion = webReference.suggestion;
+    } else if (webReference.suggestion && !hasSaveableHumidorEnrichmentSuggestion(item, suggestion, requestedFields)) {
+      suggestion = webReference.suggestion;
+    }
+  }
+
+  if (!hasSaveableHumidorEnrichmentSuggestion(item, suggestion, requestedFields)) {
+    const catalogReference = await maybeBuildHumidorCatalogEnrichmentSuggestion(item, requestedFields);
+    if (catalogReference) {
+      bedrock = {
+        ...bedrock,
+        catalogReferenceStatus: catalogReference.status,
+        catalogReferenceCount: catalogReference.count,
+      };
+      suggestion = catalogReference.suggestion;
+    }
+  }
 
   return {
     ...bedrock,
     browserSearch,
-    suggestion: parseHumidorEnrichmentReply(bedrock.reply || "", item, requestedFields),
+    rekognition,
+    webSearchStatus: webSearch.status,
+    webSearchQuery: webSearch.query,
+    webSearchResultCount: webSearch.resultCount,
+    webSearchSources: webSearch.sources,
+    suggestion,
   };
 }
 
-function buildHumidorEnrichmentRetrievalQuery(item, requestedFields) {
+function shouldRetryHumidorEnrichmentWithDirectRuntime(item, reply, suggestion, requestedFields) {
+  if (hasSaveableHumidorEnrichmentSuggestion(item, suggestion, requestedFields)) {
+    return false;
+  }
+
+  return isAgentGuardrailRefusalReply(reply) || !parseFirstJsonObject(reply || "");
+}
+
+function hasSaveableHumidorEnrichmentSuggestion(item, suggestion, requestedFields) {
+  if (!suggestion) {
+    return false;
+  }
+
+  return mergeHumidorEnrichment(item, suggestion, requestedFields).updatedFields.length > 0;
+}
+
+function buildHumidorEnrichmentRetrievalQuery(item, requestedFields, rekognition = null) {
   const identity = [
     item.name,
     item.brand && item.brand !== item.name ? item.brand : "",
@@ -5370,16 +5987,20 @@ function buildHumidorEnrichmentRetrievalQuery(item, requestedFields) {
     .map((value) => sanitizeText(value, MAX_FIELD_LENGTH))
     .filter(Boolean)
     .join(" ");
+  const imageTerms = getRekognitionSearchTerms(rekognition);
 
   return [
     "YCC humidor cigar reference lookup for missing member inventory fields.",
     `Cigar identity: ${identity || sanitizeText(item.name, MAX_FIELD_LENGTH) || "unknown cigar"}`,
+    imageTerms.length ? `Saved image OCR/label terms: ${imageTerms.join(", ")}` : "",
     `Requested missing groups: ${requestedFields.join(", ")}`,
     "Retrieve product reference facts for brand, line, vitola, wrapper, origin, strength, tasting notes, MSRP or retail price, and stable product image URLs.",
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
-function buildHumidorEnrichmentBrowserSearchPlan(item, requestedFields) {
+function buildHumidorEnrichmentBrowserSearchPlan(item, requestedFields, rekognition = null) {
   const identityParts = [
     item.name,
     item.brand && item.brand !== item.name ? item.brand : "",
@@ -5406,7 +6027,7 @@ function buildHumidorEnrichmentBrowserSearchPlan(item, requestedFields) {
     fieldTerms.push("product image");
   }
 
-  return {
+  const plan = {
     status: "requested",
     query: [...uniqueIdentityParts, "cigar", ...fieldTerms].filter(Boolean).join(" "),
     missingFields: requestedFields,
@@ -5416,9 +6037,20 @@ function buildHumidorEnrichmentBrowserSearchPlan(item, requestedFields) {
       "Every returned value needs a source URL in evidence or sourceSummary.",
     ],
   };
+
+  const imageTerms = getRekognitionSearchTerms(rekognition);
+  if (imageTerms.length) {
+    plan.query = [...uniqueIdentityParts, ...imageTerms, "cigar", ...fieldTerms].filter(Boolean).join(" ");
+    plan.sourcePolicy = [
+      ...plan.sourcePolicy,
+      "Use saved-image OCR and labels as search hints only; verify any product identity against inspected source pages.",
+    ];
+  }
+
+  return plan;
 }
 
-function buildHumidorEnrichmentPrompt(item, requestedFields, browserSearch = null) {
+function buildHumidorEnrichmentPrompt(item, requestedFields, browserSearch = null, rekognition = null) {
   const browserSearchBlock = browserSearch?.query
     ? [
         "Browser search required before needsReview:",
@@ -5429,16 +6061,18 @@ function buildHumidorEnrichmentPrompt(item, requestedFields, browserSearch = nul
         "If browser search is unavailable or no reliable source is found, leave the field empty and add the search query plus source gap to needsReview.",
       ]
     : [];
+  const rekognitionBlock = buildHumidorEnrichmentRekognitionPromptEvidence(rekognition);
 
   return [
     "Locate missing reference data for this member humidor cigar and return only strict JSON.",
     "Do not overwrite member-entered values. Fill only the requested missing groups: info, image, and/or MSRP.",
     "Use this top-level schema exactly: brand, line, vitola, wrapper, origin, strength, tastingNotes, estimatedValue, estimatedValueCurrency, estimatedValueSource, cigarImage, confidence, evidence, needsReview, details.",
-    "cigarImage must be an object with imageUrl, mimeType, fileName, and source. Use stable HTTPS product/reference image URLs or first-party /assets/... product image paths; leave imageUrl empty if no reliable image is known.",
+    "cigarImage must be an object with imageUrl, mimeType, fileName, and source. Use only renderable Yuzu-hosted humidor image URLs, or leave imageUrl empty if no reliable renderable image is known. Do not use third-party retailer image URLs.",
     "details must be an object with this schema exactly: manufacturer, country, region, factory, size, length, ringGauge, shape, wrapper, binder, filler, blend, flavorProfile, body, finish, msrp, releaseStatus, packaging, sourceSummary, imageObservations.",
     "Set estimatedValue to the best per-cigar retail/MSRP number when known, otherwise null. Set estimatedValueCurrency to USD unless another currency is explicit.",
     "Evidence and needsReview must be arrays of short strings. Avoid health, cessation, medical, safety, or underage tobacco claims.",
     ...browserSearchBlock,
+    rekognitionBlock,
     `Requested missing groups: ${requestedFields.join(", ")}`,
     `Current humidor item: ${JSON.stringify({
       name: item.name,
@@ -5451,10 +6085,137 @@ function buildHumidorEnrichmentPrompt(item, requestedFields, browserSearch = nul
       estimatedValue: item.estimatedValue,
       estimatedValueCurrency: item.estimatedValueCurrency,
       estimatedValueSource: item.estimatedValueSource,
-      hasVisibleImage: hasHumidorVisibleImage(item),
+      hasImageMetadata: hasHumidorRenderableImageMetadata(item),
       tastingNotes: item.tastingNotes ? "present" : "",
     })}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+async function maybeAnalyzeHumidorItemImageForEnrichment(item) {
+  const featureStatus = sanitizeText(process.env.FEATURE_REKOGNITION || "pending_service", 80);
+  const rekognitionReady = REKOGNITION_TEXT_READY_VALUES.has(featureStatus) || REKOGNITION_LABEL_READY_VALUES.has(featureStatus);
+  if (!rekognitionReady) {
+    return buildSkippedRekognitionAnalysis(featureStatus);
+  }
+
+  const image = await maybeLoadHumidorItemImageForRekognition(item?.cigarImage);
+  if (!image) {
+    return buildSkippedRekognitionAnalysis("no_member_image");
+  }
+
+  return maybeDetectCigarImageText(image);
+}
+
+async function maybeLoadHumidorItemImageForRekognition(cigarImage) {
+  const s3Image = normalizeHumidorS3Image(cigarImage);
+  if (s3Image) {
+    try {
+      const { GetObjectCommand, S3Client } = require("@aws-sdk/client-s3");
+      const client = new S3Client({ region: process.env.AWS_REGION || "us-east-1" });
+      const result = await client.send(
+        new GetObjectCommand({
+          Bucket: s3Image.s3Bucket,
+          Key: s3Image.s3Key,
+        })
+      );
+      const bytes = await readAwsSdkBodyAsBuffer(result.Body);
+      return normalizeHumidorImageBytesForRekognition(bytes, s3Image.mimeType, s3Image.fileName);
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          level: "warn",
+          event: "humidor_enrichment_rekognition_image_load_failed",
+          name: error instanceof Error ? error.name : null,
+          message: error instanceof Error ? error.message : String(error),
+        })
+      );
+
+      return null;
+    }
+  }
+
+  const attachment = normalizeHumidorCigarImageAttachment(cigarImage).value;
+  if (!attachment?.dataUrl) {
+    return null;
+  }
+
+  const parsed = parseImageDataUrl(attachment.dataUrl);
+  if (!parsed.base64) {
+    return null;
+  }
+
+  return normalizeHumidorImageBytesForRekognition(Buffer.from(parsed.base64, "base64"), attachment.mimeType, attachment.fileName);
+}
+
+function normalizeHumidorImageBytesForRekognition(bytes, mimeType, fileName) {
+  const normalizedMimeType = sanitizeText(mimeType, 80).toLowerCase().split(";", 1)[0];
+  const format = CIGAR_IMAGE_MIME_FORMATS.get(normalizedMimeType);
+  const buffer = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes || []);
+
+  if (!format || !buffer.length || buffer.length > MAX_CIGAR_IMAGE_BYTES) {
+    return null;
+  }
+
+  return {
+    bytes: buffer,
+    format,
+    mimeType: normalizedMimeType,
+    fileName: sanitizeText(fileName, 180),
+  };
+}
+
+function buildSkippedRekognitionAnalysis(status) {
+  const normalizedStatus = sanitizeText(status || "not_run", 80);
+  return {
+    status: normalizedStatus,
+    minConfidence: normalizeRekognitionMinTextConfidence(process.env.REKOGNITION_MIN_TEXT_CONFIDENCE),
+    textLines: [],
+    labelStatus: normalizedStatus,
+    minLabelConfidence: normalizeRekognitionMinLabelConfidence(process.env.REKOGNITION_MIN_LABEL_CONFIDENCE),
+    labels: [],
+  };
+}
+
+function buildHumidorEnrichmentRekognitionPromptEvidence(rekognition) {
+  const evidence = buildRekognitionPromptEvidence(rekognition);
+  if (!evidence) {
+    return "";
+  }
+
+  return [
+    "Saved member image Rekognition evidence from the current humidor item's cigar photo:",
+    evidence,
+    "Use saved-image text and visual labels to improve brand, line, vitola, wrapper, origin, strength, and image-review notes. Do not overwrite member-entered fields, and do not infer brand, line, vitola, MSRP, or product-image URLs from generic labels alone.",
   ].join("\n");
+}
+
+function getRekognitionSearchTerms(rekognition) {
+  const terms = [];
+  const addTerm = (value, maxLength = 120) => {
+    const term = sanitizeText(value, maxLength);
+    const normalized = term.toLowerCase();
+    if (term && !terms.some((existing) => existing.toLowerCase() === normalized)) {
+      terms.push(term);
+    }
+  };
+
+  for (const line of Array.isArray(rekognition?.textLines) ? rekognition.textLines : []) {
+    addTerm(line.text, 180);
+    if (terms.length >= 3) {
+      break;
+    }
+  }
+
+  for (const label of Array.isArray(rekognition?.labels) ? rekognition.labels : []) {
+    addTerm(label.name, 80);
+    if (terms.length >= 5) {
+      break;
+    }
+  }
+
+  return terms;
 }
 
 async function handleHumidorItems(event, actor, requestId) {
@@ -5497,8 +6258,53 @@ async function handleHumidorItems(event, actor, requestId) {
       [member.id]
     );
 
+    const items = [];
+    for (const row of result.rows) {
+      items.push(await mapHumidorItemRowForClient(client, row, member.id, actor, requestId));
+    }
+
     return json(200, requestId, {
-      items: result.rows.map(mapHumidorItemRow),
+      items,
+      persistence: "stored",
+    });
+  });
+}
+
+async function handleHumidorSmokeLogs(event, actor, requestId) {
+  if (!shouldPersistDatabaseWrites()) {
+    return json(200, requestId, {
+      logs: [],
+      persistence: getDatabasePersistenceStatus(),
+    });
+  }
+
+  return withDatabaseClient("ycc-api-humidor-smoke-logs", async (client) => {
+    const member = await upsertMember(client, actor, requestId);
+    const result = await client.query(
+      `
+        /* smoke_log_recent_list */
+        select
+          sl.id,
+          sl.humidor_item_id,
+          sl.cigar_name,
+          sl.smoked_at,
+          sl.rating,
+          sl.pairing,
+          sl.notes,
+          sl.duration_minutes,
+          sl.metadata,
+          sl.created_at
+        from public.smoke_logs sl
+        left join public.humidor_items hi on hi.id = sl.humidor_item_id and hi.member_id = sl.member_id
+        where sl.member_id = $1
+        order by sl.smoked_at desc, sl.created_at desc
+        limit 50
+      `,
+      [member.id]
+    );
+
+    return json(200, requestId, {
+      logs: result.rows.map(mapHumidorSmokeLogRow),
       persistence: "stored",
     });
   });
@@ -7335,6 +8141,92 @@ async function updateHumidorItemLocation(client, details) {
   return row;
 }
 
+async function archiveHumidorItem(client, details) {
+  const result = await client.query(
+    `
+      /* humidor_item_archive */
+      update public.humidor_items
+      set quantity = 0,
+          archived_at = now(),
+          actor_id = $3,
+          request_id = $4,
+          updated_at = now()
+      where id = $1 and member_id = $2 and archived_at is null
+      returning
+        id,
+        name,
+        brand,
+        line,
+        vitola,
+        wrapper,
+        origin,
+        strength,
+        quantity,
+        rating,
+        purchase_date,
+        aging_start_date,
+        reorder_reminder,
+        humidor_location,
+        tray,
+        tasting_notes,
+        source,
+        metadata,
+        created_at
+    `,
+    [details.itemId, details.memberId, details.actor.sub, details.requestId]
+  );
+
+  const row = result.rows[0];
+  if (!row) {
+    throw new Error(`Humidor item archive did not return item ${details.itemId}.`);
+  }
+
+  return row;
+}
+
+async function updateHumidorItemSharedQuantity(client, details) {
+  const result = await client.query(
+    `
+      /* humidor_item_shared_update */
+      update public.humidor_items
+      set quantity = greatest(quantity - $3, 0),
+          archived_at = case when greatest(quantity - $3, 0) = 0 then now() else archived_at end,
+          actor_id = $4,
+          request_id = $5,
+          updated_at = now()
+      where id = $1 and member_id = $2 and archived_at is null
+      returning
+        id,
+        name,
+        brand,
+        line,
+        vitola,
+        wrapper,
+        origin,
+        strength,
+        quantity,
+        rating,
+        purchase_date,
+        aging_start_date,
+        reorder_reminder,
+        humidor_location,
+        tray,
+        tasting_notes,
+        source,
+        metadata,
+        created_at
+    `,
+    [details.itemId, details.memberId, details.quantity, details.actor.sub, details.requestId]
+  );
+
+  const row = result.rows[0];
+  if (!row) {
+    throw new Error(`Humidor item shared update did not return item ${details.itemId}.`);
+  }
+
+  return row;
+}
+
 function buildHumidorEnrichmentMetadata(details) {
   const metadata = buildHumidorItemMetadata(details.actor, details.item);
   metadata.humidorEnrichment = {
@@ -7441,6 +8333,62 @@ async function persistHumidorItem(event, actor, requestId, item) {
       createdAt: toIsoString(row.created_at),
     };
   });
+}
+
+async function insertHumidorSmokeLog(client, details) {
+  const metadata = {
+    drinkPairing: details.log.drinkPairing,
+    source: details.log.source,
+  };
+  const result = await client.query(
+    `
+      insert into public.smoke_logs (
+        member_id,
+        humidor_item_id,
+        cigar_name,
+        smoked_at,
+        rating,
+        pairing,
+        notes,
+        duration_minutes,
+        metadata,
+        actor_id,
+        request_id
+      )
+      values ($1, $2::uuid, $3, coalesce($4::timestamptz, now()), $5, $6, $7, $8, $9::jsonb, $10, $11)
+      returning
+        id,
+        humidor_item_id,
+        cigar_name,
+        smoked_at,
+        rating,
+        pairing,
+        notes,
+        duration_minutes,
+        metadata,
+        created_at
+    `,
+    [
+      details.memberId,
+      details.log.humidorItemId,
+      details.log.cigarName,
+      details.log.smokedAt,
+      details.log.rating,
+      nullable(details.log.drinkPairing),
+      nullable(details.log.notes),
+      details.log.durationMinutes,
+      JSON.stringify(metadata),
+      details.actor.sub,
+      details.requestId,
+    ]
+  );
+
+  const row = result.rows[0];
+  if (!row) {
+    throw new Error("Humidor smoke log insert did not return a row.");
+  }
+
+  return row;
 }
 
 async function upsertHumidorAlertPreferences(client, actor, requestId, memberId, settings) {
@@ -10214,6 +11162,59 @@ function mapHumidorItemRow(row) {
   };
 }
 
+async function mapHumidorItemRowForClient(client, row, memberId, actor, requestId) {
+  const item = mapHumidorItemRow(row);
+  const metadata = normalizeMetadataObject(row.metadata);
+
+  return {
+    ...item,
+    cigarImage: await resolveHumidorCigarImageForClient(metadata.cigarImage, {
+      actor,
+      client,
+      itemId: row.id,
+      itemName: row.name,
+      memberId,
+      requestId,
+    }),
+  };
+}
+
+function mapHumidorSmokeLogRow(row) {
+  const metadata = normalizeMetadataObject(row.metadata);
+  const drinkPairing = sanitizeText(row.pairing || metadata.drinkPairing || metadata.drink || "", MAX_FIELD_LENGTH);
+
+  return {
+    id: row.id,
+    humidorItemId: row.humidor_item_id || null,
+    cigarName: row.cigar_name || "",
+    smokedAt: toIsoString(row.smoked_at),
+    rating: row.rating === null || row.rating === undefined ? null : Number(row.rating),
+    drinkPairing,
+    pairing: drinkPairing,
+    notes: row.notes || "",
+    durationMinutes: row.duration_minutes === null || row.duration_minutes === undefined ? null : Number(row.duration_minutes),
+    source: sanitizeText(metadata.source, 120) || "member_smoke_log",
+    createdAt: toIsoString(row.created_at),
+  };
+}
+
+function mapHumidorSmokeLogForResponse(log) {
+  const drinkPairing = sanitizeText(log.drinkPairing || log.pairing, MAX_FIELD_LENGTH);
+
+  return {
+    humidorItemId: log.humidorItemId || null,
+    cigarName: log.cigarName,
+    smokedAt: log.smokedAt || new Date().toISOString(),
+    rating: log.rating,
+    drinkPairing,
+    pairing: drinkPairing,
+    notes: log.notes,
+    durationMinutes: log.durationMinutes,
+    source: log.source || "member_smoke_log",
+    createdAt: log.createdAt || new Date().toISOString(),
+  };
+}
+
 function normalizeHumidorAlertPreferences(value) {
   const raw = value && typeof value === "object" ? value : {};
   const normalized = {
@@ -10532,6 +11533,12 @@ async function maybeBuildBedrockReply(agent, actor, message, conversationId, opt
   const guardrailVersion = guardrailsEnabled ? process.env.BEDROCK_GUARDRAIL_VERSION || null : null;
   const knowledgeBaseId = process.env.BEDROCK_KNOWLEDGE_BASE_ID || null;
   const prefetchedKnowledgeBaseRetrieval = options.knowledgeBaseRetrieval || null;
+  const catalogRecommendations = await maybeSelectCatalogRecommendationsForMessage(message);
+  const catalogRecommendationContext = buildCatalogRecommendationContext(catalogRecommendations);
+  const memberHumidor = options.includeMemberHumidorContext
+    ? await maybeBuildMemberHumidorContext(actor, message, options.requestId || conversationId)
+    : { context: "", items: [] };
+  const memberHumidorContext = memberHumidor.context;
 
   if (process.env.FEATURE_BEDROCK !== "runtime_ready") {
     return {
@@ -10554,7 +11561,10 @@ async function maybeBuildBedrockReply(agent, actor, message, conversationId, opt
         agentId: agentTarget.agentId,
         agentAliasId: agentTarget.agentAliasId,
         sessionId: agentSessionId,
-        inputText: buildBedrockAgentInputText(message, prefetchedKnowledgeBaseRetrieval?.context),
+        inputText: buildBedrockAgentInputText(
+          message,
+          combineAgentContext(prefetchedKnowledgeBaseRetrieval?.context, catalogRecommendationContext, memberHumidorContext)
+        ),
         enableTrace: process.env.BEDROCK_AGENT_ENABLE_TRACE === "1",
         sessionState: {
           sessionAttributes: buildAgentSessionAttributes(agent, actor, conversationId),
@@ -10571,6 +11581,8 @@ async function maybeBuildBedrockReply(agent, actor, message, conversationId, opt
       const reply = await extractAgentCompletionText(result);
 
       if (reply) {
+        const finalReply = normalizeAgentReply(agent, message, reply, catalogRecommendations, memberHumidor);
+
         return {
           status: "bedrock_agent_runtime",
           modelId,
@@ -10582,7 +11594,7 @@ async function maybeBuildBedrockReply(agent, actor, message, conversationId, opt
           retrievedContextCount: prefetchedKnowledgeBaseRetrieval?.count,
           guardrailId,
           guardrailVersion,
-          reply,
+          reply: finalReply,
         };
       }
     } catch (error) {
@@ -10601,6 +11613,7 @@ async function maybeBuildBedrockReply(agent, actor, message, conversationId, opt
   }
 
   const knowledgeBaseRetrieval = prefetchedKnowledgeBaseRetrieval || (await maybeRetrieveKnowledgeBaseContext(knowledgeBaseId, message));
+  const runtimeContext = combineAgentContext(knowledgeBaseRetrieval.context, catalogRecommendationContext, memberHumidorContext);
 
   try {
     const { BedrockRuntimeClient, ConverseCommand } = require("@aws-sdk/client-bedrock-runtime");
@@ -10613,7 +11626,7 @@ async function maybeBuildBedrockReply(agent, actor, message, conversationId, opt
           content: [{ text: message }],
         },
       ],
-      system: [{ text: buildAgentSystemPrompt(agent, actor, knowledgeBaseRetrieval.context) }],
+      system: [{ text: buildAgentSystemPrompt(agent, actor, runtimeContext) }],
       inferenceConfig: {
         maxTokens: options.maxTokens || 700,
         temperature: options.temperature ?? 0.4,
@@ -10631,9 +11644,7 @@ async function maybeBuildBedrockReply(agent, actor, message, conversationId, opt
     });
     const result = await client.send(command);
     let reply = extractConverseText(result);
-    if (agent === "YCCCigarGuide" && shouldUseAdultCigarQuestionFallbackReply(message, reply)) {
-      reply = buildAdultCigarQuestionFallbackReply(message);
-    }
+    reply = normalizeAgentReply(agent, message, reply, catalogRecommendations, memberHumidor);
 
     return {
       status: reply ? "bedrock_runtime" : "fallback",
@@ -10660,6 +11671,12 @@ async function maybeBuildBedrockReply(agent, actor, message, conversationId, opt
     );
 
     if (isCigarGuideQuestion(message)) {
+      const reply = agent === "YCCCigarGuide" && isDisallowedTobaccoAccessQuestion(message)
+        ? buildAdultCigarQuestionFallbackReply(message)
+        : catalogRecommendations.length
+        ? buildCatalogRecommendationReply(catalogRecommendations)
+        : buildAdultCigarQuestionFallbackReply(message);
+
       return {
         status: "bedrock_runtime",
         modelId,
@@ -10668,7 +11685,33 @@ async function maybeBuildBedrockReply(agent, actor, message, conversationId, opt
         retrievedContextCount: knowledgeBaseRetrieval.count,
         guardrailId,
         guardrailVersion,
-        reply: buildAdultCigarQuestionFallbackReply(message),
+        reply,
+      };
+    }
+
+    if (shouldUseMemberHumidorFallbackReply(message, "", memberHumidor)) {
+      return {
+        status: "fallback",
+        modelId,
+        knowledgeBaseId,
+        knowledgeBaseStatus: knowledgeBaseRetrieval.status,
+        retrievedContextCount: knowledgeBaseRetrieval.count,
+        guardrailId,
+        guardrailVersion,
+        reply: buildMemberHumidorFallbackReply(memberHumidor.items),
+      };
+    }
+
+    if (agent === "YCCSupportAgent" && shouldUseSupportFallbackReply(message, "")) {
+      return {
+        status: "fallback",
+        modelId,
+        knowledgeBaseId,
+        knowledgeBaseStatus: knowledgeBaseRetrieval.status,
+        retrievedContextCount: knowledgeBaseRetrieval.count,
+        guardrailId,
+        guardrailVersion,
+        reply: buildSupportFallbackReply(message),
       };
     }
 
@@ -10683,6 +11726,480 @@ async function maybeBuildBedrockReply(agent, actor, message, conversationId, opt
       reply: null,
     };
   }
+}
+
+function normalizeAgentReply(agent, message, reply, catalogRecommendations, memberHumidor) {
+  if (agent === "YCCCigarGuide" && isDisallowedTobaccoAccessQuestion(message)) {
+    return buildAdultCigarQuestionFallbackReply(message);
+  }
+
+  if (shouldUseMemberHumidorFallbackReply(message, reply, memberHumidor)) {
+    return buildMemberHumidorFallbackReply(memberHumidor.items);
+  }
+
+  if (shouldUseCatalogRecommendationFallbackReply(message, reply, catalogRecommendations)) {
+    return buildCatalogRecommendationReply(catalogRecommendations);
+  }
+
+  if (agent === "YCCCigarGuide" && shouldUseAdultCigarQuestionFallbackReply(message, reply)) {
+    return buildAdultCigarQuestionFallbackReply(message);
+  }
+
+  if (agent === "YCCSupportAgent" && shouldUseSupportFallbackReply(message, reply)) {
+    return buildSupportFallbackReply(message);
+  }
+
+  return reply;
+}
+
+async function maybeSelectCatalogRecommendationsForMessage(message) {
+  if (!shouldUseCatalogRecommendations(message)) {
+    return [];
+  }
+
+  try {
+    const commerceEnv = await getCommerceRuntimeEnv();
+    const launchCatalog = loadStripeLaunchCatalog(commerceEnv);
+    if (launchCatalog.error || !launchCatalog.catalog.length) {
+      return [];
+    }
+
+    return selectCatalogRecommendationsForMessage(launchCatalog.catalog, message, 5);
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        level: "warn",
+        event: "catalog_recommendation_context_unavailable",
+        name: error instanceof Error ? error.name : null,
+        message: error instanceof Error ? error.message : String(error),
+      })
+    );
+
+    return [];
+  }
+}
+
+function shouldUseCatalogRecommendations(message) {
+  const normalized = String(message || "").toLowerCase();
+  if (!isCigarGuideQuestion(normalized)) {
+    return false;
+  }
+
+  if (isDisallowedTobaccoAccessQuestion(normalized)) {
+    return false;
+  }
+
+  if (shouldUseMemberHumidorContext(normalized)) {
+    return false;
+  }
+
+  return /\b(recommend|suggest|which|what should i buy|what cigar|catalog|shop|available|in stock|new arrival|latest cigar|box|sampler|pair|pairing|coffee|espresso|beginner|mild|medium|full|maduro|connecticut|habano|broadleaf|infused|sweet|budget)\b/.test(
+    normalized
+  );
+}
+
+function selectCatalogRecommendationsForMessage(catalog, message, limit = 5) {
+  const maxPrice = extractCatalogRecommendationMaxPrice(message);
+  const terms = buildCatalogRecommendationTerms(message);
+  const scored = catalog
+    .filter(isRecommendableCigarCatalogProduct)
+    .filter((product) => maxPrice === null || product.price <= maxPrice)
+    .map((product, index) => ({
+      product,
+      index,
+      score: scoreCatalogRecommendation(product, terms),
+    }))
+    .filter((entry) => entry.score > 0 || terms.length === 0)
+    .sort((left, right) => right.score - left.score || left.product.price - right.product.price || left.index - right.index);
+
+  const recommendations = scored.length
+    ? scored
+    : catalog
+        .filter(isRecommendableCigarCatalogProduct)
+        .map((product, index) => ({ product, index, score: 0 }))
+        .sort((left, right) => left.product.price - right.product.price || left.index - right.index);
+
+  return recommendations.slice(0, limit).map((entry) => entry.product);
+}
+
+function isRecommendableCigarCatalogProduct(product) {
+  if (!product || product.shippable === false) {
+    return false;
+  }
+
+  if (sanitizeText(product.publishStatus, 40).toLowerCase() !== "published") {
+    return false;
+  }
+
+  const text = `${product.name} ${product.category} ${product.description}`.toLowerCase();
+  if (/\b(humidor|lighter|torch|butane|fluid|ashtray|cutter|punch cutter|display|book matches|membership|subscription)\b/.test(text)) {
+    return false;
+  }
+
+  return /\b(cigar|cigars|robusto|toro|churchill|corona|gordo|lonsdale|belicoso|torpedo|maduro|connecticut|habano|sampler|box|bx|bundle|bdl)\b/.test(
+    text
+  );
+}
+
+function extractCatalogRecommendationMaxPrice(message) {
+  const text = String(message || "").toLowerCase();
+  const match = text.match(/\b(?:under|below|less than|max|maximum|budget)\s*\$?\s*(\d{2,4})(?:\.\d{1,2})?\b/);
+  if (!match) {
+    return null;
+  }
+
+  const value = Number(match[1]);
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function buildCatalogRecommendationTerms(message) {
+  const normalized = String(message || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9$]+/g, " ");
+  const stopWords = new Set([
+    "adult",
+    "adults",
+    "cigar",
+    "cigars",
+    "from",
+    "with",
+    "that",
+    "this",
+    "what",
+    "which",
+    "would",
+    "should",
+    "recommend",
+    "suggest",
+    "catalog",
+    "yuzu",
+    "shop",
+    "box",
+    "boxes",
+    "buy",
+    "for",
+    "and",
+  ]);
+  const terms = normalized
+    .split(/\s+/)
+    .map((term) => term.trim())
+    .filter((term) => term.length >= 3 && !stopWords.has(term));
+
+  if (/\b(coffee|morning|breakfast|cream|creamy|mild|smooth|beginner)\b/.test(normalized)) {
+    terms.push("connecticut", "shade", "claro", "mild");
+  }
+
+  if (/\b(espresso|dessert|chocolate|cocoa|sweet|maduro)\b/.test(normalized)) {
+    terms.push("maduro", "java", "cocoa");
+  }
+
+  if (/\b(full|bold|strong|pepper|peppery)\b/.test(normalized)) {
+    terms.push("full", "habano", "broadleaf", "nicaragua");
+  }
+
+  if (/\b(infused|aromatic|sweet)\b/.test(normalized)) {
+    terms.push("acid", "java", "infused");
+  }
+
+  return Array.from(new Set(terms));
+}
+
+function scoreCatalogRecommendation(product, terms) {
+  const searchable = `${product.name} ${product.brand} ${product.category} ${product.description}`.toLowerCase();
+  let score = 0;
+
+  for (const term of terms) {
+    if (searchable.includes(term)) {
+      score += product.name.toLowerCase().includes(term) ? 6 : 3;
+    }
+  }
+
+  if (/\bconnecticut\b/i.test(product.name) && terms.includes("coffee")) {
+    score += 4;
+  }
+
+  if (/\b(java|maduro)\b/i.test(product.name) && (terms.includes("espresso") || terms.includes("cocoa"))) {
+    score += 4;
+  }
+
+  if (score === 0 && /\b(cigar|cigars|sampler)\b/i.test(product.category)) {
+    score = 1;
+  }
+
+  return score;
+}
+
+function buildCatalogRecommendationContext(recommendations) {
+  if (!recommendations.length) {
+    return "";
+  }
+
+  return [
+    "Yuzu live product catalog recommendations:",
+    ...recommendations.map((product, index) => {
+      const parts = [
+        `${index + 1}. ${product.name}`,
+        `SKU ${product.sku}`,
+        `${formatMoney(product.price)} public price`,
+        `shop /shop/${product.slug}/`,
+      ];
+
+      if (product.category) {
+        parts.push(`category ${product.category}`);
+      }
+
+      return parts.join(" | ");
+    }),
+    "When the member asks for cigar suggestions from the Yuzu catalog, recommend only these listed products and include the shop path.",
+  ].join("\n");
+}
+
+function combineAgentContext(...contexts) {
+  return contexts
+    .map((context) => sanitizeMultilineText(context, 4500))
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function shouldUseCatalogRecommendationFallbackReply(message, reply, recommendations) {
+  if (!recommendations.length || !shouldUseCatalogRecommendations(message)) {
+    return false;
+  }
+
+  if (isAgentGuardrailRefusalReply(reply)) {
+    return true;
+  }
+
+  const normalizedReply = String(reply || "").toLowerCase();
+  return !recommendations.some((product) => normalizedReply.includes(product.name.toLowerCase()) || normalizedReply.includes(`/shop/${product.slug}/`));
+}
+
+function buildCatalogRecommendationReply(recommendations) {
+  const lines = recommendations.slice(0, 4).map((product, index) => {
+    const category = product.category ? `, ${product.category}` : "";
+    return `${index + 1}. ${product.name}${category}: ${formatMoney(product.price)} public price, SKU ${product.sku}, /shop/${product.slug}/`;
+  });
+
+  return [
+    "For adults 21+, I would start with these live Yuzu catalog options:",
+    ...lines,
+    "I would still confirm current availability and adult-signature shipping at checkout before you place the order.",
+  ].join("\n");
+}
+
+async function maybeBuildMemberHumidorContext(actor, message, requestId) {
+  if (!shouldUseMemberHumidorContext(message) || !actor || !shouldPersistDatabaseWrites()) {
+    return { context: "", items: [] };
+  }
+
+  if (buildHumidorMembershipDeniedPayload(actor)) {
+    return { context: "", items: [] };
+  }
+
+  try {
+    return await withDatabaseClient("ycc-api-agent-humidor-context", async (client) => {
+      const member = await upsertMember(client, actor, sanitizeText(requestId, 120) || `agent_humidor_${crypto.randomUUID()}`);
+      const result = await client.query(
+        `
+          select
+            id,
+            name,
+            brand,
+            line,
+            vitola,
+            wrapper,
+            origin,
+            strength,
+            quantity,
+            rating,
+            purchase_date,
+            aging_start_date,
+            reorder_reminder,
+            humidor_location,
+            tray,
+            tasting_notes,
+            source,
+            metadata,
+            created_at
+          from public.humidor_items
+          where member_id = $1 and archived_at is null
+          order by created_at desc
+          limit 20
+        `,
+        [member.id]
+      );
+      const items = result.rows.map(mapHumidorItemRow);
+      return {
+        context: buildMemberHumidorContext(items),
+        items,
+      };
+    });
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        level: "warn",
+        event: "member_humidor_context_unavailable",
+        name: error instanceof Error ? error.name : null,
+        message: error instanceof Error ? error.message : String(error),
+      })
+    );
+
+    return { context: "", items: [] };
+  }
+}
+
+function shouldUseMemberHumidorContext(message) {
+  const normalized = String(message || "").toLowerCase();
+  const ownsHumidorContext = /\b(digital humidor|my humidor|member humidor|saved cigars|my collection|my inventory)\b/.test(normalized);
+  const inventoryIntent =
+    /\b(humidor inventory|inventory|saved cigars|my collection|my inventory|which cigar|what cigar|what should i smoke|smoke tonight|smoke next|reorder soon|reorder reminder|aging window|ready to smoke|locker|tray|quantity|qty)\b/.test(
+      normalized
+    ) || /\bwhat(?:'s| is)? in my humidor\b/.test(normalized);
+
+  return ownsHumidorContext && inventoryIntent;
+}
+
+function buildMemberHumidorContext(items) {
+  if (!items.length) {
+    return "Member digital humidor inventory: no saved cigars found for this member.";
+  }
+
+  return [
+    "Member digital humidor inventory:",
+    ...items.slice(0, 12).map((item, index) => {
+      const parts = [
+        `${index + 1}. ${item.name}`,
+        `qty ${item.quantity || 0}`,
+        item.humidorLocation ? `location ${item.humidorLocation}${item.tray ? ` / ${item.tray}` : ""}` : "location not set",
+      ];
+
+      const blend = [item.brand, item.line, item.vitola, item.wrapper, item.strength].filter(Boolean).join(", ");
+      if (blend) {
+        parts.push(`details ${blend}`);
+      }
+
+      if (typeof item.rating === "number") {
+        parts.push(`member rating ${item.rating}`);
+      }
+
+      if (item.agingStartDate) {
+        parts.push(`aging start ${item.agingStartDate}`);
+      }
+
+      if (item.reorderReminder) {
+        parts.push(`reorder ${item.reorderReminder}`);
+      }
+
+      if (item.tastingNotes) {
+        parts.push(`notes ${sanitizeText(item.tastingNotes, 140)}`);
+      }
+
+      return parts.join(" | ");
+    }),
+    "Use this member-owned inventory when answering questions about what to smoke, age, move, rate, reorder, or compare. Do not claim changes were saved unless an authenticated action confirms it.",
+  ].join("\n");
+}
+
+function shouldUseMemberHumidorFallbackReply(message, reply, memberHumidor) {
+  if (!shouldUseMemberHumidorContext(message) || !memberHumidor?.context) {
+    return false;
+  }
+
+  if (isAgentGuardrailRefusalReply(reply)) {
+    return true;
+  }
+
+  const items = Array.isArray(memberHumidor.items) ? memberHumidor.items : [];
+  const normalizedReply = String(reply || "").toLowerCase();
+
+  if (!items.length) {
+    return !/\b(no saved cigars|no cigars saved|empty humidor|add cigars)\b/.test(normalizedReply);
+  }
+
+  return !items.some((item) => item.name && normalizedReply.includes(item.name.toLowerCase()));
+}
+
+function buildMemberHumidorFallbackReply(items) {
+  if (!items.length) {
+    return "I do not see any saved cigars in your digital humidor yet. Add a cigar first, then I can help choose what to smoke, track aging, or flag reorder reminders.";
+  }
+
+  const smokePick =
+    items
+      .filter((item) => item.name)
+      .sort((left, right) => (Number(right.rating) || 0) - (Number(left.rating) || 0))[0] || items[0];
+  const reorderPick =
+    items.find((item) => item.reorderReminder) ||
+    items.find((item) => Number(item.quantity || 0) > 0 && Number(item.quantity || 0) <= 2) ||
+    null;
+  const agingPick = items.find((item) => item.agingStartDate && item.name !== smokePick.name) || null;
+
+  const lines = [
+    "Looking only at your saved digital humidor:",
+    `Smoke tonight: ${formatHumidorFallbackItem(smokePick)}.`,
+  ];
+
+  if (reorderPick) {
+    lines.push(
+      `Reorder watch: ${reorderPick.name}${
+        reorderPick.reorderReminder ? ` has a reorder reminder for ${reorderPick.reorderReminder}` : ` is down to qty ${reorderPick.quantity || 0}`
+      }.`
+    );
+  } else {
+    lines.push("Reorder watch: I do not see an urgent reorder reminder in the saved items.");
+  }
+
+  if (agingPick) {
+    lines.push(`Keep aging: ${formatHumidorFallbackItem(agingPick)}.`);
+  }
+
+  lines.push("I have not saved any changes from this chat; use the humidor action controls to update inventory.");
+
+  return lines.join("\n");
+}
+
+function formatHumidorFallbackItem(item) {
+  const details = [item.brand, item.line, item.vitola, item.wrapper, item.strength].filter(Boolean).join(", ");
+  const location = item.humidorLocation ? ` in ${item.humidorLocation}${item.tray ? ` / ${item.tray}` : ""}` : "";
+  const rating = typeof item.rating === "number" ? `, member rating ${item.rating}` : "";
+  const notes = item.tastingNotes ? `, notes: ${sanitizeText(item.tastingNotes, 120)}` : "";
+  return `${item.name}${details ? ` (${details})` : ""}${location}${rating}${notes}`;
+}
+
+function shouldUseSupportFallbackReply(message, reply) {
+  if (!isSupportShippingQuestion(message)) {
+    return false;
+  }
+
+  if (isAgentGuardrailRefusalReply(reply)) {
+    return true;
+  }
+
+  const normalizedReply = String(reply || "").toLowerCase();
+  return !/\b(adult[- ]signature|age verification|signature delivery|shipping)\b/.test(normalizedReply);
+}
+
+function isSupportShippingQuestion(message) {
+  const normalized = String(message || "").toLowerCase();
+  return /\b(ship|shipping|delivery|deliver|order|checkout)\b/.test(normalized) &&
+    /\b(adult|signature|21|age verification|age check|tobacco|cigar)\b/.test(normalized);
+}
+
+function buildSupportFallbackReply() {
+  return [
+    "For adult cigar orders, expect age verification before checkout and adult-signature delivery where the selected service or destination requires it.",
+    "Use the checkout address and shipping service shown in Yuzu so the compliance token, carrier, and signature option stay matched to the order.",
+    "If a shipment is delayed, damaged, or missing, share the order number with support so a concierge operator can review the case without collecting payment details in chat.",
+  ].join("\n");
+}
+
+function formatMoney(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) {
+    return "price pending";
+  }
+
+  return `$${amount.toFixed(2)}`;
 }
 
 async function maybeBuildNewsDraftRuntimeReply(actor, prompt) {
@@ -11799,7 +13316,7 @@ function getMissingHumidorEnrichmentFields(item) {
     fields.push("info");
   }
 
-  if (!hasHumidorVisibleImage(item)) {
+  if (!hasHumidorRenderableImageMetadata(item)) {
     fields.push("image");
   }
 
@@ -11810,8 +13327,21 @@ function getMissingHumidorEnrichmentFields(item) {
   return fields;
 }
 
-function hasHumidorVisibleImage(item) {
-  return Boolean(item?.cigarImage?.imageUrl || item?.cigarImage?.dataUrl);
+function hasHumidorRenderableImageMetadata(item) {
+  const image = item?.cigarImage;
+  if (!image || typeof image !== "object" || Array.isArray(image)) {
+    return false;
+  }
+
+  if (normalizeHumidorReferenceImage(image, { requireRenderableHost: true })?.imageUrl) {
+    return true;
+  }
+
+  if (normalizeHumidorS3Image(image)) {
+    return true;
+  }
+
+  return Boolean(normalizeHumidorCigarImageAttachment(image).value?.dataUrl);
 }
 
 function parseHumidorEnrichmentReply(reply, item, requestedFields) {
@@ -11836,7 +13366,8 @@ function parseHumidorEnrichmentReply(reply, item, requestedFields) {
         mimeType: parsed.mimeType,
         fileName: parsed.fileName,
         source: parsed.imageSource || parsed.imageSourceUrl,
-      }
+      },
+    { allowFirstPartyAssets: false, requireRenderableHost: true }
   );
   const estimatedValue = normalized.estimatedValue ?? normalizeHumidorMoneyValue(parsed.msrp ?? details.msrp);
   const estimatedValueSource = sanitizeText(parsed.estimatedValueSource || parsed.valueSource, 120);
@@ -11880,6 +13411,935 @@ function buildFallbackHumidorEnrichmentSuggestion(item, requestedFields) {
   };
 }
 
+async function maybeBuildHumidorWebEnrichmentSuggestion(item, requestedFields, browserSearch) {
+  if (!isHumidorWebSearchEnabled()) {
+    return {
+      status: "disabled",
+      query: browserSearch?.query || "",
+      references: [],
+      suggestion: null,
+    };
+  }
+
+  if (typeof fetch !== "function") {
+    return {
+      status: "unavailable",
+      query: browserSearch?.query || "",
+      references: [],
+      suggestion: null,
+    };
+  }
+
+  const query = sanitizeText(browserSearch?.query || buildHumidorEnrichmentBrowserSearchPlan(item, requestedFields).query, 700);
+  if (!query) {
+    return {
+      status: "missing_query",
+      query: "",
+      references: [],
+      suggestion: null,
+    };
+  }
+
+  try {
+    const references = await searchHumidorWebReferences(query, item);
+    if (!references.length) {
+      return {
+        status: "no_results",
+        query,
+        references: [],
+        suggestion: null,
+      };
+    }
+
+    return {
+      status: "retrieved",
+      query,
+      references,
+      suggestion: buildHumidorWebEnrichmentSuggestion(item, requestedFields, references),
+    };
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        level: "warn",
+        event: "humidor_web_enrichment_unavailable",
+        name: error instanceof Error ? error.name : null,
+        message: error instanceof Error ? error.message : String(error),
+      })
+    );
+
+    return {
+      status: "error",
+      query,
+      references: [],
+      suggestion: null,
+    };
+  }
+}
+
+function isHumidorWebSearchEnabled() {
+  return HUMIDOR_WEB_SEARCH_READY_VALUES.has(sanitizeText(process.env.HUMIDOR_ENRICHMENT_WEB_SEARCH, 40).toLowerCase());
+}
+
+function summarizeHumidorWebSearchResult(result, browserSearch) {
+  const references = Array.isArray(result?.references) ? result.references : [];
+  return {
+    status: result?.status || "not_run",
+    query: result?.query || browserSearch?.query || "",
+    resultCount: references.length,
+    sources: references.slice(0, 4).map((reference) => ({
+      title: reference.title,
+      url: reference.url,
+      fields: reference.fields,
+    })),
+  };
+}
+
+async function searchHumidorWebReferences(query, item) {
+  const searchHtml = await fetchHumidorWebText(buildHumidorSearchUrl(query), "text/html");
+  const searchResults = parseHumidorSearchResults(searchHtml)
+    .filter((result) => isAllowedHumidorWebReferenceUrl(result.url))
+    .slice(0, getHumidorWebSearchMaxResults());
+  const references = [];
+
+  for (const result of searchResults) {
+    try {
+      const html = await fetchHumidorWebText(result.url, "text/html,application/xhtml+xml");
+      const reference = extractHumidorWebReference(result.url, result.title, html, item);
+      if (reference) {
+        references.push(reference);
+      }
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          level: "warn",
+          event: "humidor_web_reference_fetch_skipped",
+          url: result.url,
+          name: error instanceof Error ? error.name : null,
+          message: error instanceof Error ? error.message : String(error),
+        })
+      );
+    }
+  }
+
+  return references;
+}
+
+function buildHumidorSearchUrl(query) {
+  const configuredTemplate = sanitizeText(process.env.HUMIDOR_ENRICHMENT_WEB_SEARCH_URL, 1200);
+  if (configuredTemplate.includes("{query}")) {
+    return configuredTemplate.replace("{query}", encodeURIComponent(query));
+  }
+
+  return `https://duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+}
+
+function getHumidorWebSearchMaxResults() {
+  const configured = Number(process.env.HUMIDOR_ENRICHMENT_WEB_SEARCH_MAX_RESULTS || 4);
+  return Number.isFinite(configured) ? Math.max(1, Math.min(8, Math.round(configured))) : 4;
+}
+
+function getHumidorWebSearchTimeoutMs() {
+  const configured = Number(process.env.HUMIDOR_ENRICHMENT_WEB_SEARCH_TIMEOUT_MS || 4500);
+  return Number.isFinite(configured) ? Math.max(500, Math.min(12000, Math.round(configured))) : 4500;
+}
+
+async function fetchHumidorWebText(url, accept) {
+  const controller = typeof AbortController === "function" ? new AbortController() : null;
+  const timeout = controller ? setTimeout(() => controller.abort(), getHumidorWebSearchTimeoutMs()) : null;
+
+  try {
+    const response = await fetch(url, {
+      headers: {
+        accept,
+        "user-agent": "YuzuCigarClubHumidorAgent/1.0 (+https://www.yuzucigarclub.com)",
+      },
+      signal: controller?.signal,
+    });
+
+    if (!response?.ok) {
+      throw new Error(`web_fetch_failed_${response?.status || "unknown"}`);
+    }
+
+    const text = await response.text();
+    return String(text || "").slice(0, 300000);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
+}
+
+function parseHumidorSearchResults(html) {
+  const results = [];
+  const anchorPattern = /<a\b([^>]*?)>([\s\S]*?)<\/a>/gi;
+  let match;
+
+  while ((match = anchorPattern.exec(String(html || "")))) {
+    const attributes = parseHtmlAttributes(match[1]);
+    const rawHref = attributes.href;
+    const url = normalizeHumidorSearchResultUrl(rawHref);
+    const title = sanitizeText(htmlToPlainText(match[2]), 220);
+    if (!url || !title) {
+      continue;
+    }
+
+    if (!results.some((result) => result.url === url)) {
+      results.push({ title, url });
+    }
+  }
+
+  return results;
+}
+
+function normalizeHumidorSearchResultUrl(rawHref) {
+  let href = decodeHtmlEntities(sanitizeText(rawHref, 1200));
+  if (!href) {
+    return "";
+  }
+
+  if (href.startsWith("//")) {
+    href = `https:${href}`;
+  }
+
+  try {
+    const parsed = new URL(href, "https://duckduckgo.com");
+    const redirected = parsed.searchParams.get("uddg") || parsed.searchParams.get("u");
+    const finalUrl = redirected ? new URL(redirected) : parsed;
+    if (finalUrl.protocol !== "https:" && finalUrl.protocol !== "http:") {
+      return "";
+    }
+
+    finalUrl.hash = "";
+    return finalUrl.toString();
+  } catch {
+    return "";
+  }
+}
+
+function isAllowedHumidorWebReferenceUrl(value) {
+  try {
+    const parsed = new URL(value);
+    const domain = parsed.hostname.toLowerCase().replace(/^www\./, "");
+    if (HUMIDOR_WEB_SEARCH_BLOCKED_DOMAINS.has(domain)) {
+      return false;
+    }
+
+    if ([...HUMIDOR_WEB_SEARCH_BLOCKED_DOMAINS].some((blocked) => domain.endsWith(`.${blocked}`))) {
+      return false;
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function extractHumidorWebReference(url, searchTitle, html, item) {
+  const title = sanitizeText(extractHtmlTitle(html) || searchTitle, 220);
+  const heading = sanitizeText(extractFirstHtmlHeading(html), 220);
+  const text = htmlToPlainText(html);
+  const searchable = `${title} ${heading} ${text}`.toLowerCase();
+  const identityTerms = buildHumidorCatalogEnrichmentTerms(item);
+  const matchedTerms = identityTerms.filter((term) => searchable.includes(term));
+  const cigarCue = /\b(cigar|cigars|wrapper|origin|strength|body|toro|robusto|churchill|corona|vitola|msrp)\b/i.test(searchable);
+
+  if (!hasEnoughHumidorReferenceTermCoverage(item, matchedTerms, identityTerms) || !cigarCue) {
+    return null;
+  }
+
+  const identity = inferHumidorWebReferenceIdentity(`${title} ${heading}`, text);
+  const wrapper = extractHumidorWebFact(text, ["Wrapper Type", "Wrapper", "Wrapper Leaf"]);
+  const origin = extractHumidorWebFact(text, ["Country of Origin", "Origin", "Country", "Made In"]);
+  const strength = extractHumidorWebFact(text, ["Strength", "Body"]);
+  const extractedEstimatedValue = extractHumidorWebMoneyValue(text);
+  const estimatedValue = isPlausibleHumidorEnrichmentUnitValue(extractedEstimatedValue) ? extractedEstimatedValue : null;
+  const rejectedEstimatedValue = extractedEstimatedValue !== null && estimatedValue === null ? extractedEstimatedValue : null;
+  const imageUrl = sanitizeHumidorImageUrl(
+    resolveHumidorReferenceUrl(url, extractHtmlMetaContent(html, ["og:image", "twitter:image", "image"])),
+    { requireRenderableHost: true }
+  );
+  const fields = [];
+
+  for (const [field, value] of Object.entries({
+    brand: identity.brand,
+    line: identity.line,
+    vitola: identity.vitola,
+    wrapper,
+    origin,
+    strength,
+    estimatedValue,
+    image: imageUrl,
+  })) {
+    if (value !== null && value !== undefined && value !== "") {
+      fields.push(field);
+    }
+  }
+
+  if (fields.length < 2) {
+    return null;
+  }
+
+  return {
+    url,
+    title,
+    brand: identity.brand,
+    line: identity.line,
+    vitola: identity.vitola,
+    wrapper,
+    origin,
+    strength,
+    estimatedValue,
+    rejectedEstimatedValue,
+    imageUrl,
+    fields,
+    matchedTerms,
+  };
+}
+
+function hasEnoughHumidorReferenceTermCoverage(item, matchedTerms, identityTerms) {
+  if (!identityTerms.length || !matchedTerms.length) {
+    return false;
+  }
+
+  if (sanitizeText(item.brand, MAX_FIELD_LENGTH)) {
+    return matchedTerms.length >= 1;
+  }
+
+  return identityTerms.length >= 2 && matchedTerms.length >= 2;
+}
+
+function inferHumidorWebReferenceIdentity(titleText, bodyText) {
+  const text = `${titleText} ${bodyText}`.replace(/\s+/g, " ");
+  if (/\bcamacho\s+ecuador\b/i.test(text)) {
+    return {
+      brand: "Camacho",
+      line: "Ecuador",
+      vitola: inferHumidorReferenceVitola(text),
+    };
+  }
+
+  const title = sanitizeText(titleText, 220);
+  const vitola = inferHumidorReferenceVitola(title);
+  const firstWords = title
+    .replace(/\|.*$/, "")
+    .replace(/[-:]\s*(?:cigar|cigars).*$/i, "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  return {
+    brand: firstWords.length ? titleCaseCatalogText(firstWords[0]) : "",
+    line: firstWords.length > 1 ? titleCaseCatalogText(firstWords.slice(1, Math.min(firstWords.length, 4)).join(" ")) : "",
+    vitola,
+  };
+}
+
+function inferHumidorReferenceVitola(text) {
+  for (const vitola of HUMIDOR_VITOLA_TERMS) {
+    if (new RegExp(`\\b${escapeRegex(vitola)}\\b`, "i").test(text)) {
+      return titleCaseCatalogText(vitola);
+    }
+  }
+
+  return "";
+}
+
+function extractHumidorWebFact(text, labels) {
+  const lines = String(text || "")
+    .split(/\n+/)
+    .map((line) => sanitizeText(line, 220))
+    .filter(Boolean);
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    for (const label of labels) {
+      const labelPattern = new RegExp(`^${escapeRegex(label)}\\s*(?:[:|\\-])?\\s*(.*)$`, "i");
+      const match = line.match(labelPattern);
+      if (!match) {
+        continue;
+      }
+
+      const inlineValue = cleanHumidorWebFactValue(match[1]);
+      if (inlineValue) {
+        return inlineValue;
+      }
+
+      const nextValue = cleanHumidorWebFactValue(lines[index + 1] || "");
+      if (nextValue && !isHumidorWebFactLabel(nextValue)) {
+        return nextValue;
+      }
+    }
+  }
+
+  return "";
+}
+
+function isHumidorWebFactLabel(value) {
+  return /^(wrapper(?: type| leaf)?|country(?: of origin)?|origin|made in|strength|body|price|msrp)$/i.test(sanitizeText(value, 120));
+}
+
+function cleanHumidorWebFactValue(value) {
+  return sanitizeText(String(value || "").replace(/^[\s:|\-]+/, "").replace(/\s+/g, " "), 120)
+    .replace(/\b(?:learn more|shop now|add to cart)\b.*$/i, "")
+    .trim();
+}
+
+function extractHumidorWebMoneyValue(text) {
+  const lines = String(text || "")
+    .split(/\n+/)
+    .map((line) => sanitizeText(line, 500))
+    .filter(Boolean);
+  const packageCount = inferHumidorWebPackageCount(lines.join(" "));
+  const labeledMsrp = findHumidorWebPriceCandidate(lines, packageCount, [
+    /\$\s*(\d{1,5}(?:\.\d{1,2})?)\s*(?:msrp|m\.s\.r\.p\.|list\s+price)\b/i,
+    /\b(?:single\s+)?(?:msrp|m\.s\.r\.p\.|list\s+price)\b\s*:?\s*\$?\s*(\d{1,5}(?:\.\d{1,2})?)\b/i,
+  ]);
+
+  if (labeledMsrp !== null) {
+    return labeledMsrp;
+  }
+
+  const singlePrice = findHumidorWebPriceCandidate(lines, packageCount, [
+    /\bsingle\b[^\n$]{0,60}\$\s*(\d{1,5}(?:\.\d{1,2})?)\b/i,
+    /\$\s*(\d{1,5}(?:\.\d{1,2})?)\s*(?:each|per\s+cigar)\b/i,
+  ]);
+
+  if (singlePrice !== null) {
+    return singlePrice;
+  }
+
+  const tablePrice = findHumidorWebTablePriceCandidate(lines, packageCount);
+  if (tablePrice !== null) {
+    return tablePrice;
+  }
+
+  return findHumidorWebPriceCandidate(lines, packageCount, [
+    /\b(?:retail|price|special\s+price|sale\s+price|our\s+price|each|per\s+cigar)\b\s*:?\s*\$\s*(\d{1,5}(?:\.\d{1,2})?)\b/i,
+    /\$\s*(\d{1,5}(?:\.\d{1,2})?)\s*(?:retail|price)\b/i,
+  ]);
+}
+
+function findHumidorWebPriceCandidate(lines, packageCount, patterns) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index].replace(/,/g, "");
+    const context = getHumidorWebPriceContext(lines, index);
+    if (isHumidorWebMarketingMoneyContext(line)) {
+      continue;
+    }
+
+    for (const pattern of patterns) {
+      const match = line.match(pattern);
+      if (!match) {
+        continue;
+      }
+
+      const value = normalizeHumidorWebPriceCandidate(match[1], packageCount, context);
+      if (value !== null) {
+        return value;
+      }
+    }
+
+    if (/^(?:msrp|m\.s\.r\.p\.|retail|price|special\s+price|sale\s+price|our\s+price)\s*:?\s*$/i.test(line)) {
+      const nextMoneyLine = lines
+        .slice(index + 1, index + 4)
+        .find((candidate) => /^\$\s*\d{1,5}(?:\.\d{1,2})?\b/.test(candidate.replace(/,/g, "")));
+      if (nextMoneyLine && !isHumidorWebMarketingMoneyContext(nextMoneyLine)) {
+        const match = nextMoneyLine.replace(/,/g, "").match(/^\$\s*(\d{1,5}(?:\.\d{1,2})?)\b/);
+        const value = normalizeHumidorWebPriceCandidate(match?.[1], packageCount, `${context} ${nextMoneyLine}`);
+        if (value !== null) {
+          return value;
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+function findHumidorWebTablePriceCandidate(lines, packageCount) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index].replace(/,/g, "");
+    const context = getHumidorWebPriceContext(lines, index);
+    if (isHumidorWebMarketingMoneyContext(line)) {
+      continue;
+    }
+
+    const tableMatch = line.match(/\bbox\s+of\s+\d{1,3}\b[^\n$]{0,100}\b(\d{2,5}(?:\.\d{1,2})?)\s*\$/i);
+    if (!tableMatch) {
+      continue;
+    }
+
+    const value = normalizeHumidorWebPriceCandidate(tableMatch[1], inferHumidorWebPackageCount(context) || packageCount, context);
+    if (value !== null) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function getHumidorWebPriceContext(lines, index) {
+  return lines.slice(Math.max(0, index - 4), Math.min(lines.length, index + 3)).join(" ");
+}
+
+function inferHumidorWebPackageCount(value) {
+  const text = sanitizeText(value, 1200);
+  const patterns = [
+    /\bbox\s*[-:]?\s*(\d{1,3})\s*(?:total\s+)?cigars\b/i,
+    /\bbox\s+of\s+(\d{1,3})\b/i,
+    /\b(\d{1,3})\s*(?:total\s+)?cigars\b/i,
+    /\b(\d{1,3})\s*\/\s*(?:bx|bdl|pk|tin|ct)\b/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    const count = match ? Number(match[1]) : 0;
+    if (Number.isFinite(count) && count > 1 && count <= 100) {
+      return Math.round(count);
+    }
+  }
+
+  return null;
+}
+
+function normalizeHumidorWebPriceCandidate(value, packageCount, context) {
+  const amount = normalizeHumidorMoneyValue(value);
+  if (amount === null || amount <= 0) {
+    return null;
+  }
+
+  const count = inferHumidorWebPackageCount(context) || packageCount;
+  const hasSingleContext = /\b(?:single|each|per\s+cigar)\b/i.test(context);
+  const hasPackageContext = /\b(?:box|bundle|pack|tin|total\s+cigars)\b|\/\s*(?:bx|bdl|pk|tin|ct)\b/i.test(context);
+
+  if (!hasSingleContext && hasPackageContext && count && amount >= count * 1.5) {
+    return Math.round((amount / count) * 100) / 100;
+  }
+
+  return amount;
+}
+
+function isPlausibleHumidorEnrichmentUnitValue(value) {
+  return value !== null && value !== undefined && Number.isFinite(Number(value)) && Number(value) > 0 && Number(value) <= HUMIDOR_ENRICHMENT_MAX_AUTO_UNIT_VALUE;
+}
+
+function isHumidorWebMarketingMoneyContext(value) {
+  return /\b(?:advertised\s+price|best\s+price\s+guarantee|beat\s+any|bonus\s+item|discount|free\s+shipping|gift\s+certificate|guarantee|off|points|quantity|return\s+policy|returns|reward\s+points|save|shipping\s+over|you\s+save)\b/i.test(
+    sanitizeText(value, 700)
+  );
+}
+
+function buildHumidorWebEnrichmentSuggestion(item, requestedFields, references) {
+  const suggestion = {
+    brand: "",
+    line: "",
+    vitola: "",
+    wrapper: "",
+    origin: "",
+    strength: "",
+    tastingNotes: "",
+    estimatedValue: null,
+    estimatedValueCurrency: "",
+    estimatedValueSource: "",
+    cigarImage: null,
+    confidence: "low",
+    evidence: [],
+    needsReview: [],
+    details: normalizeCigarDetails({}, item),
+  };
+
+  for (const reference of references) {
+    if (requestedFields.includes("info")) {
+      suggestion.brand ||= reference.brand;
+      suggestion.line ||= reference.line;
+      suggestion.vitola ||= reference.vitola;
+      suggestion.wrapper ||= reference.wrapper;
+      suggestion.origin ||= reference.origin;
+      suggestion.strength ||= reference.strength;
+    }
+
+    if (requestedFields.includes("msrp") && suggestion.estimatedValue === null && reference.estimatedValue !== null) {
+      suggestion.estimatedValue = reference.estimatedValue;
+      suggestion.estimatedValueCurrency = "USD";
+      suggestion.estimatedValueSource = "public_web_reference";
+    }
+
+    if (requestedFields.includes("msrp") && reference.rejectedEstimatedValue !== null && reference.rejectedEstimatedValue !== undefined) {
+      suggestion.needsReview.push(
+        `${reference.title || "Public cigar reference"} (${reference.url}) reported ${formatMoney(reference.rejectedEstimatedValue)}, which is an implausible per-cigar price for automatic MSRP enrichment.`
+      );
+    }
+
+    if (requestedFields.includes("image") && !suggestion.cigarImage && reference.imageUrl) {
+      suggestion.cigarImage = normalizeHumidorReferenceImage({
+        imageUrl: reference.imageUrl,
+        source: reference.url,
+      }, { allowFirstPartyAssets: false, requireRenderableHost: true });
+    }
+
+    suggestion.evidence.push(`${reference.title || "Public cigar reference"} (${reference.url}) provided ${reference.fields.join(", ")}.`);
+  }
+
+  const coverage = [
+    suggestion.brand,
+    suggestion.vitola,
+    suggestion.wrapper,
+    suggestion.origin,
+    suggestion.strength,
+    suggestion.estimatedValue,
+    suggestion.cigarImage?.imageUrl,
+  ].filter(Boolean).length;
+
+  if (coverage >= 4) {
+    suggestion.confidence = "medium";
+  }
+
+  if (requestedFields.includes("image") && !suggestion.cigarImage) {
+    suggestion.needsReview.push("No stable product image URL was found during public web search.");
+  }
+
+  if (suggestion.estimatedValue !== null) {
+    suggestion.details = normalizeCigarDetails(
+      {
+        manufacturer: suggestion.brand,
+        size: suggestion.vitola,
+        shape: suggestion.vitola,
+        wrapper: suggestion.wrapper,
+        country: suggestion.origin,
+        body: suggestion.strength,
+        msrp: formatMoney(suggestion.estimatedValue),
+        sourceSummary: references.slice(0, 2).map((reference) => reference.url).join("; "),
+      },
+      item
+    );
+  } else {
+    suggestion.details = normalizeCigarDetails(
+      {
+        manufacturer: suggestion.brand,
+        size: suggestion.vitola,
+        shape: suggestion.vitola,
+        wrapper: suggestion.wrapper,
+        country: suggestion.origin,
+        body: suggestion.strength,
+        sourceSummary: references.slice(0, 2).map((reference) => reference.url).join("; "),
+      },
+      item
+    );
+  }
+
+  return suggestion;
+}
+
+function extractHtmlTitle(html) {
+  const match = String(html || "").match(/<title\b[^>]*>([\s\S]*?)<\/title>/i);
+  return match ? htmlToPlainText(match[1]) : "";
+}
+
+function extractFirstHtmlHeading(html) {
+  const match = String(html || "").match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i);
+  return match ? htmlToPlainText(match[1]) : "";
+}
+
+function extractHtmlMetaContent(html, names) {
+  const metaPattern = /<meta\b([^>]*?)>/gi;
+  let match;
+
+  while ((match = metaPattern.exec(String(html || "")))) {
+    const attributes = parseHtmlAttributes(match[1]);
+    const key = sanitizeText(attributes.property || attributes.name || attributes.itemprop, 120).toLowerCase();
+    if (names.map((name) => name.toLowerCase()).includes(key)) {
+      return decodeHtmlEntities(attributes.content || "");
+    }
+  }
+
+  return "";
+}
+
+function parseHtmlAttributes(value) {
+  const attributes = {};
+  const attrPattern = /([a-zA-Z_:.-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g;
+  let match;
+
+  while ((match = attrPattern.exec(String(value || "")))) {
+    attributes[match[1].toLowerCase()] = decodeHtmlEntities(match[2] || match[3] || match[4] || "");
+  }
+
+  return attributes;
+}
+
+function htmlToPlainText(value) {
+  return decodeHtmlEntities(
+    String(value || "")
+      .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
+      .replace(/<\/?(?:br|p|div|section|article|li|ul|ol|table|thead|tbody|tr|td|th|dt|dd|dl|h[1-6])\b[^>]*>/gi, "\n")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/[ \t\f\v]+/g, " ")
+      .replace(/\n\s+/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim()
+  );
+}
+
+function decodeHtmlEntities(value) {
+  return String(value || "")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&#(\d+);/g, (_match, code) => {
+      const parsed = Number(code);
+      return Number.isFinite(parsed) ? String.fromCharCode(parsed) : "";
+    });
+}
+
+function resolveHumidorReferenceUrl(pageUrl, candidate) {
+  const text = sanitizeText(candidate, 1200);
+  if (!text) {
+    return "";
+  }
+
+  try {
+    return new URL(text, pageUrl).toString();
+  } catch {
+    return text;
+  }
+}
+
+async function maybeBuildHumidorCatalogEnrichmentSuggestion(item, requestedFields) {
+  let catalog = [];
+  try {
+    const commerceEnv = await getCommerceRuntimeEnv();
+    const launchCatalog = loadStripeLaunchCatalog(commerceEnv);
+    catalog = Array.isArray(launchCatalog.catalog) ? launchCatalog.catalog : [];
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        level: "warn",
+        event: "humidor_catalog_enrichment_unavailable",
+        name: error instanceof Error ? error.name : null,
+        message: error instanceof Error ? error.message : String(error),
+      })
+    );
+    return null;
+  }
+
+  const candidates = selectHumidorCatalogEnrichmentCandidates(catalog, item);
+  if (!candidates.length) {
+    return null;
+  }
+
+  return {
+    status: "catalog_candidates_matched",
+    count: candidates.length,
+    suggestion: buildHumidorCatalogEnrichmentSuggestion(item, requestedFields, candidates),
+  };
+}
+
+function selectHumidorCatalogEnrichmentCandidates(catalog, item) {
+  const terms = buildHumidorCatalogEnrichmentTerms(item);
+  if (!terms.length) {
+    return [];
+  }
+
+  return catalog
+    .filter(isRecommendableCigarCatalogProduct)
+    .map((product, index) => ({
+      product,
+      index,
+      score: scoreHumidorCatalogEnrichmentCandidate(product, terms),
+    }))
+    .filter((entry) => entry.score >= 8)
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+    .slice(0, 8)
+    .map((entry) => entry.product);
+}
+
+function buildHumidorCatalogEnrichmentTerms(item) {
+  const raw = [item.brand, item.line, item.name, item.vitola, item.wrapper]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ");
+  const stopWords = new Set(["cigar", "cigars", "hand", "made", "box", "bx", "bundle", "bdl", "pack", "ct", "the"]);
+
+  return Array.from(
+    new Set(
+      raw
+        .split(/\s+/)
+        .map((term) => term.trim())
+        .filter((term) => term.length >= 3 && !stopWords.has(term) && !/^\d+$/.test(term))
+    )
+  );
+}
+
+function scoreHumidorCatalogEnrichmentCandidate(product, terms) {
+  const searchable = `${product.name} ${product.brand} ${product.category} ${product.description}`.toLowerCase();
+  let score = 0;
+
+  for (const term of terms) {
+    if (searchable.includes(term)) {
+      score += product.name.toLowerCase().includes(term) ? 4 : 2;
+    }
+  }
+
+  return score;
+}
+
+function buildHumidorCatalogEnrichmentSuggestion(item, requestedFields, candidates) {
+  const best = candidates[0];
+  const parsed = parseHumidorCatalogProductName(best.name);
+  const estimatedValue = requestedFields.includes("msrp") ? getHumidorCatalogUnitPrice(best) : null;
+  const evidence = candidates.slice(0, 4).map((product) => {
+    const unitPrice = getHumidorCatalogUnitPrice(product);
+    const price = unitPrice === null ? formatMoney(product.price) : `${formatMoney(unitPrice)} estimated per cigar from ${formatMoney(product.price)} box/bundle price`;
+    return `${product.name} | SKU ${product.sku} | ${price} | /shop/${product.slug}/`;
+  });
+  const needsReview = [
+    "Confirm the exact cigar, vitola, wrapper, and box count before approving catalog-derived enrichment.",
+  ];
+
+  if (requestedFields.includes("image")) {
+    needsReview.push("No verified product image was available from the launch catalog; keep product image empty until a stable source is confirmed.");
+  }
+
+  return {
+    brand: parsed.brand,
+    line: parsed.line,
+    vitola: parsed.vitola,
+    wrapper: parsed.wrapper,
+    origin: "",
+    strength: "",
+    tastingNotes: "",
+    estimatedValue,
+    estimatedValueCurrency: estimatedValue === null ? "" : "USD",
+    estimatedValueSource: estimatedValue === null ? "" : "yuzu_catalog_public_price",
+    cigarImage: null,
+    confidence: "low",
+    evidence,
+    needsReview,
+    details: normalizeCigarDetails(
+      {
+        manufacturer: parsed.brand,
+        size: parsed.vitola,
+        shape: parsed.vitola,
+        wrapper: parsed.wrapper,
+        msrp: estimatedValue === null ? "" : formatMoney(estimatedValue),
+        sourceSummary: `Matched ${item.name} against Yuzu launch catalog candidates.`,
+      },
+      item
+    ),
+  };
+}
+
+function parseHumidorCatalogProductName(name) {
+  const normalized = sanitizeText(name, 220)
+    .replace(/\b\d+\s*(?:ct|\/\s*(?:bx|bdl|pk|tin|ct))\b/gi, " ")
+    .replace(/\b(?:by oliva)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const upper = normalized.toUpperCase();
+  const brand = inferHumidorCatalogBrand(upper);
+  const withoutBrand = brand ? normalized.replace(new RegExp(`^${escapeRegex(brand)}\\s+`, "i"), "").trim() : normalized;
+  const vitola = inferHumidorCatalogVitola(withoutBrand);
+  const wrapper = inferHumidorCatalogWrapper(withoutBrand);
+  let line = withoutBrand;
+
+  if (vitola) {
+    line = line.replace(new RegExp(`\\b${escapeRegex(vitola)}\\b`, "i"), " ");
+  }
+
+  line = titleCaseCatalogText(line.replace(/\s+/g, " ").trim());
+
+  return {
+    brand,
+    line,
+    vitola,
+    wrapper,
+  };
+}
+
+function inferHumidorCatalogBrand(upperName) {
+  const knownBrands = [
+    "DREW ESTATE",
+    "ARTURO FUENTE",
+    "MY FATHER",
+    "ROCKY PATEL",
+    "LA AROMA DE CUBA",
+    "SAN CRISTOBAL",
+    "ASHTON",
+    "PLASENCIA",
+    "CAMACHO",
+    "OLIVA",
+    "NUB",
+    "PADRON",
+    "MONTECRISTO",
+    "ROMEO Y JULIETA",
+    "PARTAGAS",
+    "PUNCH",
+    "ACID",
+    "CAO",
+    "JAVA",
+    "QUORUM",
+  ];
+  const match = knownBrands.find((brand) => upperName.startsWith(`${brand} `) || upperName === brand);
+  if (match) {
+    return titleCaseCatalogText(match);
+  }
+
+  return titleCaseCatalogText(upperName.split(/\s+/, 1)[0] || "");
+}
+
+function inferHumidorCatalogVitola(name) {
+  const match = name.match(
+    /\b(robusto|toro|churchill|corona(?:\s+gorda)?|torpedo|gordo|double\s+gordo|lonsdale|belicoso|perfecto|panatela|short\s+robusto|the\s+58)\b/i
+  );
+  return match ? titleCaseCatalogText(match[1]) : "";
+}
+
+function inferHumidorCatalogWrapper(name) {
+  const match = name.match(/\b(maduro|connecticut|habano|cameroon|corojo|sumatra|natural|broadleaf|oscuro|claro|ecuador)\b/i);
+  return match ? titleCaseCatalogText(match[1]) : "";
+}
+
+function getHumidorCatalogUnitPrice(product) {
+  const price = Number(product.price);
+  if (!Number.isFinite(price) || price <= 0) {
+    return null;
+  }
+
+  const count = inferHumidorCatalogPackageCount(product.name);
+  const unitPrice = count > 1 ? price / count : price;
+
+  return Math.round(unitPrice * 100) / 100;
+}
+
+function inferHumidorCatalogPackageCount(name) {
+  const text = String(name || "").toLowerCase();
+  const slashMatch = text.match(/\b(\d{1,3})\s*\/\s*(?:bx|bdl|pk|tin|ct)\b/);
+  if (slashMatch) {
+    return Math.max(1, Number(slashMatch[1]) || 1);
+  }
+
+  const countMatch = text.match(/\b(\d{1,3})\s*ct\b/);
+  if (countMatch) {
+    return Math.max(1, Number(countMatch[1]) || 1);
+  }
+
+  return 1;
+}
+
+function titleCaseCatalogText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/\b[a-z]/g, (char) => char.toUpperCase());
+}
+
+function escapeRegex(value) {
+  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function mergeHumidorEnrichment(currentItem, enrichment, requestedFields) {
   const item = { ...currentItem };
   const updatedFields = [];
@@ -11894,14 +14354,14 @@ function mergeHumidorEnrichment(currentItem, enrichment, requestedFields) {
     fillMissingHumidorText(item, updatedFields, "tastingNotes", enrichment.tastingNotes);
   }
 
-  if (requestedFields.includes("msrp") && item.estimatedValue === null && enrichment.estimatedValue !== null) {
+  if (requestedFields.includes("msrp") && item.estimatedValue === null && isPlausibleHumidorEnrichmentUnitValue(enrichment.estimatedValue)) {
     item.estimatedValue = enrichment.estimatedValue;
     item.estimatedValueCurrency = enrichment.estimatedValueCurrency || "USD";
     item.estimatedValueSource = enrichment.estimatedValueSource || "ai_humidor_enrichment_msrp";
     updatedFields.push("estimatedValue");
   }
 
-  if (requestedFields.includes("image") && !hasHumidorVisibleImage(item) && enrichment.cigarImage?.imageUrl) {
+  if (requestedFields.includes("image") && !hasHumidorRenderableImageMetadata(item) && enrichment.cigarImage?.imageUrl) {
     item.cigarImage = enrichment.cigarImage;
     updatedFields.push("cigarImage");
   }
@@ -11928,19 +14388,26 @@ function buildHumidorEnrichmentAiSummary(ai) {
     agentAliasId: ai.agentAliasId,
     knowledgeBaseStatus: ai.knowledgeBaseStatus,
     retrievedContextCount: ai.retrievedContextCount,
+    webSearchStatus: ai.webSearchStatus,
+    webSearchQuery: ai.webSearchQuery,
+    webSearchResultCount: ai.webSearchResultCount,
+    webSearchSources: ai.webSearchSources,
+    catalogReferenceStatus: ai.catalogReferenceStatus,
+    catalogReferenceCount: ai.catalogReferenceCount,
     browserSearch: ai.browserSearch,
+    rekognition: ai.rekognition ? summarizeRekognitionForClient(ai.rekognition) : undefined,
     stopReason: ai.stopReason || null,
   };
 }
 
-function normalizeHumidorReferenceImage(value) {
+function normalizeHumidorReferenceImage(value, options = {}) {
   const raw =
     typeof value === "string"
       ? { imageUrl: value }
       : value && typeof value === "object" && !Array.isArray(value)
         ? value
         : {};
-  const imageUrl = sanitizeHumidorImageUrl(raw.imageUrl || raw.url || raw.src || raw.href);
+  const imageUrl = sanitizeHumidorImageUrl(raw.imageUrl || raw.url || raw.src || raw.href, options);
 
   if (!imageUrl) {
     return null;
@@ -11962,18 +14429,46 @@ function normalizeHumidorReferenceImage(value) {
   };
 }
 
-function sanitizeHumidorImageUrl(value) {
+function sanitizeHumidorImageUrl(value, options = {}) {
   const text = sanitizeText(value, 1000);
+  const allowFirstPartyAssets = options.allowFirstPartyAssets !== false;
 
   if (/^https:\/\/[^\s"<>]+$/i.test(text)) {
-    return text;
+    return options.requireRenderableHost && !isHumidorRenderableReferenceImageUrl(text) ? "" : text;
   }
 
-  if (/^\/assets\/[A-Za-z0-9._~/%-]+\.(?:png|jpe?g|gif|webp)$/i.test(text)) {
+  if (allowFirstPartyAssets && isHumidorRenderableFirstPartyAssetPath(text)) {
     return text;
   }
 
   return "";
+}
+
+function isHumidorRenderableFirstPartyAssetPath(value) {
+  return /^\/assets\/(?:product-[a-z-]+\.png|inventory\/[A-Za-z0-9._~/%-]+\.(?:png|jpe?g|gif|webp))$/i.test(
+    String(value || "").trim()
+  );
+}
+
+function hasHumidorReferenceImageUrlMetadata(value) {
+  const raw = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  return Boolean(sanitizeText(raw.imageUrl || raw.url || raw.src || raw.href, 1000));
+}
+
+function isHumidorRenderableReferenceImageUrl(value) {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:") {
+      return false;
+    }
+
+    const hostname = url.hostname.toLowerCase();
+    return HUMIDOR_RENDERABLE_REFERENCE_IMAGE_PATHS.some(
+      ([allowedHost, allowedPathPrefix]) => hostname === allowedHost && url.pathname.startsWith(allowedPathPrefix)
+    );
+  } catch {
+    return false;
+  }
 }
 
 function inferHumidorImageMimeType(imageUrl) {
@@ -11997,6 +14492,249 @@ function inferHumidorImageMimeType(imageUrl) {
 function buildHumidorImageFileName(imageUrl) {
   const lastPathPart = imageUrl.split("?", 1)[0].split("/").filter(Boolean).pop() || "humidor-reference-image.jpg";
   return sanitizeText(lastPathPart, 180) || "humidor-reference-image.jpg";
+}
+
+function normalizeHumidorS3Image(value) {
+  const raw = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const s3Key = sanitizeHumidorS3Key(raw.s3Key || raw.key || raw.objectKey);
+  if (!s3Key) {
+    return null;
+  }
+
+  const s3Bucket = sanitizeS3BucketName(raw.s3Bucket || raw.bucket || getHumidorImageBucket());
+  if (!s3Bucket) {
+    return null;
+  }
+
+  const mimeType = sanitizeText(raw.mimeType || raw.contentType, 80).toLowerCase().split(";", 1)[0] || inferHumidorImageMimeType(s3Key);
+  if (!CIGAR_IMAGE_MIME_FORMATS.has(mimeType)) {
+    return null;
+  }
+
+  const bytes = Number(raw.bytes ?? raw.size ?? raw.byteLength ?? 0);
+
+  return {
+    dataUrl: "",
+    imageUrl: "",
+    s3Bucket,
+    s3Key,
+    mimeType,
+    fileName: sanitizeText(raw.fileName || raw.name, 180) || buildHumidorImageFileName(s3Key),
+    bytes: Number.isFinite(bytes) && bytes > 0 ? Math.round(bytes) : 0,
+    source: sanitizeText(raw.source, 120) || "member_upload",
+  };
+}
+
+async function prepareHumidorCigarImageForStorage(cigarImage, actor, requestId, itemName) {
+  if (!cigarImage) {
+    return null;
+  }
+
+  const referenceImage = normalizeHumidorReferenceImage(cigarImage, { requireRenderableHost: true });
+  if (referenceImage?.imageUrl) {
+    return referenceImage;
+  }
+
+  const s3Image = normalizeHumidorS3Image(cigarImage);
+  if (s3Image) {
+    return s3Image;
+  }
+
+  const attachment = normalizeHumidorCigarImageAttachment(cigarImage);
+  if (!attachment.value) {
+    return summarizeStoredHumidorCigarImage(cigarImage);
+  }
+
+  const storedImage = await maybeStoreHumidorCigarImageInS3(attachment.value, actor, requestId, itemName);
+  return storedImage || summarizeStoredHumidorCigarImage(attachment.value);
+}
+
+async function resolveHumidorCigarImageForClient(value, options = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const referenceImage = normalizeHumidorReferenceImage(value, { requireRenderableHost: true });
+  if (referenceImage?.imageUrl) {
+    return referenceImage;
+  }
+
+  let s3Image = normalizeHumidorS3Image(value);
+  const attachment = !s3Image ? normalizeHumidorCigarImageAttachment(value).value : null;
+
+  if (!s3Image && attachment) {
+    s3Image = await maybeStoreHumidorCigarImageInS3(attachment, options.actor, options.requestId, options.itemName);
+    if (s3Image && options.client && options.itemId && options.memberId) {
+      await updateHumidorItemCigarImageMetadata(options.client, options.itemId, options.memberId, s3Image);
+    }
+  }
+
+  if (s3Image) {
+    return {
+      ...s3Image,
+      imageUrl: await maybeBuildHumidorCigarImageSignedUrl(s3Image),
+    };
+  }
+
+  if (hasHumidorReferenceImageUrlMetadata(value)) {
+    return null;
+  }
+
+  return summarizeStoredHumidorCigarImage(value);
+}
+
+async function maybeStoreHumidorCigarImageInS3(cigarImage, actor, requestId, itemName) {
+  const attachment = normalizeHumidorCigarImageAttachment(cigarImage);
+  if (!attachment.value?.dataUrl) {
+    return normalizeHumidorS3Image(cigarImage);
+  }
+
+  const parsed = parseImageDataUrl(attachment.value.dataUrl);
+  if (!parsed.base64) {
+    return summarizeStoredHumidorCigarImage(attachment.value);
+  }
+
+  try {
+    const { PutObjectCommand, S3Client } = require("@aws-sdk/client-s3");
+    const bucket = getHumidorImageBucket();
+    const key = buildHumidorImageS3Key(actor, attachment.value, itemName);
+    const body = Buffer.from(parsed.base64, "base64");
+    const client = new S3Client({ region: process.env.AWS_REGION || "us-east-1" });
+
+    await client.send(
+      new PutObjectCommand({
+        Bucket: bucket,
+        Key: key,
+        Body: body,
+        ContentType: attachment.value.mimeType,
+        Metadata: {
+          requestId: sanitizeText(requestId, 120),
+          source: "ycc-humidor-image",
+        },
+      })
+    );
+
+    return {
+      dataUrl: "",
+      imageUrl: "",
+      s3Bucket: bucket,
+      s3Key: key,
+      mimeType: attachment.value.mimeType,
+      fileName: attachment.value.fileName,
+      bytes: body.length,
+      source: attachment.value.source || "member_upload",
+    };
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        level: "warn",
+        event: "humidor_cigar_image_s3_store_failed",
+        name: error instanceof Error ? error.name : null,
+        message: error instanceof Error ? error.message : String(error),
+      })
+    );
+
+    return summarizeStoredHumidorCigarImage(attachment.value);
+  }
+}
+
+async function maybeBuildHumidorCigarImageSignedUrl(cigarImage) {
+  const s3Image = normalizeHumidorS3Image(cigarImage);
+  if (!s3Image) {
+    return "";
+  }
+
+  try {
+    const { GetObjectCommand, S3Client } = require("@aws-sdk/client-s3");
+    const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
+    const client = new S3Client({ region: process.env.AWS_REGION || "us-east-1" });
+
+    return await getSignedUrl(
+      client,
+      new GetObjectCommand({
+        Bucket: s3Image.s3Bucket,
+        Key: s3Image.s3Key,
+      }),
+      { expiresIn: HUMIDOR_IMAGE_SIGNED_URL_EXPIRES_SECONDS }
+    );
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        level: "warn",
+        event: "humidor_cigar_image_signed_url_failed",
+        name: error instanceof Error ? error.name : null,
+        message: error instanceof Error ? error.message : String(error),
+      })
+    );
+
+    return "";
+  }
+}
+
+async function updateHumidorItemCigarImageMetadata(client, itemId, memberId, cigarImage) {
+  const s3Image = normalizeHumidorS3Image(cigarImage);
+  if (!s3Image) {
+    return;
+  }
+
+  await client.query(
+    `
+      update public.humidor_items
+      set metadata = jsonb_set(coalesce(metadata, '{}'::jsonb), '{cigarImage}', $1::jsonb, true),
+          updated_at = now()
+      where id = $2 and member_id = $3
+    `,
+    [JSON.stringify(s3Image), itemId, memberId]
+  );
+}
+
+function getHumidorImageBucket() {
+  return sanitizeS3BucketName(process.env.HUMIDOR_IMAGE_BUCKET || process.env.S3_APP_BUCKET || process.env.CONCIERGE_VOICE_BUCKET || process.env.SUPPORT_EMAIL_RAW_BUCKET || "classroom2");
+}
+
+function getHumidorImagePrefix() {
+  const prefix = String(process.env.HUMIDOR_IMAGE_PREFIX || DEFAULT_HUMIDOR_IMAGE_PREFIX)
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/^\/+/, "");
+  const normalized = prefix.endsWith("/") ? prefix : `${prefix}/`;
+
+  if (!normalized.startsWith("ycc/") || normalized.includes("..")) {
+    return DEFAULT_HUMIDOR_IMAGE_PREFIX;
+  }
+
+  return normalized;
+}
+
+function buildHumidorImageS3Key(actor, cigarImage, itemName) {
+  const prefix = getHumidorImagePrefix();
+  const owner = crypto
+    .createHash("sha256")
+    .update(String(actor?.sub || actor?.email || "anonymous"))
+    .digest("hex")
+    .slice(0, 16);
+  const nameHint = slugify(itemName || cigarImage.fileName || "cigar-image").slice(0, 48) || "cigar-image";
+  const extension = CIGAR_IMAGE_MIME_FORMATS.get(cigarImage.mimeType) || "jpg";
+
+  return `${prefix}${owner}/${Date.now()}-${crypto.randomUUID()}-${nameHint}.${extension}`;
+}
+
+function sanitizeHumidorS3Key(value) {
+  const text = String(value || "")
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/^\/+/, "");
+
+  if (!text || text.length > 1024 || text.includes("..") || !text.startsWith("ycc/")) {
+    return "";
+  }
+
+  return text;
+}
+
+function sanitizeS3BucketName(value) {
+  const text = String(value || "").trim();
+  return /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(text) ? text : "";
 }
 
 function normalizeHumidorItem(value) {
@@ -12041,6 +14779,80 @@ function normalizeHumidorItem(value) {
     estimatedValueSource,
     cigarImage,
   };
+}
+
+function normalizeHumidorSmokeLog(value) {
+  const rawRating = value.rating;
+  const rawDuration = value.durationMinutes ?? value.duration_minutes;
+  const rawSmokedAt = value.smokedAt ?? value.smoked_at;
+  const rating = rawRating === undefined || rawRating === null || rawRating === "" ? null : Number(rawRating);
+  const durationMinutes = rawDuration === undefined || rawDuration === null || rawDuration === "" ? null : Number(rawDuration);
+  const smokedAt = normalizeHumidorSmokeTimestamp(rawSmokedAt);
+  const drinkPairing = sanitizeText(value.drinkPairing || value.drink || value.pairing, MAX_FIELD_LENGTH);
+
+  return {
+    humidorItemId: getUuidOrNull(value.humidorItemId || value.humidor_item_id),
+    cigarName: sanitizeText(value.cigarName || value.cigar || value.name, MAX_FIELD_LENGTH),
+    smokedAt,
+    rating: Number.isFinite(rating) ? Math.max(0, Math.min(100, Math.round(rating))) : null,
+    drinkPairing,
+    pairing: drinkPairing,
+    notes: sanitizeText(value.notes || value.tastingNotes, 2000),
+    durationMinutes: Number.isFinite(durationMinutes) && durationMinutes > 0 ? Math.min(Math.round(durationMinutes), 24 * 60) : null,
+    source: sanitizeText(value.source, 120) || "member_smoke_log",
+    invalidRating: rawRating !== undefined && rawRating !== null && rawRating !== "" && (!Number.isFinite(rating) || rating < 0 || rating > 100),
+    invalidDuration:
+      rawDuration !== undefined &&
+      rawDuration !== null &&
+      rawDuration !== "" &&
+      (!Number.isFinite(durationMinutes) || durationMinutes <= 0),
+    invalidSmokedAt: rawSmokedAt !== undefined && rawSmokedAt !== null && rawSmokedAt !== "" && !smokedAt,
+  };
+}
+
+function normalizeHumidorSharedQuantity(value) {
+  if (value === undefined || value === null || value === "") {
+    return 1;
+  }
+
+  const quantity = Number(value);
+  if (!Number.isFinite(quantity) || quantity <= 0) {
+    return 0;
+  }
+
+  return Math.min(Math.round(quantity), 10000);
+}
+
+function buildHumidorSharedInventoryLog(item, details) {
+  const sharedWith = sanitizeText(details.sharedWith, MAX_FIELD_LENGTH);
+  const sharedNotes = sanitizeText(details.sharedNotes, 1000);
+  const sharedSummary = `Shared ${details.quantity}${sharedWith ? ` with ${sharedWith}` : ""}.`;
+
+  return {
+    humidorItemId: item.id,
+    cigarName: item.name,
+    smokedAt: null,
+    rating: null,
+    drinkPairing: "",
+    pairing: "",
+    notes: [sharedSummary, sharedNotes].filter(Boolean).join(" "),
+    durationMinutes: null,
+    source: "member_shared_gift",
+  };
+}
+
+function normalizeHumidorSmokeTimestamp(value) {
+  const text = sanitizeText(value, 80);
+  if (!text) {
+    return null;
+  }
+
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return date.toISOString();
 }
 
 function normalizeHumidorMoneyValue(value) {
@@ -12142,13 +14954,18 @@ function normalizeStoredHumidorCigarImage(value) {
     return null;
   }
 
-  const referenceImage = normalizeHumidorReferenceImage(value);
+  const referenceImage = normalizeHumidorReferenceImage(value, { requireRenderableHost: true });
   if (referenceImage) {
     return referenceImage;
   }
 
+  const s3Image = normalizeHumidorS3Image(value);
+  if (s3Image) {
+    return s3Image;
+  }
+
   const attachment = normalizeHumidorCigarImageAttachment(value);
-  return attachment.value || null;
+  return attachment.value ? summarizeHumidorImageAttachment(attachment.value) : null;
 }
 
 function summarizeStoredHumidorCigarImage(value) {
@@ -12156,9 +14973,23 @@ function summarizeStoredHumidorCigarImage(value) {
     return null;
   }
 
-  const referenceImage = normalizeHumidorReferenceImage(value);
+  const referenceImage = normalizeHumidorReferenceImage(value, { requireRenderableHost: true });
   if (referenceImage) {
     return referenceImage;
+  }
+
+  const s3Image = normalizeHumidorS3Image(value);
+  if (s3Image) {
+    return s3Image;
+  }
+
+  const attachment = normalizeHumidorCigarImageAttachment(value);
+  if (attachment.value) {
+    return summarizeHumidorImageAttachment(attachment.value);
+  }
+
+  if (hasHumidorReferenceImageUrlMetadata(value)) {
+    return null;
   }
 
   const dataUrlMimeType = parseImageDataUrlMimeType(value.imageDataUrl || value.dataUrl || value.image);
@@ -12173,10 +15004,27 @@ function summarizeStoredHumidorCigarImage(value) {
 
   return {
     dataUrl: "",
+    imageUrl: "",
     mimeType,
     fileName: sanitizeText(value.fileName || value.name, 180),
     bytes: Number.isFinite(bytes) && bytes > 0 ? Math.round(bytes) : 0,
     source: sanitizeText(value.source, 120) || "member_upload",
+  };
+}
+
+function summarizeHumidorImageAttachment(value) {
+  const attachment = normalizeHumidorCigarImageAttachment(value);
+  if (!attachment.value) {
+    return null;
+  }
+
+  return {
+    dataUrl: "",
+    imageUrl: "",
+    mimeType: attachment.value.mimeType,
+    fileName: attachment.value.fileName,
+    bytes: attachment.value.bytes,
+    source: attachment.value.source || "member_upload",
   };
 }
 
@@ -12347,63 +15195,129 @@ function buildCigarVisionSystemPrompt(actor) {
 
 async function maybeDetectCigarImageText(image) {
   const minConfidence = normalizeRekognitionMinTextConfidence(process.env.REKOGNITION_MIN_TEXT_CONFIDENCE);
+  const minLabelConfidence = normalizeRekognitionMinLabelConfidence(process.env.REKOGNITION_MIN_LABEL_CONFIDENCE);
   const featureStatus = sanitizeText(process.env.FEATURE_REKOGNITION || "pending_service", 80);
+  const textReady = REKOGNITION_TEXT_READY_VALUES.has(featureStatus);
+  const labelsReady = REKOGNITION_LABEL_READY_VALUES.has(featureStatus);
+  const analysis = {
+    status: textReady ? "not_run" : labelsReady ? "not_enabled" : featureStatus,
+    minConfidence,
+    textLines: [],
+    labelStatus: labelsReady ? "not_run" : textReady ? "not_enabled" : featureStatus,
+    minLabelConfidence,
+    labels: [],
+  };
 
-  if (featureStatus !== REKOGNITION_FEATURE_READY_VALUE) {
-    return {
-      status: featureStatus,
-      minConfidence,
-      textLines: [],
-    };
+  if (!textReady && !labelsReady) {
+    return analysis;
   }
 
   if (!REKOGNITION_TEXT_IMAGE_MIME_TYPES.has(image.mimeType)) {
     return {
-      status: "unsupported_image_type",
-      minConfidence,
-      textLines: [],
+      ...analysis,
+      status: textReady ? "unsupported_image_type" : analysis.status,
+      labelStatus: labelsReady ? "unsupported_image_type" : analysis.labelStatus,
     };
   }
 
+  let rekognitionSdk;
   try {
-    const { DetectTextCommand, RekognitionClient } = require("@aws-sdk/client-rekognition");
-    const client = new RekognitionClient({ region: process.env.AWS_REGION || "us-east-1" });
-    const result = await client.send(
-      new DetectTextCommand({
-        Image: {
-          Bytes: image.bytes,
-        },
-      })
-    );
-
-    const textLines = normalizeRekognitionTextLines(result.TextDetections, minConfidence);
-    return {
-      status: textLines.length ? "detected_text" : "no_text",
-      minConfidence,
-      textLines,
-    };
+    rekognitionSdk = require("@aws-sdk/client-rekognition");
   } catch (error) {
     console.error(
       JSON.stringify({
         level: "warn",
-        event: "rekognition_cigar_text_detection_failed",
+        event: "rekognition_cigar_image_sdk_load_failed",
         name: error instanceof Error ? error.name : null,
         message: error instanceof Error ? error.message : String(error),
       })
     );
 
     return {
-      status: "detect_text_failed",
-      minConfidence,
-      textLines: [],
+      ...analysis,
+      status: textReady ? "detect_text_failed" : analysis.status,
+      labelStatus: labelsReady ? "detect_labels_failed" : analysis.labelStatus,
     };
   }
+
+  const { DetectLabelsCommand, DetectTextCommand, RekognitionClient } = rekognitionSdk;
+  const client = new RekognitionClient({ region: process.env.AWS_REGION || "us-east-1" });
+
+  if (textReady) {
+    try {
+      const result = await client.send(
+        new DetectTextCommand({
+          Image: {
+            Bytes: image.bytes,
+          },
+        })
+      );
+
+      const textLines = normalizeRekognitionTextLines(result.TextDetections, minConfidence);
+      analysis.status = textLines.length ? "detected_text" : "no_text";
+      analysis.textLines = textLines;
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          level: "warn",
+          event: "rekognition_cigar_text_detection_failed",
+          name: error instanceof Error ? error.name : null,
+          message: error instanceof Error ? error.message : String(error),
+        })
+      );
+
+      analysis.status = "detect_text_failed";
+      analysis.textLines = [];
+    }
+  }
+
+  if (labelsReady) {
+    try {
+      const result = await client.send(
+        new DetectLabelsCommand({
+          Image: {
+            Bytes: image.bytes,
+          },
+          MaxLabels: MAX_REKOGNITION_LABELS,
+          MinConfidence: minLabelConfidence,
+          Features: ["GENERAL_LABELS"],
+        })
+      );
+
+      const labels = normalizeRekognitionLabels(result.Labels, minLabelConfidence);
+      analysis.labelStatus = labels.length ? "detected_labels" : "no_labels";
+      analysis.labels = labels;
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          level: "warn",
+          event: "rekognition_cigar_label_detection_failed",
+          name: error instanceof Error ? error.name : null,
+          message: error instanceof Error ? error.message : String(error),
+        })
+      );
+
+      analysis.labelStatus = "detect_labels_failed";
+      analysis.labels = [];
+    }
+  }
+
+  return analysis;
 }
 
 function normalizeRekognitionMinTextConfidence(value) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {
     return DEFAULT_REKOGNITION_MIN_TEXT_CONFIDENCE;
+  }
+
+  return Math.min(99, Math.max(1, Math.round(parsed * 10) / 10));
+}
+
+function normalizeRekognitionMinLabelConfidence(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_REKOGNITION_MIN_LABEL_CONFIDENCE;
   }
 
   return Math.min(99, Math.max(1, Math.round(parsed * 10) / 10));
@@ -12440,11 +15354,71 @@ function normalizeRekognitionTextLines(detections, minConfidence) {
   return lines;
 }
 
+function normalizeRekognitionLabels(detections, minConfidence) {
+  const labels = [];
+  const seen = new Set();
+
+  for (const detection of Array.isArray(detections) ? detections : []) {
+    const name = sanitizeText(detection?.Name, 100);
+    const confidence = Number(detection?.Confidence);
+    const key = name.toLowerCase();
+    if (!name || seen.has(key) || !Number.isFinite(confidence) || confidence < minConfidence) {
+      continue;
+    }
+
+    seen.add(key);
+    labels.push({
+      name,
+      confidence: Math.round(confidence * 10) / 10,
+      parents: normalizeRekognitionLabelNames(detection?.Parents, 4),
+      categories: normalizeRekognitionLabelNames(detection?.Categories, 4),
+      aliases: normalizeRekognitionLabelNames(detection?.Aliases, 4),
+    });
+
+    if (labels.length >= MAX_REKOGNITION_LABELS) {
+      break;
+    }
+  }
+
+  return labels;
+}
+
+function normalizeRekognitionLabelNames(values, maxCount) {
+  const names = [];
+  const seen = new Set();
+
+  for (const value of Array.isArray(values) ? values : []) {
+    const name = sanitizeText(typeof value === "string" ? value : value?.Name, 100);
+    const key = name.toLowerCase();
+    if (!name || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    names.push(name);
+
+    if (names.length >= maxCount) {
+      break;
+    }
+  }
+
+  return names;
+}
+
 function summarizeRekognitionForClient(rekognition) {
   const textLines = Array.isArray(rekognition?.textLines)
     ? rekognition.textLines.map((line) => ({
         text: sanitizeText(line.text, 180),
         confidence: normalizeRekognitionMinTextConfidence(line.confidence),
+      }))
+    : [];
+  const labels = Array.isArray(rekognition?.labels)
+    ? rekognition.labels.map((label) => ({
+        name: sanitizeText(label.name, 100),
+        confidence: normalizeRekognitionMinLabelConfidence(label.confidence),
+        parents: normalizeRekognitionLabelNames(label.parents, 4),
+        categories: normalizeRekognitionLabelNames(label.categories, 4),
+        aliases: normalizeRekognitionLabelNames(label.aliases, 4),
       }))
     : [];
 
@@ -12453,6 +15427,10 @@ function summarizeRekognitionForClient(rekognition) {
     minConfidence: normalizeRekognitionMinTextConfidence(rekognition?.minConfidence),
     textCount: textLines.length,
     textLines,
+    labelStatus: sanitizeText(rekognition?.labelStatus || "not_run", 80),
+    minLabelConfidence: normalizeRekognitionMinLabelConfidence(rekognition?.minLabelConfidence),
+    labelCount: labels.length,
+    labels,
   };
 }
 
@@ -12474,6 +15452,12 @@ function buildCigarImageIdentificationPrompt(notes, rekognition) {
 }
 
 function buildRekognitionPromptEvidence(rekognition) {
+  return [buildRekognitionTextPromptEvidence(rekognition), buildRekognitionLabelPromptEvidence(rekognition)]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function buildRekognitionTextPromptEvidence(rekognition) {
   const lines = Array.isArray(rekognition?.textLines) ? rekognition.textLines : [];
   if (!lines.length) {
     return "";
@@ -12495,6 +15479,40 @@ function buildRekognitionPromptEvidence(rekognition) {
     `Amazon Rekognition OCR candidates from cigar band or box text, minimum confidence ${normalizeRekognitionMinTextConfidence(rekognition.minConfidence)}%:`,
     ...formattedLines,
     "Use these OCR candidates only as visual evidence. If the OCR conflicts with the image, member notes, or known cigar references, mark the affected fields for review instead of guessing.",
+  ].join("\n");
+}
+
+function buildRekognitionLabelPromptEvidence(rekognition) {
+  const labels = Array.isArray(rekognition?.labels) ? rekognition.labels : [];
+  if (!labels.length) {
+    return "";
+  }
+
+  const formattedLabels = labels
+    .map((label) => {
+      const name = sanitizeText(label.name, 100);
+      const confidence = normalizeRekognitionMinLabelConfidence(label.confidence);
+      const parents = normalizeRekognitionLabelNames(label.parents, 4);
+      const categories = normalizeRekognitionLabelNames(label.categories, 4);
+      const aliases = normalizeRekognitionLabelNames(label.aliases, 4);
+      const context = [
+        parents.length ? `parents: ${parents.join(", ")}` : "",
+        categories.length ? `categories: ${categories.join(", ")}` : "",
+        aliases.length ? `aliases: ${aliases.join(", ")}` : "",
+      ].filter(Boolean);
+
+      return name ? `- ${name} (${confidence}% confidence${context.length ? `; ${context.join("; ")}` : ""})` : "";
+    })
+    .filter(Boolean);
+
+  if (!formattedLabels.length) {
+    return "";
+  }
+
+  return [
+    `Amazon Rekognition visual labels from the uploaded image, minimum confidence ${normalizeRekognitionMinLabelConfidence(rekognition.minLabelConfidence)}%:`,
+    ...formattedLabels,
+    "Use these labels only as supplemental visual context for cigar, box, band, receipt, or humidor cues. Do not infer brand, line, vitola, or value from labels alone.",
   ].join("\n");
 }
 
@@ -12625,6 +15643,9 @@ function logCigarIdentificationSummary(event, requestId, actor, ai, image, notes
         status: ai.rekognition?.status || "not_run",
         textCount: Array.isArray(ai.rekognition?.textLines) ? ai.rekognition.textLines.length : 0,
         minConfidence: ai.rekognition?.minConfidence || null,
+        labelStatus: ai.rekognition?.labelStatus || "not_run",
+        labelCount: Array.isArray(ai.rekognition?.labels) ? ai.rekognition.labels.length : 0,
+        minLabelConfidence: ai.rekognition?.minLabelConfidence || null,
       },
       input: {
         imageType: image.mimeType,
@@ -12862,6 +15883,10 @@ function isSesReceiptEvent(event) {
   return Array.isArray(event.Records) && event.Records.some((record) => record?.eventSource === "aws:ses");
 }
 
+function isCognitoPostConfirmationSignUpEvent(event) {
+  return event.triggerSource === "PostConfirmation_ConfirmSignUp" && Boolean(event.request?.userAttributes);
+}
+
 function isBedrockActionGroupEvent(event) {
   return event.messageVersion === "1.0" && typeof event.actionGroup === "string" && (typeof event.function === "string" || typeof event.apiPath === "string");
 }
@@ -12954,13 +15979,17 @@ function getActor(event) {
 }
 
 function parseGroups(value) {
-  const values = Array.isArray(value) ? value : typeof value === "string" && value.trim() ? value.split(",") : [];
+  const values = Array.isArray(value) ? value : typeof value === "string" && value.trim() ? [value] : [];
 
   return values
-    .map((item) =>
+    .flatMap((item) =>
       String(item)
         .trim()
         .replace(/^\[+|\]+$/g, "")
+        .split(/[\s,]+/g)
+    )
+    .map((item) =>
+      String(item)
         .replace(/^["']+|["']+$/g, "")
         .trim()
     )

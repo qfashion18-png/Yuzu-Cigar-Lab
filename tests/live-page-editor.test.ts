@@ -607,9 +607,10 @@ test("live API client keeps humidor inventory when alert preferences fail", asyn
 
   process.env.NEXT_PUBLIC_YCC_API_BASE_URL = "https://api.yuzucigarclub.test/";
   globalThis.fetch = async (url, init) => {
-    calls.push({ url: String(url), init });
+    const requestUrl = String(url);
+    calls.push({ url: requestUrl, init });
 
-    if (calls.length === 1) {
+    if (requestUrl.endsWith("/humidor/items")) {
       const payload = {
         items: [
           {
@@ -646,6 +647,13 @@ test("live API client keeps humidor inventory when alert preferences fail", asyn
       });
     }
 
+    if (requestUrl.endsWith("/humidor/smokes")) {
+      return new Response(JSON.stringify({ logs: [], persistence: "stored" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
     return new Response(JSON.stringify({
       message: "Internal Server Error",
     }), {
@@ -662,10 +670,14 @@ test("live API client keeps humidor inventory when alert preferences fail", asyn
     assert.equal(response.items.persistence, "stored");
     assert.equal(response.alerts, null);
     assert.equal(response.alertsError, "The live Yuzu API is temporarily unavailable.");
-    assert.equal(calls[0].url, "https://api.yuzucigarclub.test/humidor/items");
-    assert.equal(calls[1].url, "https://api.yuzucigarclub.test/humidor/alerts");
-    assert.equal((calls[0].init?.headers as Record<string, string>).Authorization, "Bearer member-token");
-    assert.equal((calls[1].init?.headers as Record<string, string>).Authorization, "Bearer member-token");
+    const itemsCall = calls.find((call) => call.url === "https://api.yuzucigarclub.test/humidor/items");
+    const smokesCall = calls.find((call) => call.url === "https://api.yuzucigarclub.test/humidor/smokes");
+    const alertsCall = calls.find((call) => call.url === "https://api.yuzucigarclub.test/humidor/alerts");
+    assert.ok(itemsCall, "bootstrap should request humidor inventory");
+    assert.ok(smokesCall, "bootstrap should request recent smoke logs");
+    assert.ok(alertsCall, "bootstrap should request alert preferences");
+    assert.equal((itemsCall.init?.headers as Record<string, string>).Authorization, "Bearer member-token");
+    assert.equal((alertsCall.init?.headers as Record<string, string>).Authorization, "Bearer member-token");
   } finally {
     globalThis.fetch = originalFetch;
     if (previousApiBase === undefined) {

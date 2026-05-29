@@ -100,9 +100,12 @@
       ]
     },
     {
-      "Sid": "DetectTextForAiCigarAdderImages",
+      "Sid": "AnalyzeAiCigarAdderImagesWithRekognition",
       "Effect": "Allow",
-      "Action": "rekognition:DetectText",
+      "Action": [
+        "rekognition:DetectText",
+        "rekognition:DetectLabels"
+      ],
       "Resource": "*"
     },
     {

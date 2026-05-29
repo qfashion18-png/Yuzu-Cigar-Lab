@@ -212,11 +212,49 @@ Current missing category buckets:
 | Montecristo Cigars | 8 |
 | JM's Cigars | 6 |
 
+## 2026-05-28 Ratings & Reviews Only Correction
+
+Removed the placeholder review-profile fallback that rendered broad community/profile/search coverage in the public `Ratings & Reviews` panel. Products now receive a `reviewProfile` only when the catalog has a concrete source such as an exact review, customer-review product/line page, or clearly rated line-reference page. Cigar Aficionado search pages, broad brand profiles, and community/profile placeholders are not treated as public Ratings & Reviews data.
+
+The product detail `Ratings & Reviews` panel now renders only the source name, rating text, and source link for sourced review profiles. It no longer renders profile summaries or source-detail bullets, which could expose internal mapping notes such as "Use this as..." or "coverage for..." in the customer-facing section.
+
+This correction supersedes the previous artificial 100% coverage claim.
+
+| Metric | Count |
+| --- | ---: |
+| Published catalog products | 921 |
+| Corrected cigar and cigar-sampler products | 872 |
+| Products with concrete sourced review coverage | 558 |
+| Products without concrete sourced review coverage | 314 |
+| Honest sourced coverage rate | 63.99% |
+| Placeholder/profile-only review records | 0 |
+
+## 2026-05-28 Sub-Agent Ratings & Reviews Completion
+
+Ran five read-only sub-agent research batches against the corrected 314-product missing queue, then integrated only exact-product, exact-line, customer-review, or rated line-reference sources. Generic search pages, broad profile placeholders, and unsupported community/profile fallbacks remain excluded from public Ratings & Reviews.
+
+The public `Ratings & Reviews` panel is no longer blank for any corrected cigar/sampler product. Most rows now point to a real public rating/review source. Four products had no responsible public customer aggregate or publication score after the sub-agent and local verification passes, so they carry an explicit no-public-rating status instead of an invented rating:
+
+- `cactus-joe-coffee-lonsdale-20-bx`
+- `cactus-joe-coffee-toro-20-bx`
+- `cactus-joe-coffee-torpedo-20-bx`
+- `cojimar-honey-blueberry-10-bx`
+
+| Metric | Count |
+| --- | ---: |
+| Published catalog products | 921 |
+| Corrected cigar and cigar-sampler products | 872 |
+| Products with a nonblank Ratings & Reviews panel | 872 |
+| Products with public rating/review sources | 868 |
+| Products with explicit no-public-rating status | 4 |
+| Blank cigar/sampler Ratings & Reviews panels | 0 |
+| Placeholder/profile-only review records | 0 |
+
 ## 2026-05-28 100 Percent Coverage Final Update
 
 Added source-backed `reviewProfile` coverage for the remaining long-tail cigar products and corrected the cigar audit predicate. The previous denominator treated `punch` as only an accessory term, which incorrectly excluded Punch brand cigars and a few cigar/sample-pack products with cutter/lighter/display wording. The updated predicate treats cigar-positive categories as cigars while still excluding true accessory categories such as lighters, humidors, cutters, ashtrays, displays, and book matches.
 
-Final coverage uses exact expert-review pages where already mapped, line/customer/brand-profile pages where available, and clearly labeled Cigar Aficionado review-search profile coverage for residual long-tail products where a stronger exact public review page has not yet been mapped. The search-profile entries are deliberately not presented as exact scores.
+Historical note: this section records the earlier final pass. The search/profile fallback described here was removed by the Ratings & Reviews-only correction above and replaced with exact, line, customer-review, rated line-reference, or explicit no-public-rating status rows.
 
 Final covered groups include the remaining ACID, Quorum, Punch, Cohiba, Ashton, Brick House, Java/Drew Estate, JM's Dominican, Davidoff, Tabak, Deadwood, AJ Fernandez, Nub, CAO, Partagas, Camacho, La Gloria/La Aurora/La Antiguedad, My Father extended family, Asylum, Karen Berger, Rocky Patel residual lines, Tatuaje, Aladino, AVO, Baccarat, Joya, Perla del Mar, Oscar/Valladares, Undercrown/Nica Rustica, H. Upmann, Hoyo, Diesel, New Cuba, Havana Q, Cazadores, Schizo, Trader Jack, Plasencia, Olmec, Zino, Villiger, 20 Acre Farm, J.C. Newman sampler, and other residual cigar-line products.
 

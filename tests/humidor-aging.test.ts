@@ -37,6 +37,16 @@ test("derives aging readiness and progress from the aging start date", () => {
   });
 });
 
+test("date-only humidor aging dates stay on the member calendar day", () => {
+  const phoenixLikeReviewDate = new Date(2026, 5, 27, 12);
+
+  assert.deepEqual(getAgingSnapshot("2026-05-28", phoenixLikeReviewDate), {
+    ageMonths: 0,
+    progress: 0,
+    readiness: "Too Young",
+  });
+});
+
 test("derives total cigar age separately from the user humidor aging clock", async () => {
   const agingModule = await import("../src/lib/humidor-aging");
   const getTotalAgeSnapshot = (

@@ -107,14 +107,26 @@ Resources:
         - Key: Environment
           Value: !Ref EnvironmentName
 
+  CognitoPostConfirmationInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ExistingLambdaLiveAliasArn
+      Principal: cognito-idp.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !Sub arn:${AWS::Partition}:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/*
+
   UserPool:
     Type: AWS::Cognito::UserPool
+    DependsOn: CognitoPostConfirmationInvokePermission
     Properties:
       UserPoolName: YCCMembers
       UsernameAttributes:
         - email
       AutoVerifiedAttributes:
         - email
+      LambdaConfig:
+        PostConfirmation: !Ref ExistingLambdaLiveAliasArn
       DeletionProtection: ACTIVE
       MfaConfiguration: "OPTIONAL"
       EnabledMfas:
@@ -650,6 +662,24 @@ Resources:
     Properties:
       ApiId: !Ref HttpApi
       RouteKey: GET /humidor/items
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${LambdaIntegration}
+
+  HumidorSmokeLogsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /humidor/smokes
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${LambdaIntegration}
+
+  HumidorSmokeLogCreateRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /humidor/smokes
       AuthorizationType: JWT
       AuthorizerId: !Ref JwtAuthorizer
       Target: !Sub integrations/${LambdaIntegration}

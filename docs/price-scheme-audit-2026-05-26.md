@@ -85,6 +85,12 @@ Before the fix, these 40 rows were published with public/non-member price equal 
 - `tests/product-detail.test.ts` now expects price-pending cigar rows to remain unpublished until public market prices are researched.
 - `tests/commerce-schema.test.ts` now reflects the audited 921-row public catalog scale.
 
+## 2026-05-28 Follow-Up
+
+- Researched and published SKUs `777287`, `777292`, and `777293` with explicit public/non-member prices and local images.
+- Added new inventory rows for SKUs `777295`, `777296`, `777297`, and `777303`, each with explicit public/non-member pricing at or above the member/current price.
+- The requested catalog expansion raises the expected published catalog scale from 921 to 928 rows.
+
 ## Verification
 
 - Red regression before fix: `node --import tsx --test --test-name-pattern "explicit public market pricing" tests/product-pricing.test.ts` failed with the 40 fallback-priced SKUs.

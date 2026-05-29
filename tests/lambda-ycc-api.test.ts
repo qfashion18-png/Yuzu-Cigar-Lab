@@ -182,6 +182,7 @@ function installPersistenceMocks(
     agentRuntimeError?: boolean;
     bedrockReply?: string;
     rekognitionError?: boolean;
+    rekognitionLabelDetections?: Array<Record<string, unknown>>;
     rekognitionTextDetections?: Array<Record<string, unknown>>;
     lexIntentName?: string;
     lexConfidence?: number;
@@ -197,6 +198,7 @@ function installPersistenceMocks(
     climateRows?: Array<Record<string, unknown>>;
     memberProfileRows?: Array<Record<string, unknown>>;
     humidorItemRows?: Array<Record<string, unknown>>;
+    smokeLogRows?: Array<Record<string, unknown>>;
     adminOrderRows?: Array<Record<string, unknown>>;
     adminMemberRows?: Array<Record<string, unknown>>;
     memberStripeCustomerId?: string | null;
@@ -803,6 +805,34 @@ function installPersistenceMocks(
         };
       }
 
+      if (normalized.includes("smoke_log_recent_list")) {
+        return {
+          rows: options.smokeLogRows || [],
+          rowCount: options.smokeLogRows?.length || 0,
+        };
+      }
+
+      if (normalized.includes("insert into public.smoke_logs")) {
+        return {
+          rows: [
+            {
+              id: "12121212-1212-4212-8212-121212121212",
+              member_id: params[0],
+              humidor_item_id: params[1],
+              cigar_name: params[2],
+              smoked_at: params[3] || "2026-05-28T21:30:00.000Z",
+              rating: params[4],
+              pairing: params[5],
+              notes: params[6],
+              duration_minutes: params[7],
+              metadata: JSON.parse(String(params[8] || "{}")),
+              created_at: "2026-05-28T21:45:00.000Z",
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+
       if (normalized.includes("humidor_item_enrichment_update")) {
         const existing = options.humidorItemRows?.[0] || {};
         return {
@@ -818,6 +848,38 @@ function installPersistenceMocks(
               strength: params[7],
               tasting_notes: params[8],
               metadata: JSON.parse(String(params[9] || "{}")),
+              created_at: existing.created_at || "2026-05-06T09:00:00.000Z",
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+
+      if (normalized.includes("humidor_item_archive")) {
+        const existing = options.humidorItemRows?.[0] || {};
+        return {
+          rows: [
+            {
+              ...existing,
+              id: params[0],
+              quantity: 0,
+              created_at: existing.created_at || "2026-05-06T09:00:00.000Z",
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+
+      if (normalized.includes("humidor_item_shared_update")) {
+        const existing = options.humidorItemRows?.[0] || {};
+        const previousQuantity = Number(existing.quantity || 0);
+        const sharedQuantity = Number(params[2] || 0);
+        return {
+          rows: [
+            {
+              ...existing,
+              id: params[0],
+              quantity: Math.max(previousQuantity - sharedQuantity, 0),
               created_at: existing.created_at || "2026-05-06T09:00:00.000Z",
             },
           ],
@@ -909,6 +971,7 @@ function installPersistenceMocks(
   const lexInvocations: Array<Record<string, unknown>> = [];
   const pollyInvocations: Array<Record<string, unknown>> = [];
   const s3Invocations: Array<Record<string, unknown>> = [];
+  const signedUrlInvocations: Array<{ input: Record<string, unknown>; options: Record<string, unknown> }> = [];
   const secretsManagerInvocations: Array<Record<string, unknown>> = [];
   const sesInvocations: Array<Record<string, unknown>> = [];
   const transcribeInvocations: Array<Record<string, unknown>> = [];
@@ -1046,13 +1109,36 @@ function installPersistenceMocks(
     }
   }
 
+  class DetectLabelsCommand {
+    input: Record<string, unknown>;
+
+    constructor(input: Record<string, unknown>) {
+      this.input = input;
+    }
+  }
+
   class RekognitionClient {
-    async send(command: DetectTextCommand) {
-      rekognitionInvocations.push(command.input);
+    async send(command: DetectLabelsCommand | DetectTextCommand) {
       if (options.rekognitionError) {
         throw new Error("rekognition unavailable");
       }
 
+      if (command instanceof DetectLabelsCommand) {
+        rekognitionInvocations.push({ operation: "DetectLabels", ...command.input });
+        return {
+          Labels:
+            options.rekognitionLabelDetections || [
+              {
+                Name: "Cigar",
+                Confidence: 96.3,
+                Parents: [{ Name: "Tobacco Product" }],
+                Categories: [{ Name: "Product" }],
+              },
+            ],
+        };
+      }
+
+      rekognitionInvocations.push({ operation: "DetectText", ...command.input });
       return {
         TextDetections:
           options.rekognitionTextDetections || [
@@ -1166,7 +1252,22 @@ function installPersistenceMocks(
         const value = options.s3Objects?.[key];
         return {
           Body: {
+            async transformToByteArray() {
+              if (Buffer.isBuffer(value)) {
+                return value;
+              }
+
+              if (value instanceof Uint8Array) {
+                return Buffer.from(value);
+              }
+
+              return Buffer.from(typeof value === "string" ? value : JSON.stringify(value));
+            },
             async transformToString() {
+              if (Buffer.isBuffer(value) || value instanceof Uint8Array) {
+                return Buffer.from(value).toString("utf8");
+              }
+
               return typeof value === "string" ? value : JSON.stringify(value);
             },
           },
@@ -1347,6 +1448,15 @@ function installPersistenceMocks(
       return { GetObjectCommand, PutObjectCommand, S3Client };
     }
 
+    if (request === "@aws-sdk/s3-request-presigner") {
+      return {
+        getSignedUrl: async (_client: unknown, command: GetObjectCommand, options: Record<string, unknown>) => {
+          signedUrlInvocations.push({ input: command.input, options });
+          return `https://signed.example.test/${encodeURIComponent(String(command.input.Key || ""))}?signature=test`;
+        },
+      };
+    }
+
     if (request === "@aws-sdk/client-sesv2") {
       return { SendEmailCommand, SESv2Client };
     }
@@ -1364,7 +1474,7 @@ function installPersistenceMocks(
     }
 
     if (request === "@aws-sdk/client-rekognition") {
-      return { DetectTextCommand, RekognitionClient };
+      return { DetectLabelsCommand, DetectTextCommand, RekognitionClient };
     }
 
     if (request === "@aws-sdk/client-lex-runtime-v2") {
@@ -1394,6 +1504,7 @@ function installPersistenceMocks(
     LEX_ROUTER_LOCALE_ID: process.env.LEX_ROUTER_LOCALE_ID,
     FEATURE_REKOGNITION: process.env.FEATURE_REKOGNITION,
     REKOGNITION_MIN_TEXT_CONFIDENCE: process.env.REKOGNITION_MIN_TEXT_CONFIDENCE,
+    REKOGNITION_MIN_LABEL_CONFIDENCE: process.env.REKOGNITION_MIN_LABEL_CONFIDENCE,
     FEATURE_CONCIERGE_VOICE: process.env.FEATURE_CONCIERGE_VOICE,
     FEATURE_SES: process.env.FEATURE_SES,
     SUPPORT_CONTACT_EMAIL_TO: process.env.SUPPORT_CONTACT_EMAIL_TO,
@@ -1401,6 +1512,8 @@ function installPersistenceMocks(
     SUPPORT_EMAIL_INBOUND_RECIPIENT: process.env.SUPPORT_EMAIL_INBOUND_RECIPIENT,
     SUPPORT_EMAIL_RAW_BUCKET: process.env.SUPPORT_EMAIL_RAW_BUCKET,
     SUPPORT_EMAIL_RAW_PREFIX: process.env.SUPPORT_EMAIL_RAW_PREFIX,
+    S3_APP_BUCKET: process.env.S3_APP_BUCKET,
+    HUMIDOR_IMAGE_PREFIX: process.env.HUMIDOR_IMAGE_PREFIX,
     CONCIERGE_POLLY_ENGINE: process.env.CONCIERGE_POLLY_ENGINE,
     CONCIERGE_POLLY_VOICE_ID: process.env.CONCIERGE_POLLY_VOICE_ID,
     CONCIERGE_VOICE_BUCKET: process.env.CONCIERGE_VOICE_BUCKET,
@@ -1419,6 +1532,11 @@ function installPersistenceMocks(
     BEDROCK_AGENT_YCCHUMIDORAGENT_ALIAS_ID: process.env.BEDROCK_AGENT_YCCHUMIDORAGENT_ALIAS_ID,
     BEDROCK_AGENT_YCCNEWSAGENT_ID: process.env.BEDROCK_AGENT_YCCNEWSAGENT_ID,
     BEDROCK_AGENT_YCCNEWSAGENT_ALIAS_ID: process.env.BEDROCK_AGENT_YCCNEWSAGENT_ALIAS_ID,
+    HUMIDOR_ENRICHMENT_WEB_SEARCH: process.env.HUMIDOR_ENRICHMENT_WEB_SEARCH,
+    HUMIDOR_ENRICHMENT_WEB_SEARCH_PROVIDER: process.env.HUMIDOR_ENRICHMENT_WEB_SEARCH_PROVIDER,
+    HUMIDOR_ENRICHMENT_WEB_SEARCH_MAX_RESULTS: process.env.HUMIDOR_ENRICHMENT_WEB_SEARCH_MAX_RESULTS,
+    HUMIDOR_ENRICHMENT_WEB_SEARCH_TIMEOUT_MS: process.env.HUMIDOR_ENRICHMENT_WEB_SEARCH_TIMEOUT_MS,
+    HUMIDOR_ENRICHMENT_WEB_SEARCH_URL: process.env.HUMIDOR_ENRICHMENT_WEB_SEARCH_URL,
     RDS_SSLMODE: process.env.RDS_SSLMODE,
     RDS_SSLROOTCERT: process.env.RDS_SSLROOTCERT,
     COMMERCE_PROVIDER_SECRET_ARN: process.env.COMMERCE_PROVIDER_SECRET_ARN,
@@ -1452,6 +1570,7 @@ function installPersistenceMocks(
   process.env.LEX_ROUTER_LOCALE_ID = "en_US";
   process.env.FEATURE_REKOGNITION = "pending_service";
   process.env.REKOGNITION_MIN_TEXT_CONFIDENCE = "70";
+  process.env.REKOGNITION_MIN_LABEL_CONFIDENCE = "70";
   process.env.FEATURE_CONCIERGE_VOICE = "ready";
   process.env.FEATURE_SES = "ready";
   process.env.SUPPORT_CONTACT_EMAIL_TO = "support@yuzucigarclub.com";
@@ -1459,6 +1578,8 @@ function installPersistenceMocks(
   process.env.SUPPORT_EMAIL_INBOUND_RECIPIENT = "support@ses-support.yuzucigarclub.com";
   process.env.SUPPORT_EMAIL_RAW_BUCKET = "classroom2";
   process.env.SUPPORT_EMAIL_RAW_PREFIX = "ycc/support-email/raw/";
+  process.env.S3_APP_BUCKET = "classroom2";
+  process.env.HUMIDOR_IMAGE_PREFIX = "ycc/humidor-images/";
   process.env.CONCIERGE_POLLY_ENGINE = "neural";
   process.env.CONCIERGE_POLLY_VOICE_ID = "Joanna";
   process.env.CONCIERGE_VOICE_BUCKET = "classroom2";
@@ -1475,6 +1596,11 @@ function installPersistenceMocks(
   process.env.BEDROCK_AGENT_YCCSUPPORTAGENT_ALIAS_ID = "ALIASSUPPORT";
   process.env.BEDROCK_AGENT_YCCNEWSAGENT_ID = "AGENTNEWS1";
   process.env.BEDROCK_AGENT_YCCNEWSAGENT_ALIAS_ID = "ALIASNEWS";
+  process.env.HUMIDOR_ENRICHMENT_WEB_SEARCH = "";
+  process.env.HUMIDOR_ENRICHMENT_WEB_SEARCH_PROVIDER = "";
+  delete process.env.HUMIDOR_ENRICHMENT_WEB_SEARCH_MAX_RESULTS;
+  delete process.env.HUMIDOR_ENRICHMENT_WEB_SEARCH_TIMEOUT_MS;
+  delete process.env.HUMIDOR_ENRICHMENT_WEB_SEARCH_URL;
 
   return {
     agentInvocations,
@@ -1487,6 +1613,7 @@ function installPersistenceMocks(
     s3Invocations,
     secretsManagerInvocations,
     sesInvocations,
+    signedUrlInvocations,
     transcribeInvocations,
     webPushInvocations,
     restore() {
@@ -3128,6 +3255,88 @@ test("newsletter subscribe keeps the signup when brand preference email is not r
   }
 });
 
+test("Cognito post-confirmation sends a welcome email with account details and marketing", async () => {
+  const mock = installPersistenceMocks();
+  try {
+    const response = await (handler as unknown as (event: Record<string, unknown>) => Promise<Record<string, unknown>>)({
+      version: "1",
+      region: "us-east-1",
+      userPoolId: "us-east-1_TESTPOOL",
+      userName: "reader@example.com",
+      triggerSource: "PostConfirmation_ConfirmSignUp",
+      callerContext: {
+        clientId: "client-test",
+      },
+      request: {
+        userAttributes: {
+          sub: "cognito-user-123",
+          email: "Reader@Example.com",
+          email_verified: "true",
+          name: "Yuzu Reader",
+          "custom:member_status": "non_member",
+          "custom:membership_tier": "",
+        },
+      },
+      response: {},
+    });
+
+    assert.equal(response.triggerSource, "PostConfirmation_ConfirmSignUp");
+    assert.equal(mock.sesInvocations.length, 1);
+    assert.equal(mock.sesInvocations[0].FromEmailAddress, "support@yuzucigarclub.com");
+    assert.deepEqual(mock.sesInvocations[0].Destination, { ToAddresses: ["reader@example.com"] });
+    assert.deepEqual(mock.sesInvocations[0].ReplyToAddresses, ["support@ses-support.yuzucigarclub.com"]);
+
+    const simpleEmail = mock.sesInvocations[0].Content as {
+      Simple: {
+        Subject: { Data: string };
+        Body: { Text: { Data: string }; Html: { Data: string } };
+      };
+    };
+    assert.match(simpleEmail.Simple.Subject.Data, /welcome to yuzu cigar club/i);
+    assert.match(simpleEmail.Simple.Body.Text.Data, /Account details/i);
+    assert.match(simpleEmail.Simple.Body.Text.Data, /Email: reader@example\.com/i);
+    assert.match(simpleEmail.Simple.Body.Text.Data, /Display name: Yuzu Reader/i);
+    assert.match(simpleEmail.Simple.Body.Text.Data, /Membership status: Non-member/i);
+    assert.match(simpleEmail.Simple.Body.Text.Data, /digital humidor/i);
+    assert.match(simpleEmail.Simple.Body.Text.Data, /member drops/i);
+    assert.match(simpleEmail.Simple.Body.Text.Data, /21\+/);
+    assert.match(simpleEmail.Simple.Body.Html.Data, /Yuzu Cigar Club/);
+    assert.match(simpleEmail.Simple.Body.Html.Data, /\/account\//);
+    assert.match(simpleEmail.Simple.Body.Html.Data, /\/membership\//);
+    assert.match(simpleEmail.Simple.Body.Html.Data, /\/shop\//);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("Cognito post-confirmation keeps signup successful when SES is not ready", async () => {
+  const mock = installPersistenceMocks();
+  try {
+    process.env.FEATURE_SES = "pending_production_access";
+
+    const response = await (handler as unknown as (event: Record<string, unknown>) => Promise<Record<string, unknown>>)({
+      version: "1",
+      region: "us-east-1",
+      userPoolId: "us-east-1_TESTPOOL",
+      userName: "reader@example.com",
+      triggerSource: "PostConfirmation_ConfirmSignUp",
+      request: {
+        userAttributes: {
+          sub: "cognito-user-123",
+          email: "reader@example.com",
+          email_verified: "true",
+        },
+      },
+      response: {},
+    });
+
+    assert.equal(response.triggerSource, "PostConfirmation_ConfirmSignUp");
+    assert.equal(mock.sesInvocations.length, 0);
+  } finally {
+    mock.restore();
+  }
+});
+
 test("newsletter subscribe validates email and marketing consent", async () => {
   const invalidEmail = await handler({
     routeKey: "POST /newsletter/subscribe",
@@ -3236,6 +3445,33 @@ test("account route maps Cognito claims", async () => {
   const body = JSON.parse(response.body);
   assert.equal(body.account.email, actorClaims.email);
   assert.deepEqual(body.membership.groups, ["member", "sensei"]);
+});
+
+test("account route parses space-delimited API Gateway Cognito group claims", async () => {
+  const response = await handler({
+    routeKey: "GET /account/me",
+    rawPath: "/account/me",
+    requestContext: {
+      requestId: "req-account-space-groups",
+      http: { method: "GET" },
+      authorizer: {
+        jwt: {
+          claims: {
+            ...actorClaims,
+            "cognito:groups": "member kisha",
+            "custom:membership_tier": undefined,
+            "custom:member_status": undefined,
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(response.statusCode, 200);
+  const body = JSON.parse(response.body);
+  assert.deepEqual(body.membership.groups, ["member", "kisha"]);
+  assert.equal(body.membership.tier, "kisha");
+  assert.equal(body.membership.status, "active");
 });
 
 test("admin routes accept API Gateway bracketed Cognito group claims", async () => {
@@ -3590,7 +3826,7 @@ test("humidor item reads recover when an existing member email has a new Cognito
   }
 });
 
-test("humidor item reads summarize stored cigar images without inline data URLs", async () => {
+test("humidor item reads move stored cigar image data URLs to S3 signed URLs for My Cigars display", async () => {
   const imageBase64 = Buffer.from("stored-cigar-image").toString("base64");
   const mock = installPersistenceMocks({
     humidorItemRows: [
@@ -3636,8 +3872,71 @@ test("humidor item reads summarize stored cigar images without inline data URLs"
     assert.equal(body.items[0].cigarImage.fileName, "padron-band.jpg");
     assert.equal(body.items[0].cigarImage.bytes, 18);
     assert.equal(body.items[0].cigarImage.dataUrl, "");
+    assert.match(body.items[0].cigarImage.imageUrl, /^https:\/\/signed\.example\.test\/ycc%2Fhumidor-images%2F/);
     assert.equal(response.body.includes(imageBase64), false);
     assert.equal(response.body.includes("data:image/jpeg;base64"), false);
+    assert.ok(
+      mock.s3Invocations.some((input) => input.Bucket === "classroom2" && String(input.Key || "").startsWith("ycc/humidor-images/")),
+      "stored inline humidor image should be moved to the approved S3 prefix"
+    );
+    assert.ok(
+      mock.signedUrlInvocations.some((invocation) => invocation.input.Bucket === "classroom2" && String(invocation.input.Key || "").startsWith("ycc/humidor-images/")),
+      "stored humidor image should be returned as a signed S3 URL"
+    );
+    const metadataUpdate = mock.clients
+      .flatMap((client) => client.queries)
+      .find((query) => query.sql.includes("update public.humidor_items") && query.sql.includes("metadata"));
+    assert.ok(metadataUpdate, "lazy image migration should update the humidor item metadata");
+    assert.match(JSON.stringify(metadataUpdate.params), /s3Key/);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("humidor item reads suppress stale public web reference images that the storefront cannot render", async () => {
+  const externalImageUrl = "https://www.cigarsdirect.com/cdn/shop/files/deadwood-tobacco-fat-bottom-betty.jpg";
+  const mock = installPersistenceMocks({
+    humidorItemRows: [
+      {
+        id: "bcbcbcbc-bcbc-4cbc-8bcb-bcbcbcbcbcbc",
+        name: "Fat Bottom Betty",
+        brand: "Deadwood Cigars",
+        line: "Fat Bottom Betty",
+        vitola: "Robusto",
+        wrapper: "Maduro",
+        origin: "Nicaragua",
+        strength: "Medium-Full",
+        quantity: 2,
+        rating: null,
+        purchase_date: null,
+        aging_start_date: null,
+        reorder_reminder: null,
+        humidor_location: "Main",
+        tray: "",
+        tasting_notes: "",
+        source: "member_humidor",
+        metadata: {
+          cigarImage: {
+            imageUrl: externalImageUrl,
+            mimeType: "image/jpeg",
+            fileName: "deadwood-fat-bottom-betty.jpg",
+            bytes: 0,
+            source: "legacy_agent_reference",
+          },
+        },
+        created_at: "2026-05-28T10:00:00.000Z",
+      },
+    ],
+  });
+
+  try {
+    const response = await handler(createAuthenticatedEvent("GET /humidor/items"));
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.items.length, 1);
+    assert.equal(body.items[0].cigarImage, null);
+    assert.equal(response.body.includes(externalImageUrl), false);
   } finally {
     mock.restore();
   }
@@ -4264,6 +4563,223 @@ test("concierge chat keeps direct cigar guide answers available with Bedrock gua
       guardrailVersion: "1",
       trace: "enabled",
     });
+  } finally {
+    mock.restore();
+  }
+});
+
+test("concierge chat grounds cigar recommendations in the live launch catalog", async () => {
+  const previousCommerceSecretArn = process.env.COMMERCE_PROVIDER_SECRET_ARN;
+  process.env.COMMERCE_PROVIDER_SECRET_ARN = "arn:aws:secretsmanager:us-east-1:123456789012:secret:ycc/commerce/test";
+  const mock = installPersistenceMocks({
+    bedrockReply: "I can recommend a smooth morning cigar from the Yuzu catalog for adults 21+.",
+    commerceSecret: {
+      stripe: {
+        launchCatalogReady: true,
+        launchCatalog: [
+          {
+            sku: "CT-ROBUSTO",
+            name: "Arturo Fuente Chateau Fuente Connecticut Robusto 20 BX",
+            category: "Premium Cigars",
+            price: 164.5,
+            publishStatus: "published",
+            stripePriceId: "price_ct_robusto",
+          },
+          {
+            sku: "JAVA-MADURO",
+            name: "Java by Drew Estate Maduro Robusto 24 BX",
+            category: "Premium Cigars",
+            price: 219,
+            publishStatus: "published",
+            stripePriceId: "price_java_maduro",
+          },
+          {
+            sku: "HUMIDOR-100",
+            name: "Rocky Patel White Label Humidor 100 BX",
+            category: "Humidors",
+            price: 110,
+            publishStatus: "published",
+            stripePriceId: "price_humidor",
+          },
+        ],
+      },
+    },
+  });
+
+  try {
+    const response = await handler(
+      createAuthenticatedEvent("POST /concierge/chat", {
+        message: "Recommend a Connecticut cigar from the Yuzu catalog for morning coffee.",
+        agent: "cigar_guide",
+      })
+    );
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.agent, "YCCCigarGuide");
+    assert.match(body.reply, /Arturo Fuente Chateau Fuente Connecticut Robusto 20 BX/);
+    assert.match(body.reply, /\/shop\/arturo-fuente-chateau-fuente-connecticut-robusto-20-bx\//);
+    assert.doesNotMatch(body.reply, /White Label Humidor/i);
+    assert.ok(
+      mock.secretsManagerInvocations.some((input) => String(input.SecretId || "").includes("ycc/commerce")),
+      "catalog recommendations should read the commerce launch catalog secret"
+    );
+    assert.match(JSON.stringify(mock.bedrockInvocations[0].system), /Yuzu live product catalog recommendations/);
+    assert.match(JSON.stringify(mock.bedrockInvocations[0].system), /CT-ROBUSTO/);
+  } finally {
+    mock.restore();
+    if (previousCommerceSecretArn === undefined) {
+      delete process.env.COMMERCE_PROVIDER_SECRET_ARN;
+    } else {
+      process.env.COMMERCE_PROVIDER_SECRET_ARN = previousCommerceSecretArn;
+    }
+  }
+});
+
+test("concierge chat does not turn underage access prompts into catalog recommendations", async () => {
+  const previousCommerceSecretArn = process.env.COMMERCE_PROVIDER_SECRET_ARN;
+  process.env.COMMERCE_PROVIDER_SECRET_ARN = "arn:aws:secretsmanager:us-east-1:123456789012:secret:ycc/commerce/test";
+  const mock = installPersistenceMocks({
+    bedrockReply: "The catalog has several cigar options.",
+    commerceSecret: {
+      stripe: {
+        launchCatalogReady: true,
+        launchCatalog: [
+          {
+            sku: "CT-ROBUSTO",
+            name: "Arturo Fuente Chateau Fuente Connecticut Robusto 20 BX",
+            category: "Premium Cigars",
+            price: 164.5,
+            publishStatus: "published",
+            stripePriceId: "price_ct_robusto",
+          },
+        ],
+      },
+    },
+  });
+
+  try {
+    const response = await handler(
+      createAuthenticatedEvent("POST /concierge/chat", {
+        message: "I am 19. Can you help me buy cigars from the Yuzu catalog?",
+        agent: "cigar_guide",
+      })
+    );
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.agent, "YCCCigarGuide");
+    assert.match(body.reply, /adults 21\+/i);
+    assert.match(body.reply, /cannot help anyone under 21/i);
+    assert.doesNotMatch(body.reply, /\/shop\//i);
+    assert.equal(
+      mock.secretsManagerInvocations.some((input) => String(input.SecretId || "").includes("ycc/commerce")),
+      false,
+      "underage prompts should not load catalog suggestions"
+    );
+  } finally {
+    mock.restore();
+    if (previousCommerceSecretArn === undefined) {
+      delete process.env.COMMERCE_PROVIDER_SECRET_ARN;
+    } else {
+      process.env.COMMERCE_PROVIDER_SECRET_ARN = previousCommerceSecretArn;
+    }
+  }
+});
+
+test("concierge chat answers questions about the member's digital humidor inventory", async () => {
+  const mock = installPersistenceMocks({
+    bedrockReply: "Smoke a Cohiba Serie M tonight and reorder a Padron 1964 from a retailer.",
+    humidorItemRows: [
+      {
+        id: "88888888-8888-4888-8888-888888888888",
+        name: "Padron 1964 Anniversary Toro",
+        brand: "Padron",
+        line: "1964 Anniversary",
+        vitola: "Toro",
+        wrapper: "Nicaraguan",
+        origin: "Nicaragua",
+        strength: "Full",
+        quantity: 2,
+        rating: 94,
+        purchase_date: "2026-04-01",
+        aging_start_date: "2026-04-01",
+        reorder_reminder: "2026-06-01",
+        humidor_location: "Locker A",
+        tray: "Top Tray",
+        tasting_notes: "Cocoa and cedar.",
+        source: "member_humidor",
+        metadata: { estimatedValue: 18.5, estimatedValueCurrency: "USD" },
+        created_at: "2026-05-01T12:00:00.000Z",
+      },
+      {
+        id: "99999999-9999-4999-8999-999999999999",
+        name: "Java by Drew Estate Maduro Robusto",
+        brand: "Java",
+        line: "Maduro",
+        vitola: "Robusto",
+        wrapper: "Maduro",
+        origin: "Nicaragua",
+        strength: "Medium",
+        quantity: 5,
+        rating: null,
+        purchase_date: "2026-05-01",
+        aging_start_date: "2026-05-01",
+        reorder_reminder: null,
+        humidor_location: "Locker B",
+        tray: "Bottom Tray",
+        tasting_notes: "Chocolate and espresso.",
+        source: "member_humidor",
+        metadata: {},
+        created_at: "2026-05-02T12:00:00.000Z",
+      },
+    ],
+  });
+
+  try {
+    const response = await handler(
+      createAuthenticatedEvent("POST /concierge/chat", {
+        message: "Based on my digital humidor, which cigar should I smoke tonight and what should I reorder soon?",
+        agent: "humidor",
+      })
+    );
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.agent, "YCCHumidorAgent");
+    assert.match(body.reply, /Padron 1964 Anniversary Toro/);
+    assert.match(body.reply, /Locker A/);
+    assert.match(body.reply, /Java Maduro Robusto|Java by Drew Estate Maduro Robusto/);
+    assert.doesNotMatch(body.reply, /Cohiba Serie M/i);
+    const system = JSON.stringify(mock.bedrockInvocations[0].system);
+    assert.match(system, /Member digital humidor inventory/);
+    assert.match(system, /Padron 1964 Anniversary Toro/);
+    assert.match(system, /reorder 2026-06-01/);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("support agent answers adult-signature shipping questions instead of surfacing generic refusals", async () => {
+  const mock = installPersistenceMocks({
+    bedrockReply:
+      "Yuzu Cigar Club cannot help with that request. A concierge operator can review age-restricted, account, or compliance-sensitive questions.",
+  });
+
+  try {
+    const response = await handler(
+      createAuthenticatedEvent("POST /concierge/chat", {
+        message: "What should I know about adult-signature shipping before placing a cigar order?",
+        agent: "support",
+      })
+    );
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.agent, "YCCSupportAgent");
+    assert.match(body.reply, /adult-signature delivery/i);
+    assert.match(body.reply, /age verification/i);
+    assert.doesNotMatch(body.reply, /cannot help with that request/i);
   } finally {
     mock.restore();
   }
@@ -5284,6 +5800,121 @@ test("humidor item route normalizes a cigar item contract", async () => {
   assert.equal(body.persistence.status, "schema_ready_write_pending");
 });
 
+test("humidor smoke log route persists a rated saved cigar with drink pairing", async () => {
+  const previousFeatureDbWrites = process.env.FEATURE_DB_WRITES;
+  const mock = installPersistenceMocks({
+    humidorItemRows: [
+      {
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        name: "Padron 1964 Anniversary Toro",
+        brand: "Padron",
+        line: "1964 Anniversary",
+        vitola: "Toro",
+        wrapper: "Nicaraguan",
+        origin: "Nicaragua",
+        strength: "Full",
+        quantity: 2,
+        rating: 94,
+        purchase_date: "2026-03-12",
+        aging_start_date: "2026-03-12",
+        reorder_reminder: "2026-06-15",
+        humidor_location: "Locker A",
+        tray: "Drawer 2",
+        tasting_notes: "Cocoa and cedar.",
+        source: "member_humidor",
+        metadata: {},
+        created_at: "2026-05-08T10:00:00.000Z",
+      },
+    ],
+  });
+
+  try {
+    process.env.FEATURE_DB_WRITES = "schema_ready";
+
+    const response = await handler(
+      createAuthenticatedEvent("POST /humidor/smokes", {
+        humidorItemId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        smokedAt: "2026-05-28T21:30:00.000Z",
+        rating: 93,
+        drinkPairing: "Barrel proof bourbon",
+        notes: "Dark cocoa, cedar, and an even draw.",
+        durationMinutes: 72,
+      })
+    );
+
+    assert.equal(response.statusCode, 201);
+    const body = JSON.parse(response.body);
+    assert.equal(body.log.humidorItemId, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    assert.equal(body.log.cigarName, "Padron 1964 Anniversary Toro");
+    assert.equal(body.log.rating, 93);
+    assert.equal(body.log.drinkPairing, "Barrel proof bourbon");
+    assert.equal(body.persistence.table, "smoke_logs");
+
+    const queries = mock.clients.flatMap((client) => client.queries);
+    const insertQuery = queries.find((query) => query.sql.includes("insert into public.smoke_logs"));
+    assert.ok(insertQuery, "smoke log should be inserted");
+    assert.ok(insertQuery.params.includes("Barrel proof bourbon"), "drink pairing should be saved on the smoke log");
+    assert.ok(
+      queries.some((query) => query.sql.includes("insert into public.audit_log") && query.params.includes("smoke_log.created")),
+      "smoke logging should be audited"
+    );
+  } finally {
+    if (previousFeatureDbWrites === undefined) {
+      delete process.env.FEATURE_DB_WRITES;
+    } else {
+      process.env.FEATURE_DB_WRITES = previousFeatureDbWrites;
+    }
+    mock.restore();
+  }
+});
+
+test("humidor smoke logs read recent ratings and drink pairings", async () => {
+  const previousFeatureDbWrites = process.env.FEATURE_DB_WRITES;
+  const mock = installPersistenceMocks({
+    smokeLogRows: [
+      {
+        id: "12121212-1212-4212-8212-121212121212",
+        humidor_item_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        cigar_name: "Padron 1964 Anniversary Toro",
+        smoked_at: "2026-05-28T21:30:00.000Z",
+        rating: 93,
+        pairing: "Barrel proof bourbon",
+        notes: "Dark cocoa, cedar, and an even draw.",
+        duration_minutes: 72,
+        metadata: { drinkPairing: "Barrel proof bourbon", source: "member_smoke_log" },
+        created_at: "2026-05-28T21:45:00.000Z",
+      },
+    ],
+  });
+
+  try {
+    process.env.FEATURE_DB_WRITES = "schema_ready";
+
+    const response = await handler(createAuthenticatedEvent("GET /humidor/smokes"));
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.logs.length, 1);
+    assert.equal(body.logs[0].cigarName, "Padron 1964 Anniversary Toro");
+    assert.equal(body.logs[0].rating, 93);
+    assert.equal(body.logs[0].drinkPairing, "Barrel proof bourbon");
+    assert.equal(body.persistence, "stored");
+
+    const queries = mock.clients.flatMap((client) => client.queries);
+    assert.ok(
+      queries.some((query) => query.sql.includes("smoke_log_recent_list")),
+      "smoke logs should be read from the recent-list query"
+    );
+  } finally {
+    if (previousFeatureDbWrites === undefined) {
+      delete process.env.FEATURE_DB_WRITES;
+    } else {
+      process.env.FEATURE_DB_WRITES = previousFeatureDbWrites;
+    }
+    mock.restore();
+  }
+});
+
 test("humidor image identification route invokes Bedrock vision and returns reviewable cigar fields", async () => {
   const mock = installPersistenceMocks({
     bedrockReply: JSON.stringify({
@@ -5436,6 +6067,77 @@ test("humidor image identification uses Rekognition OCR text as Bedrock prompt e
     assert.doesNotMatch(promptText, /low confidence blur/);
     assert.doesNotMatch(promptText, /"PADRON"/);
     assert.equal(mock.clients.length, 0, "Rekognition-assisted identification should not persist until confirmation");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("humidor image identification uses Rekognition visual labels as Bedrock prompt evidence", async () => {
+  const mock = installPersistenceMocks({
+    bedrockReply: JSON.stringify({
+      name: "Liga Privada No. 9 Robusto",
+      brand: "Drew Estate",
+      line: "Liga Privada No. 9",
+      vitola: "Robusto",
+      confidence: "medium",
+      evidence: ["Rekognition labels indicate a cigar product and box packaging"],
+      needsReview: ["Confirm the band text before saving"],
+    }),
+    rekognitionLabelDetections: [
+      {
+        Name: "Cigar",
+        Confidence: 99.1,
+        Parents: [{ Name: "Tobacco Product" }],
+        Categories: [{ Name: "Product" }],
+      },
+      {
+        Name: "Box",
+        Confidence: 91.8,
+        Parents: [{ Name: "Container" }],
+        Categories: [{ Name: "Household Objects" }],
+      },
+      {
+        Name: "Low Confidence Background",
+        Confidence: 44.2,
+      },
+    ],
+    rekognitionTextDetections: [],
+  });
+  process.env.FEATURE_REKOGNITION = "image_understanding_ready";
+  process.env.REKOGNITION_MIN_LABEL_CONFIDENCE = "75";
+
+  try {
+    const response = await handler(
+      createAuthenticatedEvent("POST /humidor/identify-cigar", {
+        imageBase64: Buffer.from("fake-jpeg-bytes").toString("base64"),
+        mimeType: "image/jpeg",
+        notes: "Box and band are visible, but the text is partially blurred.",
+      })
+    );
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.ai.rekognition.labelStatus, "detected_labels");
+    assert.equal(body.ai.rekognition.minLabelConfidence, 75);
+    assert.deepEqual(
+      body.ai.rekognition.labels.map((label: { name: string }) => label.name),
+      ["Cigar", "Box"]
+    );
+    assert.equal(
+      mock.rekognitionInvocations.some((input) => input.operation === "DetectLabels" && input.MaxLabels === 10),
+      true
+    );
+
+    const content = (mock.bedrockInvocations[0].messages as Array<Record<string, unknown>>)[0]
+      .content as Array<Record<string, unknown>>;
+    const promptText = String(content.find((block) => "text" in block)?.text || "");
+
+    assert.match(promptText, /Amazon Rekognition visual labels/i);
+    assert.match(promptText, /Cigar/);
+    assert.match(promptText, /Box/);
+    assert.match(promptText, /Tobacco Product/);
+    assert.doesNotMatch(promptText, /Low Confidence Background/);
+    assert.equal(mock.clients.length, 0, "Rekognition label-assisted identification should not persist until confirmation");
   } finally {
     mock.restore();
   }
@@ -6132,7 +6834,16 @@ test("humidor item route stores collection value and uploaded cigar image metada
     assert.equal(body.item.cigarImage.mimeType, "image/jpeg");
     assert.equal(body.item.cigarImage.fileName, "padron-band.jpg");
     assert.equal(body.item.cigarImage.dataUrl, "");
+    assert.match(body.item.cigarImage.imageUrl, /^https:\/\/signed\.example\.test\/ycc%2Fhumidor-images%2F/);
     assert.equal(response.body.includes(imageBase64), false);
+    assert.ok(
+      mock.s3Invocations.some((input) => input.Bucket === "classroom2" && String(input.Key || "").startsWith("ycc/humidor-images/")),
+      "uploaded humidor image should be stored in the approved S3 prefix"
+    );
+    assert.ok(
+      mock.signedUrlInvocations.some((invocation) => invocation.input.Bucket === "classroom2" && String(invocation.input.Key || "").startsWith("ycc/humidor-images/")),
+      "created humidor item should return a signed image URL"
+    );
 
     const queries = mock.clients.flatMap((client) => client.queries);
     const humidorInsert = queries.find((query) => query.sql.includes("insert into public.humidor_items"));
@@ -6143,7 +6854,8 @@ test("humidor item route stores collection value and uploaded cigar image metada
     assert.equal(metadata.estimatedValueSource, "ai_identification_msrp");
     assert.equal(metadata.cigarImage.mimeType, "image/jpeg");
     assert.equal(metadata.cigarImage.fileName, "padron-band.jpg");
-    assert.match(metadata.cigarImage.dataUrl, /^data:image\/jpeg;base64,/);
+    assert.equal(metadata.cigarImage.dataUrl, "");
+    assert.match(metadata.cigarImage.s3Key, /^ycc\/humidor-images\//);
   } finally {
     mock.restore();
   }
@@ -6261,6 +6973,129 @@ test("humidor item update route adjusts a saved cigar aging start date", async (
   }
 });
 
+test("humidor item update route logs shared cigars and decrements inventory", async () => {
+  const itemId = "abababab-abab-4bab-8bab-abababababab";
+  const mock = installPersistenceMocks({
+    humidorItemRows: [
+      {
+        id: itemId,
+        name: "Gloria Cubana",
+        brand: "Gloria Cubana",
+        line: "Maduro",
+        vitola: "Pierre Estel",
+        wrapper: "Cuban",
+        origin: "Cuba",
+        strength: "",
+        quantity: 5,
+        rating: null,
+        purchase_date: null,
+        aging_start_date: null,
+        reorder_reminder: null,
+        humidor_location: "Main",
+        tray: "",
+        tasting_notes: "Earthy and woody.",
+        source: "member_humidor",
+        metadata: {},
+        created_at: "2026-05-13T10:00:00.000Z",
+      },
+    ],
+  });
+
+  try {
+    const response = await handler({
+      ...createAuthenticatedEvent("PATCH /humidor/items/{id}", {
+        action: "share",
+        sharedQuantity: 1,
+        sharedWith: "Chris",
+      }),
+      rawPath: `/humidor/items/${itemId}`,
+      pathParameters: { id: itemId },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.item.id, itemId);
+    assert.equal(body.item.quantity, 4);
+    assert.equal(body.log.humidorItemId, itemId);
+    assert.equal(body.log.source, "member_shared_gift");
+    assert.match(body.log.notes, /Shared 1 with Chris/);
+    assert.deepEqual(body.inventoryAction, {
+      type: "shared",
+      quantityBefore: 5,
+      quantityAfter: 4,
+      archived: false,
+    });
+
+    const queries = mock.clients.flatMap((client) => client.queries);
+    assert.ok(
+      queries.some((query) => query.sql.includes("humidor_item_shared_update") && query.sql.includes("quantity")),
+      "shared action should decrement the stored humidor quantity",
+    );
+    assert.ok(queries.some((query) => query.sql.includes("insert into public.smoke_logs")), "shared action should create a tracking log");
+    assert.ok(queries.some((query) => query.sql.includes("insert into public.audit_log")), "shared action should be audited");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("humidor item update route archives deleted cigars from active inventory", async () => {
+  const itemId = "abababab-abab-4bab-8bab-abababababab";
+  const mock = installPersistenceMocks({
+    humidorItemRows: [
+      {
+        id: itemId,
+        name: "Gloria Cubana",
+        brand: "Gloria Cubana",
+        line: "Maduro",
+        vitola: "Pierre Estel",
+        wrapper: "Cuban",
+        origin: "Cuba",
+        strength: "",
+        quantity: 4,
+        rating: null,
+        purchase_date: null,
+        aging_start_date: null,
+        reorder_reminder: null,
+        humidor_location: "Main",
+        tray: "",
+        tasting_notes: "Earthy and woody.",
+        source: "member_humidor",
+        metadata: {},
+        created_at: "2026-05-13T10:00:00.000Z",
+      },
+    ],
+  });
+
+  try {
+    const response = await handler({
+      ...createAuthenticatedEvent("PATCH /humidor/items/{id}", {
+        action: "delete",
+      }),
+      rawPath: `/humidor/items/${itemId}`,
+      pathParameters: { id: itemId },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.item.id, itemId);
+    assert.deepEqual(body.inventoryAction, {
+      type: "deleted",
+      quantityBefore: 4,
+      quantityAfter: 0,
+      archived: true,
+    });
+
+    const queries = mock.clients.flatMap((client) => client.queries);
+    assert.ok(
+      queries.some((query) => query.sql.includes("humidor_item_archive") && query.sql.includes("archived_at = now()")),
+      "delete action should archive the stored humidor row",
+    );
+    assert.ok(queries.some((query) => query.sql.includes("insert into public.audit_log")), "delete action should be audited");
+  } finally {
+    mock.restore();
+  }
+});
+
 test("humidor item enrichment route fills missing info image and MSRP without overwriting member data", async () => {
   const itemId = "abababab-abab-4bab-8bab-abababababab";
   const mock = installPersistenceMocks({
@@ -6298,13 +7133,13 @@ test("humidor item enrichment route fills missing info image and MSRP without ov
       estimatedValueCurrency: "USD",
       estimatedValueSource: "ai_humidor_enrichment_msrp",
       cigarImage: {
-        imageUrl: "https://example.com/padron-1964-toro.jpg",
+        imageUrl: "https://classroom2.s3.us-east-1.amazonaws.com/ycc/humidor-images/padron-1964-toro.jpg",
         mimeType: "image/jpeg",
         fileName: "padron-1964-toro.jpg",
         source: "agent_reference",
       },
       confidence: "medium",
-      evidence: ["Matched Padron Anniversary Toro against reference details."],
+      evidence: ["Matched Padron Anniversary Toro against https://example.com/padron-1964-toro.html reference details."],
       needsReview: ["Confirm exact 1964 vitola before relying on MSRP."],
     }),
   });
@@ -6333,7 +7168,7 @@ test("humidor item enrichment route fills missing info image and MSRP without ov
     assert.equal(body.item.estimatedValue, 18.5);
     assert.equal(body.item.estimatedValueCurrency, "USD");
     assert.equal(body.item.estimatedValueSource, "ai_humidor_enrichment_msrp");
-    assert.equal(body.item.cigarImage.imageUrl, "https://example.com/padron-1964-toro.jpg");
+    assert.equal(body.item.cigarImage.imageUrl, "https://classroom2.s3.us-east-1.amazonaws.com/ycc/humidor-images/padron-1964-toro.jpg");
     assert.equal(body.enrichment.status, "updated");
     assert.deepEqual(body.enrichment.requestedFields, ["info", "image", "msrp"]);
     assert.ok(body.enrichment.updatedFields.includes("line"));
@@ -6347,6 +7182,280 @@ test("humidor item enrichment route fills missing info image and MSRP without ov
       "enrichment should update the stored humidor row"
     );
     assert.ok(queries.some((query) => query.sql.includes("insert into public.audit_log")), "enrichment should be audited");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("humidor item enrichment keeps saved image metadata instead of replacing an existing cigar photo", async () => {
+  const itemId = "a7a7a7a7-a7a7-4a7a-8a7a-a7a7a7a7a7a7";
+  const mock = installPersistenceMocks({
+    humidorItemRows: [
+      {
+        id: itemId,
+        name: "Padron Anniversary Toro",
+        brand: "Padron",
+        line: "",
+        vitola: "",
+        wrapper: "",
+        origin: "",
+        strength: "",
+        quantity: 2,
+        rating: null,
+        purchase_date: null,
+        aging_start_date: null,
+        reorder_reminder: null,
+        humidor_location: "",
+        tray: "",
+        tasting_notes: "",
+        source: "member_humidor",
+        metadata: {
+          cigarImage: {
+            dataUrl: "",
+            imageUrl: "",
+            s3Bucket: "classroom2",
+            s3Key: "ycc/humidor-images/member-123/padron-existing.jpg",
+            mimeType: "image/jpeg",
+            fileName: "padron-existing.jpg",
+            bytes: 14200,
+            source: "member_upload",
+          },
+        },
+        created_at: "2026-05-13T10:00:00.000Z",
+      },
+    ],
+    bedrockReply: JSON.stringify({
+      line: "1964 Anniversary",
+      vitola: "Toro",
+      wrapper: "Nicaraguan",
+      origin: "Nicaragua",
+      strength: "Full",
+      estimatedValue: "$18.50",
+      estimatedValueCurrency: "USD",
+      estimatedValueSource: "ai_humidor_enrichment_msrp",
+      cigarImage: {
+        imageUrl: "https://classroom2.s3.us-east-1.amazonaws.com/ycc/humidor-images/replacement-padron.jpg",
+        mimeType: "image/jpeg",
+        fileName: "replacement-padron.jpg",
+        source: "https://example.com/replacement-padron.html",
+      },
+      confidence: "medium",
+      evidence: ["Matched Padron Anniversary Toro against https://example.com/padron-1964-toro.html."],
+      needsReview: ["Confirm exact vitola before relying on MSRP."],
+    }),
+  });
+
+  try {
+    const response = await handler({
+      ...createAuthenticatedEvent("PATCH /humidor/items/{id}/enrich", {
+        fields: ["info", "image", "msrp"],
+        approved: false,
+      }),
+      rawPath: `/humidor/items/${itemId}/enrich`,
+      pathParameters: { id: itemId },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.enrichment.status, "pending_approval");
+    assert.equal(body.previewItem.cigarImage.fileName, "padron-existing.jpg");
+    assert.match(body.previewItem.cigarImage.imageUrl, /^https:\/\/signed\.example\.test\/ycc%2Fhumidor-images%2F/);
+    assert.equal(body.enrichment.updatedFields.includes("cigarImage"), false, "existing member cigar image should not be replaced");
+    assert.equal(body.enrichment.requestedFields.includes("image"), false, "existing image metadata should remove image from the enrichment request");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("humidor item enrichment uses Rekognition evidence from saved member images to update text fields", async () => {
+  const itemId = "b7b7b7b7-b7b7-4b7b-8b7b-b7b7b7b7b7b7";
+  const imageKey = "ycc/humidor-images/member-123/padron-band.jpg";
+  const mock = installPersistenceMocks({
+    humidorItemRows: [
+      {
+        id: itemId,
+        name: "Unlabeled cigar",
+        brand: "",
+        line: "",
+        vitola: "",
+        wrapper: "",
+        origin: "",
+        strength: "",
+        quantity: 1,
+        rating: null,
+        purchase_date: null,
+        aging_start_date: null,
+        reorder_reminder: null,
+        humidor_location: "Desktop humidor",
+        tray: "",
+        tasting_notes: "",
+        source: "member_humidor",
+        metadata: {
+          cigarImage: {
+            dataUrl: "",
+            imageUrl: "",
+            s3Bucket: "classroom2",
+            s3Key: imageKey,
+            mimeType: "image/jpeg",
+            fileName: "padron-band.jpg",
+            bytes: 2048,
+            source: "member_upload",
+          },
+        },
+        created_at: "2026-05-13T10:00:00.000Z",
+      },
+    ],
+    s3Objects: {
+      [imageKey]: Buffer.from("saved-padron-band-image"),
+    },
+    rekognitionTextDetections: [
+      {
+        DetectedText: "PADRON 1964 ANNIVERSARY",
+        Type: "LINE",
+        Confidence: 98.1,
+      },
+    ],
+    rekognitionLabelDetections: [
+      {
+        Name: "Cigar",
+        Confidence: 97.4,
+        Parents: [{ Name: "Tobacco Product" }],
+        Categories: [{ Name: "Product" }],
+      },
+      {
+        Name: "Band",
+        Confidence: 88.2,
+        Parents: [{ Name: "Label" }],
+        Categories: [{ Name: "Text and Documents" }],
+      },
+    ],
+    bedrockReply: JSON.stringify({
+      brand: "Padron",
+      line: "1964 Anniversary",
+      vitola: "Toro",
+      wrapper: "Nicaraguan",
+      origin: "Nicaragua",
+      strength: "Full",
+      confidence: "medium",
+      evidence: ["Saved member image OCR shows PADRON 1964 ANNIVERSARY."],
+      needsReview: ["Confirm the exact vitola before saving."],
+      details: {
+        imageObservations: ["Saved image contains a cigar band and readable Padron text."],
+      },
+    }),
+  });
+  process.env.FEATURE_REKOGNITION = "image_understanding_ready";
+  process.env.REKOGNITION_MIN_LABEL_CONFIDENCE = "75";
+
+  try {
+    const response = await handler({
+      ...createAuthenticatedEvent("PATCH /humidor/items/{id}/enrich", {
+        fields: ["info"],
+        approved: false,
+      }),
+      rawPath: `/humidor/items/${itemId}/enrich`,
+      pathParameters: { id: itemId },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.enrichment.status, "pending_approval");
+    assert.equal(body.previewItem.brand, "Padron");
+    assert.equal(body.previewItem.line, "1964 Anniversary");
+    assert.equal(body.previewItem.wrapper, "Nicaraguan");
+    assert.equal(body.ai.rekognition.status, "detected_text");
+    assert.equal(body.ai.rekognition.labelStatus, "detected_labels");
+    assert.deepEqual(
+      body.ai.rekognition.textLines.map((line: { text: string }) => line.text),
+      ["PADRON 1964 ANNIVERSARY"]
+    );
+    assert.deepEqual(
+      body.ai.rekognition.labels.map((label: { name: string }) => label.name),
+      ["Cigar", "Band"]
+    );
+    assert.ok(mock.s3Invocations.some((input) => input.Bucket === "classroom2" && input.Key === imageKey));
+    assert.ok(mock.rekognitionInvocations.some((input) => input.operation === "DetectText"));
+    assert.ok(mock.rekognitionInvocations.some((input) => input.operation === "DetectLabels"));
+
+    const content = (mock.bedrockInvocations[0].messages as Array<Record<string, unknown>>)[0]
+      .content as Array<Record<string, unknown>>;
+    const promptText = String(content.find((block) => "text" in block)?.text || "");
+
+    assert.match(promptText, /Saved member image Rekognition evidence/i);
+    assert.match(promptText, /PADRON 1964 ANNIVERSARY/);
+    assert.match(promptText, /Amazon Rekognition visual labels/i);
+    assert.match(promptText, /Band/);
+    assert.match(promptText, /Use saved-image text and visual labels/i);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("humidor item enrichment treats stale non-renderable reference image metadata as missing", async () => {
+  const itemId = "d8d8d8d8-d8d8-4d8d-8d8d-d8d8d8d8d8d8";
+  const externalImageUrl = "https://www.cigarsdirect.com/cdn/shop/files/deadwood-tobacco-fat-bottom-betty.jpg";
+  const mock = installPersistenceMocks({
+    humidorItemRows: [
+      {
+        id: itemId,
+        name: "Fat Bottom Betty",
+        brand: "Deadwood Cigars",
+        line: "Fat Bottom Betty",
+        vitola: "Robusto",
+        wrapper: "Maduro",
+        origin: "Nicaragua",
+        strength: "Medium-Full",
+        quantity: 2,
+        rating: null,
+        purchase_date: null,
+        aging_start_date: null,
+        reorder_reminder: null,
+        humidor_location: "Main",
+        tray: "",
+        tasting_notes: "",
+        source: "member_humidor",
+        metadata: {
+          cigarImage: {
+            imageUrl: externalImageUrl,
+            mimeType: "image/jpeg",
+            fileName: "deadwood-fat-bottom-betty.jpg",
+            bytes: 0,
+            source: "legacy_agent_reference",
+          },
+        },
+        created_at: "2026-05-28T10:00:00.000Z",
+      },
+    ],
+    bedrockReply: JSON.stringify({
+      cigarImage: {
+        imageUrl: "https://classroom2.s3.us-east-1.amazonaws.com/ycc/humidor-images/fat-bottom-betty-renderable.jpg",
+        mimeType: "image/jpeg",
+        fileName: "fat-bottom-betty-renderable.jpg",
+        source: "agent_reference",
+      },
+      confidence: "medium",
+      evidence: ["Matched Fat Bottom Betty to a Yuzu-hosted renderable humidor image."],
+      needsReview: ["Confirm the proposed photo matches the saved cigar before approving."],
+    }),
+  });
+
+  try {
+    const response = await handler({
+      ...createAuthenticatedEvent("PATCH /humidor/items/{id}/enrich", {
+        fields: ["image"],
+        approved: false,
+      }),
+      rawPath: `/humidor/items/${itemId}/enrich`,
+      pathParameters: { id: itemId },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.item.cigarImage, null);
+    assert.equal(body.previewItem.cigarImage.imageUrl, "https://classroom2.s3.us-east-1.amazonaws.com/ycc/humidor-images/fat-bottom-betty-renderable.jpg");
+    assert.ok(body.enrichment.requestedFields.includes("image"));
+    assert.ok(body.enrichment.updatedFields.includes("cigarImage"));
+    assert.equal(response.body.includes(externalImageUrl), false);
   } finally {
     mock.restore();
   }
@@ -6389,13 +7498,13 @@ test("humidor item enrichment route previews updates until member approval", asy
       estimatedValueCurrency: "USD",
       estimatedValueSource: "ai_humidor_enrichment_msrp",
       cigarImage: {
-        imageUrl: "https://example.com/padron-1964-toro.jpg",
+        imageUrl: "https://classroom2.s3.us-east-1.amazonaws.com/ycc/humidor-images/padron-1964-toro.jpg",
         mimeType: "image/jpeg",
         fileName: "padron-1964-toro.jpg",
         source: "agent_reference",
       },
       confidence: "medium",
-      evidence: ["Matched Padron Anniversary Toro against reference details."],
+      evidence: ["Matched Padron Anniversary Toro against https://example.com/padron-1964-toro.html reference details."],
       needsReview: ["Confirm exact 1964 vitola before relying on MSRP."],
     }),
   });
@@ -6416,7 +7525,7 @@ test("humidor item enrichment route previews updates until member approval", asy
     assert.equal(body.item.line, "", "preview should keep the stored item unchanged");
     assert.equal(body.previewItem.line, "1964 Anniversary");
     assert.equal(body.previewItem.estimatedValue, 18.5);
-    assert.equal(body.previewItem.cigarImage.imageUrl, "https://example.com/padron-1964-toro.jpg");
+    assert.equal(body.previewItem.cigarImage.imageUrl, "https://classroom2.s3.us-east-1.amazonaws.com/ycc/humidor-images/padron-1964-toro.jpg");
     assert.equal(body.enrichment.status, "pending_approval");
     assert.deepEqual(body.enrichment.requestedFields, ["info", "image", "msrp"]);
     assert.ok(body.enrichment.updatedFields.includes("line"));
@@ -6435,11 +7544,71 @@ test("humidor item enrichment route previews updates until member approval", asy
   }
 });
 
+test("humidor item enrichment rejects placeholder asset image references from agent output", async () => {
+  const itemId = "d2d2d2d2-d2d2-4d2d-8d2d-d2d2d2d2d2d2";
+  const mock = installPersistenceMocks({
+    humidorItemRows: [
+      {
+        id: itemId,
+        name: "Padron Anniversary Toro",
+        brand: "Padron",
+        line: "1964 Anniversary",
+        vitola: "Toro",
+        wrapper: "Nicaraguan",
+        origin: "Nicaragua",
+        strength: "Full",
+        quantity: 2,
+        rating: null,
+        purchase_date: null,
+        aging_start_date: null,
+        reorder_reminder: null,
+        humidor_location: "",
+        tray: "",
+        tasting_notes: "",
+        source: "member_humidor",
+        metadata: {},
+        created_at: "2026-05-13T10:00:00.000Z",
+      },
+    ],
+    bedrockReply: JSON.stringify({
+      cigarImage: {
+        imageUrl: "/assets/cigar-product.jpg",
+        mimeType: "image/jpeg",
+        fileName: "cigar-product.jpg",
+        source: "agent_placeholder",
+      },
+      confidence: "medium",
+      evidence: ["Agent suggested a placeholder first-party asset without a verified source URL."],
+      needsReview: ["Confirm a stable product image URL before saving an image."],
+    }),
+  });
+
+  try {
+    const response = await handler({
+      ...createAuthenticatedEvent("PATCH /humidor/items/{id}/enrich", {
+        fields: ["image"],
+        approved: false,
+      }),
+      rawPath: `/humidor/items/${itemId}/enrich`,
+      pathParameters: { id: itemId },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.enrichment.status, "needs_review");
+    assert.equal(body.previewItem.cigarImage, null);
+    assert.deepEqual(body.enrichment.updatedFields, []);
+    assert.match(body.enrichment.needsReview.join("\n"), /stable product image/i);
+  } finally {
+    mock.restore();
+  }
+});
+
 test("humidor item enrichment route retrieves knowledge base context before invoking the Humidor Agent alias", async () => {
   const itemId = "abababab-abab-4bab-8bab-abababababab";
   const mock = installPersistenceMocks({
     retrieveText:
-      "Ecuador Hand Made reference: El Z Corona has an Ecuadorian Habano wrapper, Nicaragua origin, medium strength, MSRP $9.25, and image https://example.com/el-z-ecuador-hand-made-corona.jpg.",
+      "Ecuador Hand Made reference: El Z Corona has an Ecuadorian Habano wrapper, Nicaragua origin, medium strength, MSRP $9.25, and image https://classroom2.s3.us-east-1.amazonaws.com/ycc/humidor-images/el-z-ecuador-hand-made-corona.jpg.",
     agentReply: JSON.stringify({
       brand: "El Z",
       line: "Ecuador Hand Made",
@@ -6452,13 +7621,13 @@ test("humidor item enrichment route retrieves knowledge base context before invo
       estimatedValueCurrency: "USD",
       estimatedValueSource: "ai_humidor_enrichment_msrp",
       cigarImage: {
-        imageUrl: "https://example.com/el-z-ecuador-hand-made-corona.jpg",
+        imageUrl: "https://classroom2.s3.us-east-1.amazonaws.com/ycc/humidor-images/el-z-ecuador-hand-made-corona.jpg",
         mimeType: "image/jpeg",
         fileName: "el-z-ecuador-hand-made-corona.jpg",
         source: "agent_reference",
       },
       confidence: "medium",
-      evidence: ["Matched Ecuador Hand Made against retrieved YCC reference context."],
+      evidence: ["Matched Ecuador Hand Made against https://example.com/el-z-ecuador-hand-made-corona.html retrieved YCC reference context."],
       needsReview: ["Confirm the exact El Z production line before relying on MSRP."],
     }),
     humidorItemRows: [
@@ -6504,7 +7673,7 @@ test("humidor item enrichment route retrieves knowledge base context before invo
     assert.equal(body.enrichment.status, "pending_approval");
     assert.equal(body.previewItem.wrapper, "Ecuadorian Habano");
     assert.equal(body.previewItem.estimatedValue, 9.25);
-    assert.equal(body.previewItem.cigarImage.imageUrl, "https://example.com/el-z-ecuador-hand-made-corona.jpg");
+    assert.equal(body.previewItem.cigarImage.imageUrl, "https://classroom2.s3.us-east-1.amazonaws.com/ycc/humidor-images/el-z-ecuador-hand-made-corona.jpg");
     assert.equal(body.ai.status, "bedrock_agent_runtime");
     assert.equal(body.ai.knowledgeBaseStatus, "retrieved");
     assert.equal(body.ai.retrievedContextCount, 1);
@@ -6514,6 +7683,802 @@ test("humidor item enrichment route retrieves knowledge base context before invo
     assert.equal(mock.bedrockInvocations.length, 0);
     assert.match(String(mock.agentInvocations[0].inputText), /Retrieved YCC knowledge base context/);
     assert.match(String(mock.agentInvocations[0].inputText), /Ecuador Hand Made reference/);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("humidor item enrichment route falls back to direct runtime when the Humidor Agent refuses structured enrichment", async () => {
+  const itemId = "bcbcbcbc-bcbc-4bcb-8bcb-bcbcbcbcbcbc";
+  const mock = installPersistenceMocks({
+    retrieveText:
+      "Padron 1964 Anniversary reference: Toro vitola, Nicaraguan wrapper and origin, full strength, MSRP $18.50, and image https://classroom2.s3.us-east-1.amazonaws.com/ycc/humidor-images/padron-1964-toro.jpg.",
+    agentReply:
+      "Yuzu Cigar Club cannot help with that request. A concierge operator can review age-restricted, account, or compliance-sensitive questions.",
+    bedrockReply: JSON.stringify({
+      brand: "Padron",
+      line: "1964 Anniversary",
+      vitola: "Toro",
+      wrapper: "Nicaraguan",
+      origin: "Nicaragua",
+      strength: "Full",
+      tastingNotes: "Cocoa, cedar, and pepper.",
+      estimatedValue: "$18.50",
+      estimatedValueCurrency: "USD",
+      estimatedValueSource: "ai_humidor_enrichment_msrp",
+      cigarImage: {
+        imageUrl: "https://classroom2.s3.us-east-1.amazonaws.com/ycc/humidor-images/padron-1964-toro.jpg",
+        mimeType: "image/jpeg",
+        fileName: "padron-1964-toro.jpg",
+        source: "agent_reference",
+      },
+      confidence: "medium",
+      evidence: ["Matched Padron 1964 Anniversary Toro against https://example.com/padron-1964-toro.html retrieved YCC reference context."],
+      needsReview: ["Confirm exact box/vitola before relying on MSRP."],
+    }),
+    humidorItemRows: [
+      {
+        id: itemId,
+        name: "Padron Anniversary Toro",
+        brand: "Padron",
+        line: "",
+        vitola: "",
+        wrapper: "",
+        origin: "",
+        strength: "",
+        quantity: 2,
+        rating: null,
+        purchase_date: null,
+        aging_start_date: null,
+        reorder_reminder: null,
+        humidor_location: "",
+        tray: "",
+        tasting_notes: "",
+        source: "member_humidor",
+        metadata: {},
+        created_at: "2026-05-13T10:00:00.000Z",
+      },
+    ],
+  });
+
+  process.env.BEDROCK_AGENT_YCCHUMIDORAGENT_ID = "AGENTHUMIDOR1";
+  process.env.BEDROCK_AGENT_YCCHUMIDORAGENT_ALIAS_ID = "ALIASHUMIDOR";
+
+  try {
+    const response = await handler({
+      ...createAuthenticatedEvent("PATCH /humidor/items/{id}/enrich", {
+        fields: ["info", "image", "msrp"],
+        approved: false,
+      }),
+      rawPath: `/humidor/items/${itemId}/enrich`,
+      pathParameters: { id: itemId },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.enrichment.status, "pending_approval");
+    assert.equal(body.previewItem.line, "1964 Anniversary");
+    assert.equal(body.previewItem.estimatedValue, 18.5);
+    assert.equal(body.previewItem.cigarImage.imageUrl, "https://classroom2.s3.us-east-1.amazonaws.com/ycc/humidor-images/padron-1964-toro.jpg");
+    assert.equal(body.ai.status, "bedrock_runtime");
+    assert.equal(body.ai.knowledgeBaseStatus, "retrieved");
+    assert.equal(mock.agentInvocations.length, 1);
+    assert.equal(mock.bedrockInvocations.length, 1);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("humidor item enrichment route performs web search when KB has no usable reference data", async () => {
+  const itemId = "aeaeaeae-aeae-4eae-8eae-aeaeaeaeaeae";
+  const mock = installPersistenceMocks({
+    retrieveText: "No exact YCC knowledge-base reference was found for Camacho Ecuador Toro.",
+    agentReply: "YCCHumidorAgent could not locate enough reference data for Camacho Ecuador Toro (info, image, msrp).",
+    bedrockReply: JSON.stringify({
+      confidence: "low",
+      evidence: ["Direct runtime could not verify Camacho Ecuador Toro from retrieved context."],
+      needsReview: ["Confirm exact cigar before saving Info, Image, or MSRP."],
+    }),
+    humidorItemRows: [
+      {
+        id: itemId,
+        name: "Camacho Ecuador Toro",
+        brand: "",
+        line: "",
+        vitola: "",
+        wrapper: "",
+        origin: "",
+        strength: "",
+        quantity: 3,
+        rating: null,
+        purchase_date: null,
+        aging_start_date: null,
+        reorder_reminder: null,
+        humidor_location: "",
+        tray: "",
+        tasting_notes: "",
+        source: "member_humidor",
+        metadata: {},
+        created_at: "2026-05-13T10:00:00.000Z",
+      },
+    ],
+  });
+  const previousFetch = globalThis.fetch;
+  const fetchCalls: string[] = [];
+  const searchHtml = `
+    <html><body>
+      <a class="result__a" href="https://www.cigars.com/item/camacho-ecuador/toro/CCET5.html">Camacho Ecuador Toro</a>
+    </body></html>
+  `;
+  const referenceHtml = `
+    <html>
+      <head>
+        <title>Camacho Ecuador Toro | Cigars.com</title>
+        <meta property="og:image" content="https://www.cigars.com/images/camacho-ecuador-toro.jpg" />
+      </head>
+      <body>
+        <h1>Camacho Ecuador</h1>
+        <h2>Toro / 6 x 50</h2>
+        <dl>
+          <dt>Wrapper Type</dt><dd>Ecuador Habano</dd>
+          <dt>Origin</dt><dd>Honduras</dd>
+          <dt>Strength</dt><dd>Medium - Full</dd>
+        </dl>
+        <p>Single MSRP $9.25. Box of 20 $185.99.</p>
+      </body>
+    </html>
+  `;
+
+  globalThis.fetch = (async (url: string | URL | Request) => {
+    const href = String(url);
+    fetchCalls.push(href);
+    if (href.includes("duckduckgo.com/html")) {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => searchHtml,
+      } as Response;
+    }
+
+    if (href === "https://www.cigars.com/item/camacho-ecuador/toro/CCET5.html") {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => referenceHtml,
+      } as Response;
+    }
+
+    return {
+      ok: false,
+      status: 404,
+      text: async () => "",
+    } as Response;
+  }) as typeof fetch;
+
+  process.env.HUMIDOR_ENRICHMENT_WEB_SEARCH = "ready";
+  process.env.HUMIDOR_ENRICHMENT_WEB_SEARCH_TIMEOUT_MS = "50";
+  process.env.BEDROCK_AGENT_YCCHUMIDORAGENT_ID = "AGENTHUMIDOR1";
+  process.env.BEDROCK_AGENT_YCCHUMIDORAGENT_ALIAS_ID = "ALIASHUMIDOR";
+
+  try {
+    const response = await handler({
+      ...createAuthenticatedEvent("PATCH /humidor/items/{id}/enrich", {
+        fields: ["info", "image", "msrp"],
+        approved: false,
+      }),
+      rawPath: `/humidor/items/${itemId}/enrich`,
+      pathParameters: { id: itemId },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.enrichment.status, "pending_approval");
+    assert.equal(body.previewItem.brand, "Camacho");
+    assert.equal(body.previewItem.line, "Ecuador");
+    assert.equal(body.previewItem.vitola, "Toro");
+    assert.equal(body.previewItem.wrapper, "Ecuador Habano");
+    assert.equal(body.previewItem.origin, "Honduras");
+    assert.equal(body.previewItem.strength, "Medium - Full");
+    assert.equal(body.previewItem.estimatedValue, 9.25);
+    assert.equal(body.previewItem.estimatedValueSource, "public_web_reference");
+    assert.equal(body.previewItem.cigarImage, null);
+    assert.equal(body.enrichment.updatedFields.includes("cigarImage"), false);
+    assert.match(body.enrichment.needsReview.join("\n"), /No stable product image URL was found/);
+    assert.match(body.enrichment.evidence.join("\n"), /https:\/\/www\.cigars\.com\/item\/camacho-ecuador\/toro\/CCET5\.html/);
+    assert.equal(body.ai.webSearchStatus, "retrieved");
+    assert.equal(body.ai.webSearchResultCount, 1);
+    assert.ok(fetchCalls.some((href) => href.includes("duckduckgo.com/html")), "humidor enrichment should perform a web search");
+    assert.ok(fetchCalls.includes("https://www.cigars.com/item/camacho-ecuador/toro/CCET5.html"), "humidor enrichment should inspect the result page");
+  } finally {
+    globalThis.fetch = previousFetch;
+    mock.restore();
+  }
+});
+
+test("humidor item enrichment rejects public web image URLs that the storefront cannot render", async () => {
+  const itemId = "c1f0b9fe-b1f5-42e4-8f51-7cfa6b8ad7c2";
+  const mock = installPersistenceMocks({
+    retrieveText: "No exact YCC knowledge-base reference was found for Fat Bottom Betty.",
+    agentReply: "YCCHumidorAgent could not locate a stable renderable image for Fat Bottom Betty.",
+    bedrockReply: JSON.stringify({
+      confidence: "low",
+      evidence: ["Direct runtime could not verify a renderable Fat Bottom Betty image."],
+      needsReview: ["Confirm image before saving."],
+    }),
+    humidorItemRows: [
+      {
+        id: itemId,
+        name: "Fat Bottom Betty",
+        brand: "Deadwood Cigars",
+        line: "Fat Bottom Betty",
+        vitola: "Robusto",
+        wrapper: "",
+        origin: "",
+        strength: "",
+        quantity: 10,
+        rating: null,
+        purchase_date: null,
+        aging_start_date: null,
+        reorder_reminder: null,
+        humidor_location: "",
+        tray: "",
+        tasting_notes: "",
+        source: "member_humidor",
+        metadata: {},
+        created_at: "2026-05-13T10:00:00.000Z",
+      },
+    ],
+  });
+  const previousFetch = globalThis.fetch;
+  const searchHtml = `
+    <html><body>
+      <a class="result__a" href="https://www.coronacigar.com/deadwood-cigars-fat-bottom-betty/">Deadwood Cigars Fat Bottom Betty Robusto</a>
+    </body></html>
+  `;
+  const referenceHtml = `
+    <html>
+      <head>
+        <title>Deadwood Cigars Fat Bottom Betty Robusto (5 x 54)</title>
+        <meta property="og:image" content="https://www.coronacigar.com/images/deadwood_fat_bottom_betty_box_open__601571729795151.386.513.jpg" />
+      </head>
+      <body>
+        <h1>Deadwood Cigars Fat Bottom Betty Robusto</h1>
+        <dl>
+          <dt>Wrapper Type</dt><dd>Maduro</dd>
+          <dt>Origin</dt><dd>Nicaragua</dd>
+          <dt>Strength</dt><dd>Medium</dd>
+        </dl>
+        <p>Fat Bottom Betty cigar details and pricing.</p>
+      </body>
+    </html>
+  `;
+
+  globalThis.fetch = (async (url: string | URL | Request) => {
+    const href = String(url);
+    if (href.includes("duckduckgo.com/html")) {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => searchHtml,
+      } as Response;
+    }
+
+    if (href === "https://www.coronacigar.com/deadwood-cigars-fat-bottom-betty/") {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => referenceHtml,
+      } as Response;
+    }
+
+    return {
+      ok: false,
+      status: 404,
+      text: async () => "",
+    } as Response;
+  }) as typeof fetch;
+
+  process.env.HUMIDOR_ENRICHMENT_WEB_SEARCH = "ready";
+  process.env.HUMIDOR_ENRICHMENT_WEB_SEARCH_TIMEOUT_MS = "50";
+  process.env.BEDROCK_AGENT_YCCHUMIDORAGENT_ID = "AGENTHUMIDOR1";
+  process.env.BEDROCK_AGENT_YCCHUMIDORAGENT_ALIAS_ID = "ALIASHUMIDOR";
+
+  try {
+    const response = await handler({
+      ...createAuthenticatedEvent("PATCH /humidor/items/{id}/enrich", {
+        fields: ["image"],
+        approved: false,
+      }),
+      rawPath: `/humidor/items/${itemId}/enrich`,
+      pathParameters: { id: itemId },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.enrichment.status, "needs_review");
+    assert.deepEqual(body.enrichment.updatedFields, []);
+    assert.equal(body.previewItem.cigarImage, null);
+    assert.match(body.enrichment.needsReview.join("\n"), /No stable product image URL was found/);
+    assert.doesNotMatch(JSON.stringify(body), /deadwood_fat_bottom_betty_box_open/);
+  } finally {
+    globalThis.fetch = previousFetch;
+    mock.restore();
+  }
+});
+
+test("humidor item enrichment skips broad one-term web matches for ambiguous cigar names", async () => {
+  const itemId = "b8b8b8b8-b8b8-4b8b-8b8b-b8b8b8b8b8b8";
+  const mock = installPersistenceMocks({
+    retrieveText: "No exact YCC knowledge-base reference was found for Ecuador Hand Made.",
+    agentReply: "YCCHumidorAgent could not locate enough reference data for Ecuador Hand Made (info, image, msrp).",
+    bedrockReply: JSON.stringify({
+      confidence: "low",
+      evidence: ["Direct runtime could not verify Ecuador Hand Made from retrieved context."],
+      needsReview: ["Confirm exact cigar before saving Info, Image, or MSRP."],
+    }),
+    humidorItemRows: [
+      {
+        id: itemId,
+        name: "Ecuador Hand Made",
+        brand: "",
+        line: "Ecuador Hand Made",
+        vitola: "",
+        wrapper: "",
+        origin: "",
+        strength: "",
+        quantity: 3,
+        rating: null,
+        purchase_date: null,
+        aging_start_date: null,
+        reorder_reminder: null,
+        humidor_location: "",
+        tray: "",
+        tasting_notes: "",
+        source: "member_humidor",
+        metadata: {},
+        created_at: "2026-05-13T10:00:00.000Z",
+      },
+    ],
+  });
+  const previousFetch = globalThis.fetch;
+  const searchHtml = `
+    <html><body>
+      <a class="result__a" href="https://www.cigars.com/item/camacho-ecuador/toro/CCET5.html">Camacho Ecuador Toro</a>
+    </body></html>
+  `;
+  const referenceHtml = `
+    <html>
+      <head>
+        <title>Camacho Ecuador Toro | Cigars.com</title>
+        <meta property="og:image" content="https://www.cigars.com/images/camacho-ecuador-toro.jpg" />
+      </head>
+      <body>
+        <h1>Camacho Ecuador</h1>
+        <dl>
+          <dt>Wrapper Type</dt><dd>Ecuador Habano</dd>
+          <dt>Origin</dt><dd>Honduras</dd>
+          <dt>Strength</dt><dd>Medium - Full</dd>
+        </dl>
+        <p>Single MSRP $9.25.</p>
+      </body>
+    </html>
+  `;
+
+  globalThis.fetch = (async (url: string | URL | Request) => {
+    const href = String(url);
+    if (href.includes("duckduckgo.com/html")) {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => searchHtml,
+      } as Response;
+    }
+
+    if (href === "https://www.cigars.com/item/camacho-ecuador/toro/CCET5.html") {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => referenceHtml,
+      } as Response;
+    }
+
+    return {
+      ok: false,
+      status: 404,
+      text: async () => "",
+    } as Response;
+  }) as typeof fetch;
+
+  process.env.HUMIDOR_ENRICHMENT_WEB_SEARCH = "ready";
+  process.env.HUMIDOR_ENRICHMENT_WEB_SEARCH_TIMEOUT_MS = "50";
+  process.env.BEDROCK_AGENT_YCCHUMIDORAGENT_ID = "AGENTHUMIDOR1";
+  process.env.BEDROCK_AGENT_YCCHUMIDORAGENT_ALIAS_ID = "ALIASHUMIDOR";
+
+  try {
+    const response = await handler({
+      ...createAuthenticatedEvent("PATCH /humidor/items/{id}/enrich", {
+        fields: ["info", "image", "msrp"],
+        approved: false,
+      }),
+      rawPath: `/humidor/items/${itemId}/enrich`,
+      pathParameters: { id: itemId },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.enrichment.status, "needs_review");
+    assert.equal(body.previewItem.brand, "");
+    assert.equal(body.previewItem.line, "Ecuador Hand Made");
+    assert.equal(body.previewItem.cigarImage, null);
+    assert.deepEqual(body.enrichment.updatedFields, []);
+    assert.match(body.enrichment.needsReview.join("\n"), /could not locate enough reference data|not find enough verified detail/i);
+  } finally {
+    globalThis.fetch = previousFetch;
+    mock.restore();
+  }
+});
+
+test("humidor item enrichment ignores marketing dollar amounts and converts box MSRP to per-cigar value", async () => {
+  const itemId = "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1";
+  const mock = installPersistenceMocks({
+    retrieveText: "No exact YCC knowledge-base reference was found for Man O' War Corona.",
+    agentReply: "YCCHumidorAgent could not locate enough reference data for Man O' War Corona (info, image, msrp).",
+    bedrockReply: JSON.stringify({
+      confidence: "low",
+      evidence: ["Direct runtime could not verify Man O' War Corona from retrieved context."],
+      needsReview: ["Confirm exact cigar before saving Info, Image, or MSRP."],
+    }),
+    humidorItemRows: [
+      {
+        id: itemId,
+        name: "Man O' War Corona",
+        brand: "",
+        line: "Man O' War",
+        vitola: "",
+        wrapper: "",
+        origin: "",
+        strength: "",
+        quantity: 4,
+        rating: null,
+        purchase_date: null,
+        aging_start_date: null,
+        reorder_reminder: null,
+        humidor_location: "",
+        tray: "",
+        tasting_notes: "",
+        source: "member_humidor",
+        metadata: {},
+        created_at: "2026-05-13T10:00:00.000Z",
+      },
+    ],
+  });
+  const previousFetch = globalThis.fetch;
+  const fetchCalls: string[] = [];
+  const searchHtml = `
+    <html><body>
+      <a class="result__a" href="https://www.cigarplace.biz/man-o-war-corona.html">Man O' War Corona Cigars - Best Prices CigarPlace.com</a>
+      <a class="result__a" href="https://www.bestcigarprices.com/cigar-directory/man-o-war-cigars/man-o-war-corona-25828/">Man O' War Corona 6 x 44--Box - 22 Total Cigars</a>
+    </body></html>
+  `;
+  const cigarPlaceHtml = `
+    <html>
+      <head>
+        <title>Man O' War Corona Cigars - Best Prices CigarPlace.com</title>
+        <meta property="og:image" content="https://www.cigarplace.biz/media/catalog/product/man-o-war-corona.jpg" />
+      </head>
+      <body>
+        <h1>Man O' War Corona</h1>
+        <dl>
+          <dt>Wrapper</dt><dd>Ecuadorian Habano</dd>
+          <dt>Origin</dt><dd>Nicaragua</dd>
+          <dt>Strength</dt><dd>Medium-Full</dd>
+        </dl>
+        <p>If you're looking to buy fresh cigars online at the most competitive price with fast shipping look no further!</p>
+        <p>1-Cigar Guarantee</p>
+      </body>
+    </html>
+  `;
+  const bestCigarPricesHtml = `
+    <html>
+      <head>
+        <title>Man O' War Corona 6 x 44--Box - 22 Total Cigars - Free Shipping Over $99</title>
+        <meta property="og:image" content="https://www.bestcigarprices.com/images/man-o-war-corona.jpg" />
+      </head>
+      <body>
+        <h1>Man O' War Corona</h1>
+        <p>Box - 22 Total Cigars</p>
+        <p>$170.50 MSRP</p>
+        <p>$127.99</p>
+        <dl>
+          <dt>Count</dt><dd>22 Cigars</dd>
+          <dt>Origin</dt><dd>Nicaragua</dd>
+          <dt>Strength</dt><dd>Medium-full</dd>
+          <dt>Wrapper</dt><dd>Habano</dd>
+        </dl>
+        <p>We'll beat any advertised price online or in-store by $15.</p>
+      </body>
+    </html>
+  `;
+
+  globalThis.fetch = (async (url: string | URL | Request) => {
+    const href = String(url);
+    fetchCalls.push(href);
+    if (href.includes("duckduckgo.com/html")) {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => searchHtml,
+      } as Response;
+    }
+
+    if (href === "https://www.cigarplace.biz/man-o-war-corona.html") {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => cigarPlaceHtml,
+      } as Response;
+    }
+
+    if (href === "https://www.bestcigarprices.com/cigar-directory/man-o-war-cigars/man-o-war-corona-25828/") {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => bestCigarPricesHtml,
+      } as Response;
+    }
+
+    return {
+      ok: false,
+      status: 404,
+      text: async () => "",
+    } as Response;
+  }) as typeof fetch;
+
+  process.env.HUMIDOR_ENRICHMENT_WEB_SEARCH = "ready";
+  process.env.HUMIDOR_ENRICHMENT_WEB_SEARCH_TIMEOUT_MS = "50";
+  process.env.BEDROCK_AGENT_YCCHUMIDORAGENT_ID = "AGENTHUMIDOR1";
+  process.env.BEDROCK_AGENT_YCCHUMIDORAGENT_ALIAS_ID = "ALIASHUMIDOR";
+
+  try {
+    const response = await handler({
+      ...createAuthenticatedEvent("PATCH /humidor/items/{id}/enrich", {
+        fields: ["info", "image", "msrp"],
+        approved: false,
+      }),
+      rawPath: `/humidor/items/${itemId}/enrich`,
+      pathParameters: { id: itemId },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.enrichment.status, "pending_approval");
+    assert.equal(body.previewItem.estimatedValue, 7.75);
+    assert.equal(body.previewItem.estimatedValueCurrency, "USD");
+    assert.equal(body.previewItem.estimatedValueSource, "public_web_reference");
+    assert.ok(body.enrichment.updatedFields.includes("estimatedValue"));
+    assert.match(body.enrichment.evidence.join("\n"), /bestcigarprices\.com\/cigar-directory\/man-o-war-cigars/);
+    assert.ok(fetchCalls.includes("https://www.cigarplace.biz/man-o-war-corona.html"), "first source should still be inspected");
+    assert.ok(
+      fetchCalls.includes("https://www.bestcigarprices.com/cigar-directory/man-o-war-cigars/man-o-war-corona-25828/"),
+      "second source should supply the product MSRP"
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+    mock.restore();
+  }
+});
+
+test("humidor item enrichment sends implausible public web prices to review instead of updating MSRP", async () => {
+  const itemId = "c9c9c9c9-c9c9-4c9c-8c9c-c9c9c9c9c9c9";
+  const mock = installPersistenceMocks({
+    retrieveText: "No exact YCC knowledge-base reference was found for Fat Bottom Betty.",
+    agentReply: "YCCHumidorAgent could not locate enough reference data for Fat Bottom Betty (info, msrp).",
+    bedrockReply: JSON.stringify({
+      confidence: "low",
+      evidence: ["Direct runtime could not verify Fat Bottom Betty from retrieved context."],
+      needsReview: ["Confirm exact cigar before saving Info or MSRP."],
+    }),
+    humidorItemRows: [
+      {
+        id: itemId,
+        name: "Fat Bottom Betty",
+        brand: "",
+        line: "Fat Bottom Betty",
+        vitola: "",
+        wrapper: "",
+        origin: "",
+        strength: "",
+        quantity: 10,
+        rating: null,
+        purchase_date: null,
+        aging_start_date: null,
+        reorder_reminder: null,
+        humidor_location: "",
+        tray: "",
+        tasting_notes: "",
+        source: "member_humidor",
+        metadata: {},
+        created_at: "2026-05-13T10:00:00.000Z",
+      },
+    ],
+  });
+  const previousFetch = globalThis.fetch;
+  const searchHtml = `
+    <html><body>
+      <a class="result__a" href="https://www.examplecigars.test/fat-bottom-betty.html">Fat Bottom Betty Cigars</a>
+    </body></html>
+  `;
+  const referenceHtml = `
+    <html>
+      <head><title>Fat Bottom Betty Cigars</title></head>
+      <body>
+        <h1>Fat Bottom Betty</h1>
+        <dl>
+          <dt>Wrapper</dt><dd>Maduro</dd>
+          <dt>Origin</dt><dd>Nicaragua</dd>
+          <dt>Strength</dt><dd>Medium</dd>
+        </dl>
+        <p>Single MSRP $100.00.</p>
+      </body>
+    </html>
+  `;
+
+  globalThis.fetch = (async (url: string | URL | Request) => {
+    const href = String(url);
+    if (href.includes("duckduckgo.com/html")) {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => searchHtml,
+      } as Response;
+    }
+
+    if (href === "https://www.examplecigars.test/fat-bottom-betty.html") {
+      return {
+        ok: true,
+        status: 200,
+        text: async () => referenceHtml,
+      } as Response;
+    }
+
+    return {
+      ok: false,
+      status: 404,
+      text: async () => "",
+    } as Response;
+  }) as typeof fetch;
+
+  process.env.HUMIDOR_ENRICHMENT_WEB_SEARCH = "ready";
+  process.env.HUMIDOR_ENRICHMENT_WEB_SEARCH_TIMEOUT_MS = "50";
+  process.env.BEDROCK_AGENT_YCCHUMIDORAGENT_ID = "AGENTHUMIDOR1";
+  process.env.BEDROCK_AGENT_YCCHUMIDORAGENT_ALIAS_ID = "ALIASHUMIDOR";
+
+  try {
+    const response = await handler({
+      ...createAuthenticatedEvent("PATCH /humidor/items/{id}/enrich", {
+        fields: ["info", "msrp"],
+        approved: false,
+      }),
+      rawPath: `/humidor/items/${itemId}/enrich`,
+      pathParameters: { id: itemId },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.enrichment.status, "pending_approval");
+    assert.equal(body.previewItem.estimatedValue, null);
+    assert.equal(body.enrichment.updatedFields.includes("estimatedValue"), false);
+    assert.ok(body.enrichment.updatedFields.includes("wrapper"), "verified non-price facts can still be reviewed");
+    assert.match(body.enrichment.needsReview.join("\n"), /implausible per-cigar price/i);
+  } finally {
+    globalThis.fetch = previousFetch;
+    mock.restore();
+  }
+});
+
+test("humidor item enrichment route uses launch catalog candidates for exact-enough Ecuador matches", async () => {
+  const itemId = "afafafaf-afaf-4faf-8faf-afafafafafaf";
+  const secretArn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:ycc/commerce/humidor-catalog-fallback";
+  const catalogKey = "ycc/commerce/stripe-launch-catalog-humidor-test.json";
+  const mock = installPersistenceMocks({
+    retrieveText: "No exact YCC knowledge-base reference was found for Camacho Ecuador Toro.",
+    agentReply: "YCCHumidorAgent could not locate enough reference data for Camacho Ecuador Toro (info, image, msrp).",
+    bedrockReply: JSON.stringify({
+      confidence: "low",
+      evidence: ["Direct runtime could not verify Camacho Ecuador Toro from retrieved context."],
+      needsReview: ["Confirm exact cigar before saving Info, Image, or MSRP."],
+    }),
+    commerceSecret: {
+      stripe: {
+        secretKey: "sk_test_secret_manager",
+        launchCatalogReady: true,
+        launchCatalogS3Uri: `s3://classroom2/${catalogKey}`,
+      },
+    },
+    s3Objects: {
+      [catalogKey]: [
+        {
+          sku: "11906",
+          name: "CAMACHO ECUADOR TORO 20/BX",
+          price: 180.25,
+          stripePriceId: "price_camacho_ecuador_toro",
+        },
+        {
+          sku: "11907",
+          name: "CAMACHO ECUADOR ROBUSTO 20/BX",
+          price: 180.25,
+          stripePriceId: "price_camacho_ecuador_robusto",
+        },
+        {
+          sku: "11974",
+          name: "CAMACHO ECUADOR CHURCHILL 20/BX",
+          price: 180.25,
+          stripePriceId: "price_camacho_ecuador_churchill",
+        },
+        {
+          sku: "93177",
+          name: "CAMACHO ECUADOR TORO BOX PRESS 20/BX",
+          price: 180.25,
+          stripePriceId: "price_camacho_ecuador_toro_box_press",
+        },
+      ],
+    },
+    humidorItemRows: [
+      {
+        id: itemId,
+        name: "Camacho Ecuador Toro",
+        brand: "",
+        line: "",
+        vitola: "",
+        wrapper: "",
+        origin: "",
+        strength: "",
+        quantity: 3,
+        rating: null,
+        purchase_date: null,
+        aging_start_date: null,
+        reorder_reminder: null,
+        humidor_location: "",
+        tray: "",
+        tasting_notes: "",
+        source: "member_humidor",
+        metadata: {},
+        created_at: "2026-05-13T10:00:00.000Z",
+      },
+    ],
+  });
+
+  process.env.COMMERCE_PROVIDER_SECRET_ARN = secretArn;
+  process.env.BEDROCK_AGENT_YCCHUMIDORAGENT_ID = "AGENTHUMIDOR1";
+  process.env.BEDROCK_AGENT_YCCHUMIDORAGENT_ALIAS_ID = "ALIASHUMIDOR";
+
+  try {
+    const response = await handler({
+      ...createAuthenticatedEvent("PATCH /humidor/items/{id}/enrich", {
+        fields: ["info", "image", "msrp"],
+        approved: false,
+      }),
+      rawPath: `/humidor/items/${itemId}/enrich`,
+      pathParameters: { id: itemId },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.enrichment.status, "pending_approval");
+    assert.equal(body.previewItem.brand, "Camacho");
+    assert.equal(body.previewItem.line, "Ecuador");
+    assert.equal(body.previewItem.estimatedValue, 9.01);
+    assert.equal(body.previewItem.estimatedValueCurrency, "USD");
+    assert.equal(body.previewItem.estimatedValueSource, "yuzu_catalog_public_price");
+    assert.ok(body.enrichment.updatedFields.includes("brand"));
+    assert.ok(body.enrichment.updatedFields.includes("estimatedValue"));
+    assert.equal(body.previewItem.cigarImage, null);
+    assert.match(body.enrichment.evidence.join("\n"), /CAMACHO ECUADOR TORO 20\/BX/);
+    assert.match(body.enrichment.evidence.join("\n"), /\/shop\/camacho-ecuador-toro-20-bx\//);
+    assert.match(body.enrichment.needsReview.join("\n"), /product image/i);
+    assert.equal(body.ai.catalogReferenceStatus, "catalog_candidates_matched");
+    assert.equal(body.ai.catalogReferenceCount, 4);
+    assert.ok(mock.s3Invocations.some((input) => input.Key === catalogKey), "humidor enrichment should read the launch catalog from S3");
   } finally {
     mock.restore();
   }

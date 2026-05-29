@@ -39,6 +39,8 @@ const expectedRouteAuth = new Map([
   ["POST /humidor/items", "JWT"],
   ["PATCH /humidor/items/{id}", "JWT"],
   ["PATCH /humidor/items/{id}/enrich", "JWT"],
+  ["GET /humidor/smokes", "JWT"],
+  ["POST /humidor/smokes", "JWT"],
   ["GET /humidor/alerts", "JWT"],
   ["POST /humidor/alerts", "JWT"],
   ["POST /humidor/alerts/dispatch", "NONE"],
@@ -92,6 +94,22 @@ test("Cognito OAuth redirects include admin and deployed storefront origins", ()
   assert.match(templateSource, /AdminLogoutUrl:[\s\S]*Default: https:\/\/admin\.yuzucigarclub\.com\/auth\/logout/);
   assert.match(templateSource, /CallbackURLs:[\s\S]*!Ref AdminCallbackUrl/);
   assert.match(templateSource, /LogoutURLs:[\s\S]*!Ref AdminLogoutUrl/);
+});
+
+test("Cognito user signups invoke the live Lambda alias after confirmation", () => {
+  const userPoolBlock = templateSource.match(/\n  UserPool:[\s\S]*?(?=\n  UserPoolClient:)/)?.[0];
+  const permissionBlock = templateSource.match(/\n  CognitoPostConfirmationInvokePermission:[\s\S]*?(?=\n  [A-Za-z0-9]+:|\nOutputs:)/)?.[0];
+
+  assert.ok(userPoolBlock, "UserPool should be defined");
+  assert.match(userPoolBlock, /DependsOn:\s*CognitoPostConfirmationInvokePermission/);
+  assert.match(userPoolBlock, /LambdaConfig:[\s\S]*PostConfirmation:\s*!Ref ExistingLambdaLiveAliasArn/);
+
+  assert.ok(permissionBlock, "CognitoPostConfirmationInvokePermission should be defined");
+  assert.match(permissionBlock, /Type:\s*AWS::Lambda::Permission/);
+  assert.match(permissionBlock, /FunctionName:\s*!Ref ExistingLambdaLiveAliasArn/);
+  assert.match(permissionBlock, /Principal:\s*cognito-idp\.amazonaws\.com/);
+  assert.match(permissionBlock, /Action:\s*lambda:InvokeFunction/);
+  assert.match(permissionBlock, /SourceArn:\s*!Sub arn:\$\{AWS::Partition\}:cognito-idp:\$\{AWS::Region\}:\$\{AWS::AccountId\}:userpool\/\*/);
 });
 
 test("API Gateway integration invokes the live Lambda alias", () => {

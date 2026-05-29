@@ -456,6 +456,37 @@ export type HumidorItemsResponse = {
   persistence: string;
 };
 
+export type HumidorSmokeLog = {
+  id: string;
+  humidorItemId: string | null;
+  cigarName: string;
+  smokedAt: string;
+  rating: number | null;
+  drinkPairing: string;
+  pairing: string;
+  notes: string;
+  durationMinutes: number | null;
+  source: string;
+  createdAt?: string;
+};
+
+export type HumidorSmokeLogInput = {
+  humidorItemId?: string | null;
+  cigarName?: string;
+  smokedAt?: string | null;
+  rating?: number | null;
+  drinkPairing?: string;
+  pairing?: string;
+  notes?: string;
+  durationMinutes?: number | null;
+  source?: string;
+};
+
+export type HumidorSmokeLogsResponse = {
+  logs: HumidorSmokeLog[];
+  persistence: string;
+};
+
 export type HumidorPushSubscription = {
   endpoint: string;
   keys: {
@@ -494,6 +525,8 @@ export type HumidorAlertsResponse = {
 
 export type HumidorDashboardBootstrap = {
   items: HumidorItemsResponse;
+  smokes: HumidorSmokeLogsResponse;
+  smokesError: string | null;
   alerts: HumidorAlertsResponse | null;
   alertsError: string | null;
 };
@@ -513,8 +546,38 @@ export type HumidorItemInput = Partial<Omit<HumidorItem, "id" | "createdAt">> & 
 
 export type HumidorItemUpdateInput = {
   agingStartDate?: string;
+  archived?: boolean;
   humidorLocation?: string;
+  sharedNotes?: string;
+  sharedQuantity?: number;
+  sharedWith?: string;
+  action?: "delete" | "share";
   tray?: string;
+};
+
+export type HumidorItemActionResponse = {
+  item: HumidorItem;
+  log?: HumidorSmokeLog;
+  inventoryAction?: {
+    type: "deleted" | "shared";
+    quantityBefore: number;
+    quantityAfter: number;
+    archived: boolean;
+  };
+  persistence: {
+    status: string;
+    table: string;
+  };
+  tracking?: {
+    status: string;
+    table: string;
+  };
+};
+
+export type HumidorSharedItemInput = {
+  sharedQuantity?: number;
+  sharedWith?: string;
+  sharedNotes?: string;
 };
 
 export type CigarImageIdentifyInput = {
@@ -569,6 +632,16 @@ export type CigarImageIdentifyResponse = {
         text: string;
         confidence: number;
       }>;
+      labelStatus: string;
+      minLabelConfidence: number;
+      labelCount: number;
+      labels: Array<{
+        name: string;
+        confidence: number;
+        parents: string[];
+        categories: string[];
+        aliases: string[];
+      }>;
     };
   };
   input: {
@@ -617,6 +690,25 @@ export type HumidorItemEnrichmentResponse = {
       query: string;
       missingFields: HumidorEnrichmentField[];
       sourcePolicy: string[];
+    };
+    rekognition?: {
+      status: string;
+      minConfidence: number;
+      textCount: number;
+      textLines: Array<{
+        text: string;
+        confidence: number;
+      }>;
+      labelStatus: string;
+      minLabelConfidence: number;
+      labelCount: number;
+      labels: Array<{
+        name: string;
+        confidence: number;
+        parents: string[];
+        categories: string[];
+        aliases: string[];
+      }>;
     };
     stopReason?: string | null;
   };
@@ -770,13 +862,18 @@ export async function fetchHumidorItems(headers: LiveApiHeaders) {
   return getLive<HumidorItemsResponse>("/humidor/items", headers);
 }
 
+export async function fetchHumidorSmokeLogs(headers: LiveApiHeaders) {
+  return getLive<HumidorSmokeLogsResponse>("/humidor/smokes", headers);
+}
+
 export async function fetchHumidorAlertPreferences(headers: LiveApiHeaders) {
   return getLive<HumidorAlertsResponse>("/humidor/alerts", headers);
 }
 
 export async function fetchHumidorDashboardBootstrap(headers: LiveApiHeaders): Promise<HumidorDashboardBootstrap> {
-  const [itemsResult, alertsResult] = await Promise.allSettled([
+  const [itemsResult, smokesResult, alertsResult] = await Promise.allSettled([
     fetchHumidorItems(headers),
+    fetchHumidorSmokeLogs(headers),
     fetchHumidorAlertPreferences(headers),
   ]);
 
@@ -787,6 +884,14 @@ export async function fetchHumidorDashboardBootstrap(headers: LiveApiHeaders): P
   if (alertsResult.status === "rejected") {
     return {
       items: itemsResult.value,
+      smokes:
+        smokesResult.status === "fulfilled"
+          ? smokesResult.value
+          : {
+              logs: [],
+              persistence: "",
+            },
+      smokesError: smokesResult.status === "rejected" ? getLiveApiErrorMessage(smokesResult.reason) : null,
       alerts: null,
       alertsError: getLiveApiErrorMessage(alertsResult.reason),
     };
@@ -794,6 +899,14 @@ export async function fetchHumidorDashboardBootstrap(headers: LiveApiHeaders): P
 
   return {
     items: itemsResult.value,
+    smokes:
+      smokesResult.status === "fulfilled"
+        ? smokesResult.value
+        : {
+            logs: [],
+            persistence: "",
+          },
+    smokesError: smokesResult.status === "rejected" ? getLiveApiErrorMessage(smokesResult.reason) : null,
     alerts: alertsResult.value,
     alertsError: null,
   };
@@ -807,10 +920,38 @@ export async function createHumidorItem(input: HumidorItemInput, headers: LiveAp
   return postLive<{ item: HumidorItem; persistence: { status: string; table: string } }>("/humidor/items", input, headers);
 }
 
+export async function createSmokeLog(input: HumidorSmokeLogInput, headers: LiveApiHeaders) {
+  return postLive<{ log: HumidorSmokeLog; persistence: { status: string; table: string } }>("/humidor/smokes", input, headers);
+}
+
 export async function updateHumidorItem(itemId: string, input: HumidorItemUpdateInput, headers: LiveApiHeaders) {
   return patchLive<{ item: HumidorItem; persistence: { status: string; table: string } }>(
     `/humidor/items/${encodeURIComponent(itemId)}`,
     input,
+    headers,
+  );
+}
+
+export async function shareHumidorItem(itemId: string, input: HumidorSharedItemInput, headers: LiveApiHeaders) {
+  return patchLive<HumidorItemActionResponse>(
+    `/humidor/items/${encodeURIComponent(itemId)}`,
+    {
+      action: "share",
+      sharedQuantity: input.sharedQuantity ?? 1,
+      sharedWith: input.sharedWith,
+      sharedNotes: input.sharedNotes,
+    },
+    headers,
+  );
+}
+
+export async function deleteHumidorItem(itemId: string, headers: LiveApiHeaders) {
+  return patchLive<HumidorItemActionResponse>(
+    `/humidor/items/${encodeURIComponent(itemId)}`,
+    {
+      action: "delete",
+      archived: true,
+    },
     headers,
   );
 }
@@ -875,8 +1016,11 @@ export function getLiveApiErrorMessage(error: unknown) {
     database_writes_not_ready: "The live member database is not ready for updates yet.",
     humidor_item_not_found: "That humidor cigar could not be found for this account.",
     invalid_humidor_enrichment_fields: "Choose info, image, or MSRP for humidor enrichment.",
+    invalid_humidor_item_update: "Save one humidor inventory action at a time.",
+    invalid_shared_quantity: "Shared cigar quantity must be at least 1.",
     missing_humidor_item_id: "Open a saved cigar before asking the humidor agent to update it.",
     missing_humidor_location: "Enter a humidor location before updating this cigar.",
+    shared_quantity_exceeds_inventory: "You cannot share more cigars than are currently in this humidor record.",
     admin_agent_forbidden: "Only admins and concierge operators can use the admin agent.",
     news_agent_forbidden: "Only admins and concierge operators can use the weekly news agent.",
     news_agent_not_configured: "The weekly news agent is not configured for this environment yet.",

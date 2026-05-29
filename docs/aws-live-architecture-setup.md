@@ -705,6 +705,20 @@ Verification:
 - Additional home smokes returned HTTP `200` and 335,832 bytes for both `https://staging.d2yxcklt245wh0.amplifyapp.com/?deploy=129` and `https://www.yuzucigarclub.com/?deploy=129`.
 - Temporary Amplify deploy zip and Lambda package artifacts were removed after successful deployment and smoke checks.
 
+### 2026-05-29 Full Stack Rekognition Humidor Agent Deploy
+
+- Applied `infra/ycc-phase2-lambda-runtime-policy.json` to Lambda execution role `ycyyy-1778040454500`; readback confirmed Rekognition permissions now include both `rekognition:DetectText` and `rekognition:DetectLabels`.
+- Lambda package artifact `output/ycc-api-all-updates-rekognition-humidor-agent-20260529.zip` was built with code hash `cdgN95/aI1E9Fbs1vEKRl6xopykZpUu7EyzNcKt7Ep8=`.
+- Updated Lambda `$LATEST` for `ycyyy`, set `FEATURE_REKOGNITION=image_understanding_ready`, `REKOGNITION_MIN_LABEL_CONFIDENCE=70`, and `REKOGNITION_MIN_TEXT_CONFIDENCE=70`, then published version `33`.
+- Promoted alias `ycyyy:live` to version `33` with description `Live API all updates with Rekognition Humidor Agent 2026-05-29`; the configured `phantom-root` profile was used only for alias promotion because the operator role still lacks `lambda:UpdateAlias`.
+- Readback confirms `ycyyy:live` is version `33`, code hash `cdgN95/aI1E9Fbs1vEKRl6xopykZpUu7EyzNcKt7Ep8=`, state `Active`, `LastUpdateStatus=Successful`, `FEATURE_REKOGNITION=image_understanding_ready`, and `REKOGNITION_MIN_LABEL_CONFIDENCE=70`.
+- Live `GET https://api.yuzucigarclub.com/health?deep=1` returned HTTP `200`, `status=ok`, database proxy reachable, `databaseWrites=schema_ready`, `bedrock=runtime_ready`, and SES still `pending_production_access`.
+- `npm run build` passed with Next.js 16.2.6 and generated 990 static pages.
+- Amplify app `d2yxcklt245wh0`, branch `staging`, job `139` reached `SUCCEED`.
+- Amplify smoke returned `homeStatus=200`, `assetStatus=200`, and asset path `/_next/static/chunks/04xlredm9wd81.css`.
+- Additional smokes returned HTTP `200` for `https://www.yuzucigarclub.com/?deploy=139`, `https://staging.d2yxcklt245wh0.amplifyapp.com/humidor/?section=cigars&deploy=139`, and `https://www.yuzucigarclub.com/humidor/?section=cigars&deploy=139`.
+- Temporary Amplify deploy zip and Lambda package artifacts were removed after successful deployment and smoke checks.
+
 ### Phase 6: Production Hardening
 
 Make these changes before public launch:

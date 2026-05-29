@@ -21,6 +21,11 @@ const nextConfig: NextConfig = {
         hostname: "cigardojo.com",
         pathname: "/wp-content/uploads/**",
       },
+      {
+        protocol: "https",
+        hostname: "classroom2.s3.us-east-1.amazonaws.com",
+        pathname: "/ycc/humidor-images/**",
+      },
     ],
   },
   trailingSlash: true,

@@ -36,6 +36,7 @@ const lambdaDependencies = [
   "@aws-sdk/client-secrets-manager",
   "@aws-sdk/client-sesv2",
   "@aws-sdk/client-transcribe",
+  "@aws-sdk/s3-request-presigner",
   "pg",
   "stripe",
   "web-push",
@@ -126,6 +127,7 @@ function validateStage() {
     "node_modules/@aws-sdk/client-lex-runtime-v2/package.json",
     "node_modules/@aws-sdk/client-secrets-manager/package.json",
     "node_modules/@aws-sdk/client-rekognition/package.json",
+    "node_modules/@aws-sdk/s3-request-presigner/package.json",
   ];
   const missing = requiredEntries.filter((entry) => !existsSync(join(stageDir, ...entry.split("/"))));
 

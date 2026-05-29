@@ -19,6 +19,7 @@ import {
   DollarSign,
   Droplets,
   FileSpreadsheet,
+  Flame,
   Image as ImageIcon,
   LoaderCircle,
   LockKeyhole,
@@ -29,8 +30,10 @@ import {
   RefreshCw,
   Search,
   Settings,
+  Share2,
   ShieldCheck,
   Thermometer,
+  Trash2,
   Upload,
   X,
 } from "lucide-react";
@@ -96,10 +99,14 @@ import {
 } from "@/lib/humidor-table-sort";
 import {
   createHumidorItem,
+  createSmokeLog,
+  deleteHumidorItem,
   updateHumidorItem,
   fetchHumidorDashboardBootstrap,
+  fetchHumidorSmokeLogs,
   getLiveApiErrorMessage,
   identifyCigarFromImage,
+  shareHumidorItem,
   type HumidorAlertPreferences,
   type HumidorPushSubscription,
   updateHumidorAlertPreferences,
@@ -113,10 +120,13 @@ import {
   type HumidorItem,
   type HumidorItemInput,
   type HumidorItemUpdateInput,
+  type HumidorSmokeLog,
+  type HumidorSmokeLogInput,
 } from "@/lib/live-api";
+import { formatHumidorTastingNote } from "@/lib/humidor-tasting-notes";
 import { cn } from "@/lib/utils";
 
-type SectionId = "overview" | "tools" | "locations" | "cigars" | "aging" | "alerts" | "settings";
+type SectionId = "overview" | "tools" | "locations" | "smokes" | "cigars" | "aging" | "alerts" | "settings";
 type IconComponent = typeof Box;
 
 type HumidorProfileLocationKind = "humidor" | "other";
@@ -156,10 +166,22 @@ type HumidorForm = {
   tastingNotes: string;
 };
 
+type SmokeLogForm = {
+  humidorItemId: string;
+  cigarName: string;
+  smokedAt: string;
+  rating: string;
+  drinkPairing: string;
+  notes: string;
+  durationMinutes: string;
+};
+
 type LiveHumidorState = {
   loading: boolean;
   items: HumidorItem[];
+  smokeLogs: HumidorSmokeLog[];
   persistence: string;
+  smokePersistence: string;
   error: string;
 };
 
@@ -178,6 +200,7 @@ const navItems: Array<{ id: SectionId; label: string; icon: IconComponent }> = [
   { id: "overview", label: "Overview", icon: Box },
   { id: "tools", label: "Add Cigars", icon: Plus },
   { id: "locations", label: "Add Locations", icon: MapPin },
+  { id: "smokes", label: "Log a Smoke", icon: Flame },
   { id: "cigars", label: "My Cigars", icon: Package },
   { id: "aging", label: "Aging", icon: Clock },
   { id: "alerts", label: "Alerts", icon: Bell },
@@ -411,8 +434,20 @@ function getHumidorStorageLocationOptions(profile: HumidorLocationProfile, items
 const initialLiveState: LiveHumidorState = {
   loading: false,
   items: [],
+  smokeLogs: [],
   persistence: "",
+  smokePersistence: "",
   error: "",
+};
+
+const blankSmokeLogForm: SmokeLogForm = {
+  humidorItemId: "",
+  cigarName: "",
+  smokedAt: "",
+  rating: "",
+  drinkPairing: "",
+  notes: "",
+  durationMinutes: "",
 };
 
 const fullMembershipHumidorToolsCopy =
@@ -437,12 +472,17 @@ export function HumidorDashboard() {
   const [aiAdderStatus, setAiAdderStatus] = useState("");
   const [isAiAdderSending, setIsAiAdderSending] = useState(false);
   const [isAiConfirmSaving, setIsAiConfirmSaving] = useState(false);
+  const [returnToSmokeLogAfterAi, setReturnToSmokeLogAfterAi] = useState(false);
+  const [smokeLogForm, setSmokeLogForm] = useState(() => buildSmokeLogFormForItem(null));
+  const [smokeLogStatus, setSmokeLogStatus] = useState("");
+  const [isSavingSmokeLog, setIsSavingSmokeLog] = useState(false);
   const [bulkImportText, setBulkImportText] = useState("");
   const [bulkImportStatus, setBulkImportStatus] = useState("");
   const [isBulkImporting, setIsBulkImporting] = useState(false);
   const [selectedHumidorItem, setSelectedHumidorItem] = useState<HumidorItem | null>(null);
   const [pendingHumidorDetailScrollItemId, setPendingHumidorDetailScrollItemId] = useState("");
   const humidorDetailCardRef = useRef<HTMLDivElement | null>(null);
+  const [humidorInventoryActionStatus, setHumidorInventoryActionStatus] = useState("");
   const [updatingHumidorItemId, setUpdatingHumidorItemId] = useState("");
   const [humidorItemUpdateStatus, setHumidorItemUpdateStatus] = useState("");
   const [humidorItemUpdateStatusItemId, setHumidorItemUpdateStatusItemId] = useState("");
@@ -505,6 +545,11 @@ export function HumidorDashboard() {
         setNewHumidorLocationDraft("");
         setNewHumidorTrayDraft("");
         setHumidorLocationProfileStatus("");
+        setSmokeLogForm(buildSmokeLogFormForItem(null));
+        setSmokeLogStatus("");
+        setReturnToSmokeLogAfterAi(false);
+        setSelectedHumidorItem(null);
+        setHumidorInventoryActionStatus("");
       });
 
       return () => {
@@ -545,7 +590,9 @@ export function HumidorDashboard() {
         setLiveState({
           loading: false,
           items: bootstrap.items.items,
+          smokeLogs: bootstrap.smokes.logs,
           persistence: bootstrap.items.persistence,
+          smokePersistence: bootstrap.smokes.persistence,
           error: "",
         });
 
@@ -560,6 +607,7 @@ export function HumidorDashboard() {
           setHumidorLocationProfileStatus("");
         }
         setHumidorAlertsStatus(bootstrap.alertsError || "");
+        setSmokeLogStatus(bootstrap.smokesError || "");
       } catch (error) {
         if (!isMounted) {
           return;
@@ -573,10 +621,13 @@ export function HumidorDashboard() {
         setNewHumidorTrayDraft("");
         setHumidorLocationProfileStatus(errorMessage);
         setHumidorAlertsStatus(errorMessage);
+        setSmokeLogStatus(errorMessage);
         setLiveState({
           loading: false,
           items: [],
+          smokeLogs: [],
           persistence: "",
+          smokePersistence: "",
           error: errorMessage,
         });
       }
@@ -589,6 +640,7 @@ export function HumidorDashboard() {
   }, [applyHumidorAlertPreferences, auth]);
 
   const items = isAnonymousDemo ? demoHumidorItems : liveState.items;
+  const smokeLogs = isAnonymousDemo ? [] : liveState.smokeLogs;
   const storageLocationOptions = useMemo(
     () => getHumidorStorageLocationOptions(humidorLocationProfile, items),
     [humidorLocationProfile, items],
@@ -622,6 +674,81 @@ export function HumidorDashboard() {
   function handleSelectHumidorItem(item: HumidorItem) {
     setSelectedHumidorItem(item);
     setPendingHumidorDetailScrollItemId(item.id);
+    setHumidorInventoryActionStatus("");
+  }
+
+  function updateSmokeLogForm(field: keyof SmokeLogForm, value: string) {
+    setSmokeLogForm((current) => ({
+      ...current,
+      [field]: value,
+    }));
+    setSmokeLogStatus("");
+  }
+
+  function handleSmokeLogItemSelection(itemId: string) {
+    const selectedItem = items.find((item) => item.id === itemId) || null;
+    setSmokeLogForm((current) => ({
+      ...buildSmokeLogFormForItem(selectedItem),
+      smokedAt: current.smokedAt || getCurrentSmokeDateTimeLocalValue(),
+      rating: selectedItem?.rating === null || selectedItem?.rating === undefined ? current.rating : String(selectedItem.rating),
+      drinkPairing: current.drinkPairing,
+      notes: current.notes,
+      durationMinutes: current.durationMinutes,
+    }));
+    setSmokeLogStatus("");
+  }
+
+  function handleStartAiCigarAdderForSmoke() {
+    setReturnToSmokeLogAfterAi(true);
+    setAiAdderStatus("Take or upload the cigar photo, then confirm it to return here and rate the smoke.");
+    setActiveSection("tools");
+  }
+
+  async function handleAddSmokeLog(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!smokeLogForm.humidorItemId && !smokeLogForm.cigarName.trim()) {
+      setSmokeLogStatus("Choose a saved cigar or add the cigar with the AI Cigar Adder first.");
+      return;
+    }
+
+    if (!smokeLogForm.rating.trim()) {
+      setSmokeLogStatus("Add a smoke rating before saving the log.");
+      return;
+    }
+
+    if (isAnonymousDemo || auth.authSource !== "cognito") {
+      setSmokeLogStatus("Sign in with Cognito before saving smoke logs.");
+      return;
+    }
+
+    setIsSavingSmokeLog(true);
+    setSmokeLogStatus("");
+
+    try {
+      const headers = await auth.createApiHeaders();
+      const response = await createSmokeLog(buildSmokeLogPayload(smokeLogForm), headers);
+      setLiveState((current) => ({
+        ...current,
+        loading: false,
+        smokeLogs: [response.log, ...current.smokeLogs.filter((log) => log.id !== response.log.id)],
+        smokePersistence: response.persistence.status,
+        error: "",
+      }));
+      setSmokeLogForm((current) => ({
+        ...buildSmokeLogFormForItem(items.find((item) => item.id === current.humidorItemId) || null),
+        drinkPairing: current.drinkPairing,
+      }));
+      setSmokeLogStatus(
+        response.persistence.status === "stored"
+          ? "Smoke logged with rating and drink pairing."
+          : "The live API accepted this smoke log, but database persistence is not enabled.",
+      );
+    } catch (error) {
+      setSmokeLogStatus(getLiveApiErrorMessage(error));
+    } finally {
+      setIsSavingSmokeLog(false);
+    }
   }
 
   useEffect(() => {
@@ -1094,6 +1221,7 @@ export function HumidorDashboard() {
       );
 
       setLiveState((current) => ({
+        ...current,
         loading: false,
         items: [response.item, ...current.items.filter((item) => item.id !== response.item.id)],
         persistence: response.persistence.status,
@@ -1110,7 +1238,14 @@ export function HumidorDashboard() {
           ? "Confirmed and added to your live humidor."
           : "Confirmed. The live API accepted this item, but database persistence is not enabled.",
       );
-      setActiveSection("cigars");
+      if (returnToSmokeLogAfterAi) {
+        setSmokeLogForm(buildSmokeLogFormForItem(response.item));
+        setSmokeLogStatus("Cigar added. Add your smoke rating and drink pairing to finish the log.");
+        setReturnToSmokeLogAfterAi(false);
+        setActiveSection("smokes");
+      } else {
+        setActiveSection("cigars");
+      }
     } catch (error) {
       setAiAdderStatus(getLiveApiErrorMessage(error));
     } finally {
@@ -1139,6 +1274,7 @@ export function HumidorDashboard() {
       const response = await createHumidorItem(buildHumidorPayload(getFormWithDefaultHumidorLocation(itemForm), null, auth.isMember), headers);
 
       setLiveState((current) => ({
+        ...current,
         loading: false,
         items: [response.item, ...current.items.filter((item) => item.id !== response.item.id)],
         persistence: response.persistence.status,
@@ -1227,6 +1363,7 @@ export function HumidorDashboard() {
 
     if (response.enrichment.status === "updated") {
       setLiveState((current) => ({
+        ...current,
         loading: false,
         items: current.items.map((currentItem) => (currentItem.id === response.item.id ? response.item : currentItem)),
         persistence: response.persistence.status,
@@ -1264,6 +1401,7 @@ export function HumidorDashboard() {
 
     if (response.enrichment.status === "updated") {
       setLiveState((current) => ({
+        ...current,
         loading: false,
         items: current.items.map((currentItem) => (currentItem.id === response.item.id ? response.item : currentItem)),
         persistence: response.persistence.status,
@@ -1338,6 +1476,7 @@ export function HumidorDashboard() {
       const response = await updateHumidorItem(item.id, updatePayload, headers);
 
       setLiveState((current) => ({
+        ...current,
         loading: false,
         items: current.items.map((currentItem) => (currentItem.id === response.item.id ? response.item : currentItem)),
         persistence: response.persistence.status,
@@ -1356,6 +1495,99 @@ export function HumidorDashboard() {
       );
     } catch (error) {
       setHumidorItemUpdateStatus(getLiveApiErrorMessage(error));
+    } finally {
+      setUpdatingHumidorItemId("");
+    }
+  }
+
+  async function handleShareHumidorItem(item: HumidorItem) {
+    setHumidorItemUpdateStatusItemId(item.id);
+
+    if (item.quantity <= 0) {
+      setHumidorInventoryActionStatus("This cigar is already out of inventory.");
+      return;
+    }
+
+    if (isAnonymousDemo || auth.authSource !== "cognito") {
+      setHumidorInventoryActionStatus("Sign in with Cognito before updating saved cigars.");
+      return;
+    }
+
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(`Log one ${item.name} as shared and remove it from your inventory?`)
+    ) {
+      return;
+    }
+
+    setUpdatingHumidorItemId(item.id);
+    setHumidorItemUpdateStatus("");
+    setHumidorInventoryActionStatus("");
+
+    try {
+      const headers = await auth.createApiHeaders();
+      const response = await shareHumidorItem(item.id, { sharedQuantity: 1 }, headers);
+      const updatedItem = response.item;
+
+      setLiveState((current) => ({
+        ...current,
+        loading: false,
+        items:
+          response.item.quantity > 0
+            ? current.items.map((currentItem) => (currentItem.id === updatedItem.id ? updatedItem : currentItem))
+            : current.items.filter((currentItem) => currentItem.id !== item.id),
+        smokeLogs: response.log ? [response.log, ...current.smokeLogs.filter((log) => log.id !== response.log?.id)] : current.smokeLogs,
+        persistence: response.persistence.status,
+        smokePersistence: response.tracking?.status || current.smokePersistence,
+        error: "",
+      }));
+      setSelectedHumidorItem(response.item.quantity > 0 ? updatedItem : null);
+      setHumidorInventoryActionStatus(
+        response.item.quantity > 0
+          ? `Shared 1 ${item.name}. ${response.item.quantity} left in inventory.`
+          : `Shared the last ${item.name}. It was removed from inventory.`,
+      );
+    } catch (error) {
+      setHumidorInventoryActionStatus(getLiveApiErrorMessage(error));
+    } finally {
+      setUpdatingHumidorItemId("");
+    }
+  }
+
+  async function handleDeleteHumidorItem(item: HumidorItem) {
+    setHumidorItemUpdateStatusItemId(item.id);
+
+    if (isAnonymousDemo || auth.authSource !== "cognito") {
+      setHumidorInventoryActionStatus("Sign in with Cognito before updating saved cigars.");
+      return;
+    }
+
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(`Delete ${item.name} from your humidor inventory?`)
+    ) {
+      return;
+    }
+
+    setUpdatingHumidorItemId(item.id);
+    setHumidorItemUpdateStatus("");
+    setHumidorInventoryActionStatus("");
+
+    try {
+      const headers = await auth.createApiHeaders();
+      const response = await deleteHumidorItem(item.id, headers);
+
+      setLiveState((current) => ({
+        ...current,
+        loading: false,
+        items: current.items.filter((currentItem) => currentItem.id !== item.id),
+        persistence: response.persistence.status,
+        error: "",
+      }));
+      setSelectedHumidorItem(null);
+      setHumidorInventoryActionStatus(`Deleted ${item.name} from inventory.`);
+    } catch (error) {
+      setHumidorInventoryActionStatus(getLiveApiErrorMessage(error));
     } finally {
       setUpdatingHumidorItemId("");
     }
@@ -1404,6 +1636,7 @@ export function HumidorDashboard() {
       const importedIds = new Set(importedItems.map((item) => item.id));
 
       setLiveState((current) => ({
+        ...current,
         loading: false,
         items: [...importedItems, ...current.items.filter((item) => !importedIds.has(item.id))],
         persistence: persistence || current.persistence,
@@ -1660,7 +1893,9 @@ export function HumidorDashboard() {
         setLiveState({
           loading: false,
           items: bootstrap.items.items,
+          smokeLogs: bootstrap.smokes.logs,
           persistence: bootstrap.items.persistence,
+          smokePersistence: bootstrap.smokes.persistence,
           error: "",
         });
         if (bootstrap.alerts) {
@@ -1673,6 +1908,7 @@ export function HumidorDashboard() {
           setNewHumidorTrayDraft("");
         }
         setHumidorAlertsStatus(bootstrap.alertsError || "");
+        setSmokeLogStatus(bootstrap.smokesError || "");
       } catch (error) {
         const errorMessage = getLiveApiErrorMessage(error);
         setHumidorAlerts(defaultHumidorAlerts);
@@ -1682,12 +1918,38 @@ export function HumidorDashboard() {
         setNewHumidorTrayDraft("");
         setHumidorLocationProfileStatus(errorMessage);
         setHumidorAlertsStatus(errorMessage);
+        setSmokeLogStatus(errorMessage);
         setLiveState({
           loading: false,
           items: [],
+          smokeLogs: [],
           persistence: "",
+          smokePersistence: "",
           error: errorMessage,
         });
+      }
+    })();
+  }
+
+  function refreshSmokeLogs() {
+    if (auth.authSource !== "cognito") {
+      return;
+    }
+
+    setSmokeLogStatus("Refreshing smoke logs.");
+    void (async () => {
+      try {
+        const headers = await auth.createApiHeaders();
+        const response = await fetchHumidorSmokeLogs(headers);
+        setLiveState((current) => ({
+          ...current,
+          smokeLogs: response.logs,
+          smokePersistence: response.persistence,
+          error: "",
+        }));
+        setSmokeLogStatus("");
+      } catch (error) {
+        setSmokeLogStatus(getLiveApiErrorMessage(error));
       }
     })();
   }
@@ -1769,6 +2031,12 @@ export function HumidorDashboard() {
             icon={Clock}
           />
           <StatCard
+            label="Smoke Logs"
+            value={smokeLogs.length}
+            note={isAnonymousDemo ? "Sign in to save rated smoke sessions" : "Recent rated smokes and drink pairings"}
+            icon={Flame}
+          />
+          <StatCard
             label="Reorder Dates"
             value={reorderCount}
             note={isAnonymousDemo ? "Sample reminders for preview" : "Pulled from live humidor items"}
@@ -1840,6 +2108,10 @@ export function HumidorDashboard() {
 
     if (activeSection === "locations") {
       return renderLocations();
+    }
+
+    if (activeSection === "smokes") {
+      return renderSmokeLogs();
     }
 
     if (activeSection === "cigars") {
@@ -2346,6 +2618,115 @@ export function HumidorDashboard() {
     );
   }
 
+  function renderSmokeLogs() {
+    const selectedSmokeItem = items.find((item) => item.id === smokeLogForm.humidorItemId) || null;
+
+    return (
+      <div className="grid gap-5">
+        <Card className="luxury-card">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-3 text-sm uppercase tracking-[0.16em] text-yuzu-gold">
+              <Flame />
+              Log a Smoke
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-5">
+            <form className="grid gap-4" onSubmit={handleAddSmokeLog}>
+              <div className="grid gap-4 md:grid-cols-2">
+                <Field label="Saved humidor cigar">
+                  <select
+                    aria-label="Saved humidor cigar"
+                    className="h-11 w-full rounded-sm border border-yuzu-line bg-yuzu-night px-3 text-sm text-yuzu-cream outline-none focus:border-yuzu-gold disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={isAnonymousDemo || !items.length}
+                    value={smokeLogForm.humidorItemId}
+                    onChange={(event: ChangeEvent<HTMLSelectElement>) => handleSmokeLogItemSelection(event.currentTarget.value)}
+                  >
+                    <option value="">{items.length ? "Choose from My Cigars" : "No saved cigars yet"}</option>
+                    {items.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Cigar name">
+                  <Input
+                    value={smokeLogForm.cigarName}
+                    onChange={(event: ChangeEvent<HTMLInputElement>) => updateSmokeLogForm("cigarName", event.currentTarget.value)}
+                    placeholder={selectedSmokeItem ? selectedSmokeItem.name : "Use AI Cigar Adder for a new smoke"}
+                    required={!smokeLogForm.humidorItemId}
+                  />
+                </Field>
+                <Field label="Smoked at">
+                  <Input type="datetime-local" value={smokeLogForm.smokedAt} onChange={(event: ChangeEvent<HTMLInputElement>) => updateSmokeLogForm("smokedAt", event.currentTarget.value)} />
+                </Field>
+                <Field label="Smoke rating">
+                  <Input max={100} min={0} type="number" value={smokeLogForm.rating} onChange={(event: ChangeEvent<HTMLInputElement>) => updateSmokeLogForm("rating", event.currentTarget.value)} required />
+                </Field>
+                <Field label="Drink pairing">
+                  <Input value={smokeLogForm.drinkPairing} onChange={(event: ChangeEvent<HTMLInputElement>) => updateSmokeLogForm("drinkPairing", event.currentTarget.value)} placeholder="Bourbon, espresso, rum, coffee, sparkling water" />
+                </Field>
+                <Field label="Duration minutes">
+                  <Input min={1} type="number" value={smokeLogForm.durationMinutes} onChange={(event: ChangeEvent<HTMLInputElement>) => updateSmokeLogForm("durationMinutes", event.currentTarget.value)} />
+                </Field>
+              </div>
+              <Field label="Smoke notes">
+                <Textarea aria-label="Smoke notes" value={smokeLogForm.notes} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => updateSmokeLogForm("notes", event.currentTarget.value)} />
+              </Field>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center">
+                  <Button className="h-11 bg-yuzu-gold text-yuzu-ink hover:bg-yuzu-gold-light" disabled={isSavingSmokeLog || isAnonymousDemo} type="submit">
+                    {isSavingSmokeLog ? (
+                      <LoaderCircle className="animate-spin" data-icon="inline-start" />
+                    ) : isAnonymousDemo ? (
+                      <LockKeyhole data-icon="inline-start" />
+                    ) : (
+                      <Flame data-icon="inline-start" />
+                    )}
+                    {isAnonymousDemo ? "Sign In To Log" : isSavingSmokeLog ? "Logging Smoke" : "Log Smoke"}
+                  </Button>
+                  <Button className="h-11 border-yuzu-line text-yuzu-cream" disabled={isAnonymousDemo} type="button" variant="outline" onClick={handleStartAiCigarAdderForSmoke}>
+                    <Camera data-icon="inline-start" />
+                    Use AI Cigar Adder
+                  </Button>
+                </div>
+                <p className="min-h-5 text-sm text-yuzu-gold" aria-live="polite">
+                  {smokeLogStatus || (isAnonymousDemo ? "Sign in to rate smokes and save drink pairings." : "")}
+                </p>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
+
+        <Card className="luxury-card">
+          <CardHeader>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <CardTitle className="flex items-center gap-3 text-sm uppercase tracking-[0.16em] text-yuzu-gold">
+                <Clock />
+                Recent Smoke Logs
+              </CardTitle>
+              <Button className="h-10 w-fit border-yuzu-line text-yuzu-cream" disabled={isAnonymousDemo} type="button" variant="outline" onClick={refreshSmokeLogs}>
+                <RefreshCw data-icon="inline-start" />
+                Refresh Logs
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="grid gap-3">
+            {smokeLogs.length ? (
+              smokeLogs.map((log) => <SmokeLogRow key={log.id} log={log} />)
+            ) : (
+              <p className="text-sm leading-6 text-yuzu-muted">
+                {isAnonymousDemo
+                  ? "Smoke logs are saved to member accounts after sign-in."
+                  : "No smoke logs yet. Choose a cigar, add a rating, and save the first session."}
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   function renderCigars() {
     return (
       <div className="grid gap-5">
@@ -2364,6 +2745,9 @@ export function HumidorDashboard() {
                 {isAnonymousDemo ? "No demo humidor records are configured." : "No live humidor records have been returned yet."}
               </p>
             )}
+            <p className="mt-3 min-h-5 text-sm text-yuzu-gold" aria-live="polite">
+              {humidorInventoryActionStatus}
+            </p>
           </CardContent>
         </Card>
 
@@ -2383,7 +2767,9 @@ export function HumidorDashboard() {
                 setSelectedHumidorItem(null);
                 setPendingHumidorDetailScrollItemId("");
               }}
+              onDelete={isAnonymousDemo ? undefined : handleDeleteHumidorItem}
               onEnrich={isAnonymousDemo ? undefined : handleRequestHumidorEnrichment}
+              onShare={isAnonymousDemo ? undefined : handleShareHumidorItem}
               onUpdate={isAnonymousDemo ? undefined : handleUpdateHumidorItem}
             />
           </div>
@@ -3045,6 +3431,37 @@ function StatCard({ label, value, note, icon: Icon }: { label: string; value: Re
   );
 }
 
+function SmokeLogRow({ log }: { log: HumidorSmokeLog }) {
+  const isSharedLog = log.source === "member_shared_gift";
+
+  return (
+    <div className="grid gap-3 border border-yuzu-line bg-yuzu-night/60 p-4 md:grid-cols-[1fr_auto] md:items-start">
+      <div className="grid gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="font-heading text-xl text-yuzu-cream">{log.cigarName}</p>
+          {isSharedLog ? (
+            <Badge className="border-yuzu-gold/50 text-yuzu-gold" variant="outline">
+              Shared
+            </Badge>
+          ) : null}
+          {typeof log.rating === "number" ? (
+            <Badge className="border-yuzu-gold/50 text-yuzu-gold" variant="outline">
+              {log.rating}/100
+            </Badge>
+          ) : null}
+        </div>
+        <p className="text-sm text-yuzu-muted">{log.notes || (isSharedLog ? "Shared cigar logged." : "No smoke notes recorded.")}</p>
+        <div className="flex flex-wrap gap-2 text-xs uppercase tracking-[0.14em] text-yuzu-muted">
+          {isSharedLog ? <span>Inventory activity</span> : null}
+          {log.drinkPairing ? <span>Drink: {log.drinkPairing}</span> : null}
+          {log.durationMinutes ? <span>{formatSmokeDuration(log.durationMinutes)}</span> : null}
+        </div>
+      </div>
+      <span className="text-sm text-yuzu-muted md:text-right">{formatDateTime(log.smokedAt)}</span>
+    </div>
+  );
+}
+
 function StatusTile({ label, note, value }: { label: string; note?: string; value: ReactNode }) {
   return (
     <div className="border border-yuzu-line bg-yuzu-night/60 p-4">
@@ -3604,7 +4021,9 @@ function HumidorDetailCard({
   isUpdating,
   storageLocationOptions,
   onClose,
+  onDelete,
   onEnrich,
+  onShare,
   onUpdate,
 }: {
   item: HumidorItem;
@@ -3616,7 +4035,9 @@ function HumidorDetailCard({
   isUpdating: boolean;
   storageLocationOptions: HumidorStorageLocationOption[];
   onClose: () => void;
+  onDelete?: (item: HumidorItem) => void;
   onEnrich?: (item: HumidorItem) => void;
+  onShare?: (item: HumidorItem) => void;
   onUpdate?: (item: HumidorItem, input: HumidorItemUpdateInput) => void;
 }) {
   const snapshot = getAgingSnapshotForItem(item, agingNow);
@@ -3626,6 +4047,7 @@ function HumidorDetailCard({
   const cigarImageSrc = getHumidorCigarImageSrc(item);
   const enrichmentGaps = getHumidorEnrichmentGaps(item);
   const currentStorageLocationKey = buildHumidorStorageOptionKey(item.humidorLocation, item.tray);
+  const tastingNote = formatHumidorTastingNote(item.tastingNotes);
   const initialStorageLocation = storageLocationOptions.find((option) => option.key === currentStorageLocationKey) ?? storageLocationOptions[0] ?? null;
   const [selectedStorageLocationKey, setSelectedStorageLocationKey] = useState(initialStorageLocation?.key ?? "");
   const selectedStorageLocation =
@@ -3661,10 +4083,36 @@ function HumidorDetailCard({
               <p className="text-sm text-yuzu-muted">{formatItemDetails(item) || "No brand details recorded yet."}</p>
             </div>
           </div>
-          <Button className="h-10 w-fit border-yuzu-line text-yuzu-cream" type="button" variant="outline" onClick={onClose}>
-            <X data-icon="inline-start" />
-            Close Details
-          </Button>
+          <div className="flex flex-wrap gap-2 sm:justify-end">
+            {onShare ? (
+              <Button
+                className="h-10 w-fit border-yuzu-line text-yuzu-cream"
+                disabled={isUpdating || item.quantity <= 0}
+                type="button"
+                variant="outline"
+                onClick={() => onShare?.(item)}
+              >
+                <Share2 data-icon="inline-start" />
+                Shared
+              </Button>
+            ) : null}
+            {onDelete ? (
+              <Button
+                className="h-10 w-fit border-yuzu-amber/60 text-yuzu-cream hover:border-yuzu-amber hover:bg-yuzu-amber/15"
+                disabled={isUpdating}
+                type="button"
+                variant="outline"
+                onClick={() => onDelete?.(item)}
+              >
+                <Trash2 data-icon="inline-start" />
+                Delete
+              </Button>
+            ) : null}
+            <Button className="h-10 w-fit border-yuzu-line text-yuzu-cream" type="button" variant="outline" onClick={onClose}>
+              <X data-icon="inline-start" />
+              Close Details
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="grid gap-5">
@@ -3801,7 +4249,7 @@ function HumidorDetailCard({
           </div>
         ) : null}
 
-        <div className="grid gap-2 border border-yuzu-line bg-yuzu-night/60 p-4">
+        <div className="grid gap-3 border border-yuzu-line bg-yuzu-night/60 p-4">
           <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-xs uppercase tracking-[0.16em] text-yuzu-gold">Tasting Notes</p>
             <span className="text-xs text-yuzu-muted">
@@ -3810,7 +4258,27 @@ function HumidorDetailCard({
                 : `${formatHumidorValue(unitValue, item.estimatedValueCurrency)} each | ${formatHumidorValueSource(item.estimatedValueSource)}`}
             </span>
           </div>
-          <p className="whitespace-pre-wrap text-sm leading-6 text-yuzu-muted">{item.tastingNotes || "No tasting notes recorded yet."}</p>
+          {tastingNote.paragraphs.length || tastingNote.details.length ? (
+            <div className="grid gap-3">
+              {tastingNote.paragraphs.map((paragraph) => (
+                <p key={paragraph} className="text-sm leading-6 text-yuzu-muted">
+                  {paragraph}
+                </p>
+              ))}
+              {tastingNote.details.length ? (
+                <dl className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                  {tastingNote.details.map((detail) => (
+                    <div key={`${detail.label}-${detail.value}`} className="grid gap-1 border border-yuzu-line/60 bg-yuzu-ink/45 p-3">
+                      <dt className="text-[0.68rem] uppercase tracking-[0.14em] text-yuzu-muted">{detail.label}</dt>
+                      <dd className="break-words text-sm leading-6 text-yuzu-cream">{detail.value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              ) : null}
+            </div>
+          ) : (
+            <p className="text-sm leading-6 text-yuzu-muted">No tasting notes recorded yet.</p>
+          )}
         </div>
       </CardContent>
     </Card>
@@ -3818,7 +4286,25 @@ function HumidorDetailCard({
 }
 
 function getHumidorCigarImageSrc(item: HumidorItem) {
-  return item.cigarImage?.imageUrl || item.cigarImage?.dataUrl || "";
+  const src = item.cigarImage?.imageUrl || item.cigarImage?.dataUrl || "";
+  return isRenderableHumidorCigarImageSrc(src) ? src : "";
+}
+
+function isRenderableHumidorCigarImageSrc(src: string) {
+  if (/^data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+$/i.test(src)) {
+    return true;
+  }
+
+  if (
+    /^https:\/\/classroom2\.s3\.us-east-1\.amazonaws\.com\/ycc\/humidor-images\/[^\s"<>]+$/i.test(src) ||
+    /^https:\/\/swwest\.com\/Images\/SunsetItems\/[^\s"<>]+$/i.test(src) ||
+    /^https:\/\/halfwheel\.com\/wp-content\/uploads\/[^\s"<>]+$/i.test(src) ||
+    /^https:\/\/cigardojo\.com\/wp-content\/uploads\/[^\s"<>]+$/i.test(src)
+  ) {
+    return true;
+  }
+
+  return /^\/assets\/(?:product-[a-z-]+\.png|inventory\/[A-Za-z0-9._~/%-]+\.(?:png|jpe?g|gif|webp))$/i.test(src);
 }
 
 type HumidorEnrichmentGap = {
@@ -4055,6 +4541,33 @@ function buildHumidorPayload(form: HumidorForm, cigarImage: HumidorCigarImage | 
   return applyHumidorEntryPriceSnapshot(payload, isMember);
 }
 
+function buildSmokeLogFormForItem(item: HumidorItem | null): SmokeLogForm {
+  return {
+    ...blankSmokeLogForm,
+    humidorItemId: item?.id || "",
+    cigarName: item?.name || "",
+    smokedAt: getCurrentSmokeDateTimeLocalValue(),
+    rating: item?.rating === null || item?.rating === undefined ? "" : String(item.rating),
+  };
+}
+
+function buildSmokeLogPayload(form: SmokeLogForm): HumidorSmokeLogInput {
+  const rating = form.rating.trim() ? Math.max(0, Math.min(100, Math.round(Number(form.rating) || 0))) : null;
+  const durationMinutes = form.durationMinutes.trim() ? Math.max(1, Math.round(Number(form.durationMinutes) || 0)) : null;
+  const smokedAt = form.smokedAt ? new Date(form.smokedAt).toISOString() : null;
+
+  return {
+    humidorItemId: form.humidorItemId || null,
+    cigarName: form.cigarName.trim(),
+    smokedAt,
+    rating,
+    drinkPairing: form.drinkPairing.trim(),
+    notes: form.notes.trim(),
+    durationMinutes,
+    source: "member_smoke_log",
+  };
+}
+
 function buildHumidorImageAttachment(
   payload: { imageBase64: string; mimeType: string; fileName: string } | null,
   dataUrl: string,
@@ -4192,7 +4705,7 @@ function formatDate(value: string | null | undefined) {
     return "Not set";
   }
 
-  const date = new Date(value);
+  const date = parseHumidorDisplayDate(value);
   if (Number.isNaN(date.getTime())) {
     return value;
   }
@@ -4202,6 +4715,45 @@ function formatDate(value: string | null | undefined) {
     day: "numeric",
     year: "numeric",
   }).format(date);
+}
+
+function formatDateTime(value: string | null | undefined) {
+  if (!value) {
+    return "Not set";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function getCurrentSmokeDateTimeLocalValue() {
+  const now = new Date();
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
+function formatSmokeDuration(value: number) {
+  return `${value} min`;
+}
+
+function parseHumidorDisplayDate(value: string) {
+  const text = value.trim();
+  const dateOnly = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (dateOnly) {
+    return new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]));
+  }
+
+  return new Date(text);
 }
 
 function formatDateInputValue(value: string | null | undefined) {

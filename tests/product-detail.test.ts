@@ -81,8 +81,79 @@ const pricePendingSwwestCigarSkus = [
   "777279",
   "777280",
   "777281",
-  "777287",
-  "777292",
+];
+
+const requestedNewCigarCatalogItems = [
+  {
+    sku: "777293",
+    slug: "my-father-don-pepin-clasicos-20th-20-bx",
+    memberPrice: 300,
+    nonMemberPrice: 396,
+    image: "/assets/inventory/cigars/my-father-don-pepin-clasicos-20th-20-bx.jpg",
+    vitola: "Toro Extra",
+    length: '6.5"',
+    gauge: "52",
+  },
+  {
+    sku: "777292",
+    slug: "oliva-serie-v-melanio-soccer-edition-24-bx",
+    memberPrice: 450,
+    nonMemberPrice: 612,
+    image: "/assets/inventory/cigars/oliva-serie-v-melanio-soccer-edition-24-bx.jpg",
+    vitola: "Double Toro",
+    length: '6"',
+    gauge: "60",
+  },
+  {
+    sku: "777297",
+    slug: "olmec-maduro-toro-12-bx",
+    memberPrice: 133,
+    nonMemberPrice: 174.99,
+    image: "/assets/inventory/cigars/olmec-maduro-toro-12-bx.jpg",
+    vitola: "Toro",
+    length: '6"',
+    gauge: "52",
+  },
+  {
+    sku: "777296",
+    slug: "montecristo-1935-winners-club-sampler-6-pk",
+    memberPrice: 90,
+    nonMemberPrice: 121.5,
+    image: "/assets/inventory/cigars/montecristo-1935-winners-club-sampler-6-pk.jpg",
+    vitola: "Sampler",
+    length: "Assorted",
+    gauge: "Assorted",
+  },
+  {
+    sku: "777303",
+    slug: "plasencia-alma-fuerte-salomon-10-bx",
+    memberPrice: 160,
+    nonMemberPrice: 247.99,
+    image: "/assets/inventory/cigars/plasencia-alma-fuerte-salomon-10-bx.jpg",
+    vitola: "Salomon",
+    length: '7"',
+    gauge: "58",
+  },
+  {
+    sku: "777287",
+    slug: "plasencia-explorer-sampler-6-bx",
+    memberPrice: 75,
+    nonMemberPrice: 107.95,
+    image: "/assets/inventory/cigars/plasencia-explorer-sampler-6-bx.jpg",
+    vitola: "Sampler",
+    length: "Assorted",
+    gauge: "Assorted",
+  },
+  {
+    sku: "777295",
+    slug: "plasencia-triunfal-2026-10-bx",
+    memberPrice: 400,
+    nonMemberPrice: 539.91,
+    image: "/assets/inventory/cigars/plasencia-triunfal-2026-10-bx.jpg",
+    vitola: "Toro",
+    length: '6.25"',
+    gauge: "54",
+  },
 ];
 
 const removedInventorySlug = "cohiba-riviera-box-press-toro-20-bx";
@@ -129,7 +200,7 @@ function readJpegSize(assetPath: string) {
 test("featured luxury products expose unique static detail slugs", () => {
   const slugs = featuredLuxuryProducts.map((product) => product.slug);
 
-  assert.equal(luxuryCatalogProducts.length, 18);
+  assert.equal(luxuryCatalogProducts.length, 21);
   assert.equal(slugs.length, 4);
   assert.equal(new Set(slugs).size, featuredLuxuryProducts.length);
   assert.equal(featuredLuxuryProducts.every((product) => product.category === "Luxury Cigars ($300+)"), true);
@@ -180,14 +251,14 @@ test("featured luxury products include complete size, strength, and blend detail
     [
       bySlug.get("ashton-churchill-25-bx"),
       bySlug.get("montecristo-churchill-25-bx"),
-      bySlug.get("ashton-monarch-24-bx"),
-      bySlug.get("ashton-vsg-eclipse-tubo-24-bx"),
+      bySlug.get("oliva-serie-v-melanio-soccer-edition-24-bx"),
+      bySlug.get("my-father-don-pepin-clasicos-20th-20-bx"),
     ].map((product) => [product?.length, product?.gauge, product?.strength, product?.wrapper, product?.filler, product?.binder]),
     [
       ['7.5"', "52", "Mild", "Connecticut Shade", "Dominican Republic", "Dominican Republic"],
       ['7"', "54", "Mild", "Connecticut Shade", "Dominican Republic", "Dominican Republic"],
-      ['6"', "50", "Mild", "Connecticut Shade", "Dominican Republic", "Dominican Republic"],
-      ['6"', "52", "Full", "Ecuadorian Sumatra", "Dominican Republic", "Dominican Republic"],
+      ['6"', "60", "Medium-Full", "Ecuadorian Sumatra, Mexican San Andres Maduro", "Nicaragua", "Nicaragua"],
+      ['6.5"', "52", "Full", "Nicaraguan Habano", "Nicaragua", "Nicaragua"],
     ]
   );
 });
@@ -196,7 +267,7 @@ test("shop catalog is generated from imported inventory and curated SKU image UR
   const acidTwenty = catalogProducts.find((product) => product.sku === "39919");
   const vectorLighter = catalogProducts.find((product) => product.sku === "31683");
 
-  assert.equal(catalogProducts.length, 921);
+  assert.equal(catalogProducts.length, 928);
   assert.ok(acidTwenty);
   assert.equal(acidTwenty.name, "ACID 20 TWENTY YEAR 24/BX");
   assert.equal(acidTwenty.storeHref, "/shop/acid-20-twenty-year-24-bx/");
@@ -279,7 +350,7 @@ test("shop catalog publishes only sellable, unique imported inventory items", ()
   assert.equal(catalogProducts.some((product) => product.price <= 0), false);
   assert.equal(catalogProducts.some((product) => /membership/i.test(`${product.category} ${product.name}`)), false);
   assert.equal(catalogProducts.some((product) => product.sku === "13500"), false);
-  assert.equal(catalogProducts.some((product) => product.sku === "777293"), false);
+  assert.equal(catalogProducts.some((product) => product.sku === "777293"), true);
   assert.equal(catalogProducts.some((product) => product.sku === "88908"), false);
   assert.equal(catalogProducts.some((product) => product.sku === "31683"), true);
   assert.equal(catalogProducts.some((product) => product.category === "Infused & Aromatic"), false);
@@ -309,6 +380,39 @@ test("shop catalog holds newly found SWWest cigar SKUs until public market prici
 
   for (const sku of pricePendingSwwestCigarSkus) {
     assert.equal(productsBySku.has(sku), false, `${sku} should stay unpublished until public market pricing is researched`);
+  }
+});
+
+test("shop catalog includes newly researched cigar products with member and public pricing", () => {
+  const productsBySku = new Map(catalogProducts.map((product) => [product.sku, product]));
+
+  for (const expected of requestedNewCigarCatalogItems) {
+    const product = productsBySku.get(expected.sku);
+
+    assert.ok(product, `expected SKU ${expected.sku} to be published`);
+    assert.equal(product.slug, expected.slug);
+    assert.equal(product.price, expected.memberPrice);
+    assert.equal(product.memberPrice, expected.memberPrice);
+    assert.equal(product.marketPrice, expected.nonMemberPrice);
+    assert.equal(product.nonMemberPrice, expected.nonMemberPrice);
+    assert.equal(importedMarketPricesBySku[expected.sku], expected.nonMemberPrice);
+    assert.equal(product.image, expected.image);
+    assert.equal(getCatalogImageUrl(expected.sku), expected.image);
+    assert.equal(product.vitola, expected.vitola);
+    assert.equal(product.length, expected.length);
+    assert.equal(product.gauge, expected.gauge);
+    assert.ok(importedProductDescriptions[expected.slug].length > 120, `${expected.slug} should expose a shopper description`);
+    assert.match(product.storeHref, /^\/shop\/[a-z0-9]+(?:-[a-z0-9]+)*\/$/);
+  }
+});
+
+test("newly researched cigar product images are local publishable JPEGs", () => {
+  for (const expected of requestedNewCigarCatalogItems) {
+    const image = readJpegSize(expected.image);
+
+    assert.ok(image.width >= 600, `${expected.sku} image width`);
+    assert.ok(image.height >= 600, `${expected.sku} image height`);
+    assert.ok(image.bytes >= 30000, `${expected.sku} image should retain enough detail for product cards`);
   }
 });
 
@@ -610,7 +714,7 @@ test("catalog products expose sourced review profiles for the next five brand ba
   }
 
   const expectedCoveredCounts = new Map([
-    ["Oliva", 47],
+    ["Oliva", 48],
     ["Romeo", 43],
     ["Ryj", 4],
     ["Perdomo", 42],
@@ -652,8 +756,8 @@ test("catalog products expose sourced review profiles for the 50 percent coverag
 
   const expectedCoveredCounts = new Map([
     ["Gurkha", 28],
-    ["Montecristo", 26],
-    ["My Father", 26],
+    ["Montecristo", 27],
+    ["My Father", 27],
     ["Factory", 22],
   ]);
 
@@ -671,15 +775,14 @@ test("catalog products expose sourced review profiles for the 50 percent coverag
   assert.ok(coveredCigarProducts.length / cigarProducts.length >= 0.5);
 });
 
-test("catalog products expose sourced review profiles for every cigar product", () => {
+test("catalog products keep placeholder review coverage out of Ratings & Reviews", () => {
   const expectedProfiles = [
+    ["acid-atom-maduro-24-bx", "ACID Yellow", "Overall 4.48/5 from 294 Neptune customer reviews", "https://www.neptunecigar.com/cigar/acid-yellow"],
     ["acid-kuba-kuba-24-bx", "ACID Kuba Kuba", "Neptune customer-review product page", "https://www.neptunecigar.com/cigars/acid-kuba-kuba"],
+    ["punch-signature-robusto-18-bx", "Punch Signature", "91 Cigar Aficionado Signature Robusto line-reference rating", "https://www.cigaraficionado.com/ratings/18072/name/punch-signature-robusto-robusto"],
+    ["cohiba-blue-robusto-20-bx", "Cohiba Blue", "86 Cigar Aficionado Cohiba Blue Robusto line-reference rating", "https://www.cigaraficionado.com/ratings/19906/name/cohiba-blue-robusto"],
     ["quorum-classic-robusto-20-bdl", "Quorum", "Neptune customer-review brand and line page", "https://www.neptunecigar.com/cigar/quorum"],
-    ["punch-signature-robusto-18-bx", "Punch Signature", "Cigar Aficionado review-search profile coverage", "https://www.cigaraficionado.com/search?q=PUNCH+SIGNATURE+ROBUSTO"],
-    ["cohiba-blue-robusto-20-bx", "Cohiba Blue", "Cigar Aficionado review-search profile coverage", "https://www.cigaraficionado.com/search?q=COHIBA+BLUE+ROBUSTO"],
-    ["ashton-vsg-torpedo-24-bx", "Ashton VSG", "Cigar Aficionado brand-profile ratings coverage", "https://www.cigaraficionado.com/brand/ashton"],
     ["brick-house-natural-robusto-25-bx", "Brick House", "Cigar Aficionado line-reference rating coverage", "https://www.cigaraficionado.com/ratings/26184/name/brick-house-corona"],
-    ["la-gloria-cubana-serie-r-5-maduro-24-bx", "La Gloria Cubana", "Cigar Aficionado review-search profile coverage", "https://www.cigaraficionado.com/search?q=LA+GLORIA+CUBANA+SERIE+R"],
     ["drew-estate-java-maduro-robusto-24-bx", "Java by Drew Estate", "Neptune customer-review product page", "https://www.neptunecigar.com/cigars/java-maduro-toro"],
     ["jms-dominican-connecticut-robusto-50-bx", "JM's Dominican", "Cigars.com product-review page", "https://www.cigars.com/item/jms-dominican/connecticut-robusto/JMDCR.html"],
     ["davidoff-winston-churchill-late-hour-5pk25-tins", "Davidoff Winston Churchill The Late Hour", "86 Cigar Aficionado Churchill line-reference rating", "https://www.cigaraficionado.com/ratings/20277/name/davidoff-winston-churchill-the-late-hour-churchill"],
@@ -697,18 +800,19 @@ test("catalog products expose sourced review profiles for every cigar product", 
   const cigarProducts = catalogProducts.filter(isCigarCatalogProduct);
   const unsourcedCigarProducts = cigarProducts.filter((product) => !product.expertReview && !product.reviewProfile);
 
-  assert.equal(cigarProducts.length, 872);
+  assert.equal(cigarProducts.length, 879);
   assert.equal(unsourcedCigarProducts.length, 0);
+  assert.ok(unsourcedCigarProducts.every((product) => !/review-search profile|community-review profile|review-discovery|brand\/line coverage/i.test(product.reviewProfile?.summary ?? "")));
 });
 
-test("unsourced cigar products do not expose review audit prompts as catalog signals", () => {
+test("all cigar products expose sourced Ratings & Reviews without internal audit prompts", () => {
   const cigarProducts = catalogProducts.filter(isCigarCatalogProduct);
   const unsourcedCigarProducts = cigarProducts.filter((product) => !product.expertReview && !product.reviewProfile);
 
-  assert.equal(cigarProducts.length, 872);
+  assert.equal(cigarProducts.length, 879);
   assert.equal(unsourcedCigarProducts.length, 0);
 
-  for (const product of unsourcedCigarProducts) {
+  for (const product of cigarProducts) {
     assert.doesNotMatch(
       getCatalogProductDetails(product).signals.join(" "),
       /Review audit|research query|sourced ratings review/i,
@@ -724,6 +828,16 @@ test("non-cigar products without sourced reviews remain neutral without internal
   assert.equal(rockyPatelHumidor.expertReview, undefined);
   assert.equal(rockyPatelHumidor.reviewProfile, undefined);
   assert.doesNotMatch(getCatalogProductDetails(rockyPatelHumidor).signals.join(" "), /Review audit|research|queued|sourced rating/i);
+});
+
+test("Ratings & Reviews panel renders only ratings, source names, and source links", () => {
+  const productPageSource = readFileSync(new URL("../src/app/shop/[slug]/page.tsx", import.meta.url), "utf8");
+
+  assert.equal(productPageSource.includes("{profile.summary}"), false);
+  assert.equal(productPageSource.includes("source.keyDetails.map"), false);
+  assert.equal(productPageSource.includes("{source.rating}"), true);
+  assert.equal(productPageSource.includes("{source.sourceName}"), true);
+  assert.equal(productPageSource.includes("href={source.sourceUrl}"), true);
 });
 
 test("product detail hero image is formatted as a full product shot", () => {

@@ -278,6 +278,7 @@ test("Amplify custom headers include production browser security headers", () =>
   assert.match(customHeaders, /connect-src 'self' https:\/\/api\.yuzucigarclub\.com/u);
   assert.match(customHeaders, /script-src[^"]*https:\/\/www\.googletagmanager\.com/u);
   assert.match(customHeaders, /img-src[^"]*https:\/\/www\.google-analytics\.com/u);
+  assert.match(customHeaders, /img-src[^"]*https:\/\/classroom2\.s3\.us-east-1\.amazonaws\.com/u);
   assert.match(customHeaders, /connect-src[^"]*https:\/\/www\.google-analytics\.com/u);
 });
 

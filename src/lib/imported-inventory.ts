@@ -11469,5 +11469,45 @@ export const importedInventory = [
     "managedStock": false,
     "sourceQuantity": null,
     "slug": "my-father-don-pepin-clasicos-20th-20-bx"
+  },
+  {
+    "sku": "777297",
+    "product": "OLMEC MADURO TORO 12/BX",
+    "category": "Mid-Range Cigars ($50-$150)",
+    "price": 133,
+    "sourceStatus": "instock",
+    "managedStock": false,
+    "sourceQuantity": null,
+    "slug": "olmec-maduro-toro-12-bx"
+  },
+  {
+    "sku": "777296",
+    "product": "MONTECRISTO 1935 WINNERS CLUB SAMPLER 6/PK",
+    "category": "Sample Packs",
+    "price": 90,
+    "sourceStatus": "instock",
+    "managedStock": false,
+    "sourceQuantity": null,
+    "slug": "montecristo-1935-winners-club-sampler-6-pk"
+  },
+  {
+    "sku": "777303",
+    "product": "PLASENCIA ALMA FUERTE SALOMON 10/BX",
+    "category": "Premium Cigars ($150-$300)",
+    "price": 160,
+    "sourceStatus": "instock",
+    "managedStock": false,
+    "sourceQuantity": null,
+    "slug": "plasencia-alma-fuerte-salomon-10-bx"
+  },
+  {
+    "sku": "777295",
+    "product": "PLASENCIA TRIUNFAL 2026 10/BX",
+    "category": "Luxury Cigars ($300+)",
+    "price": 400,
+    "sourceStatus": "instock",
+    "managedStock": false,
+    "sourceQuantity": null,
+    "slug": "plasencia-triunfal-2026-10-bx"
   }
 ] satisfies ImportedInventoryItem[];

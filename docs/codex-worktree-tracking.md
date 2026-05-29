@@ -1,10 +1,961 @@
 # Codex Worktree Tracking
 
-Last updated: 2026-05-28
+Last updated: 2026-05-29
 
 Purpose: track the dirty worktree I encounter while expanding and verifying the Yuzu admin/backend. This file is Codex-owned working notes, so future passes have a stable place to record what was changed, verified, and still needs audit.
 
 Project memory: `AGENTS.md` now requires Codex to use this file as the persistent worktree ledger. Every meaningful update, fix, audit, verification pass, or newly discovered dirty/untracked area should be recorded here in the same turn.
+
+## 2026-05-29 Launch Readiness Audit, Static Redeploy, and Commit Prep
+
+- Goal: perform the final user-experience/production-readiness check for accepting sales today, confirm all current updates are uploaded, and prepare the full launch batch for commit/push. SES production access remains explicitly excluded by the user.
+- Skills/guidance used:
+  - `storefront-best-practices`
+  - `deploy-yuzu-amplify`
+  - `aws`
+  - `build-web-apps:frontend-testing-debugging`
+  - `browser:browser`
+  - `superpowers:verification-before-completion`
+  - `superpowers:finishing-a-development-branch`
+  - `github:yeet`
+- Local Next.js 16.2.6 docs checked before launch verification/deploy:
+  - `node_modules/next/dist/docs/01-app/02-guides/static-exports.md`
+  - `node_modules/next/dist/docs/01-app/01-getting-started/17-deploying.md`
+  - `node_modules/next/dist/docs/01-app/02-guides/environment-variables.md`
+- Verification:
+  - `npm run launch:check` passed: ESLint, TypeScript, 537/537 Node tests, Next.js 16.2.6 static export build with 990 generated pages, and `npm audit --omit=dev` found 0 vulnerabilities.
+  - `npm run launch:go-live-check` passed all strict go-live readiness checks, with only the expected generated-artifacts cleanup warning for ignored local output.
+  - `npx tsx scripts/e2e-runtime-audit.ts --json` passed against the fresh `out/` static export: 139 routes checked, 112 internal links followed, 90 runtime assets checked, not-found probe returned 404, and 0 warnings/failures.
+  - `git diff --check` returned no whitespace errors, only Git CRLF normalization notices.
+  - A committable-file secret-pattern scan found only placeholder/test fixture examples in `.env.example`, Lambda README, and tests; ignored real local secret files such as `.env.local`, PEMs, `secure/`, `out/`, `output/`, and zips were not staged.
+- Live backend/API verification:
+  - AWS identity checked for source and operator profiles in account `374587466106`.
+  - Lambda alias `ycyyy:live` readback confirmed version `33`, description `Live API all updates with Rekognition Humidor Agent 2026-05-29`, runtime state `Active`, and `LastUpdateStatus=Successful`.
+  - Packaged the current Lambda source with `node scripts/package-ycc-api-lambda.mjs ycc-api-current-commit-audit-20260529`; package zip hash differed from live due packaging artifacts, so the live Lambda zip was downloaded for file-level comparison.
+  - File-level SHA-256 comparison confirmed live version `33` matches the current packaged `index.js`, `commerce-rules.js`, `stripe-commerce.js`, `migrations/0005_member_stripe_customer_link.sql`, and package manifest.
+  - Live deep health `https://api.yuzucigarclub.com/health?deep=1&codex-post-deploy=140` returned HTTP `200`, `status=ok`, DB proxy reachable, SSL `verify-full` ready, `databaseWrites=schema_ready`, `bedrock=runtime_ready`, and SES still `pending_production_access`.
+- Static Amplify deployment:
+  - Ran `python C:\Users\qfash\.codex\skills\deploy-yuzu-amplify\scripts\deploy_amplify_static.py --skip-build --label launch-readiness-commit-20260529` after the fresh successful build.
+  - The helper zipped the contents of `out/` with POSIX archive paths, 9168 entries, and uploaded through the assumed deployment role `arn:aws:sts::374587466106:assumed-role/CodexMcpYccDeploymentRole/CodexYuzuAmplifyDeploy`.
+  - Amplify app `d2yxcklt245wh0`, branch `staging`, job `140` reached `SUCCEED`.
+  - Helper smoke verified live home HTTP `200`, length `336574`, and referenced asset `/_next/static/chunks/04xlredm9wd81.css` HTTP `200`.
+  - Additional post-deploy smokes returned HTTP `200` and included `_next/static` assets for `https://www.yuzucigarclub.com/`, `/shop/`, `/checkout/`, and `/humidor/` with `postDeploy=140`.
+- Browser UX smoke:
+  - In-app Browser opened `https://www.yuzucigarclub.com/?codexLaunchAudit=140`; title was `Yuzu Cigar Club | Premium Cigar Boxes, Memberships, Digital Humidor`, DOM was nonblank, and console warnings/errors were empty.
+  - Header navigation from home to `/shop/` was retested after waiting for client-side routing and rendered the shop catalog without stale home content.
+  - Product detail `/shop/6-x-60-sampler-jc-newman-4-bx/` rendered, `Add 6 X 60 SAMPLER JC NEWMAN 4/BX to cart` updated the cart count to 1, `/cart/` showed the product line and order summary, and `/checkout/` showed shipping, delivery, Stripe-hosted payment, and AgeChecker review sections without console warnings/errors.
+  - Browser screenshot capture timed out in the in-app browser runtime, so this pass used DOM, title, URL, console, and interaction evidence rather than screenshot evidence.
+- Cleanup:
+  - Removed only generated/ignored deploy and comparison artifacts: the temporary Amplify zip plus the Lambda package/compare directories and zips under `output/`.
+- Remaining known caveat:
+  - SES production access is still `pending_production_access` and remains the one explicitly excluded launch gap.
+
+## 2026-05-29 Deploy All Updates With Rekognition Humidor Agent
+
+- Goal: deploy all current backend and static storefront updates, including Humidor Agent saved-image Rekognition, AI Cigar Adder visual labels, stale humidor image metadata repair, and the current dirty storefront/catalog/humidor changes in this workspace.
+- Skills/guidance used:
+  - `aws`
+  - `deploy-yuzu-amplify`
+- AWS account/region:
+  - Confirmed source identity `arn:aws:iam::374587466106:user/codex-mcp-ycc`.
+  - Confirmed operator identity `arn:aws:sts::374587466106:assumed-role/CodexMcpYccOperatorRole/...`.
+  - Confirmed `phantom-root` is available and used only for Lambda alias promotion because the operator role still lacks `lambda:UpdateAlias`.
+- Backend deployment:
+  - Applied `infra/ycc-phase2-lambda-runtime-policy.json` to Lambda execution role `ycyyy-1778040454500` as inline policy `YccApiPhase2RuntimePolicy`.
+  - Readback confirmed Rekognition actions are now `rekognition:DetectText` and `rekognition:DetectLabels`.
+  - Packaged Lambda artifact `output/ycc-api-all-updates-rekognition-humidor-agent-20260529.zip` with code hash `cdgN95/aI1E9Fbs1vEKRl6xopykZpUu7EyzNcKt7Ep8=`.
+  - Updated Lambda `$LATEST` for `ycyyy` with the new package and environment flags `FEATURE_REKOGNITION=image_understanding_ready`, `REKOGNITION_MIN_LABEL_CONFIDENCE=70`, and `REKOGNITION_MIN_TEXT_CONFIDENCE=70`.
+  - Published Lambda version `33` with description `Deploy all current updates with Rekognition Humidor Agent 2026-05-29`.
+  - Promoted alias `ycyyy:live` to version `33` with revision `399706f4-9ce9-4c95-bdb6-144e38b5749c`.
+  - Alias readback confirmed version `33`, runtime state `Active`, `LastUpdateStatus=Successful`, code hash `cdgN95/aI1E9Fbs1vEKRl6xopykZpUu7EyzNcKt7Ep8=`, `FEATURE_REKOGNITION=image_understanding_ready`, and `REKOGNITION_MIN_LABEL_CONFIDENCE=70`.
+  - Live API deep health `https://api.yuzucigarclub.com/health?deep=1&deploy=33-ledger` returned HTTP `200`, `status=ok`, DB proxy reachable, `databaseWrites=schema_ready`, `bedrock=runtime_ready`, and SES still `pending_production_access`.
+- Static Amplify deployment:
+  - Initial helper run failed before build/upload because Python on Windows could not resolve `npm`; no deployment was created during that failed attempt.
+  - Ran `npm run build` directly; it passed with Next.js 16.2.6 static export and 990 generated pages.
+  - Reran the Amplify helper with `--skip-build`; it zipped the contents of `out/` with POSIX paths, 9168 entries, and no forbidden parent folders.
+  - Assumed deployment role `arn:aws:sts::374587466106:assumed-role/CodexMcpYccDeploymentRole/CodexYuzuAmplifyDeploy`.
+  - Amplify app `d2yxcklt245wh0`, branch `staging`, job `139` reached `SUCCEED`.
+  - Amplify smoke returned `homeStatus=200`, `assetStatus=200`, asset path `/_next/static/chunks/04xlredm9wd81.css`, and home length `336574`.
+  - Additional smokes returned HTTP `200` for `https://www.yuzucigarclub.com/?deploy=139`, `https://staging.d2yxcklt245wh0.amplifyapp.com/humidor/?section=cigars&deploy=139`, and `https://www.yuzucigarclub.com/humidor/?section=cigars&deploy=139`.
+  - A later `amplify get-job` readback through the source profile failed with `AccessDeniedException` for `amplify:GetJob`; the deployment helper already polled the assumed deployment role to `SUCCEED`, so this was only a source-profile readback permission gap.
+  - Removed the temporary Amplify zip and Lambda package/stage artifacts after successful deployment and smoke checks.
+- Pre-deploy verification carried into this deploy:
+  - `npx eslint infra\lambda\ycc-api\index.js tests\lambda-ycc-api.test.ts tests\bedrock-infra-contract.test.ts src\lib\live-api.ts` passed.
+  - `npx tsc --noEmit --pretty false` passed.
+  - `node --import tsx --test tests\lambda-ycc-api.test.ts tests\bedrock-infra-contract.test.ts` passed 151/151.
+  - `npm test` passed 537/537.
+  - `npm run build` passed before deployment and again during the static deploy path.
+- Dirty worktree note:
+  - The deployment intentionally shipped the current dirty workspace requested by the user as "all updates"; unrelated dirty/untracked files still remain in the worktree, but temporary deployment artifacts from this pass were removed.
+
+## 2026-05-29 Humidor Agent Update Rekognition Evidence
+
+- Goal: make the Humidor Agent update/enrichment path use Amazon Rekognition on saved member cigar photos so it can fix picture-assisted text fields during updates, not only during new AI Cigar Adder uploads.
+- Skills/guidance used:
+  - `aws`
+  - `superpowers:test-driven-development`
+- Local Next.js 16.2.6 docs checked before editing:
+  - `node_modules/next/dist/docs/01-app/01-getting-started/05-server-and-client-components.md`
+  - `node_modules/next/dist/docs/01-app/02-guides/static-exports.md`
+  - `node_modules/next/dist/docs/01-app/01-getting-started/15-route-handlers.md`
+- AWS SDK surface checked locally:
+  - `node_modules/@aws-sdk/client-rekognition/dist-types/commands/DetectLabelsCommand.d.ts`
+- Patched:
+  - `infra/lambda/ycc-api/index.js`
+  - `tests/lambda-ycc-api.test.ts`
+  - `src/lib/live-api.ts`
+  - `.env.example`
+  - `infra/lambda/ycc-api/README.md`
+  - `docs/codex-worktree-tracking.md`
+- Behavior:
+  - `PATCH /humidor/items/{id}/enrich` now loads the saved member cigar image from existing Yuzu S3 humidor metadata, or from a valid data URL attachment when present.
+  - With `FEATURE_REKOGNITION=image_understanding_ready`, the enrichment path runs Rekognition `DetectText` and `DetectLabels` on that saved image before invoking `YCCHumidorAgent`.
+  - OCR lines and visual labels are injected into the knowledge-base retrieval query, web-search plan, and Humidor Agent prompt as saved-image evidence.
+  - The prompt tells the agent to use saved-image text/labels for brand, line, vitola, wrapper, origin, strength, and image-review notes, while preserving member-entered fields and avoiding generic-label-only guesses.
+  - Enrichment responses now return a safe `ai.rekognition` summary with text and label statuses/counts/labels so the UI/API client can surface what helped the update.
+  - `detect_text_ready` remains OCR-only and `pending_service` skips saved-image analysis without fetching the S3 object.
+- TDD and verification:
+  - Red run: `node --import tsx --test --test-name-pattern "Rekognition evidence from saved member images" tests\lambda-ycc-api.test.ts` failed because Humidor enrichment did not return or prompt with `ai.rekognition`.
+  - Green focused run passed after adding saved-image analysis and prompt/search wiring.
+  - Wider focused run passed 20/20: `node --import tsx --test --test-name-pattern "humidor item enrichment|humidor image identification|Rekognition" tests\lambda-ycc-api.test.ts tests\bedrock-infra-contract.test.ts`.
+  - `npx eslint infra\lambda\ycc-api\index.js tests\lambda-ycc-api.test.ts tests\bedrock-infra-contract.test.ts src\lib\live-api.ts` passed.
+  - `npx tsc --noEmit --pretty false` passed.
+  - `node --import tsx --test tests\lambda-ycc-api.test.ts tests\bedrock-infra-contract.test.ts` passed 151/151.
+  - `npm test` passed 537/537.
+  - `npm run build` passed with Next.js 16.2.6 static export and 990 generated pages.
+- Deployment note:
+  - Code and policy docs are ready, but this pass did not publish or move the live Lambda alias. Live enablement still needs the Rekognition IAM policy applied, a Lambda package promoted, and `FEATURE_REKOGNITION=image_understanding_ready` configured.
+- Dirty worktree note:
+  - The workspace was already broadly dirty with unrelated/concurrent storefront, catalog, humidor, infrastructure, docs, package, and static asset changes. This pass intentionally touched only the Humidor Agent/Rekognition update path, related tests/types/docs/env guidance, and this ledger entry.
+
+## 2026-05-29 Humidor Stale Image Metadata Repair
+
+- Goal: deep-dive and fix the remaining Digital Humidor image issue where old/non-renderable image metadata could keep appearing as an existing photo and block proper repair.
+- Skills/guidance used:
+  - `superpowers:systematic-debugging`
+  - `superpowers:test-driven-development`
+  - `build-web-apps:frontend-testing-debugging`
+  - `build-web-apps:react-best-practices`
+  - `superpowers:verification-before-completion`
+- Local Next.js 16.2.6 docs checked before editing:
+  - `node_modules/next/dist/docs/01-app/01-getting-started/12-images.md`
+- Live e2e findings before the patch:
+  - Created a fresh Cognito `member` test account in user pool `us-east-1_63U9PflAX` and exercised the real `https://api.yuzucigarclub.com` humidor API.
+  - Member-uploaded cigar images stored to S3 under `classroom2/ycc/humidor-images/...`; the returned signed URL used host `classroom2.s3.us-east-1.amazonaws.com`, path `/ycc/humidor-images/...`, and returned HTTP `200` with `Content-Type: image/png`.
+  - A direct member create with a third-party image URL was rejected with HTTP `400` / `missing_cigar_image`, so normal member upload was not the remaining break.
+  - A live Fat Bottom Betty image-only enrichment returned `needs_review` with no `cigarImage`, confirming the previous guardrail stopped new retailer-image proposals.
+  - Remaining root cause: stale persisted reference metadata such as old retailer/CDN URLs still normalized as an existing image on read and enrichment, even though the deployed storefront cannot render those sources.
+- Patched:
+  - `infra/lambda/ycc-api/index.js`
+  - `tests/lambda-ycc-api.test.ts`
+  - `docs/codex-worktree-tracking.md`
+- Behavior:
+  - Lambda read mapping now suppresses stale non-renderable reference image URLs instead of returning them to My Cigars or the approval dialog.
+  - Humidor enrichment now treats an image as existing only when it is actually renderable by the storefront: valid data URL, stored/signed Yuzu S3 humidor image, approved Yuzu/static asset path, or an explicitly allowed reference host/path.
+  - Valid member-uploaded S3 photos still block replacement, so the agent will not overwrite a real saved image.
+  - Stale retailer/CDN image metadata is treated as missing, allowing the agent to propose a renderable Yuzu-hosted replacement when one is available.
+- TDD, verification, and deployment:
+  - Red tests reproduced stale public web images being returned on `GET /humidor/items` and stale image metadata blocking enrichment repair.
+  - Green focused run passed: `node --import tsx --test --test-name-pattern "stale public web reference images|stale non-renderable reference image metadata|keeps saved image metadata" tests\lambda-ycc-api.test.ts`.
+  - Wider focused image run passed 8/8 for upload migration, stale reference suppression, saved-image preservation, enrichment previews, web search, and public-web image rejection.
+  - Frontend focused run passed 3/3 for humidor enrichment/member approval/non-renderable placeholder image paths.
+  - `npx eslint infra\lambda\ycc-api\index.js tests\lambda-ycc-api.test.ts src\components\humidor-dashboard.tsx tests\humidor-dashboard.test.ts` passed.
+  - `npx tsc --noEmit --pretty false` passed.
+  - `npm test` passed 536/536.
+  - `npm run build` passed with Next.js 16.2.6 static export and 990 generated pages.
+  - Packaged `output\humidor-stale-image-metadata-repair-20260529.zip` with code hash `nRBeLy9Vg2pnXZ3POc5F9sfqbjk4rUvR/Nm33UiUn7w=`.
+  - Published Lambda version `32` and moved alias `ycyyy:live` to version `32`; readback showed runtime `nodejs22.x`, code hash `nRBeLy9Vg2pnXZ3POc5F9sfqbjk4rUvR/Nm33UiUn7w=`, and last modified `2026-05-29T00:56:10.000+0000`.
+  - `https://api.yuzucigarclub.com/health?deep=1&humidor-stale-image-metadata=32` returned HTTP `200`, `status=ok`, database writes `schema_ready`, Bedrock `runtime_ready`, and SES still `pending_production_access`.
+  - Post-deploy API e2e created a fresh Cognito member, uploaded a humidor image, confirmed the signed S3 image returned HTTP `200`, and confirmed third-party image create still rejects with HTTP `400`.
+  - Post-deploy Chrome e2e opened `https://www.yuzucigarclub.com/humidor/?section=cigars&codexImageE2E=32` with a fresh Cognito member session, rendered the uploaded cigar photo with natural size `1x1`, reloaded under the production service worker, and found zero broken images, zero image network failures, and zero serious console messages.
+  - Post-deploy Fat Bottom Betty modal-path API check returned `needs_review` with no proposed image URL and `containsRetailerImage=false`, so the approval dialog will not show a broken retailer image for that case.
+  - Removed the temporary Lambda package zip and package directory after deployment.
+- Dirty worktree note:
+  - The workspace was already broadly dirty with unrelated/concurrent docs, catalog, humidor, infrastructure, package, and image asset changes. This pass intentionally changed only the stale humidor image metadata repair path, related Lambda tests, and this ledger entry.
+
+## 2026-05-29 AI Cigar Adder Rekognition Visual Labels
+
+- Goal: make the AI Cigar Adder understand uploaded cigar images with Amazon Rekognition beyond OCR-only text extraction.
+- Skills/guidance used:
+  - `aws`
+  - `superpowers:test-driven-development`
+- Local Next.js 16.2.6 docs checked before editing:
+  - `node_modules/next/dist/docs/01-app/01-getting-started/05-server-and-client-components.md`
+  - `node_modules/next/dist/docs/01-app/02-guides/static-exports.md`
+  - `node_modules/next/dist/docs/01-app/01-getting-started/15-route-handlers.md`
+- AWS SDK surface checked locally:
+  - `node_modules/@aws-sdk/client-rekognition/dist-types/commands/DetectLabelsCommand.d.ts`
+- Patched:
+  - `infra/lambda/ycc-api/index.js`
+  - `infra/ycc-phase2-lambda-runtime-policy.json`
+  - `infra/lambda/ycc-api/README.md`
+  - `src/lib/live-api.ts`
+  - `tests/lambda-ycc-api.test.ts`
+  - `tests/bedrock-infra-contract.test.ts`
+  - `.env.example`
+  - `docs/codex-worktree-tracking.md`
+- Behavior:
+  - Existing `FEATURE_REKOGNITION=detect_text_ready` remains OCR-only and backward compatible.
+  - New `FEATURE_REKOGNITION=image_understanding_ready` runs both Rekognition `DetectText` and `DetectLabels` for uploaded PNG/JPEG cigar images.
+  - `DetectLabels` results are filtered by `REKOGNITION_MIN_LABEL_CONFIDENCE`, capped at 10 labels, deduped, and passed into the Bedrock Nova Vision prompt as supplemental cigar/box/band/receipt/humidor visual context.
+  - Client responses now include safe Rekognition label status/count/labels alongside OCR text status/count/text lines.
+  - Logs record Rekognition label status/count/threshold only, not uploaded image bytes, OCR text, labels, or private notes.
+  - Lambda runtime policy now grants `rekognition:DetectLabels` alongside `rekognition:DetectText` for byte-image analysis.
+- TDD and verification:
+  - Red run: `node --import tsx --test --test-name-pattern "Rekognition visual labels|Rekognition text and label" tests\lambda-ycc-api.test.ts tests\bedrock-infra-contract.test.ts` failed because `ai.rekognition.labelStatus` was missing and the runtime policy did not grant `rekognition:DetectLabels`.
+  - Green focused run passed for Rekognition OCR, visual labels, and runtime policy coverage.
+  - `node --import tsx --test --test-name-pattern "humidor image identification|Rekognition text and label" tests\lambda-ycc-api.test.ts tests\bedrock-infra-contract.test.ts` passed 5/5.
+  - `npx eslint infra\lambda\ycc-api\index.js tests\lambda-ycc-api.test.ts tests\bedrock-infra-contract.test.ts src\lib\live-api.ts` passed.
+  - `npx tsc --noEmit --pretty false` passed.
+  - `node --import tsx --test tests\lambda-ycc-api.test.ts tests\bedrock-infra-contract.test.ts` passed 148/148.
+  - `npm test` passed 534/534.
+  - `npm run build` passed with Next.js 16.2.6 static export and 990 generated pages.
+- Deployment note:
+  - Code and infra policy are ready for packaging/deployment, but this pass did not update the live Lambda alias or live IAM policy. Live enablement should apply `infra/ycc-phase2-lambda-runtime-policy.json`, publish/promote a Lambda package containing the code, and set `FEATURE_REKOGNITION=image_understanding_ready` plus `REKOGNITION_MIN_LABEL_CONFIDENCE=70` or another approved threshold.
+- Dirty worktree note:
+  - The workspace was already broadly dirty with unrelated/concurrent storefront, catalog, humidor, infrastructure, package, docs, and static asset changes. This pass intentionally touched only the Rekognition image-understanding files listed above and this ledger entry.
+
+## 2026-05-28 Humidor Detail Tasting Notes and Inventory Actions
+
+- Goal: improve the detailed cigar card tasting-note presentation and add member inventory actions for deleting cigars and logging cigars shared/given away.
+- Skills/guidance used:
+  - `superpowers:using-superpowers`
+  - `superpowers:test-driven-development`
+  - `build-web-apps:frontend-testing-debugging`
+  - `superpowers:systematic-debugging`
+  - `build-web-apps:react-best-practices`
+  - `superpowers:verification-before-completion`
+  - `browser:browser`
+- Local Next.js 16.2.6 docs checked before editing:
+  - `node_modules/next/dist/docs/01-app/01-getting-started/05-server-and-client-components.md`
+  - `node_modules/next/dist/docs/01-app/02-guides/static-exports.md`
+- Patched:
+  - `src/lib/humidor-tasting-notes.ts`
+  - `src/components/humidor-dashboard.tsx`
+  - `src/lib/live-api.ts`
+  - `infra/lambda/ycc-api/index.js`
+  - `tests/humidor-tasting-notes.test.ts`
+  - `tests/humidor-dashboard.test.ts`
+  - `tests/lambda-ycc-api.test.ts`
+  - `tests/live-page-editor.test.ts`
+  - `docs/codex-worktree-tracking.md`
+- Behavior:
+  - Detail-card tasting notes are parsed into readable paragraphs plus a detail grid when agent-style notes contain runs such as `Pulled cigar details: - Manufacturer: ... - Country: ...`.
+  - Signed-in Cognito member detail cards now expose `Shared` and `Delete` actions next to `Close Details`.
+  - `Shared` decrements inventory by one cigar, removes the card when quantity reaches zero, and inserts a `member_shared_gift` smoke-log/activity record so giveaways are tracked separately from smoked sessions.
+  - `Delete` archives the saved humidor item by setting quantity to zero and removing it from the visible inventory.
+  - The existing `PATCH /humidor/items/{id}` route handles normal location/aging edits, shared inventory updates, and archive/delete actions, avoiding a new API Gateway route.
+  - Smoke-log rows now show a `Shared` badge and inventory-activity copy for shared-gift records.
+- TDD and verification:
+  - Red tests first reproduced missing tasting-note formatting, missing dashboard actions/API helpers, and missing Lambda share/archive behavior.
+  - `node --import tsx --test tests\humidor-tasting-notes.test.ts` passed 2/2.
+  - `node --import tsx --test tests\humidor-dashboard.test.ts --test-name-pattern "detailed cigar|delete cigars|shared inventory"` passed.
+  - `node --import tsx --test tests\lambda-ycc-api.test.ts --test-name-pattern "logs shared cigars|archives deleted cigars"` passed.
+  - A full `npm test` first exposed one stale bootstrap-order assertion in `tests/live-page-editor.test.ts`; the test now keys by URL and accounts for `/humidor/smokes`.
+  - Final `npm test` passed 532/532.
+  - `npx eslint src\components\humidor-dashboard.tsx src\lib\live-api.ts src\lib\humidor-tasting-notes.ts infra\lambda\ycc-api\index.js tests\humidor-dashboard.test.ts tests\humidor-tasting-notes.test.ts tests\lambda-ycc-api.test.ts tests\live-page-editor.test.ts` passed.
+  - `npx tsc --noEmit --pretty false` passed.
+  - `npm run build` passed with Next.js 16.2.6 and generated 990 static pages.
+  - `git diff --check` reported only existing CRLF normalization warnings and no whitespace errors.
+- Browser QA:
+  - Static preview at `http://127.0.0.1:3068/humidor/` loaded the rebuilt Humidor export, opened the detailed cigar card, verified the note section rendering, and reported no console warnings/errors.
+  - Screenshot saved at `output/humidor-tasting-note-section-qa-20260528.png`.
+  - Anonymous demo mode intentionally hides member inventory mutation buttons; the `Shared`/`Delete` member-only surface and API behavior are covered by the dashboard and Lambda tests above.
+- Dirty worktree note:
+  - The workspace remains broadly dirty with unrelated/concurrent docs, catalog/imported inventory, product detail, package, infrastructure, image asset, concierge, and test changes.
+  - This pass intentionally changed only the Humidor detail-card formatting/actions, live API/Lambda share-delete handling, related tests, the stale bootstrap-order test, generated browser QA screenshot, and this ledger entry.
+
+## 2026-05-28 Floating Concierge Play Button and Reply Formatting
+
+- Goal: fix the sitewide concierge reply Play button and make AI responses easier to read than one raw markdown-like paragraph.
+- Skills/guidance used:
+  - `superpowers:using-superpowers`
+  - `superpowers:systematic-debugging`
+  - `superpowers:test-driven-development`
+  - `build-web-apps:frontend-testing-debugging`
+  - `browser:browser`
+  - `build-web-apps:react-best-practices`
+- Local Next.js 16.2.6 docs checked before editing:
+  - `node_modules/next/dist/docs/01-app/01-getting-started/05-server-and-client-components.md`
+  - `node_modules/next/dist/docs/01-app/02-guides/static-exports.md`
+  - `node_modules/next/dist/docs/01-app/03-api-reference/01-directives/use-client.md`
+- Root cause:
+  - The deployed CSP allows `media-src 'self' blob:` but does not allow `data:` media.
+  - `FloatingConcierge` tried to play Polly audio with `new Audio("data:...")`, so deployed browsers could block the Play button even when synthesized audio was present.
+  - The reply renderer displayed `response.reply` as one paragraph, so markdown emphasis markers and recommendation runs such as `**Cigar**: notes` were hard to scan.
+- Patched:
+  - `src/components/floating-concierge.tsx`
+  - `tests/site-chrome-console-health.test.ts`
+  - `docs/codex-worktree-tracking.md`
+- Behavior:
+  - Synthesized concierge speech is now decoded into a temporary `Blob` URL before playback, matching the current production CSP.
+  - Temporary speech object URLs are revoked on replacement, playback end, and component cleanup.
+  - Previously synthesized replies remain playable even if the member later toggles voice output off.
+  - Concierge replies are normalized into readable paragraphs and list blocks, and common markdown emphasis markers are stripped from visible text.
+- TDD and verification:
+  - Red run: `node --import tsx --test tests\site-chrome-console-health.test.ts` failed because `URL.createObjectURL` and `formatConciergeReply` were missing.
+  - Green run passed after the component patch.
+  - Focused related run passed: `node --import tsx --test --test-name-pattern "public chrome owns the always-on concierge|live API client sends authenticated concierge" tests\live-page-editor.test.ts` passed 3/3.
+  - `node --import tsx --test tests\site-chrome-console-health.test.ts` passed 4/4.
+  - `npx eslint src\components\floating-concierge.tsx tests\site-chrome-console-health.test.ts` passed.
+  - In-app Browser opened `http://localhost:3000/`, found the sitewide launcher, opened the concierge panel, verified the message textarea, voice controls, Cognito prompt, no framework overlay, and no initial console warnings/errors before interaction.
+- Verification blockers discovered:
+  - `npx tsc --noEmit --pretty false` is currently blocked by pre-existing dirty `src/components/humidor-dashboard.tsx` smoke-log helper errors: missing `buildSmokeLogFormForItem`, `getCurrentSmokeDateTimeLocalValue`, `buildSmokeLogPayload`, plus implicit `any` parameters.
+  - `npm run build` compiles but fails during TypeScript for the same humidor smoke-log errors.
+  - A broader `tests\live-page-editor.test.ts tests\site-chrome-console-health.test.ts` run has one unrelated failure in `live API client keeps humidor inventory when alert preferences fail`, because the current live API bootstrap calls `/humidor/smokes` before the test's expected `/humidor/alerts`.
+  - Browser screenshot capture timed out twice with the in-app Browser `Page.captureScreenshot` path, so this pass has DOM/browser-state evidence but no screenshot artifact.
+  - After opening the panel, Browser reported existing homepage motion/reduced-motion hydration noise unrelated to the concierge patch.
+- Dirty worktree note:
+  - The workspace remains broadly dirty with unrelated/concurrent backend, humidor, catalog, infrastructure, docs, package, and image changes. Final status also showed untracked `tests/humidor-tasting-notes.test.ts`.
+  - This pass intentionally changed only the floating concierge, its source-level regression tests, and this ledger entry.
+
+## 2026-05-28 Humidor Renderable Image Guardrails Follow-up
+
+- Goal: fix the remaining broken image icon in the Humidor Agent review dialog for proposed images such as Fat Bottom Betty.
+- Root cause:
+  - The first image guardrail rejected placeholder paths and protected saved photos, but both backend and frontend still treated any HTTPS image URL as renderable.
+  - Live CSP only allows self, Yuzu S3 humidor images, and a small set of curated image hosts, so public retailer images such as Corona Cigar/Drew Estate/CigarPlace/Cigars Direct could pass enrichment validation while still being blocked or broken in the browser.
+  - The review dialog therefore attempted to render the proposed remote image, while the visible filename made the broken image look like a bad local path.
+- Patched:
+  - `infra/lambda/ycc-api/index.js`
+  - `src/components/humidor-dashboard.tsx`
+  - `tests/lambda-ycc-api.test.ts`
+  - `tests/humidor-dashboard.test.ts`
+  - `docs/codex-worktree-tracking.md`
+- Behavior:
+  - Humidor enrichment now requires proposed agent/web image URLs to be renderable by the deployed storefront before adding `cigarImage` to pending updates.
+  - Public web references can still contribute verified info/MSRP evidence, but CSP-blocked retailer image URLs are ignored and produce a review note instead of an approvable image update.
+  - My Cigars and the review modal now render only data URLs, known Yuzu public assets, signed Yuzu S3 humidor image URLs, or other explicitly CSP-allowed image hosts.
+- Verification:
+  - Red tests first reproduced the failure: arbitrary HTTPS image URLs were renderable in the frontend helper, and a Corona Cigar `og:image` URL produced a `pending_approval` image update.
+  - `node --import tsx --test tests\lambda-ycc-api.test.ts --test-name-pattern "rejects public web image URLs|performs web search|fills missing info image|previews updates until member approval|retrieves knowledge base context"` passed.
+  - `node --import tsx --test tests\humidor-dashboard.test.ts --test-name-pattern "non-renderable placeholder cigar image paths|humidor agent enrichment|member approval"` passed.
+  - `npx eslint infra\lambda\ycc-api\index.js tests\lambda-ycc-api.test.ts src\components\humidor-dashboard.tsx tests\humidor-dashboard.test.ts` passed.
+  - `npx tsc --noEmit --pretty false` passed.
+  - `npm run build` passed with Next.js 16.2.6 and generated 990 static pages.
+  - `npm test` passed 522/522.
+- Live deployment:
+  - Packaged Lambda artifact `output/humidor-renderable-image-guardrails-20260528.zip` with code hash `An6ZQbaI5nBYHeRrbPQGEpip8kmSVz9sRPBhdCXkiSM=`.
+  - Updated Lambda `$LATEST` for `ycyyy`, published version `31`, and promoted alias `ycyyy:live` to version `31` with description `Humidor renderable image guardrails 2026-05-28`.
+  - Lambda readback confirmed `ycyyy:live` version `31`, state `Active`, `LastUpdateStatus=Successful`, runtime `nodejs22.x`, last modified `2026-05-29T00:00:43.000+0000`, and code hash `An6ZQbaI5nBYHeRrbPQGEpip8kmSVz9sRPBhdCXkiSM=`.
+  - Live `GET https://api.yuzucigarclub.com/health?deep=1` returned HTTP `200`, `status=ok`, `databaseWrites=schema_ready`, `bedrock=runtime_ready`, and `ses=pending_production_access`.
+  - Amplify app `d2yxcklt245wh0`, branch `staging`, job `138` reached `SUCCEED`.
+  - Amplify smoke returned `homeStatus=200`, `assetStatus=200`, and asset path `/_next/static/chunks/05dbl1h~2f9gs.css`.
+  - Additional live smokes returned HTTP `200` for `https://staging.d2yxcklt245wh0.amplifyapp.com/humidor/` and `https://www.yuzucigarclub.com/humidor/`.
+  - In-app browser verification opened `https://staging.d2yxcklt245wh0.amplifyapp.com/humidor/?deploy=138`, switched to My Cigars, found 6 rendered images, 0 broken images, 0 non-renderable retailer image sources, and no console warnings/errors.
+  - Removed the temporary Amplify deploy zip plus the Lambda package zip/stage directory after successful deployment and smoke checks.
+- Dirty worktree note:
+  - The workspace remains broadly dirty with unrelated/concurrent docs, catalog/imported inventory, product detail, infrastructure, package, static asset, and test changes. This pass intentionally changed only Humidor renderable-image validation, related tests, regenerated build output, and this ledger entry.
+
+## 2026-05-28 Humidor Agent Image and Match Guardrails
+
+- Goal: fix Humidor Agent suggestions that proposed incorrect cigar identity/MSRP data and replaced existing member cigar images with broken placeholder image paths.
+- Root cause:
+  - Enrichment accepted weak one-term web/reference matches, so broad names such as "Ecuador Hand Made" could be matched to unrelated Ecuador cigars.
+  - Agent-suggested placeholder/local image paths such as `/assets/cigar-product.jpg` were treated as valid enrichment image updates, then rendered as broken images.
+  - Existing image metadata such as `s3Key`/`fileName` did not fully protect an item from future image enrichment, so an already uploaded cigar photo could still be considered missing.
+  - Implausible public web prices could be applied automatically as MSRP instead of being routed to member review.
+- Patched:
+  - `infra/lambda/ycc-api/index.js`
+  - `src/components/humidor-dashboard.tsx`
+  - `tests/lambda-ycc-api.test.ts`
+  - `tests/humidor-dashboard.test.ts`
+  - `docs/codex-worktree-tracking.md`
+- Behavior:
+  - Humidor enrichment now treats any existing image metadata as a saved image and will not replace it automatically.
+  - Agent/reference images now reject first-party placeholder asset paths unless they are known renderable product/inventory assets.
+  - Ambiguous no-brand cigar names need stronger identity-term coverage before web references can drive brand/line/MSRP enrichment.
+  - Public web unit values over the enrichment auto-apply cap are sent to review notes instead of being applied as MSRP.
+  - The My Cigars UI filters non-renderable placeholder paths before setting an `<img src>`, preventing broken-image alt text from appearing.
+- Verification:
+  - Red tests first reproduced the failure modes: saved image replacement, placeholder asset acceptance, broad one-term Ecuador matching, and implausible public MSRP auto-apply.
+  - `node --import tsx --test tests\lambda-ycc-api.test.ts --test-name-pattern "keeps saved image metadata|rejects placeholder asset|skips broad one-term|implausible public web prices|performs web search|uses launch catalog candidates"` passed.
+  - `node --import tsx --test tests\humidor-dashboard.test.ts --test-name-pattern "placeholder cigar image|humidor agent enrichment|member approval|demo data"` passed.
+  - `npx eslint infra\lambda\ycc-api\index.js tests\lambda-ycc-api.test.ts src\components\humidor-dashboard.tsx tests\humidor-dashboard.test.ts` passed.
+  - `npx tsc --noEmit --pretty false` passed.
+  - `npm run build` passed with Next.js 16.2.6 and generated 990 static pages.
+  - `npm test` passed 521/521.
+  - Browser/static preview check at `http://127.0.0.1:3067/humidor/` loaded the Humidor page, switched to My Cigars, found 6 rendered images, 0 broken images, 0 placeholder `cigar-product.jpg` sources, and no console warnings/errors. Screenshot saved at `output/humidor-image-qa-20260528.png`.
+- Live deployment:
+  - Packaged Lambda artifact `output/humidor-agent-image-guardrails-20260528.zip` with code hash `Zpc16TcbNrBlpYmoPNZUdT6uyBCcx4MVzRRjkaJc6sI=`.
+  - Updated Lambda `$LATEST` for `ycyyy`, published version `30`, and promoted alias `ycyyy:live` to version `30` with description `Humidor agent image and match guardrails 2026-05-28`.
+  - Lambda readback confirmed `ycyyy:live` version `30`, state `Active`, `LastUpdateStatus=Successful`, runtime `nodejs22.x`, last modified `2026-05-28T22:41:10.000+0000`, and code hash `Zpc16TcbNrBlpYmoPNZUdT6uyBCcx4MVzRRjkaJc6sI=`.
+  - Live `GET https://api.yuzucigarclub.com/health?deep=1` returned HTTP `200`, `status=ok`, `databaseWrites=schema_ready`, `bedrock=runtime_ready`, and `ses=pending_production_access`.
+  - `npm run build` passed immediately before the static deploy with Next.js 16.2.6 and generated 990 static pages.
+  - Amplify app `d2yxcklt245wh0`, branch `staging`, job `137` reached `SUCCEED`.
+  - Amplify smoke returned `homeStatus=200`, `assetStatus=200`, and asset path `/_next/static/chunks/05dbl1h~2f9gs.css`.
+  - Additional live smokes returned HTTP `200` for `https://staging.d2yxcklt245wh0.amplifyapp.com/humidor/`, `https://www.yuzucigarclub.com/humidor/`, and `https://api.yuzucigarclub.com/health?deep=1`.
+  - In-app browser verification opened `https://staging.d2yxcklt245wh0.amplifyapp.com/humidor/?deploy=137`, found 6 rendered images, 0 broken images, 0 placeholder `cigar-product.jpg` sources, and no console warnings/errors.
+  - Removed the temporary Amplify deploy zip plus the Lambda package zip/stage directory after successful deployment and smoke checks.
+- Dirty worktree note:
+  - The workspace remains broadly dirty with unrelated/concurrent docs, catalog/imported inventory, product detail, infrastructure, package, static asset, and test changes. This pass intentionally changed only the Humidor enrichment guardrails, My Cigars image filtering, related tests, regenerated build output, the browser evidence screenshot, and this ledger entry.
+
+## 2026-05-28 Full Humidor Live User Audit
+
+- Goal: test the live Humidor experience as a real member with a newly created Cognito user, exercise every major feature path, and close logic gaps found during the pass.
+- Test account:
+  - Created and confirmed `codex-humidor-e2e-20260528-132210@example.com` in Cognito user pool `us-east-1_63U9PflAX`.
+  - Added `member` and `kisha` access, plus Kisha/member custom attributes.
+  - Left the Cognito user and live Humidor QA records in place as an audit fixture; removed the temporary local credential/token JSON files from `%TEMP%` before handoff.
+- Browser/live user journey verified:
+  - Signed in through the production inline Cognito account form and confirmed the account page showed the live Kisha/member profile.
+  - Opened the authenticated live Humidor and verified live records loaded without console warnings or errors.
+  - Added and saved a Humidor location with tray names.
+  - Added a manual cigar, imported a bulk CSV cigar, sorted My Cigars, opened item details, updated location/tray, asked the Humidor Agent for review, and approved reviewable enrichment updates.
+  - Verified Aging records use the member's local calendar day for date-only API values, not the previous UTC day.
+  - Verified Alerts preference toggles, iOS web push guide visibility, Settings device search, HUMIDIFIER pairing, and overview humidity/temperature stats from the paired device.
+  - Saved final browser evidence at `output/humidor-live-audit-overview-20260528.png`.
+- Live API paths verified:
+  - `/health?deep=1` returned `status=ok`, DB proxy reachable, SSL verify-full ready, database writes `schema_ready`, Bedrock `runtime_ready`, and SES `pending_production_access`.
+  - `/account/me` returned the expected authenticated Kisha/member account.
+  - Humidor item create stored an uploaded cigar image to S3 and returned a signed image URL with inline `dataUrl` removed.
+  - Humidor enrichment returned a member-review preview with catalog/knowledge-base/direct-runtime fallback evidence and reviewable fields.
+  - Humidor chat answered from the saved member inventory.
+- Logic gaps fixed during the pass:
+  - Cognito/API Gateway group parsing now splits space-delimited and comma-delimited group claims into real groups.
+  - Humidor create now preserves raw uploaded image payloads long enough to store them in S3.
+  - Humidor Agent enrichment falls back to direct Bedrock Runtime and launch catalog candidates when the agent refuses or returns unusable structured JSON.
+  - Cognito post-confirmation signup events now return the original event and optionally send the welcome email without blocking signup.
+  - Date-only Humidor aging/display values now parse as local calendar dates to avoid Phoenix/off-UTC backshifts.
+  - A same-day follow-up guardrail also prevents web-price enrichment from treating marketing dollar amounts as MSRP and converts box MSRP to per-cigar value.
+- Verification:
+  - `node --import tsx --test tests\lambda-ycc-api.test.ts tests\humidor-dashboard.test.ts tests\humidor-devices.test.ts tests\humidor-bulk-import.test.ts tests\humidor-aging.test.ts tests\humidor-table-sort.test.ts tests\live-wiring.test.ts tests\cognito-auth.test.ts` passed 207/207.
+  - `npx eslint infra\lambda\ycc-api\index.js tests\lambda-ycc-api.test.ts src\lib\humidor-aging.ts src\components\humidor-dashboard.tsx tests\humidor-aging.test.ts tests\humidor-dashboard.test.ts` passed.
+  - `npm run build` passed with Next.js 16.2.6 and generated 990 static pages.
+- Live deployment/readback:
+  - Final Lambda readback confirmed `ycyyy:live` is version `29`, state `Active`, `LastUpdateStatus=Successful`, `HUMIDOR_ENRICHMENT_WEB_SEARCH=ready`, code hash `7b6l8IO4mzl4KC98lAie6ElY1xV/8b/iWMDY2P2bSuc=`.
+  - Amplify branch `staging` latest successful deployment is job `135`; retry job `136` failed and did not become the active successful deployment.
+- Coverage limits:
+  - The native browser file picker was not driven directly in the UI audit, but uploaded-image persistence was covered by live API smoke plus automated Humidor UI/API tests.
+  - Browser/OS push notification permission was not accepted, but alert preference persistence and dispatch logic were covered by UI and Lambda tests.
+- Dirty worktree note:
+  - The workspace remains broadly dirty with unrelated/concurrent static, catalog, inventory image, product detail, infrastructure, package, docs, and test changes. This audit intentionally changed the Humidor Lambda/API logic, Humidor aging/dashboard date handling, related tests, and this ledger entry.
+
+## 2026-05-28 My Cigars S3 Image CSP Fix
+
+- Goal: fix the broken image icons in My Cigars after moving uploaded humidor photos from inline data URLs to S3 signed URLs.
+- Root cause:
+  - The S3 objects and signed URLs were valid; a sampled migrated photo at `ycc/humidor-images/.../ecuador-hand-made.jpeg` returned HTTP `200`, `Content-Type: image/jpeg`, and the expected byte size.
+  - The live browser `Content-Security-Policy` still blocked the signed S3 host because `img-src` did not include `https://classroom2.s3.us-east-1.amazonaws.com`.
+  - The browser therefore rendered broken image alt text even though the API and S3 storage path were working.
+- Patched:
+  - `customHttp.yml`
+  - `next.config.ts`
+  - `tests/launch-readiness.test.ts`
+  - `docs/codex-worktree-tracking.md`
+- Behavior:
+  - Production CSP now allows images from the exact Yuzu application bucket host used by humidor signed URLs: `https://classroom2.s3.us-east-1.amazonaws.com`.
+  - Next image remote patterns also allow `/ycc/humidor-images/**` from that host for local/build-time consistency, while the rendered humidor images remain `unoptimized`.
+- TDD and verification:
+  - Red run: `node --import tsx --test --test-name-pattern "Amplify custom headers include production browser security headers" tests\launch-readiness.test.ts` failed because the S3 host was missing from `img-src`.
+  - Green run passed after updating `customHttp.yml`.
+  - `node --import tsx --test tests\launch-readiness.test.ts tests\humidor-dashboard.test.ts` passed 49/49.
+  - `npx eslint next.config.ts tests\launch-readiness.test.ts src\components\humidor-dashboard.tsx` passed.
+  - `npx tsc --noEmit --pretty false` passed.
+  - `npm run build` passed with Next.js 16.2.6 and generated 990 static pages.
+- Live deployment:
+  - Ran the Yuzu Amplify static deploy helper with `--skip-build --label humidor-s3-image-csp-20260528`; job `134` succeeded and smoke checks returned home HTTP `200` plus `_next/static` asset HTTP `200`.
+  - Found that manual zip deploys do not update Amplify app-level `customHeaders` from the repo file automatically, so updated Amplify app `d2yxcklt245wh0` with `aws amplify update-app --custom-headers file://customHttp.yml`.
+  - A follow-up deployment was created as job `135` and succeeded after the app-level header update. A duplicate retry job `136` failed; it did not become the active successful deployment.
+  - After CloudFront propagation, both `https://www.yuzucigarclub.com/humidor/?csp-humidor-s3=job135-prop` and `https://staging.d2yxcklt245wh0.amplifyapp.com/humidor/?csp-humidor-s3=job135-prop` returned HTTP `200` with CSP `img-src` including `https://classroom2.s3.us-east-1.amazonaws.com`.
+  - Removed the temporary root deploy zips created by the helper after verification.
+- Dirty worktree note:
+  - The workspace remains broadly dirty with unrelated/concurrent Lambda, humidor aging/dashboard, edge template, ratings/reviews, catalog/imported inventory, product detail, docs, tests, and untracked product image asset changes. This pass intentionally changed the S3 image CSP/Next image allowlist, its readiness test, and this ledger entry.
+
+## 2026-05-28 Humidor Agent MSRP Web Price Guardrail
+
+- Goal: fix the Humidor Agent review result where `Man O' War` proposed `MSRP After: $1.00` from public web-search evidence.
+- Skills/guidance used:
+  - `superpowers:systematic-debugging`
+  - `superpowers:test-driven-development`
+  - `build-web-apps:frontend-testing-debugging`
+  - `aws`
+- Local Next.js 16.2.6 docs checked before code edits:
+  - `node_modules/next/dist/docs/01-app/01-getting-started/05-server-and-client-components.md`
+  - `node_modules/next/dist/docs/01-app/02-guides/static-exports.md`
+- Root cause:
+  - The web fallback MSRP parser accepted any `price` phrase followed by a nearby number, so retail-site marketing copy such as price guarantees, shipping, savings, or cigar-count guarantee text could be interpreted as the product MSRP.
+  - Once the first source returned a false low value, later sources with actual box MSRP/count data were ignored.
+- Patched:
+  - `infra/lambda/ycc-api/index.js`
+  - `tests/lambda-ycc-api.test.ts`
+  - `docs/codex-worktree-tracking.md`
+- Behavior:
+  - Web enrichment now accepts explicit MSRP/list-price, single/each/per-cigar, product table, or retail price candidates instead of a generic first dollar amount.
+  - Marketing and logistics dollar amounts such as free shipping, gift certificates, advertised-price guarantees, savings, points, and return/guarantee text are filtered out.
+  - Box/bundle MSRP values are converted to per-cigar value when a local package count such as `Box - 22 Total Cigars` is present.
+- TDD and verification:
+  - Red run: `node --import tsx --test tests\lambda-ycc-api.test.ts --test-name-pattern "ignores marketing dollar amounts"` failed with `1 !== 7.75`.
+  - Green focused run passed after the parser fix.
+  - Nearby enrichment run passed: `node --import tsx --test tests\lambda-ycc-api.test.ts --test-name-pattern "humidor item enrichment route (performs web search|uses launch catalog candidates|previews member review|retrieves knowledge base|falls back to direct runtime|fills missing info image and MSRP|previews updates)|ignores marketing dollar amounts"`.
+  - `npx eslint infra\lambda\ycc-api\index.js tests\lambda-ycc-api.test.ts` passed.
+  - `node --import tsx --test tests\lambda-ycc-api.test.ts` passed 129/129.
+  - `npx tsc --noEmit --pretty false` passed.
+- Live deployment:
+  - Built `output\ycc-api-humidor-msrp-price-20260528.zip` with code hash `7b6l8IO4mzl4KC98lAie6ElY1xV/8b/iWMDY2P2bSuc=`.
+  - Updated Lambda `ycyyy`, published immutable version `29` with description `Humidor enrichment MSRP web price guardrail 2026-05-28`, and moved alias `live` to version `29`.
+  - Readback confirmed `ycyyy:live` version `29`, state `Active`, `LastUpdateStatus=Successful`, `HUMIDOR_ENRICHMENT_WEB_SEARCH=ready`, and matching code hash `7b6l8IO4mzl4KC98lAie6ElY1xV/8b/iWMDY2P2bSuc=`.
+  - `https://api.yuzucigarclub.com/health?deep=1&humidor-msrp=29` returned HTTP `200` with `status=ok`, database writes `schema_ready`, Bedrock `runtime_ready`, and SES still `pending_production_access`.
+- Dirty worktree note:
+  - The workspace remains broadly dirty with unrelated/concurrent static, catalog, inventory image, product-detail, ratings/reviews, infrastructure, package, and docs changes. This pass intentionally changed only the Lambda humidor web-price parser, its regression test, and this ledger entry.
+
+## 2026-05-28 Cognito Signup Welcome Email
+
+- Goal: send new Cognito signups a welcome email that includes account details plus light Yuzu marketing for the digital humidor, shop/member drops, and memberships.
+- Skills/guidance used:
+  - `superpowers:using-superpowers`
+  - `superpowers:test-driven-development`
+- Local Next.js 16.2.6 docs checked before code edits:
+  - `node_modules/next/dist/docs/01-app/02-guides/authentication.md`
+  - `node_modules/next/dist/docs/01-app/01-getting-started/15-route-handlers.md`
+- Patched:
+  - `infra/lambda/ycc-api/index.js`
+  - `infra/ycc-phase1-edge.yaml`
+  - `tests/lambda-ycc-api.test.ts`
+  - `tests/api-gateway-contract.test.ts`
+  - `docs/codex-worktree-tracking.md`
+- Behavior:
+  - The shared YCC Lambda now detects Cognito `PostConfirmation_ConfirmSignUp` trigger events and sends a best-effort SES welcome email when `FEATURE_SES=ready`.
+  - The email includes normalized account details (email, display name, membership status/tier when present), `/account/`, `/humidor/`, `/shop/`, and `/membership/` links, and 21+ compliance copy.
+  - SES pending/failure/missing-email cases are logged but return the original Cognito event so account confirmation is not blocked by email delivery.
+  - The CloudFormation user pool now sets `LambdaConfig.PostConfirmation` to `ExistingLambdaLiveAliasArn`, depends on the Cognito invoke permission, and grants `cognito-idp.amazonaws.com` permission to invoke the live Lambda alias.
+- TDD and verification:
+  - Red run: `node --import tsx --test --test-name-pattern "Cognito post-confirmation|Cognito user signups invoke" tests\lambda-ycc-api.test.ts tests\api-gateway-contract.test.ts` failed because the handler returned an HTTP 401 shape and the template had no post-confirmation trigger wiring.
+  - Green focused run: the same command passed 3/3 after the Lambda/template changes.
+  - Broader run: `node --import tsx --test tests\api-gateway-contract.test.ts tests\lambda-ycc-api.test.ts` passed 137/137.
+  - `npx eslint infra\lambda\ycc-api\index.js tests\lambda-ycc-api.test.ts tests\api-gateway-contract.test.ts` passed.
+  - `npx tsc --noEmit --pretty false` passed.
+  - An intermediate broad run made concurrently with TypeScript checking showed one transient, unrelated humidor MSRP assertion failure; that test passed in isolation and the final broad rerun passed.
+- Deployment note:
+  - This pass updated local Lambda and infrastructure code only. The new welcome email will require packaging/publishing the Lambda alias and applying the Cognito user-pool template change before it is live.
+- Dirty worktree note:
+  - The workspace remains broadly dirty with unrelated/concurrent catalog, ratings/reviews, product-detail, humidor/agent, package, docs, and untracked product image changes. This pass intentionally changed only the Cognito welcome-email behavior, its infrastructure trigger wiring, tests, and this ledger entry.
+
+## 2026-05-28 Humidor Agent KB Miss Web Search Fallback
+
+- Goal: fix the live `YCCHumidorAgent could not locate enough reference data for Ecuador Hand Made (info, image, msrp)` review note and make the humidor agent perform an actual web search when the KB does not contain enough reference facts.
+- Skills/guidance used:
+  - `superpowers:systematic-debugging`
+  - `superpowers:test-driven-development`
+  - `aws`
+- Root cause:
+  - The deployed knowledge base did not contain a real `Ecuador Hand Made` reference; the previous local regression covered this only by injecting mocked KB text.
+  - The humidor enrichment prompt asked the model to use a browser/search tool, but the Lambda runtime had no actual web-search implementation for KB misses.
+- Patched:
+  - `infra/lambda/ycc-api/index.js`
+  - `tests/lambda-ycc-api.test.ts`
+  - `package.json`
+  - `docs/codex-worktree-tracking.md`
+- Behavior:
+  - When KB/Bedrock agent and direct runtime still return no saveable enrichment, the Lambda now runs an enabled server-side public web search, fetches candidate result pages, and extracts labeled cigar facts such as brand, vitola, wrapper, origin, strength, MSRP/price, and stable HTTPS product images.
+  - The web-search path is gated by `HUMIDOR_ENRICHMENT_WEB_SEARCH=ready` and records `webSearchStatus`, `webSearchResultCount`, and source summaries in the AI response.
+  - If web search cannot find enough facts, the Lambda falls back to Yuzu launch-catalog candidates. For ambiguous `Ecuador Hand Made`, this surfaces Camacho Ecuador catalog matches, safely fills common brand/per-cigar public price where possible, and leaves image/vitola gaps in `needsReview`.
+  - Launch catalog normalization now keeps optional image/spec fields when they exist so future catalog data can directly support humidor enrichment.
+  - `npm test` now runs test files serially (`--test-concurrency=1`) because the Lambda tests patch global AWS module/env state and the all-files parallel runner caused a false failure in an unrelated humidor image test.
+- TDD and verification:
+  - Red run: `node --import tsx --test tests\lambda-ycc-api.test.ts --test-name-pattern "web search when KB has no usable reference data|launch catalog candidates when KB has no exact Ecuador reference"` failed with `needs_review` instead of `pending_approval`.
+  - Green run: the same Lambda suite passed after adding the web-search and catalog fallback paths.
+  - `npm run lint` passed.
+  - `npx tsc --noEmit` passed.
+  - `npm test` passed 510/510.
+- AWS docs and live runtime checks:
+  - Reviewed AWS Lambda VPC internet-access docs: VPC-connected Lambda functions need private subnet routes through NAT gateways for public internet access.
+  - Live Lambda `ycyyy:live` uses subnets `subnet-06116a5414f29c8bb` and `subnet-067af6ad21ff85cc2`; their route tables have active `0.0.0.0/0` NAT routes through `nat-0460beed74a121308` and `nat-06330ee4dd558e916`.
+- Live deployment:
+  - Built `output\ycc-api-humidor-web-search-20260528.zip` with code hash `mkvub545GrCCDCbUDKAP0RqL4nAhMG3wYFnmJiEGyOE=`.
+  - Published Lambda version `27` with description `Live API humidor web search fallback with enabled runtime flag 2026-05-28`.
+  - Moved alias `ycyyy:live` to version `27`; readback confirmed code hash `mkvub545GrCCDCbUDKAP0RqL4nAhMG3wYFnmJiEGyOE=`, `LastUpdateStatus=Successful`, and `HUMIDOR_ENRICHMENT_WEB_SEARCH=ready`.
+  - `https://api.yuzucigarclub.com/health?deep=1&humidor-web-search=27b` returned HTTP `200`, `status=ok`, `environment=prod`, DB proxy reachable, database writes `schema_ready`, Bedrock `runtime_ready`, and SES still `pending_production_access`.
+  - Direct Lambda invoke of `ycyyy:live` health executed version `27` successfully.
+- Dirty worktree note:
+  - The workspace remains broadly dirty with unrelated/concurrent catalog, ratings/reviews, product detail, inventory image, package-lock, and docs changes. This pass intentionally changed only the humidor enrichment web-search/catalog fallback behavior, its tests, the serial test script, live Lambda deployment, and this ledger entry.
+
+## 2026-05-28 My Cigars Data Load Regression Follow-Up
+
+- Goal: fix the live `/humidor/items` data-loading failure that appeared after restoring uploaded cigar image data URLs to My Cigars responses.
+- Immediate live mitigation:
+  - CloudWatch showed Lambda runtime response posting failures for `GET /humidor/items`: `RequestEntityTooLarge` / `Exceeded maximum allowed payload size (6291556 bytes)`.
+  - The oversized responses were from API version `23` inlining stored uploaded cigar photos as base64 data URLs.
+  - Rolled Lambda alias `ycyyy:live` back to version `22` first so authenticated humidor data could load again while the permanent fix was built.
+- Root cause:
+  - Returning member-uploaded image bytes inside the humidor item list made the JSON response exceed the Lambda/API response payload ceiling for a real member inventory.
+  - The correct transport is to keep uploaded image bytes out of API list/create payloads and return a short, time-limited image URL.
+- Patched:
+  - `infra/lambda/ycc-api/index.js`
+  - `tests/lambda-ycc-api.test.ts`
+  - `package.json`
+  - `package-lock.json`
+  - `scripts/package-ycc-api-lambda.mjs`
+  - `docs/codex-worktree-tracking.md`
+- Behavior:
+  - New uploaded humidor cigar photos are stored in S3 under the approved `ycc/humidor-images/` prefix and persisted as S3 metadata, not inline data URLs.
+  - Existing rows that still have stored `data:image/...;base64,...` cigar image metadata are lazily migrated on authenticated read: the Lambda uploads the image to S3, updates the row metadata, and returns a signed S3 URL.
+  - Reference/catalog images still return their stable `imageUrl`; member-uploaded images now return `dataUrl: ""` plus a signed `imageUrl`.
+  - The Lambda package now includes `@aws-sdk/s3-request-presigner`, and the packaging validator checks that dependency is present.
+- TDD and verification:
+  - Red run confirmed the create/list tests still returned inline base64 or failed to sign the uploaded image before the fix was complete.
+  - Focused green: `node --import tsx --test --test-name-pattern "humidor item reads move stored cigar image data URLs|humidor item route stores collection value" tests\lambda-ycc-api.test.ts`.
+  - Broader green: `node --import tsx --test tests\lambda-ycc-api.test.ts tests\humidor-dashboard.test.ts` passed 157/157.
+  - `npx eslint infra\lambda\ycc-api\index.js tests\lambda-ycc-api.test.ts scripts\package-ycc-api-lambda.mjs` passed.
+  - `npx tsc --noEmit --pretty false` passed.
+- Live deployment:
+  - Built `output\ycc-api-humidor-images-s3-20260528.zip` with code hash `4Et0VzgixL6BsIehAA/rucOOoJbWTzWrt6WezVgVhdk=`.
+  - Published Lambda version `24` with description `Humidor uploaded images S3 signed URL fix 2026-05-28`.
+  - Moved alias `ycyyy:live` to version `24`; readback confirmed version `24`, state `Active`, `LastUpdateStatus=Successful`, runtime `nodejs22.x`, and matching code hash.
+  - `https://api.yuzucigarclub.com/health?deep=1&humidor-images-s3=24` returned HTTP `200` with `status=ok`, database writes `schema_ready`, Bedrock `runtime_ready`, and SES still `pending_production_access`.
+  - Post-alias CloudWatch search found no new `Exceeded maximum allowed payload size` events after `2026-05-28T20:47:40Z`; the earlier 413 events were at `2026-05-28T20:30:18Z`, `20:30:33Z`, `20:30:50Z`, and `20:31:06Z`.
+  - Post-alias CloudWatch search also found no `humidor_cigar_image_s3_store_failed` or `humidor_cigar_image_signed_url_failed` warnings after `2026-05-28T20:47:40Z`.
+  - Production config uses `S3_APP_BUCKET=classroom2`; the Lambda role policy already allows `s3:GetObject` and `s3:PutObject` for `arn:aws:s3:::classroom2/ycc/*`, which covers `ycc/humidor-images/`.
+- Dirty worktree note:
+  - The workspace remains broadly dirty with unrelated/concurrent ratings/reviews, catalog/imported inventory, product detail, docs, tests, and untracked product image assets. This pass intentionally changed the humidor image transport fix, its tests, dependency/package script wiring, and this ledger entry.
+
+## 2026-05-28 My Cigars Uploaded Image Regression
+
+- Goal: find and fix why member-uploaded cigar photos were missing from the My Cigars table/detail cards after saving through the AI Cigar Adder.
+- Skills/guidance used:
+  - `superpowers:systematic-debugging`
+  - `superpowers:test-driven-development`
+  - `build-web-apps:frontend-testing-debugging`
+  - `vercel:nextjs`
+  - `aws`
+- Local Next.js 16.2.6 docs checked before code edits:
+  - `node_modules/next/dist/docs/01-app/01-getting-started/12-images.md`
+  - `node_modules/next/dist/docs/01-app/01-getting-started/05-server-and-client-components.md`
+  - `node_modules/next/dist/docs/01-app/02-guides/static-exports.md`
+- Root cause:
+  - Uploaded cigar images were saved in humidor item metadata as validated data URLs, but API read/create responses passed stored uploads through `summarizeStoredHumidorCigarImage()`, which intentionally returned `dataUrl: ""`.
+  - The My Cigars UI renders saved images from `item.cigarImage.imageUrl || item.cigarImage.dataUrl`, so member-uploaded images arrived with metadata but no usable image source.
+- Patched:
+  - `infra/lambda/ycc-api/index.js`
+  - `tests/lambda-ycc-api.test.ts`
+  - `docs/codex-worktree-tracking.md`
+- Behavior:
+  - Stored member-uploaded cigar images now reuse the existing image attachment normalization/validation when serialized back to authenticated humidor clients.
+  - GET `/humidor/items` and POST `/humidor/items` now return the validated `data:image/...;base64,...` value for stored uploaded cigar photos, while reference images still return their `imageUrl`.
+- TDD:
+  - Red run: `node --import tsx --test --test-name-pattern "humidor item reads return stored cigar image data URLs|humidor item route stores collection value" tests\lambda-ycc-api.test.ts` failed because the API returned `dataUrl: ""`.
+  - Green run passed after updating `summarizeStoredHumidorCigarImage()`.
+- Verification:
+  - `node --import tsx --test tests\lambda-ycc-api.test.ts tests\humidor-dashboard.test.ts` passed 154/154.
+  - `npx eslint infra\lambda\ycc-api\index.js tests\lambda-ycc-api.test.ts` passed.
+  - `npx tsc --noEmit --pretty false` passed.
+  - `npm run build` passed with Next.js 16.2.6 and generated 990 static pages.
+- Live deployment:
+  - Built `output\ycc-api-my-cigars-images-20260528.zip` with code hash `CvsCUFSdF06Y6/TFQCqfABLovcIdSko7JVEIgVyUJYg=`.
+  - Updated Lambda `ycyyy`, published immutable version `23` with description `My Cigars uploaded image serializer fix 2026-05-28`, and moved alias `live` to version `23` using the `ycc-mcp` operator profile.
+  - Readback confirmed `ycyyy:live` version `23`, state `Active`, `LastUpdateStatus=Successful`, and matching code hash `CvsCUFSdF06Y6/TFQCqfABLovcIdSko7JVEIgVyUJYg=`.
+  - `https://api.yuzucigarclub.com/health?deep=1&my-cigar-images=23` returned `status=ok`, DB proxy/TLS ready, database writes `schema_ready`, Bedrock `runtime_ready`, and SES still `pending_production_access`.
+- Dirty worktree note:
+  - The workspace was already broadly dirty with unrelated/concurrent ratings/reviews, catalog/imported inventory, product detail, Lambda agent, docs, and untracked product image asset changes. This pass intentionally changed only the humidor image serialization regression, its Lambda regression tests, and this ledger entry.
+
+## 2026-05-28 Deploy All Current Updates
+
+- Goal: deploy the current accumulated working-tree updates after the live AI agent backend fix, including the storefront/catalog/static asset changes currently present in the repo.
+- Skills/guidance used:
+  - `deploy-yuzu-amplify`
+- Pre-deploy verification:
+  - `npm run launch:check` passed: ESLint, `npx tsc --noEmit`, 507/507 Node tests, Next.js static build, and `npm audit --omit=dev`.
+  - The build used Next.js 16.2.6, generated 990 static pages, and refreshed `out/` for deployment.
+  - Lambda backend was already live on `ycyyy:live` version `22` with code hash `B6qzrqQeZ4dIjHnXdjkH6wMabK7iwnU0jMsQoTHOJ94=` and `LastUpdateStatus=Successful`; no new backend publish was needed for this static deploy.
+- Static Amplify deployment:
+  - Ran the Yuzu deploy helper with `--skip-build --label all-updates-20260528b` using the freshly built `out/` directory.
+  - The helper packaged `out/` contents at the zip root with POSIX paths: `yuzu-cigar-club-amplify-deploy-all-updates-20260528b-2026-05-28-131800.zip`.
+  - Zip metadata before cleanup: 9,168 entries, 172,225,145 bytes.
+  - Assumed `arn:aws:iam::374587466106:role/CodexMcpYccDeploymentRole`, created Amplify deployment job `133` for app `d2yxcklt245wh0`, branch `staging`, uploaded with HTTP `200`, started the job, and polled it to `SUCCEED`.
+  - Helper smoke checks returned home HTTP `200` and `_next/static` asset HTTP `200`.
+- Extra live smokes:
+  - `https://staging.d2yxcklt245wh0.amplifyapp.com/?deploy=133` returned HTTP `200` with 336,574 bytes.
+  - `https://www.yuzucigarclub.com/?deploy=133` returned HTTP `200` with 336,574 bytes.
+  - `https://www.yuzucigarclub.com/shop/plasencia-triunfal-2026-10-bx/?deploy=133` returned HTTP `200` with 181,450 bytes.
+  - `https://www.yuzucigarclub.com/shop/montecristo-1935-winners-club-sampler-6-pk/?deploy=133` returned HTTP `200` with 180,912 bytes.
+  - `https://www.yuzucigarclub.com/assets/inventory/cigars/plasencia-triunfal-2026-10-bx.jpg?deploy=133` returned HTTP `200` with 95,370 bytes.
+  - `https://api.yuzucigarclub.com/health?deep=1&deploy=133` returned HTTP `200`.
+- Cleanup:
+  - Removed the temporary root deploy zip after successful upload and smoke verification.
+- Dirty worktree note:
+  - The workspace remains broadly dirty with tracked docs/catalog/imported-inventory/test changes and untracked product image assets. This pass deployed the current static export and verified the already-live Lambda alias without reverting any unknown local work.
+
+## 2026-05-28 Live AI Agent Runtime Audit And Fix
+
+- Goal: fully audit and test the live AI agent runtime after reports that Humidor Agent Update was not working, other agents were giving weak answers, agents needed cigar-product-catalog suggestions, and agents needed to answer questions about the user's digital humidor.
+- Skills/guidance used:
+  - `aws`
+  - `superpowers:systematic-debugging`
+  - `superpowers:test-driven-development`
+  - `superpowers:verification-before-completion`
+- AWS docs reviewed:
+  - Amazon Bedrock `InvokeAgent` API, including session IDs, `sessionState`, and chunk response behavior.
+  - Amazon Bedrock Knowledge Bases retrieval docs, especially using `Retrieve` separately from generation for custom RAG.
+  - Amazon Bedrock agent action group Lambda input/response docs.
+  - Amazon Bedrock Converse guardrail docs for `guardrailConfig`.
+  - AWS Lambda alias docs for publishing immutable versions and moving the `live` alias.
+- Root cause findings:
+  - The live Humidor Agent alias could return a generic age/compliance refusal for strict JSON enrichment, which left the enrichment parser with no saveable update.
+  - Catalog recommendation requests were not grounded in the commerce launch catalog, so agent replies could be generic instead of naming sellable products.
+  - Digital humidor questions had context available in the database, but the live model could ignore that context and hallucinate unrelated cigars.
+  - A first live smoke of version `21` showed the new catalog fallback could still suggest cigars after an under-21 prompt; version `21` was immediately superseded.
+- Patched:
+  - `infra/lambda/ycc-api/index.js`
+  - `tests/lambda-ycc-api.test.ts`
+  - `docs/codex-worktree-tracking.md`
+- Behavior added:
+  - Humidor enrichment now retries direct Bedrock Runtime with the same retrieved KB context when the Humidor Agent alias refuses or returns non-JSON/no-saveable JSON.
+  - Concierge/chat now builds live catalog recommendation context from the commerce launch catalog and only recommends published, shippable cigar products, excluding humidors, lighters, butane, memberships, and similar non-cigar SKUs.
+  - Catalog recommendation fallback names products, SKUs, public prices, and `/shop/.../` paths when the model refuses or fails to use the provided catalog.
+  - Under-21 tobacco-access prompts now take precedence over catalog fallback and do not load product suggestions.
+  - Authenticated humidor inventory questions now retrieve the member's saved `humidor_items` and add a deterministic fallback if the model refuses or ignores the saved cigar names.
+  - Humidor storage-condition questions such as humidity are kept separate from saved-inventory questions, so they do not incorrectly return "no saved cigars" copy.
+  - Support adult-signature shipping questions now receive a grounded support fallback instead of the generic age/compliance refusal.
+- TDD and verification:
+  - Added regression tests for catalog-grounded cigar recommendations, underage catalog refusal, digital humidor inventory grounding, support adult-signature shipping, and Humidor Agent enrichment direct-runtime fallback.
+  - Focused regression tests passed after red/green cycles.
+  - `npx eslint infra\lambda\ycc-api\index.js tests\lambda-ycc-api.test.ts` passed.
+  - `node --import tsx --test tests\lambda-ycc-api.test.ts` passed 123/123.
+  - `npm run launch:check` passed: lint, TypeScript, 505/505 Node tests, Next.js static build with 983 generated pages, and `npm audit --omit=dev` found 0 vulnerabilities.
+- Live deployment:
+  - Built `output\ycc-api-agent-context-fixes-v2-20260528.zip` with code hash `B6qzrqQeZ4dIjHnXdjkH6wMabK7iwnU0jMsQoTHOJ94=`.
+  - Updated Lambda `ycyyy`, published immutable version `22` with description `Live API agent catalog humidor safety fixes 2026-05-28`, and moved alias `live` to version `22` using the `ycc-mcp` operator profile.
+  - Readback confirmed `ycyyy:live` version `22`, state `Active`, `LastUpdateStatus=Successful`, and matching code hash `B6qzrqQeZ4dIjHnXdjkH6wMabK7iwnU0jMsQoTHOJ94=`.
+  - `https://api.yuzucigarclub.com/health?deep=1` returned `status=ok`, DB proxy/TLS ready, Bedrock `runtime_ready`, and SES still `pending_production_access`.
+- Live AI smoke battery:
+  - Catalog Connecticut/coffee prompt returned Yuzu catalog products with SKUs and `/shop/.../` paths.
+  - Budget maduro/espresso prompt returned Yuzu catalog products under the requested budget with SKUs and `/shop/.../` paths.
+  - Digital humidor prompt answered from the saved humidor item in the live account and did not hallucinate the prior Cohiba/Padron answer.
+  - Cut/light prompt answered with cigar cutting and lighting guidance.
+  - Underage prompt returned the 21+ refusal and no `/shop/` product path.
+  - Support adult-signature shipping prompt returned age-verification and adult-signature shipping guidance instead of the generic refusal.
+  - Humidor humidity prompt returned storage guidance and did not incorrectly say no saved cigars.
+  - Humidor enrichment preview against the existing live test item returned HTTP 200, `aiStatus=bedrock_runtime`, `knowledgeBaseStatus=retrieved`, `enrichmentStatus=needs_review`, and wrote no changes because the fake probe item had no saveable cigar identity.
+- Dirty worktree note:
+  - The workspace remains broadly dirty with unrelated/concurrent ratings/reviews, catalog, imported inventory/prices/descriptions, product-detail tests, and new product image assets. This pass intentionally edited only the Lambda backend, Lambda tests, and this ledger entry, and did not revert unknown work.
+
+## 2026-05-28 Requested Cigar Catalog Additions
+
+- Goal: verify whether seven requested cigar/sampler SKUs needed catalog work, then add publishable products with local images and the audited member/non-member price scheme.
+- Local catalog status before patch:
+  - Raw inventory already contained `777287`, `777292`, and `777293`, but they were unpublished because explicit public market prices were missing; `777293` also needed a local image override because the source image is marked missing.
+  - Raw inventory did not contain `777295`, `777296`, `777297`, or `777303`, so new inventory rows were required.
+- Patched:
+  - `src/lib/imported-inventory.ts`
+  - `src/lib/imported-market-prices.ts`
+  - `src/lib/imported-product-descriptions.ts`
+  - `src/lib/catalog.ts`
+  - `docs/inventory-image-sources.json`
+  - `docs/price-scheme-audit-2026-05-26.md`
+  - `tests/product-detail.test.ts`
+  - `tests/commerce-schema.test.ts`
+  - `docs/codex-worktree-tracking.md`
+- Behavior:
+  - Added/published SKUs `777287`, `777292`, `777293`, `777295`, `777296`, `777297`, and `777303`.
+  - Public/non-member prices now come from explicit market references: `777287=$107.95`, `777292=$612`, `777293=$396`, `777295=$539.91`, `777296=$121.50`, `777297=$174.99`, and `777303=$247.99`.
+  - Member/current prices remain the supplied costs: `75`, `450`, `300`, `400`, `90`, `133`, and `160` respectively.
+  - Added local JPEG image overrides for all seven SKUs under `public/assets/inventory/cigars/`.
+  - Added shopper descriptions and specific blend/size enrichment for the new Olmec, Montecristo, Plasencia Alma Fuerte, and Plasencia Triunfal rows.
+- Research notes:
+  - Used retail/product references from Cigars Direct/Holt's for Don Pepin Clasicos 20th, Hiland's/Atlantic for Oliva Melanio World Cup, Cigars.com/Atlantic/Corona for Olmec Maduro Toro, Mike's Cigars/Best Cigar Prices for Montecristo 1935 Winners Club, Cigars.com/Atlantic for Plasencia Alma Fuerte Salomon, Neptune/Famous for Plasencia Explorer, and Neptune/Cigars Direct/Luxury Cigar Club for Plasencia Triunfal.
+  - Mike's exact Montecristo Winners Club product page uses an image-coming-soon placeholder, so the local Montecristo asset is a relevant Montecristo sampler fallback while the price/specs are mapped from exact Winners Club sources.
+- Verification:
+  - Runtime catalog probe returned `catalog=928`, `luxury=21`, and all seven requested SKUs published with local images and explicit market/member pricing.
+  - First focused run failed only on expected catalog/count drift from adding seven cigar rows; tests were updated and the two new Plasencia rows received honest review/status coverage.
+  - `node --import tsx --test tests\product-detail.test.ts tests\product-pricing.test.ts tests\commerce-schema.test.ts tests\shop-categories.test.ts` passed 57/57.
+  - `npx eslint src\lib\catalog.ts src\lib\imported-inventory.ts src\lib\imported-market-prices.ts src\lib\imported-product-descriptions.ts tests\product-detail.test.ts tests\commerce-schema.test.ts` passed.
+  - `npx tsc --noEmit --pretty false` passed.
+  - `npm run build` passed with Next.js 16.2.6 and generated 990 static pages.
+- Dirty worktree note:
+  - The workspace had pre-existing dirty ratings/reviews, product page, Lambda, docs, and tests changes. This pass intentionally worked with those changes and did not revert unrelated work.
+
+## 2026-05-28 Sub-Agent Ratings Reviews Completion
+
+- Goal: use sub-agents to fill the remaining blank `Ratings & Reviews` panels after the Ratings & Reviews-only correction, while keeping the corrected rule that generic search/profile placeholders are not valid public review data.
+- Skills/guidance used:
+  - `superpowers:dispatching-parallel-agents`
+  - `superpowers:subagent-driven-development`
+  - `superpowers:verification-before-completion`
+- Sub-agent work:
+  - Dispatched read-only research batches for Punch/Cohiba/Hoyo/Partagas, ACID/Drew Estate/CAO, My Father/Tatuaje/EPC, Ashton/AVO/Joya/Aladino, value/long-tail brands, and a hard-leftovers pass.
+  - Integrated exact-product, exact-line, customer-review, and rated line-reference source URLs returned by those agents.
+  - Kept broad profile/search/community placeholder fallbacks removed.
+- Patched:
+  - `src/lib/catalog.ts`
+  - `tests/product-detail.test.ts`
+  - `docs/cigar-ratings-review-audit-2026-05-26.md`
+  - `docs/superpowers/plans/2026-05-28-ratings-reviews-enrichment.md`
+  - `docs/codex-worktree-tracking.md`
+- Behavior:
+  - Corrected cigar/sampler products now have 872 of 872 nonblank public `Ratings & Reviews` panels.
+  - 868 products have public rating/review source rows.
+  - 4 products carry explicit no-public-rating status rows rather than invented ratings: the three Cactus Joe Coffee formats and Cojimar Honey Blueberry.
+  - Placeholder/profile-only review records remain at 0.
+- TDD:
+  - Red run: `node --import tsx --test tests\product-detail.test.ts` failed with `acid-atom-maduro-24-bx` missing ACID Yellow coverage and 314 cigar products still blank.
+  - Intermediate run after first integration failed with 110 blanks.
+  - Final run passed 36/36 after long-tail integration and updating the Rocky Patel expected covered count to 64.
+- Verification:
+  - Audit command returned `catalog=921 cigars=872 covered=872 missing=0 coverage=100.00% noPublicReviewStatus=4 invalidProfiles=0`.
+  - `node --import tsx --test tests\product-detail.test.ts` passed 36/36.
+  - `npx eslint src\lib\catalog.ts src\app\shop\[slug]\page.tsx tests\product-detail.test.ts` passed.
+  - `npx tsc --noEmit --pretty false` passed.
+- Dirty worktree note:
+  - The workspace remains broadly dirty with unrelated/concurrent work. This pass intentionally edited only ratings/reviews catalog logic, ratings/reviews tests, audit/plan docs, and this ledger entry.
+
+## 2026-05-28 Ratings Reviews Only Correction
+
+- Goal: remove placeholder/profile-only review data from the public `Ratings & Reviews` panel after the broad ACID/Cigar World profile fallback was identified as incorrect.
+- Skills/guidance used:
+  - `superpowers:using-superpowers`
+  - `superpowers:test-driven-development`
+  - `storefront-best-practices`
+- Local docs/references checked before edits:
+  - `node_modules/next/dist/docs/01-app/01-getting-started/03-layouts-and-pages.md`
+  - `node_modules/next/dist/docs/01-app/02-guides/static-exports.md`
+  - `C:\Users\qfash\.codex\skills\storefront-best-practices\reference\components\product-reviews.md`
+- Patched:
+  - `src/lib/catalog.ts`
+  - `src/app/shop/[slug]/page.tsx`
+  - `tests/product-detail.test.ts`
+  - `docs/cigar-ratings-review-audit-2026-05-26.md`
+  - `docs/superpowers/plans/2026-05-28-ratings-reviews-enrichment.md`
+  - `docs/codex-worktree-tracking.md`
+- Behavior:
+  - Removed the final placeholder fallback that generated review profiles from Cigar Aficionado search pages, broad brand profiles, and ACID community/profile coverage.
+  - Kept concrete review sources such as exact review pages, customer-review product/line pages, and rated line-reference pages.
+  - The `Ratings & Reviews` panel now renders only source name, rating text, and source link for review profiles.
+  - Profile summaries and key-detail bullets are no longer rendered in the customer-facing Ratings & Reviews panel.
+  - Honest corrected cigar/sampler coverage is now 558 of 872 products, or 63.99%, with 314 products left neutral until concrete review sources are mapped.
+- TDD:
+  - Red run: `node --import tsx --test tests\product-detail.test.ts` failed because `acid-atom-maduro-24-bx` still had the broad Cigar World community/profile fallback and the page still rendered `profile.summary` / `source.keyDetails`.
+  - Green focused run: `node --import tsx --test tests\product-detail.test.ts` passed 36/36 after removing the fallback branches and simplifying the panel.
+- Verification:
+  - Audit command returned `catalog=921 cigars=872 covered=558 missing=314 coverage=63.99% invalidProfiles=0`.
+  - `node --import tsx --test tests\product-detail.test.ts` passed 36/36.
+  - `npx eslint src\lib\catalog.ts src\app\shop\[slug]\page.tsx tests\product-detail.test.ts` passed.
+  - `npx tsc --noEmit --pretty false` passed.
+- Dirty worktree note:
+  - The workspace remains broadly dirty with unrelated/concurrent frontend, backend, infrastructure, docs, generated assets, SEO, newsletter, humidor, launch, and test changes. This pass intentionally edited only the ratings/reviews catalog, product detail R&R panel, product-detail tests, audit/plan docs, and this ledger entry and did not revert unknown work.
+
+## 2026-05-28 Lambda Concurrency Quota Response
+
+- Goal: record the AWS response denying the Lambda quota increase request and verify the live account quota state.
+- Skills/guidance used:
+  - `superpowers:using-superpowers`
+  - `aws`
+- AWS response received:
+  - AWS could not approve the quota increase request at this time.
+  - The response cites ongoing security/usage monitoring for newly created accounts and says AWS may revise limits automatically over time, or re-evaluate later if the account is associated with main company accounts showing responsible usage and on-time payment history.
+- Live AWS verification:
+  - `aws service-quotas get-service-quota --profile ycc-mcp --region us-east-1 --service-code lambda --quota-code L-B99A9384` reports `QuotaName=Concurrent executions`, `Value=1000`, `Adjustable=true`.
+  - `aws lambda get-account-settings --profile ycc-mcp --region us-east-1` reports `ConcurrentExecutions=1000` and `UnreservedConcurrentExecutions=1000`.
+  - `aws service-quotas list-requested-service-quota-change-history-by-quota --profile ycc-mcp --region us-east-1 --service-code lambda --quota-code L-B99A9384` still shows request `448833ab82aa402090ada571aa7afe4dlXO75ihK`, case `177985461900020`, desired value `1001`, status `CASE_OPENED`; the API may lag the emailed denial.
+- Status:
+  - The denied request appears to be for increasing from the current standard `1000` concurrent executions to `1001`, not for restoring a low account limit.
+  - Current Lambda account concurrency is not a launch blocker at the verified `1000` account/unreserved limit.
+- Dirty worktree note:
+  - This pass intentionally changed only this ledger file.
+
+## 2026-05-28 SES Production Access Status Recheck
+
+- Goal: check whether AWS SES production access or case `177809591700724` has received a response/status change.
+- Skills/guidance used:
+  - `superpowers:using-superpowers`
+  - `aws`
+- Live AWS checks:
+  - Default AWS CLI context had no active credentials, so the project operator profile `ycc-mcp` was used explicitly.
+  - `aws sts get-caller-identity --profile ycc-mcp --region us-east-1` resolved to account `374587466106`, assumed role `CodexMcpYccOperatorRole`.
+  - `aws sesv2 get-account --profile ycc-mcp --region us-east-1` still reports `ProductionAccessEnabled=false`, `SendingEnabled=true`, `EnforcementStatus=HEALTHY`, and `Details.ReviewDetails.Status=DENIED` for case `177809591700724`.
+  - Account details still show transactional mail type, site `https://yuzucigarclub.com`, contact email `support@yuzucigarclub.com`, send quota `Max24HourSend=200`, `MaxSendRate=1`, and `SentLast24Hours=0`.
+  - `aws support describe-cases --case-id-list 177809591700724 --include-communications` remains blocked with `SubscriptionRequiredException`, so the Support API cannot expose case communications from this account/API entitlement.
+  - `aws sesv2 list-email-identities` shows only the two Yuzu domain identities and both are verified/sending-enabled: `yuzucigarclub.com` and `ses-support.yuzucigarclub.com`.
+  - `aws sesv2 get-email-identity yuzucigarclub.com` confirms DKIM `SUCCESS`, `VerifiedForSendingStatus=true`, configuration set `ycc-support-email-events`, and custom MAIL FROM `bounce.yuzucigarclub.com` with `MailFromDomainStatus=SUCCESS` and `BehaviorOnMxFailure=REJECT_MESSAGE`.
+  - `aws sesv2 get-email-identity ses-support.yuzucigarclub.com` confirms DKIM `SUCCESS` and `VerifiedForSendingStatus=true`.
+  - `aws sesv2 get-configuration-set-event-destinations --configuration-set-name ycc-support-email-events` confirms enabled SNS event destination `ycc-sns-bounce-complaint` for `BOUNCE`, `COMPLAINT`, `DELIVERY_DELAY`, and `REJECT`.
+- Status:
+  - No approval response or SES production-access change is visible through SES APIs as of this check.
+  - The remaining action is still AWS Support Center/Trust & Safety appeal/reopen outside the Support API, because this account lacks Premium Support API access for case communications.
+- Dirty worktree note:
+  - This pass intentionally changed only this ledger file.
+
+## 2026-05-28 Ordering Workflow Go-Live QA
+
+- Goal: fully test the storefront ordering workflow for go-live readiness without creating a real payment or order.
+- Skills/guidance used:
+  - `superpowers:using-superpowers`
+  - `build-web-apps:frontend-testing-debugging`
+  - `browser:browser`
+  - `storefront-best-practices`
+  - `building-storefronts`
+- Storefront references checked:
+  - `storefront-best-practices/reference/layouts/cart.md`
+  - `storefront-best-practices/reference/layouts/checkout.md`
+  - `storefront-best-practices/reference/layouts/order-confirmation.md`
+  - `storefront-best-practices/reference/mobile-responsiveness.md`
+- Automated verification:
+  - Focused ordering/commerce suite passed: `node --import tsx --test tests\checkout-flow.test.ts tests\shopping-cart.test.ts tests\stripe-commerce.test.ts tests\commerce-rules.test.ts tests\lambda-ycc-api.test.ts` passed 152/152.
+  - `npm run launch:check` passed: lint, TypeScript, 499/499 tests, Next.js 16.2.6 static production build with 983 generated pages, and `npm audit --omit=dev` with 0 vulnerabilities.
+  - `npm run launch:go-live-check` passed strict go-live readiness. The known `generated-artifacts-cleanup` warning remains because one old/generated artifact path is still present.
+  - `npx tsx scripts/e2e-runtime-audit.ts` passed against the static export: 137 routes checked, 110 internal links followed, 88 runtime assets checked, not-found probe 404, and 0 warnings.
+- Browser QA:
+  - Static preview was served from `out/` at `http://127.0.0.2:3029/` to match the Amplify/static export shape.
+  - Fresh-origin age gate rendered, required a valid 21+ birthday, and unlocked `/shop/` after confirmation.
+  - Shop flow added `6 X 60 SAMPLER JC NEWMAN 4/BX` to the cart, updated the cart badge from 0 to 1, and announced the add-to-cart status.
+  - Cart flow showed item image/name/package/SKU/category/price, increased quantity to 2, applied `YUZU10`, and updated subtotal/promotion/total to `$61.97`.
+  - Checkout flow preserved the 2-item cart, rendered shipping/delivery/payment/review sections, calculated non-member handling/tax/total, filtered California delivery to USPS Adult Signature Ground/Priority only, and kept payment on the Stripe Checkout method.
+  - Submit with shipping fields and terms accepted but no provider-issued AgeChecker token stayed on `/checkout/`, did not redirect to Stripe, and showed `Complete verified 21+ identity review before checkout.`
+  - Mobile viewport QA at 390x844 found no horizontal overflow on cart/checkout, confirmed the mobile cart sticky checkout bar exists, and showed no relevant app console warnings/errors.
+- Live smoke checks:
+  - `GET https://www.yuzucigarclub.com/checkout/` returned HTTP 200.
+  - `GET https://api.yuzucigarclub.com/health?deep=1` returned HTTP 200 with `status=ok`, `environment=prod`, DB proxy reachable, `databaseWrites=schema_ready`, `bedrock=runtime_ready`, and `ses=pending_production_access`.
+  - Harmless empty `POST https://api.yuzucigarclub.com/commerce/checkout-session` returned HTTP 400 validation, with no order/payment creation.
+- Evidence:
+  - Browser screenshots were saved outside the repo under `%TEMP%\yuzu-ordering-qa\`: age gate, shop after age gate, item added, cart review, cart quantity/promo, checkout initial, checkout shipping filled, checkout age-token-required, mobile cart, and mobile checkout.
+- Caveats:
+  - No live Stripe payment or real order was created during this pass.
+  - SES remains pending production access in live health output; this affects outbound email posture, not the validated checkout gate/Stripe handoff path.
+  - This pass intentionally changed only this ledger file.
+
+## 2026-05-28 Stripe Membership Subscriptions Setup Check
+
+- Goal: set up/verify Yuzu memberships as Stripe Billing subscription products and prices.
+- Skills/guidance used:
+  - `stripe:stripe-best-practices`
+  - `storefront-best-practices`
+- Official Stripe reference checked:
+  - Stripe Billing subscriptions overview: subscriptions use recurring payments for product access, should be created through Billing/Subscriptions or Checkout in `subscription` mode, and access should be provisioned from active subscription or entitlement events.
+  - Stripe skill billing guidance: use Billing APIs plus Checkout Sessions for subscription payment collection; use Prices, not deprecated Plans.
+- Local Next.js/static-export guidance checked before touching project context:
+  - `node_modules/next/dist/docs/01-app/01-getting-started/15-route-handlers.md`
+  - `node_modules/next/dist/docs/01-app/02-guides/environment-variables.md`
+  - `node_modules/next/dist/docs/01-app/01-getting-started/17-deploying.md`
+- Stripe account checked:
+  - Connected Stripe account: `Company Q` (`acct_1SofC90r0rWXiDV5`).
+  - Existing membership Products were found, so no duplicate Products or Prices were created.
+- Verified recurring subscription Price mapping discovered in Stripe:
+  - Box Access Pass product `prod_UVih3Crk3k0qTa`
+    - Monthly $18: `price_1TWhGP0r0rWXiDV54rufTLgm`
+    - Quarterly $49: `price_1TWhGP0r0rWXiDV5DT4QrXSh`
+    - Yearly $179: `price_1TWhGQ0r0rWXiDV5K3uCh2Ip`
+  - Kisha product `prod_UVih8w6Ff64fvS`
+    - Monthly $49: `price_1TWhGR0r0rWXiDV5Bg0Aqjb7`
+    - Quarterly $139: `price_1TWhGS0r0rWXiDV59pE6ru0F`
+    - Yearly $499: `price_1TWhGS0r0rWXiDV54HkEeUlx`
+  - Sensei product `prod_UVihbnDcdJUs1d`
+    - Monthly $99: `price_1TWhGU0r0rWXiDV5qacqWwet`
+    - Quarterly $279: `price_1TWhGU0r0rWXiDV5sPUL1WDz`
+    - Yearly $999: `price_1TWhGV0r0rWXiDV5guWJRkvJ`
+  - Daimyo product `prod_UVih2sObenw0oL`
+    - Monthly $199: `price_1TWhGW0r0rWXiDV5ViMghAtL`
+    - Quarterly $559: `price_1TWhGX0r0rWXiDV58yryqaHN`
+    - Yearly $1,999: `price_1TWhGY0r0rWXiDV50IHVpeEw`
+- Local app/backend alignment:
+  - `infra/lambda/ycc-api/stripe-commerce.js` already creates membership Checkout Sessions with `mode: "subscription"`.
+  - `src/lib/membership-pricing.ts`, `src/lib/data.ts`, and launch readiness checks already define the 12 matching `STRIPE_PRICE_*` keys.
+  - The static Next export should continue using the existing API Gateway/Lambda commerce routes rather than local Next route handlers.
+- Verification:
+  - `node --import tsx --test tests\membership-data.test.ts tests\membership-join-button.test.ts tests\stripe-commerce.test.ts` passed 14/14.
+- Caveats:
+  - The Stripe connector search verified Products and recurring Price IDs/amounts, but the available connector output did not expose recurring interval counts for quarterly/yearly prices.
+  - Local `.env.local` does not contain `STRIPE_SECRET_KEY`, so a direct SDK interval read could not be performed from this workspace.
+- Clarification:
+  - Stripe Billing membership offerings correctly live in Product Catalog as Products with recurring Prices. The Stripe Subscriptions dashboard lists customer subscription records after a customer subscribes; it is not a separate place where membership Products are moved.
 
 ## 2026-05-28 Deploy All Updates And Clean Worktree
 
@@ -4518,6 +5469,38 @@ Use this order for follow-up cleanup and fixes:
   - `npm run launch:check` passed: ESLint, TypeScript, 399/399 Node tests, Next.js static export build with 953 generated pages, and `npm audit --omit=dev` found 0 vulnerabilities.
   - `npm run launch:go-live-check` passed all strict readiness checks.
   - `git diff --check` reported only line-ending normalization warnings and no whitespace errors.
+
+## 2026-05-29 Log a Smoke Humidor Workflow
+
+- Goal: add the missing Digital Humidor `Log a Smoke` workflow so members can rate cigars they smoked, select cigars already in their humidor, add a not-yet-saved cigar through the AI Cigar Adder, and record drink pairings.
+- Local Next.js 16.2.6 docs checked before repo edits:
+  - `node_modules/next/dist/docs/01-app/03-building-your-application/03-rendering/03-composition-patterns.mdx`
+  - `node_modules/next/dist/docs/01-app/03-building-your-application/02-data-fetching/03-server-actions-and-mutations.mdx`
+  - `node_modules/next/dist/docs/01-app/02-guides/static-exports.md`
+- Implementation:
+  - Added a first-class `Log a Smoke` tab and smoke-log stat in `src/components/humidor-dashboard.tsx`.
+  - Added smoke log form state, saved-humidor cigar selection, free-form cigar name entry, smoke date/time, rating, drink pairing, duration, notes, recent logs, refresh, and AI Cigar Adder handoff back into the smoke form.
+  - Added client API support in `src/lib/live-api.ts` for bootstrapping, listing, and creating smoke logs through `/humidor/smokes`.
+  - Added Lambda handlers in `infra/lambda/ycc-api/index.js` for `GET /humidor/smokes` and `POST /humidor/smokes`, including demo fallback, persistence, linked humidor item ownership checks, validation, audit logging, and response mapping.
+  - Added API Gateway routes for the smoke log endpoints in `infra/ycc-phase1-edge.yaml`.
+- Tests added/updated:
+  - `tests/humidor-dashboard.test.ts` covers the smoke tab, rating/drink fields, saved or AI-added cigar flow, API calls, and AI return-to-smoke behavior.
+  - `tests/lambda-ycc-api.test.ts` covers smoke log creation with drink pairing and recent smoke log listing.
+  - `tests/api-gateway-contract.test.ts` covers the new GET/POST `/humidor/smokes` routes.
+- Verification:
+  - Red tests were observed first for missing smoke UI/API/routes, then passed after implementation.
+  - `node --import tsx --test tests\api-gateway-contract.test.ts` passed.
+  - `node --import tsx --test tests\humidor-dashboard.test.ts --test-name-pattern "log a smoke"` passed the dashboard suite.
+  - `node --import tsx --test tests\lambda-ycc-api.test.ts --test-name-pattern "humidor smoke"` passed the Lambda suite.
+  - `npx eslint src\components\humidor-dashboard.tsx src\lib\live-api.ts infra\lambda\ycc-api\index.js tests\humidor-dashboard.test.ts tests\lambda-ycc-api.test.ts tests\api-gateway-contract.test.ts` passed.
+  - `npx tsc --noEmit --pretty false` passed.
+  - `npm run build` passed with Next.js 16.2.6 static export and 990 generated pages.
+  - Static preview on `http://127.0.0.1:3068/humidor/?section=smokes` returned HTTP `200`.
+  - Browser verification used Playwright CLI fallback because the in-app Browser tool was not exposed. Desktop/mobile smoke-log screenshots were captured under `output/playwright/`; console warning/error checks returned 0 messages.
+  - Mobile QA found the disabled submit button could be visually too close to the floating concierge button; the smoke form action row now keeps controls left-aligned, and `output/playwright/humidor-smokes-form-mobile-fixed.png` verifies the fix.
+- Dirty worktree note:
+  - The repo already had many unrelated dirty and untracked files before this feature; they were left in place.
+  - The meaningful smoke-log changes are concentrated in `src/components/humidor-dashboard.tsx`, `src/lib/live-api.ts`, `infra/lambda/ycc-api/index.js`, `infra/ycc-phase1-edge.yaml`, and the three smoke-log contract/test files above.
 
 ## Working Rules
 

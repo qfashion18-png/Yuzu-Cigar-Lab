@@ -52,6 +52,26 @@ test("add cigars tab owns the humidor AI cigar adder and manual add form", () =>
   assert.ok(source.includes("auth.createApiHeaders()"), "AI adder requests must use Cognito headers");
 });
 
+test("log a smoke tab lets members rate saved or newly identified cigars with drink pairings", () => {
+  const source = readFileSync(new URL("../src/components/humidor-dashboard.tsx", import.meta.url), "utf8");
+  const smokeSection = getFunctionBlock(source, "renderSmokeLogs", "renderCigars");
+  const aiConfirm = source.slice(source.indexOf("async function handleConfirmAiCigar"), source.indexOf("async function handleAddItem"));
+
+  assert.ok(source.includes('type SectionId = "overview" | "tools" | "locations" | "smokes"'), "smoke logging should be a first-class humidor section");
+  assert.ok(source.includes('{ id: "smokes", label: "Log a Smoke"'), "humidor nav should expose Log a Smoke");
+  assert.ok(source.includes("fetchHumidorSmokeLogs"), "dashboard bootstrap should load member smoke history");
+  assert.ok(source.includes("createSmokeLog"), "Log a Smoke should write through the live smoke-log API");
+  assert.ok(source.includes("smokeLogs: bootstrap.smokes.logs"), "bootstrap should place smoke logs in live state");
+  assert.ok(smokeSection.includes("Log a Smoke"), "smoke section should render the logging form");
+  assert.ok(smokeSection.includes("Saved humidor cigar"), "members should be able to choose a saved cigar");
+  assert.ok(smokeSection.includes("Drink pairing"), "members should be able to record what they drank");
+  assert.ok(smokeSection.includes("Smoke rating"), "members should be able to rate the smoked cigar");
+  assert.ok(smokeSection.includes("Use AI Cigar Adder"), "non-humidor smokes should hand off to the AI cigar adder");
+  assert.ok(source.includes("setReturnToSmokeLogAfterAi(true)"), "AI handoff should remember to return to the smoke log");
+  assert.ok(aiConfirm.includes('setActiveSection("smokes")'), "confirmed AI-added cigars should return members to Log a Smoke");
+  assert.ok(aiConfirm.includes("buildSmokeLogFormForItem(response.item)"), "confirmed AI-added cigars should prefill the smoke-log cigar");
+});
+
 test("humidor accepts Cigar Flow deep links for smoke-note prep", () => {
   const source = readFileSync(new URL("../src/components/humidor-dashboard.tsx", import.meta.url), "utf8");
 
@@ -267,6 +287,14 @@ test("aging records separate user humidor aging from optional production age", (
   assert.ok(detailCard.includes("Box / Production Date"), "detail card should expose production provenance");
 });
 
+test("humidor display dates parse date-only API values without UTC backshifting", () => {
+  const source = readFileSync(new URL("../src/components/humidor-dashboard.tsx", import.meta.url), "utf8");
+  const dateHelpers = source.slice(source.indexOf("function formatDate"), source.indexOf("function formatDateInputValue"));
+
+  assert.ok(dateHelpers.includes("parseHumidorDisplayDate(value)"), "display formatting should use the humidor date parser");
+  assert.ok(dateHelpers.includes("new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]))"), "date-only values should be constructed as local calendar dates");
+});
+
 test("add cigar forms offer exact and approximate aging start options", () => {
   const source = readFileSync(new URL("../src/components/humidor-dashboard.tsx", import.meta.url), "utf8");
   const toolsSection = getFunctionBlock(source, "renderTools", "renderCigars");
@@ -313,8 +341,32 @@ test("my cigars rows open a detailed cigar info card", () => {
   assert.ok(table.includes("onKeyDown"), "cigar rows should support keyboard opening");
   assert.ok(detailCard.includes("Detailed Cigar Card"), "detail card should have a clear title");
   assert.ok(detailCard.includes("Tasting Notes"), "detail card should show notes");
+  assert.ok(detailCard.includes("formatHumidorTastingNote"), "detail card should format long pulled tasting-note details");
   assert.ok(detailCard.includes("Collection Value"), "detail card should show value details");
   assert.ok(detailCard.includes("Close Details"), "detail card should be dismissible");
+});
+
+test("my cigars detail card can delete cigars and log shared inventory", () => {
+  const source = readFileSync(new URL("../src/components/humidor-dashboard.tsx", import.meta.url), "utf8");
+  const cigarSection = getFunctionBlock(source, "renderCigars", "renderAging");
+  const detailCard = source.slice(source.indexOf("function HumidorDetailCard"), source.indexOf("function EmptyLiveState"));
+  const shareHandler = source.slice(source.indexOf("async function handleShareHumidorItem"), source.indexOf("async function handleDeleteHumidorItem"));
+  const deleteHandler = source.slice(source.indexOf("async function handleDeleteHumidorItem"), source.indexOf("async function handleBulkImport"));
+  const smokeLogRow = source.slice(source.indexOf("function SmokeLogRow"), source.indexOf("function StatusTile"));
+
+  assert.ok(source.includes("shareHumidorItem"), "dashboard should call the live API helper for shared cigars");
+  assert.ok(source.includes("deleteHumidorItem"), "dashboard should call the live API helper for deleted cigars");
+  assert.ok(cigarSection.includes("humidorInventoryActionStatus"), "My Cigars should announce share/delete results after the detail card closes");
+  assert.ok(detailCard.includes("Shared"), "detail card should expose a Shared inventory action");
+  assert.ok(detailCard.includes("Delete"), "detail card should expose a Delete inventory action");
+  assert.ok(detailCard.includes("onShare?.(item)"), "Shared should delegate to the dashboard mutation");
+  assert.ok(detailCard.includes("onDelete?.(item)"), "Delete should delegate to the dashboard mutation");
+  assert.ok(shareHandler.includes("shareHumidorItem(item.id"), "shared action should persist through the live API");
+  assert.ok(shareHandler.includes("response.log"), "shared action should add the tracking log returned by the API");
+  assert.ok(shareHandler.includes("response.item.quantity > 0"), "shared action should remove the card when the last cigar is given away");
+  assert.ok(deleteHandler.includes("deleteHumidorItem(item.id"), "delete action should persist through the live API");
+  assert.ok(deleteHandler.includes("current.items.filter"), "delete action should remove the cigar from visible inventory");
+  assert.ok(smokeLogRow.includes('log.source === "member_shared_gift"'), "shared logs should be visually tracked in recent activity");
 });
 
 test("my cigars row selection scrolls to the top of the detailed cigar card", () => {
@@ -380,6 +432,18 @@ test("my cigars opens member review popup when humidor agent has no saveable cha
   assert.ok(requestHandler.includes("response.previewItem ?? response.item"), "legacy needs-review responses without previewItem should still have a review target");
   assert.ok(dialog.includes("No Updates To Approve"), "review popup should make no-change agent results clear");
   assert.ok(dialog.includes("changes.length > 0"), "approval should only be available when the agent found saveable changes");
+});
+
+test("my cigars ignores non-renderable placeholder cigar image paths", () => {
+  const source = readFileSync(new URL("../src/components/humidor-dashboard.tsx", import.meta.url), "utf8");
+  const imageSrcHelper = source.slice(source.indexOf("function getHumidorCigarImageSrc"), source.indexOf("type HumidorEnrichmentGap"));
+
+  assert.ok(imageSrcHelper.includes("isRenderableHumidorCigarImageSrc"), "image source helper should validate renderable paths before rendering");
+  assert.equal(imageSrcHelper.includes("/^https:\\/\\/[^\\s"), false, "arbitrary HTTPS image URLs should not render when CSP will block them");
+  assert.ok(imageSrcHelper.includes("classroom2\\.s3\\.us-east-1\\.amazonaws\\.com"), "signed humidor S3 image URLs should remain renderable");
+  assert.ok(imageSrcHelper.includes("data:image"), "uploaded data URLs should remain renderable when present");
+  assert.ok(imageSrcHelper.includes("product-[a-z-]+"), "known generated product assets should remain renderable");
+  assert.equal(imageSrcHelper.includes("cigar-product.jpg"), false, "agent placeholder filenames should not become rendered image sources");
 });
 
 test("my cigars detail card can update a missing humidor location later", () => {

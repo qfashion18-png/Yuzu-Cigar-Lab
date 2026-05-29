@@ -175,6 +175,11 @@ function formatDateOnly(date: Date) {
 }
 
 function parseHumidorDate(value: string) {
+  const dateOnly = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (dateOnly) {
+    return new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]));
+  }
+
   const date = new Date(value);
 
   return Number.isNaN(date.getTime()) ? null : date;

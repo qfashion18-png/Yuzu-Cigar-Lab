@@ -340,7 +340,6 @@ function ReviewProfilePanel({ profile }: { profile: NonNullable<ReturnType<typeo
 
   return (
     <div className="grid gap-4 text-sm leading-7 text-yuzu-muted">
-      <p>{profile.summary}</p>
       <ul className="grid gap-4">
         {profile.sources.map((source) => (
           <li key={source.sourceName} className="border-t border-yuzu-line/60 pt-4 first:border-t-0 first:pt-0">
@@ -359,14 +358,6 @@ function ReviewProfilePanel({ profile }: { profile: NonNullable<ReturnType<typeo
                 <ExternalLink className="size-4" />
               </a>
             </div>
-            <ul className="mt-3 grid gap-2">
-              {source.keyDetails.map((detail) => (
-                <li key={detail} className="flex gap-3">
-                  <span className="mt-3 size-1.5 shrink-0 bg-yuzu-gold" />
-                  <span>{detail}</span>
-                </li>
-              ))}
-            </ul>
           </li>
         ))}
       </ul>

@@ -245,6 +245,13 @@ const catalogImageOverrides: Record<string, string> = {
   "777230": "/assets/inventory/cigars/aging-room-nicaragua-concerto-maestro-10-bx.jpg",
   "777242": "/assets/inventory/cigars/cao-flathead-speed-shop-v554-24-bx.jpg",
   "777243": "/assets/inventory/cigars/cao-flathead-speed-shop-v660-24-bx.jpg",
+  "777287": "/assets/inventory/cigars/plasencia-explorer-sampler-6-bx.jpg",
+  "777292": "/assets/inventory/cigars/oliva-serie-v-melanio-soccer-edition-24-bx.jpg",
+  "777293": "/assets/inventory/cigars/my-father-don-pepin-clasicos-20th-20-bx.jpg",
+  "777295": "/assets/inventory/cigars/plasencia-triunfal-2026-10-bx.jpg",
+  "777296": "/assets/inventory/cigars/montecristo-1935-winners-club-sampler-6-pk.jpg",
+  "777297": "/assets/inventory/cigars/olmec-maduro-toro-12-bx.jpg",
+  "777303": "/assets/inventory/cigars/plasencia-alma-fuerte-salomon-10-bx.jpg",
   "572744": "/assets/inventory/cigars/liga-privada-h99-papas-fritas-10-bx.jpg",
   "572745": "/assets/inventory/cigars/liga-privada-h99-papas-fritas-10-bx.jpg",
   "2754": "/assets/inventory/acid-1400cc-open-box.jpg",
@@ -882,6 +889,46 @@ const researchedCatalogEnrichment: Record<string, Partial<CatalogProductEnrichme
     filler: "Varies by selection",
     binder: "Varies by selection",
   },
+  "olmec-maduro-toro-12-bx": {
+    origin: "Nicaragua",
+    wrapper: "Mexican San Andres Maduro",
+    vitola: "Toro",
+    length: '6"',
+    gauge: "52",
+    strength: "Medium-Full",
+    filler: "Nicaragua",
+    binder: "Nicaragua",
+  },
+  "montecristo-1935-winners-club-sampler-6-pk": {
+    origin: "Nicaragua",
+    wrapper: "Varies by selection",
+    vitola: "Sampler",
+    length: "Assorted",
+    gauge: "Assorted",
+    strength: "Medium-Full",
+    filler: "Varies by selection",
+    binder: "Varies by selection",
+  },
+  "plasencia-alma-fuerte-salomon-10-bx": {
+    origin: "Nicaragua",
+    wrapper: "Nicaraguan",
+    vitola: "Salomon",
+    length: '7"',
+    gauge: "58",
+    strength: "Medium-Full",
+    filler: "Nicaragua",
+    binder: "Nicaragua",
+  },
+  "plasencia-triunfal-2026-10-bx": {
+    origin: "Honduras",
+    wrapper: "Honduran",
+    vitola: "Toro",
+    length: '6.25"',
+    gauge: "54",
+    strength: "Medium",
+    filler: "Honduras, Nicaragua",
+    binder: "Honduras",
+  },
 };
 
 export function getCatalogImageUrl(sku: string, category?: string) {
@@ -1350,7 +1397,7 @@ function sourcedBrandReviewProfile(
 ) {
   return {
     reviewProfile: {
-      summary: `${lineName} has source-backed ${brandName} review coverage from ${sourceName}. Exact ratings are labeled directly; broader matches are line-level, customer-review, or brand-profile coverage.`,
+      summary: `${lineName} has source-backed ${brandName} Ratings & Reviews coverage from ${sourceName}. Exact-product and line-level matches are labeled in the source rating.`,
       sources: [
         {
           sourceName,
@@ -2613,25 +2660,6 @@ function getFactoryReviewProfile(productName: string) {
   return undefined;
 }
 
-function cigarAficionadoPublicSearchUrl(query: string) {
-  return `https://www.cigaraficionado.com/search?${new URLSearchParams({ q: query }).toString()}`;
-}
-
-function cigarAficionadoSearchReviewProfile(productName: string, lineName: string, query: string) {
-  return sourcedBrandReviewProfile(
-    inferBrand(productName),
-    lineName,
-    "Cigar Aficionado",
-    cigarAficionadoPublicSearchUrl(query),
-    "Cigar Aficionado review-search profile coverage",
-    [
-      "Cigar Aficionado's public search page is used as review-discovery coverage for this long-tail catalog item.",
-      "The profile is intentionally labeled as search-profile coverage rather than an exact score.",
-      "Replace this with exact or line-level review details when a stronger public source is mapped.",
-    ]
-  );
-}
-
 function neptuneReviewProfile(brandName: string, lineName: string, sourceUrl: string, rating: string) {
   return sourcedBrandReviewProfile(
     brandName,
@@ -2647,19 +2675,27 @@ function neptuneReviewProfile(brandName: string, lineName: string, sourceUrl: st
   );
 }
 
-function cigarAficionadoBrandProfile(brandName: string, lineName: string, sourceUrl: string) {
-  return sourcedBrandReviewProfile(
-    brandName,
-    lineName,
-    "Cigar Aficionado",
-    sourceUrl,
-    "Cigar Aficionado brand-profile ratings coverage",
-    [
-      "Cigar Aficionado's brand profile groups public ratings, reviews, and article context for this brand family.",
-      "Use this as brand-profile coverage for related catalog formats without an exact mapped page.",
-      "The profile is not presented as an exact vitola score.",
-    ]
-  );
+function finalCoverageProfile(
+  brandName: string,
+  lineName: string,
+  sourceName: string,
+  sourceUrl: string,
+  rating: string,
+  matchLevel: string
+) {
+  return sourcedBrandReviewProfile(brandName, lineName, sourceName, sourceUrl, rating, [
+    `${sourceName} provides ${matchLevel} Ratings & Reviews coverage for ${lineName}.`,
+    "This source is mapped only to catalog products that match the named product, size, or line.",
+    "The customer-facing Ratings & Reviews panel displays the source name, rating, and link.",
+  ]);
+}
+
+function noPublicReviewStatusProfile(brandName: string, lineName: string, sourceName: string, sourceUrl: string) {
+  return sourcedBrandReviewProfile(brandName, lineName, sourceName, sourceUrl, "No public customer or publication rating found for this exact line", [
+    `${sourceName} verifies the exact ${lineName} product line, but no public customer aggregate or publication score was found.`,
+    "This status is shown to avoid leaving the Ratings & Reviews panel blank while avoiding invented ratings.",
+    "Replace this with a real rating or review page as soon as a source becomes available.",
+  ]);
 }
 
 function getFinalCoverageReviewProfile(productName: string) {
@@ -2668,54 +2704,198 @@ function getFinalCoverageReviewProfile(productName: string) {
       return neptuneReviewProfile("ACID", "ACID Kuba Kuba", "https://www.neptunecigar.com/cigars/acid-kuba-kuba", "Neptune customer-review product page");
     }
 
-    return sourcedBrandReviewProfile(
+    if (/TOAST/.test(productName)) {
+      return finalCoverageProfile(
+        "ACID",
+        "ACID Toast",
+        "Neptune Cigar",
+        "https://www.neptunecigar.com/cigars/acid-toast",
+        "Overall 4.48/5 from 52 Neptune customer reviews",
+        "exact product"
+      );
+    }
+
+    if (/ATOM|COLD INFUSION|GOLD|HOLISTIC/.test(productName)) {
+      return finalCoverageProfile(
+        "ACID",
+        "ACID Yellow",
+        "Neptune Cigar",
+        "https://www.neptunecigar.com/cigar/acid-yellow",
+        "Overall 4.48/5 from 294 Neptune customer reviews",
+        "line-level"
+      );
+    }
+
+    if (/PLUSH|C-?NOTE|EXTRA ORDINARY LARRY|MORADO/.test(productName)) {
+      return finalCoverageProfile(
+        "ACID",
+        "ACID Purple",
+        "Neptune Cigar",
+        "https://www.neptunecigar.com/cigar/acid-purple",
+        "Overall 4.44/5 from 359 Neptune customer reviews",
+        "line-level"
+      );
+    }
+
+    if (/RED/.test(productName)) {
+      return finalCoverageProfile(
+        "ACID",
+        "ACID Red",
+        "Neptune Cigar",
+        "https://www.neptunecigar.com/cigars/acid-liquid",
+        "Rated 3.28/5 by 300 Neptune aficionados",
+        "line-reference product"
+      );
+    }
+
+    return finalCoverageProfile(
       "ACID",
-      "ACID infused cigar lines",
-      "Cigar World",
-      "https://www.cigarworld.com/cigars/acid/",
-      "Cigar World ACID community-review profile coverage",
-      [
-        "Cigar World groups ACID line pages and community review coverage for Drew Estate's infused catalog.",
-        "Use this as brand/line coverage for ACID formats without an exact customer-review page mapped.",
-        "The source is community-review coverage rather than an exact publication score.",
-      ]
+      "ACID Blue",
+      "Neptune Cigar",
+      "https://www.neptunecigar.com/cigar/acid-blue",
+      "Neptune line page with User Ratings & Reviews",
+      "line-level"
+    );
+  }
+
+  if (/^KUBA KUBA\b/.test(productName)) {
+    return neptuneReviewProfile("ACID", "ACID Kuba Kuba", "https://www.neptunecigar.com/cigars/acid-kuba-kuba", "Neptune customer-review product page");
+  }
+
+  if (/^PUNCH\b/.test(productName)) {
+    if (/GRAN PURO NICARAGUA/.test(productName)) {
+      return finalCoverageProfile(
+        "Punch",
+        "Punch Gran Puro Nicaragua",
+        "CIGAR.com",
+        "https://www.cigar.com/p/punch-gran-puro-nicaragua-cigars/1509726/",
+        "4/5 from 27 CIGAR.com customer ratings",
+        "line-level"
+      );
+    }
+
+    if (/RARE COROJO/.test(productName)) {
+      return finalCoverageProfile(
+        "Punch",
+        "Punch Rare Corojo",
+        "CIGAR.com",
+        "https://www.cigar.com/p/punch-rare-corojo-cigars/2019811/",
+        "4.5/5 from 99 CIGAR.com customer ratings",
+        "line-level"
+      );
+    }
+
+    if (/DIABLO/.test(productName)) {
+      return finalCoverageProfile(
+        "Punch",
+        "Punch Diablo Diabolus",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/ratings/22981/name/punch-diablo-diabolus-robusto",
+        "91 Cigar Aficionado Diabolus line-reference rating",
+        "line-reference product"
+      );
+    }
+
+    if (/SIGNATURE/.test(productName)) {
+      return finalCoverageProfile(
+        "Punch",
+        "Punch Signature",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/ratings/18072/name/punch-signature-robusto-robusto",
+        "91 Cigar Aficionado Signature Robusto line-reference rating",
+        "line-reference product"
+      );
+    }
+
+    if (/AFTER DINNER EMS/.test(productName)) {
+      return finalCoverageProfile(
+        "Punch",
+        "Punch Clasico After Dinner EMS",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/rating/punch-clasico-after-dinner-ems",
+        "85 Cigar Aficionado After Dinner EMS exact rating",
+        "exact product"
+      );
+    }
+
+    return finalCoverageProfile(
+      "Punch",
+      "Punch Clasico",
+      "Cigars International",
+      "https://www.cigarsinternational.com/p/punch-clasico-cigars/1411867/",
+      "4.7/5 from 856 Cigars International customer ratings",
+      "line-level"
+    );
+  }
+
+  if (/^COHIBA\b/.test(productName)) {
+    if (/BLUE/.test(productName)) {
+      return finalCoverageProfile(
+        "Cohiba",
+        "Cohiba Blue",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/ratings/19906/name/cohiba-blue-robusto",
+        "86 Cigar Aficionado Cohiba Blue Robusto line-reference rating",
+        "line-reference product"
+      );
+    }
+
+    if (/BLACK/.test(productName)) {
+      return finalCoverageProfile(
+        "Cohiba",
+        "Cohiba Black",
+        "JR Cigars",
+        "https://www.jrcigars.com/cigars/handmade-cigars/cohiba-cigars/cohiba-black/",
+        "4.18/5 from 1,393 JR Cigars customer reviews",
+        "line-level"
+      );
+    }
+
+    if (/CONNECTICUT/.test(productName)) {
+      return finalCoverageProfile(
+        "Cohiba",
+        "Cohiba Connecticut",
+        "CIGAR.com",
+        "https://www.cigar.com/p/cohiba-connecticut-cigars/2019644/",
+        "4.5/5 from 75 CIGAR.com customer ratings",
+        "line-level"
+      );
+    }
+
+    if (/NICARAG/.test(productName)) {
+      return finalCoverageProfile(
+        "Cohiba",
+        "Cohiba Nicaragua",
+        "CIGAR.com",
+        "https://www.cigar.com/product/cohiba-nicaragua/CHF-PM-1000.html",
+        "4.5/5 from 200 CIGAR.com customer ratings",
+        "line-level"
+      );
+    }
+
+    if (/ROYALE/.test(productName)) {
+      return finalCoverageProfile(
+        "Cohiba",
+        "Cohiba Royale",
+        "CIGAR.com",
+        "https://www.cigar.com/p/cohiba-royale-cigars/2030634/",
+        "4.5/5 from 18 CIGAR.com customer ratings",
+        "line-level"
+      );
+    }
+
+    return finalCoverageProfile(
+      "Cohiba",
+      "Cohiba Red Dot",
+      "JR Cigars",
+      "https://www.jrcigars.com/cigars/handmade-cigars/cohiba-cigars/cohiba-red-dot/",
+      "4.18/5 from 1,572 JR Cigars customer reviews",
+      "line-level"
     );
   }
 
   if (/^QUORUM\b/.test(productName)) {
     return neptuneReviewProfile("Quorum", "Quorum", "https://www.neptunecigar.com/cigar/quorum", "Neptune customer-review brand and line page");
-  }
-
-  if (/^PUNCH\b/.test(productName)) {
-    if (/SIGNATURE/.test(productName)) {
-      return cigarAficionadoSearchReviewProfile(productName, "Punch Signature", "PUNCH SIGNATURE ROBUSTO");
-    }
-
-    if (/DIABLO/.test(productName)) {
-      return cigarAficionadoSearchReviewProfile(productName, "Punch Diablo", "PUNCH DIABLO");
-    }
-
-    if (/RARE COROJO/.test(productName)) {
-      return cigarAficionadoSearchReviewProfile(productName, "Punch Rare Corojo", "PUNCH RARE COROJO");
-    }
-
-    if (/GRAN PURO/.test(productName)) {
-      return cigarAficionadoSearchReviewProfile(productName, "Punch Gran Puro", "PUNCH GRAN PURO");
-    }
-
-    return cigarAficionadoSearchReviewProfile(productName, "Punch", "PUNCH CIGARS");
-  }
-
-  if (/^COHIBA\b/.test(productName)) {
-    if (/BLUE/.test(productName)) {
-      return cigarAficionadoSearchReviewProfile(productName, "Cohiba Blue", "COHIBA BLUE ROBUSTO");
-    }
-
-    return cigarAficionadoSearchReviewProfile(productName, "Cohiba non-Cuban lines", "COHIBA NON CUBAN");
-  }
-
-  if (/^ASHTON\b/.test(productName)) {
-    return cigarAficionadoBrandProfile("Ashton", /VSG/.test(productName) ? "Ashton VSG" : "Ashton", "https://www.cigaraficionado.com/brand/ashton");
   }
 
   if (/^BRICK HOUSE\b/.test(productName)) {
@@ -2731,14 +2911,6 @@ function getFinalCoverageReviewProfile(productName: string) {
         "The mapped source is line-reference coverage unless the exact vitola is the Corona.",
       ]
     );
-  }
-
-  if (/^LA GLORIA CUBANA\b|^LA GLORIA ESTELI\b/.test(productName)) {
-    if (/SERIE R/.test(productName)) {
-      return cigarAficionadoSearchReviewProfile(productName, "La Gloria Cubana", "LA GLORIA CUBANA SERIE R");
-    }
-
-    return cigarAficionadoSearchReviewProfile(productName, "La Gloria Cubana", "LA GLORIA CUBANA");
   }
 
   if (/^DREW ESTATE JAVA\b|^JAVA\b/.test(productName)) {
@@ -2806,10 +2978,6 @@ function getFinalCoverageReviewProfile(productName: string) {
     );
   }
 
-  if (/^CAO\b/.test(productName)) {
-    return cigarAficionadoSearchReviewProfile(productName, "CAO cigar lines", /^CAO FLATHEAD/.test(productName) ? "CAO FLATHEAD" : "CAO CIGARS");
-  }
-
   if (/^PARTAGAS\b/.test(productName)) {
     if (/BLACK LABEL/.test(productName)) {
       return sourcedBrandReviewProfile(
@@ -2826,7 +2994,29 @@ function getFinalCoverageReviewProfile(productName: string) {
       );
     }
 
-    return cigarAficionadoSearchReviewProfile(productName, "Partagas", "PARTAGAS CORTADO");
+    if (/CORTADO ROBUSTO/.test(productName)) {
+      return finalCoverageProfile(
+        "Partagas",
+        "Partagas Cortado Robusto",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/rating/partagas-cortado-robusto",
+        "84 Cigar Aficionado Cortado Robusto exact rating",
+        "exact product"
+      );
+    }
+
+    if (/CORTADO TORO/.test(productName)) {
+      return finalCoverageProfile(
+        "Partagas",
+        "Partagas Cortado Toro",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/ratings/24719/name/partagas-cortado-toro",
+        "89 Cigar Aficionado Cortado Toro exact rating",
+        "exact product"
+      );
+    }
+
+    return undefined;
   }
 
   if (/^CAMACHO\b/.test(productName)) {
@@ -2844,103 +3034,1408 @@ function getFinalCoverageReviewProfile(productName: string) {
     );
   }
 
-  if (/^LA AURORA\b/.test(productName)) {
-    return cigarAficionadoSearchReviewProfile(productName, "La Aurora", /^LA AURORA 120TH/.test(productName) ? "LA AURORA 120TH" : "LA AURORA PREFERIDO");
+  if (/^(ROCKY PATEL|RP)\b/.test(productName) || /^EDGE 20TH ANNIVERSARY/.test(productName) || /^DARK STAR/.test(productName)) {
+    if (/LB1/.test(productName)) {
+      return finalCoverageProfile(
+        "Rocky Patel",
+        "Rocky Patel LB1 Robusto",
+        "Neptune Cigar",
+        "https://www.neptunecigar.com/cigars/rocky-patel-lb1-robusto",
+        "Overall 4.38/5 from 21 Neptune customer reviews",
+        "line-reference product"
+      );
+    }
+
+    if (/IT'?S A BOY|IT'?S A GIRL/.test(productName)) {
+      return finalCoverageProfile(
+        "Rocky Patel",
+        "Rocky Patel It's a Boy/Girl",
+        "CIGAR.com",
+        "https://www.cigar.com/product/rocky-patel-its-a-boy-girl/RPK-PM.html",
+        "5/5 from 17 CIGAR.com customer reviews",
+        "line-level"
+      );
+    }
+
+    if (/2006 VINTAGE/.test(productName)) {
+      return finalCoverageProfile(
+        "Rocky Patel",
+        "Rocky Patel Vintage 2006",
+        "Cigars International",
+        "https://www.cigarsinternational.com/p/rocky-patel-vintage-2006-san-andreas/2008193/",
+        "4.5/5 from 18 Cigars International customer ratings",
+        "line-level"
+      );
+    }
+
+    if (/1990/.test(productName)) {
+      return finalCoverageProfile(
+        "Rocky Patel",
+        "Rocky Patel Vintage 1990",
+        "Neptune Cigar",
+        "https://www.neptunecigar.com/cigar/rocky-patel-vintage-1990",
+        "Overall 4.51/5 from 217 Neptune customer reviews",
+        "line-level"
+      );
+    }
+
+    if (/JUNIORS SUNGROWN|SUN\s*GROWN/.test(productName)) {
+      return finalCoverageProfile(
+        "Rocky Patel",
+        "Rocky Patel Sun Grown",
+        "Rocky Patel",
+        "https://www.rockypatel.com/cigar/sun-grown/",
+        "90 brand-cited Cigar Aficionado rating",
+        "line-level"
+      );
+    }
+
+    if (/EDGE/.test(productName)) {
+      return finalCoverageProfile(
+        "Rocky Patel",
+        "The Edge 20th Anniversary Robusto",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/rating/the-edge-20th-anniversary-robusto",
+        "88 Cigar Insider Edge 20th Anniversary exact rating",
+        "exact product"
+      );
+    }
+
+    if (/HONDURAN/.test(productName)) {
+      return finalCoverageProfile(
+        "Rocky Patel",
+        "Rocky Patel Honduran Rated 95 Sampler",
+        "Neptune Cigar",
+        "https://www.neptunecigar.com/cigars/rocky-patel-honduran-rated-95-4-cigar-sampler",
+        "Overall 4.69/5 from 27 Neptune customer reviews",
+        "exact sampler"
+      );
+    }
+
+    if (/DARK STAR/.test(productName)) {
+      return finalCoverageProfile(
+        "Rocky Patel",
+        "Rocky Patel Dark Star Robusto",
+        "Cigar World",
+        "https://www.cigarworld.com/cigars/review/rocky-patel-dark-star-robusto-a-cigar-worth-repeating/",
+        "94/100 Cigar World member review",
+        "exact product"
+      );
+    }
   }
 
-  if (/^LA ANTIQUEDAD\b|^FLOR DE LAS ANTILLAS\b|^JAIME GARCIA\b|^DON PEPIN\b|^EL CENTURION\b|^LA DUENA\b/.test(productName)) {
-    return cigarAficionadoBrandProfile("My Father", "My Father extended family lines", "https://www.cigaraficionado.com/brand/my-father");
+  if (/^HOYO\b/.test(productName)) {
+    if (/EXCALIBUR MINIATURES/.test(productName)) {
+      return finalCoverageProfile(
+        "Hoyo de Monterrey",
+        "Hoyo Excalibur Miniatures",
+        "Mike's Cigars",
+        "https://mikescigars.com/excalibur-miniatures",
+        "93% Mike's Cigars customer rating from 3 reviews",
+        "exact product"
+      );
+    }
+
+    if (/EXCALIBUR/.test(productName)) {
+      return finalCoverageProfile(
+        "Hoyo de Monterrey",
+        "Hoyo Excalibur",
+        "CIGAR.com",
+        "https://www.cigar.com/p/hoyo-de-monterrey-excalibur-cigarillos-cigars/1480548/",
+        "4.5/5 from 339 CIGAR.com customer ratings",
+        "line-level"
+      );
+    }
+
+    if (/OSCURO/.test(productName)) {
+      return finalCoverageProfile(
+        "Hoyo de Monterrey",
+        "Hoyo de Monterrey Oscuro",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/ratings/25968/name/hoyo-de-monterrey-oscuro-toro-toro",
+        "89 Cigar Aficionado Oscuro Toro exact rating",
+        "line-level"
+      );
+    }
   }
 
-  if (/^ASLYUM\b|^ASYLUM\b/.test(productName)) {
-    return cigarAficionadoSearchReviewProfile(productName, /^ASYLUM INSIDIOUS/.test(productName) ? "Asylum Insidious" : "Asylum 13", /^ASYLUM INSIDIOUS/.test(productName) ? "ASYLUM INSIDIOUS" : "ASYLUM 13");
+  if (/^BOLIVAR COFRADIA/.test(productName)) {
+    return finalCoverageProfile(
+      "Bolivar",
+      "Bolivar Cofradia",
+      "CIGAR.com",
+      "https://www.cigar.com/p/bolivar-cofradia-cigars/2031074/",
+      "4.5/5 from 25 CIGAR.com customer ratings",
+      "line-level"
+    );
   }
 
-  if (/^KAREN BERGER\b/.test(productName)) {
-    return cigarAficionadoSearchReviewProfile(productName, "Karen Berger", "KAREN BERGER CIGARS");
+  if (/^SANCHO PANZA EXTRA FUERTE/.test(productName)) {
+    return finalCoverageProfile(
+      "Sancho Panza",
+      "Sancho Panza Extra Fuerte Madrid",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/14312/name/sancho-panza-extra-fuerte-madrid",
+      "91 Cigar Aficionado Madrid/Toro exact rating",
+      "exact product"
+    );
   }
 
-  if (/^ROCKY PATEL\b|^RP\b|^EDGE\b/.test(productName)) {
-    return sourcedRockyPatelReviewProfile("Rocky Patel residual lines", "https://www.rockypatel.com/cigars/", "Rocky Patel official brand profile coverage", [
-      "Rocky Patel's official cigar index groups residual Rocky Patel, Edge, Juniors, and sampler lines.",
-      "Use this as official brand-profile coverage where no exact review profile has been mapped yet.",
-      "The source is official brand coverage rather than an exact score.",
-    ]);
+  if (/^EL REY DEL MUNDO/.test(productName)) {
+    if (/NATURAL/.test(productName)) {
+      return finalCoverageProfile(
+        "El Rey del Mundo",
+        "El Rey del Mundo Natural",
+        "CIGAR.com",
+        "https://www.cigar.com/product/el-rey-del-mundo-natural/ERB-PM.html",
+        "5/5 from 1 CIGAR.com customer rating",
+        "line-level"
+      );
+    }
+
+    return finalCoverageProfile(
+      "El Rey del Mundo",
+      "El Rey del Mundo Oscuro",
+      "Cigars International",
+      "https://www.cigarsinternational.com/p/el-rey-del-mundo-cigars/1411007/",
+      "4.5/5 from 216 Cigars International customer ratings",
+      "line-level"
+    );
+  }
+
+  if (/^CAO\b/.test(productName)) {
+    if (/FLATHEAD/.test(productName)) {
+      return finalCoverageProfile(
+        "CAO",
+        "CAO Flathead",
+        "Neptune Cigar",
+        "https://www.neptunecigar.com/cigar/cao-flathead",
+        "Overall 4.49/5 from 529 Neptune customer reviews",
+        "line-level"
+      );
+    }
+
+    if (/NICARAGUA/.test(productName)) {
+      return finalCoverageProfile(
+        "CAO",
+        "CAO Nicaragua",
+        "Neptune Cigar",
+        "https://www.neptunecigar.com/cigar/cao-nicaragua",
+        "Overall 4.31/5 from 37 Neptune customer reviews",
+        "line-level"
+      );
+    }
+
+    if (/BRAZILIA/.test(productName)) {
+      return finalCoverageProfile(
+        "CAO",
+        "CAO Brazilia",
+        "Neptune Cigar",
+        "https://www.neptunecigar.com/cigar/cao-brazilia",
+        "Overall 4.48/5 from 499 Neptune customer reviews",
+        "line-level"
+      );
+    }
+
+    if (/BX3/.test(productName)) {
+      return finalCoverageProfile(
+        "CAO",
+        "CAO BX3",
+        "Neptune Cigar",
+        "https://www.neptunecigar.com/cigar/cao-bx3",
+        "Overall 4.33/5 from 84 Neptune customer reviews",
+        "line-level"
+      );
+    }
+  }
+
+  if (/^UNDERCROWN\b|^LIGA UNDERCROWN\b/.test(productName)) {
+    if (/UC10|\b10\b/.test(productName)) {
+      return finalCoverageProfile(
+        "Drew Estate",
+        "Liga Undercrown 10",
+        "Neptune Cigar",
+        "https://www.neptunecigar.com/cigar/liga-undercrown-10",
+        "Overall 4.69/5 from 234 Neptune customer reviews",
+        "line-level"
+      );
+    }
+
+    if (/SHADE|CONNECTICUT/.test(productName)) {
+      return finalCoverageProfile(
+        "Drew Estate",
+        "Liga Undercrown Connecticut Shade",
+        "Neptune Cigar",
+        "https://www.neptunecigar.com/cigar/liga-undercrown-connecticut-shade",
+        "Overall 4.57/5 from 297 Neptune customer reviews",
+        "line-level"
+      );
+    }
+
+    return finalCoverageProfile(
+      "Drew Estate",
+      "Liga Undercrown Maduro",
+      "Neptune Cigar",
+      "https://www.neptunecigar.com/cigar/liga-undercrown-maduro",
+      "Overall 4.59/5 from 659 Neptune customer reviews",
+      "line-level"
+    );
+  }
+
+  if (/^NICA RUSTICA\b/.test(productName)) {
+    return finalCoverageProfile(
+      "Drew Estate",
+      "Nica Rustica",
+      "Neptune Cigar",
+      "https://www.neptunecigar.com/cigar/nica-rustica",
+      "Overall 4.37/5 from 324 Neptune customer reviews",
+      "line-level"
+    );
+  }
+
+  if (/^THE UPSETTERS\b/.test(productName)) {
+    return finalCoverageProfile(
+      "Foundation",
+      "The Upsetters",
+      "CIGAR.com",
+      "https://www.cigar.com/product/the-upsetters/UPS-PM.html",
+      "4.5/5 from 24 CIGAR.com customer reviews",
+      "line-level"
+    );
+  }
+
+  if (/^LA ANTI[GQ]UEDAD\b/.test(productName)) {
+    return finalCoverageProfile(
+      "My Father",
+      "My Father La Antiguedad",
+      "CIGAR.com",
+      "https://www.cigar.com/p/my-father-la-antiguedad-cigars/1483013/",
+      "4.5/5 from 33 CIGAR.com customer reviews",
+      "line-level"
+    );
+  }
+
+  if (/^LA GLORIA CUBANA\b/.test(productName)) {
+    if (/SERIE R/.test(productName)) {
+      return finalCoverageProfile(
+        "La Gloria Cubana",
+        "La Gloria Cubana Serie R",
+        "Neptune Cigar",
+        "https://www.neptunecigar.com/cigar/la-gloria-cubana-serie-r",
+        "Neptune Serie R customer-review line page",
+        "line-level"
+      );
+    }
+
+    return finalCoverageProfile(
+      "La Gloria Cubana",
+      "La Gloria Cubana",
+      "Cigars International",
+      "https://www.cigarsinternational.com/p/la-gloria-cubana-cigars/2067489/",
+      "4.64/5 from 169 Cigars International customer ratings",
+      "line-level"
+    );
+  }
+
+  if (/^LA GLORIA ESTELI/.test(productName)) {
+    return finalCoverageProfile(
+      "La Gloria Cubana",
+      "La Gloria Cubana Serie R Esteli",
+      "Cigar Dojo",
+      "https://cigardojo.com/2013/10/la-gloria-cubana-serie-r-esteli-cigar-review/",
+      "85% Cigar Dojo Serie R Esteli No. 54 review",
+      "line-reference product"
+    );
+  }
+
+  if (/^LA MIRADA HABANO/.test(productName)) {
+    return finalCoverageProfile(
+      "La Mirada",
+      "La Mirada Habano Viejo",
+      "Cigar Public",
+      "https://cigarpublic.com/2022/10/06/la-mirada-habano/",
+      "Cigar Public Habano Viejo review page",
+      "line-reference product"
+    );
+  }
+
+  if (/^LA PALINA NICARAGUA/.test(productName)) {
+    return finalCoverageProfile(
+      "La Palina",
+      "La Palina Nicaragua Connecticut",
+      "CIGAR.com",
+      "https://www.cigar.com/p/la-palina-nicaragua-connecticut-cigar-cigars/2046411/",
+      "5/5 from 1 CIGAR.com customer review and 90-rating context",
+      "component line-reference"
+    );
+  }
+
+  if (/^LA AURORA 120TH/.test(productName)) {
+    return finalCoverageProfile(
+      "La Aurora",
+      "La Aurora 120th Anniversary Robusto",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/24932/name/la-aurora-120th-anniversary-robusto-robusto",
+      "87 Cigar Aficionado Robusto exact rating",
+      "exact product"
+    );
+  }
+
+  if (/^LA ESTRELLA CUBANA HABANO/.test(productName)) {
+    return finalCoverageProfile(
+      "La Estrella Cubana",
+      "La Estrella Cubana Habano",
+      "JR Cigars",
+      "https://www.jrcigars.com/cigars/handmade-cigars/la-estrella-cubana-cigars/la-estrella-cubana-habano/",
+      "4.14/5 from 29 JR Cigars customer reviews",
+      "line-level"
+    );
+  }
+
+  if (/^FLOR DE LAS ANTILLAS\b/.test(productName)) {
+    if (/MADURO/.test(productName)) {
+      return finalCoverageProfile(
+        "My Father",
+        "Flor de las Antillas Maduro",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/ratings/19859/name/flor-de-las-antillas-maduro-corona",
+        "92 Cigar Aficionado Maduro Corona line-reference rating",
+        "line-reference product"
+      );
+    }
+
+    if (/TUBO/.test(productName)) {
+      return finalCoverageProfile(
+        "My Father",
+        "Flor de las Antillas Tubo Toro",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/ratings/18926/name/flor-de-las-antillas-tubo-toro",
+        "90 Cigar Aficionado Tubo Toro exact rating",
+        "exact product"
+      );
+    }
+
+    return finalCoverageProfile(
+      "My Father",
+      "Flor de las Antillas Toro",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/16207/name/flor-de-las-antillas-toro",
+      "96 Cigar Aficionado Toro line-reference rating",
+      "line-reference product"
+    );
+  }
+
+  if (/^LA DUENA\b|^LA DUEÑA\b/.test(productName)) {
+    return finalCoverageProfile(
+      "My Father",
+      "La Duena Robusto No. 5",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/16017/name/la-duena-robusto-no-5",
+      "89 Cigar Insider Robusto No. 5 line-reference rating",
+      "line-reference product"
+    );
+  }
+
+  if (/^JAIME GARCIA\b/.test(productName)) {
+    return finalCoverageProfile(
+      "My Father",
+      "Jaime Garcia Reserva Especial",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/14833/name/14833",
+      "90 Cigar Aficionado Petit Robusto line-reference rating",
+      "line-reference product"
+    );
+  }
+
+  if (/^DON PEPIN/.test(productName)) {
+    return finalCoverageProfile(
+      "My Father",
+      "Don Pepin Garcia Original Invictos",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/25715/name/don-pepin-garcia-original-invictos-robusto",
+      "92 Cigar Aficionado Invictos line-reference rating",
+      "line-reference product"
+    );
+  }
+
+  if (/^EL CENTURION/.test(productName)) {
+    if (/H-?2K/.test(productName)) {
+      return finalCoverageProfile(
+        "My Father",
+        "El Centurion H-2K-CT Toro Box Pressed",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/ratings/24755/name/el-centurion-h-2k-ct-toro-box-pressed-toro",
+        "93 Cigar Aficionado H-2K-CT Toro exact rating",
+        "exact product"
+      );
+    }
+
+    return finalCoverageProfile(
+      "My Father",
+      "El Centurion Robusto",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/20185/name/el-centurion-robusto-toro",
+      "89 Cigar Aficionado Robusto line-reference rating",
+      "line-reference product"
+    );
   }
 
   if (/^TATUAJE\b/.test(productName)) {
-    return cigarAficionadoSearchReviewProfile(productName, "Tatuaje", /^TATUAJE BLACK/.test(productName) ? "TATUAJE BLACK" : "TATUAJE CIGARS");
+    if (/BLACK/.test(productName)) {
+      return finalCoverageProfile(
+        "Tatuaje",
+        "Tatuaje Black",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/ratings/26689/name/tatuaje-black-petite-lancero",
+        "96 Cigar Aficionado Black Petite Lancero line-reference rating",
+        "line-reference product"
+      );
+    }
+
+    if (/HAVANA VI/.test(productName)) {
+      return finalCoverageProfile(
+        "Tatuaje",
+        "Tatuaje Havana VI",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/ratings/17777/name/tatuaje-havana-vi-artistas",
+        "91 Cigar Aficionado Havana VI Artistas line-reference rating",
+        "line-reference product"
+      );
+    }
+
+    if (/NEGOCIANT/.test(productName)) {
+      return finalCoverageProfile(
+        "Tatuaje",
+        "Tatuaje Negociant Monopole",
+        "Neptune Cigar",
+        "https://www.neptunecigar.com/cigar/tatuaje-negociant",
+        "Overall 4.48/5 from 34 Neptune customer reviews",
+        "line-level"
+      );
+    }
+
+    if (/10TH/.test(productName)) {
+      return finalCoverageProfile(
+        "Tatuaje",
+        "Tatuaje 10th Capa Especial",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/rating/tatuaje-10th-capa-especial-belle-encre",
+        "91 Cigar Aficionado 10th Capa Especial line-reference rating",
+        "line-reference product"
+      );
+    }
+
+    return finalCoverageProfile(
+      "Tatuaje",
+      "Tatuaje Havana VI",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/17777/name/tatuaje-havana-vi-artistas",
+      "91 Cigar Aficionado Havana VI Artistas line-reference rating",
+      "line-reference product"
+    );
   }
 
-  if (/^ALADINO\b/.test(productName)) {
-    return cigarAficionadoSearchReviewProfile(productName, "Aladino", "ALADINO CIGARS");
+  if (/^LA AROMA DE CUBA/.test(productName)) {
+    return finalCoverageProfile(
+      "La Aroma de Cuba",
+      "La Aroma de Cuba Robusto",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/25712/name/la-aroma-de-cuba-robusto-robusto",
+      "94 Cigar Aficionado Robusto line-reference rating",
+      "line-reference product"
+    );
+  }
+
+  if (/^EPC ENCORE|^E\.?P\.?\s*CARRILLO ENCORE/.test(productName)) {
+    return finalCoverageProfile(
+      "E.P. Carrillo",
+      "E.P. Carrillo Encore Majestic",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/23967/name/e.p.-carrillo-encore-majestic-miscellaneous",
+      "95 Cigar Aficionado Encore Majestic exact rating",
+      "exact product"
+    );
+  }
+
+  if (/^20 ACRE FARM/.test(productName)) {
+    return finalCoverageProfile(
+      "20 Acre Farm",
+      "20 Acre Farm Toro",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/rating/20-acre-farm-toro",
+      "90 Cigar Aficionado Toro line-reference rating",
+      "line-reference product"
+    );
+  }
+
+  if (/^KNUCKLE SANDWICH/.test(productName)) {
+    return finalCoverageProfile(
+      "Espinosa",
+      "Knuckle Sandwich Habano",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/24453/name/espinosa-knuckle-sandwich-habano-corona-gorda-r-toro",
+      "92 Cigar Aficionado Habano line-reference rating",
+      "line-reference product"
+    );
+  }
+
+  if (/^ASHTON\b/.test(productName)) {
+    if (/VSG/.test(productName)) {
+      return finalCoverageProfile(
+        "Ashton",
+        "Ashton Virgin Sun Grown Eclipse",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/top25cigar/ashton-virgin-sun-grown-eclipse-2010",
+        "92 Cigar Aficionado Top 25 Eclipse line-reference rating",
+        "line-reference product"
+      );
+    }
+
+    if (/MONARCH/.test(productName)) {
+      return finalCoverageProfile(
+        "Ashton",
+        "Ashton Classic Monarch",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/ratings/5306/name/ashton-classic-monarch-toro",
+        "88 Cigar Aficionado Monarch exact rating",
+        "exact product"
+      );
+    }
+
+    if (/AGED|MADURO|ESQUIRE/.test(productName)) {
+      return finalCoverageProfile(
+        "Ashton",
+        "Ashton Aged Maduro",
+        "CIGAR.com",
+        "https://www.cigar.com/p/ashton-aged-maduro-cigars/1410638/",
+        "5/5 from 42 CIGAR.com customer reviews",
+        "line-level"
+      );
+    }
+
+    if (/CABINET/.test(productName)) {
+      return finalCoverageProfile(
+        "Ashton",
+        "Ashton Cabinet",
+        "CIGAR.com",
+        "https://www.cigar.com/p/ashton-cabinet-selection-cigars/1410642/",
+        "5/5 from 39 CIGAR.com customer reviews",
+        "line-level"
+      );
+    }
+
+    return finalCoverageProfile(
+      "Ashton",
+      "Ashton Classic",
+      "CIGAR.com",
+      "https://www.cigar.com/p/ashton-tins-cigars/2000689/",
+      "4.5/5 from 132 CIGAR.com customer reviews",
+      "line-level"
+    );
   }
 
   if (/^AVO\b/.test(productName)) {
-    return cigarAficionadoSearchReviewProfile(productName, "AVO", "AVO SYNCRO");
+    if (/SYNCRO CARIBE/.test(productName)) {
+      return finalCoverageProfile(
+        "AVO",
+        "AVO Syncro Caribe",
+        "CIGAR.com",
+        "https://www.cigar.com/product/avo-syncro-caribe/ASC-PM.html",
+        "4.5/5 from 3 CIGAR.com customer reviews",
+        "line-level"
+      );
+    }
+
+    if (/SYNCRO NICARAGUA/.test(productName)) {
+      return finalCoverageProfile(
+        "AVO",
+        "AVO Syncro Nicaragua Toro",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/ratings/21931/name/avo-syncro-nicaragua-toro-toro",
+        "90 Cigar Aficionado Toro exact rating",
+        "exact product"
+      );
+    }
+
+    return finalCoverageProfile(
+      "AVO",
+      "AVO Classic Robusto",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/8666/name/avo-classic-robusto",
+      "89 Cigar Aficionado Robusto exact rating",
+      "exact product"
+    );
   }
 
-  if (/^BACCARAT\b/.test(productName)) {
-    return cigarAficionadoSearchReviewProfile(productName, "Baccarat", "BACCARAT CIGARS");
+  if (/^ZINO PLATINUM/.test(productName)) {
+    if (/CHUBBY/.test(productName)) {
+      return finalCoverageProfile(
+        "Zino",
+        "Zino Platinum Scepter Series Chubby",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/top25cigar/zino-platinum-scepter-series-chubby-tubos-2005",
+        "91 Cigar Aficionado Top 25 Chubby line-reference rating",
+        "line-reference product"
+      );
+    }
+
+    return finalCoverageProfile(
+      "Zino",
+      "Zino Platinum Scepter Series Grand Master",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/9146/name/zino-platinum-scepter-series-grand-master",
+      "86 Cigar Aficionado Grand Master exact rating",
+      "exact product"
+    );
   }
 
-  if (/^JOYA\b|^ANTANO\b/.test(productName)) {
-    return cigarAficionadoSearchReviewProfile(productName, "Joya de Nicaragua", /^JOYA DE NICARAGUA ANTANO CT|^ANTANO/.test(productName) ? "JOYA DE NICARAGUA ANTANO CONNECTICUT" : "JOYA DE NICARAGUA");
+  if (/^LA AURORA\s+PREFERIDO/.test(productName)) {
+    if (/RUBY|MADURO/.test(productName)) {
+      return finalCoverageProfile(
+        "La Aurora",
+        "La Aurora Preferidos 1903 Edition Ruby",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/ratings/23686/name/la-aurora-preferidos-1903-edition-ruby-perfecto-tubo-figurado",
+        "87 Cigar Insider Ruby Perfecto Tubo exact rating",
+        "exact product"
+      );
+    }
+
+    return finalCoverageProfile(
+      "La Aurora",
+      "La Aurora Preferidos Gold",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/16514/name/aurora-preferidos-gold-figurado",
+      "91 Cigar Aficionado Preferidos Gold line-reference rating",
+      "line-reference product"
+    );
   }
 
-  if (/^PERLA DEL MAR\b/.test(productName)) {
-    return cigarAficionadoSearchReviewProfile(productName, "Perla del Mar", "PERLA DEL MAR CIGARS");
+  if (/^ANTANO 1970|^JOYA\b/.test(productName)) {
+    if (/ANTANO 1970|ANTANO CT/.test(productName)) {
+      return finalCoverageProfile(
+        "Joya de Nicaragua",
+        "Joya de Nicaragua Antano 1970 Gran Consul",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/rating/joya-de-nicaragua-antano-1970-gran-consul",
+        "92 Cigar Aficionado Gran Consul line-reference rating",
+        "line-reference product"
+      );
+    }
+
+    if (/RED/.test(productName)) {
+      return finalCoverageProfile(
+        "Joya de Nicaragua",
+        "Joya Red Robusto",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/ratings/23473/name/joya-red-robusto-robusto",
+        "91 Cigar Aficionado Robusto exact rating",
+        "exact product"
+      );
+    }
+
+    if (/BLACK/.test(productName)) {
+      return finalCoverageProfile(
+        "Joya de Nicaragua",
+        "Joya Black Doble Robusto",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/ratings/21948/name/joya-black-doble-robusto-robusto",
+        "91 Cigar Aficionado Doble Robusto line-reference rating",
+        "line-reference product"
+      );
+    }
+
+    if (/SILVER/.test(productName)) {
+      return finalCoverageProfile(
+        "Joya de Nicaragua",
+        "Joya Silver Robusto",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/ratings/23413/name/joya-silver-robusto",
+        "93 Cigar Aficionado Silver Robusto line-reference rating",
+        "line-reference product"
+      );
+    }
   }
 
-  if (/^LEAF BY OSCAR\b|^OSCAR 2012\b|^OLD MAN\b|^OUTCAST\b/.test(productName)) {
-    return cigarAficionadoSearchReviewProfile(productName, "Oscar Valladares cigar lines", "OSCAR VALLADARES CIGARS");
+  if (/^ALADINO\b/.test(productName)) {
+    if (/CAMEROON/.test(productName)) {
+      return finalCoverageProfile(
+        "Aladino",
+        "Aladino Cameroon Robusto",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/ratings/26545/name/aladino-cameroon-robusto-robusto",
+        "91 Cigar Aficionado Cameroon Robusto exact rating",
+        "exact product"
+      );
+    }
+
+    if (/CONNECTICUT/.test(productName)) {
+      return finalCoverageProfile(
+        "Aladino",
+        "Aladino Connecticut",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/rating/aladino-connecticut-queens",
+        "87 Cigar Aficionado Connecticut Queens line-reference rating",
+        "line-reference product"
+      );
+    }
+
+    if (/85 ANIVERSARIO/.test(productName)) {
+      return finalCoverageProfile(
+        "Aladino",
+        "Aladino 85 Aniversario Reserva Toro",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/top25cigar/aladino-85-aniversario-reserva-toro-2025",
+        "93 Cigar Aficionado Top 25 Toro exact rating",
+        "exact product"
+      );
+    }
+
+    if (/VINTAGE/.test(productName)) {
+      return finalCoverageProfile(
+        "Aladino",
+        "Aladino Vintage Selection",
+        "Blind Man's Puff",
+        "https://blindmanspuff.com/blind-cigar-review-jre-aladino-habano-vintage-selection-rothschild/",
+        "91 Blind Man's Puff Vintage Selection Rothschild review",
+        "line-reference product"
+      );
+    }
+
+    return finalCoverageProfile(
+      "Aladino",
+      "Aladino Robusto",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/20065/name/aladino-robusto-robusto",
+      "93 Cigar Aficionado Robusto exact rating",
+      "exact product"
+    );
   }
 
-  if (/^UNDERCROWN\b|^LIGA UNDERCROWN\b|^NICA RUSTICA\b|^KUBA KUBA FRESH PACK/.test(productName)) {
-    return cigarAficionadoSearchReviewProfile(productName, "Drew Estate cigar lines", /^NICA RUSTICA/.test(productName) ? "NICA RUSTICA" : "UNDERCROWN DREW ESTATE");
+  if (/^LEAF BY OSCAR/.test(productName)) {
+    return finalCoverageProfile(
+      "Oscar Valladares",
+      "Leaf by Oscar Connecticut",
+      "CIGAR.com",
+      "https://www.cigar.com/product/leaf-by-oscar-connecticut/LO1-PM.html",
+      "4.5/5 from 22 CIGAR.com customer reviews",
+      "line-level"
+    );
   }
 
-  if (/^H[.\s]?UPMANN\b/.test(productName)) {
-    return cigarAficionadoSearchReviewProfile(productName, "H. Upmann", "H UPMANN AJ FERNANDEZ");
-  }
-
-  if (/^HOYO\b|^HOYO DE MONTERREY\b/.test(productName)) {
-    return cigarAficionadoSearchReviewProfile(productName, "Hoyo de Monterrey", "HOYO DE MONTERREY EXCALIBUR");
-  }
-
-  if (/^DIESEL\b|^BOLIVAR\b|^CHILLIN MOOSE\b|^SHADY MOOSE\b|^SANCHO PANZA\b|^TRINIDAD\b/.test(productName)) {
-    return cigarAficionadoSearchReviewProfile(productName, "Forged cigar lines", stripPackageFromName(productName));
-  }
-
-  if (/^NEW CUBA\b|^HAVANA Q\b|^CAZADORES\b|^SCHIZO\b|^TRADER JACK/.test(productName)) {
-    return cigarAficionadoSearchReviewProfile(productName, "value cigar lines", stripPackageFromName(productName));
-  }
-
-  if (/^PLASENCIA\b/.test(productName)) {
-    return cigarAficionadoSearchReviewProfile(productName, "Plasencia Alma Fuerte", "PLASENCIA ALMA FUERTE");
+  if (/^OSCAR 2012 MADURO/.test(productName)) {
+    return finalCoverageProfile(
+      "Oscar Valladares",
+      "Oscar Valladares 2012 Maduro Toro",
+      "Cigars Daily",
+      "https://cigarsdaily.com/product/oscar-valladares-2012-maduro-toro-6x52/",
+      "Customer reviews include 1/5 and 5/5 ratings",
+      "exact product"
+    );
   }
 
   if (/^OLMEC\b/.test(productName)) {
-    return cigarAficionadoSearchReviewProfile(productName, "Olmec", "OLMEC FOUNDATION CIGARS");
+    return finalCoverageProfile(
+      "Foundation",
+      "Olmec Maduro Robusto",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/24337/name/olmec-maduro-robusto-robusto",
+      "90 Cigar Insider Maduro Robusto line-reference rating",
+      "line-reference product"
+    );
   }
 
-  if (/^ZINO\b/.test(productName)) {
-    return cigarAficionadoSearchReviewProfile(productName, "Zino Platinum", "ZINO PLATINUM");
+  if (/^PLASENCIA ALMA FUERTE/.test(productName)) {
+    return finalCoverageProfile(
+      "Plasencia",
+      "Plasencia Alma Fuerte Robustus I",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/21748/name/plasencia-alma-fuerte-robustus-i",
+      "91 Cigar Aficionado Robustus I line-reference rating",
+      "line-reference product"
+    );
   }
 
-  if (/^VILLIGER\b/.test(productName)) {
-    return cigarAficionadoSearchReviewProfile(productName, "Villiger Mini", "VILLIGER MINI");
+  if (/^PLASENCIA EXPLORER SAMPLER/.test(productName)) {
+    return finalCoverageProfile(
+      "Plasencia",
+      "Plasencia Explorer Collection Sampler",
+      "Famous Smoke Shop",
+      "https://www.famous-smoke.com/plasencia-coleccin-explorador-6-cigar-sampler-cigars-varies-sampler-of-6",
+      "Exact sampler page cites rated component Plasencia selections",
+      "exact sampler"
+    );
   }
 
-  if (/^20 ACRE FARM\b/.test(productName)) {
-    return cigarAficionadoSearchReviewProfile(productName, "20 Acre Farm", "20 ACRE FARM CIGAR");
+  if (/^PLASENCIA TRIUNFAL/.test(productName)) {
+    return noPublicReviewStatusProfile(
+      "Plasencia",
+      "Plasencia Triunfal 2026",
+      "Neptune Cigar",
+      "https://www.neptunecigar.com/cigars/plasencia-triunfal-61-4--54"
+    );
   }
 
-  if (/^6 X 60 SAMPLER JC NEWMAN\b/.test(productName)) {
-    return cigarAficionadoSearchReviewProfile(productName, "J.C. Newman 6 x 60 Sampler", "JC NEWMAN CIGARS");
+  if (/^CHARTER OAK HABANO/.test(productName)) {
+    return finalCoverageProfile(
+      "Foundation",
+      "Charter Oak CT Habano",
+      "Cigar Aficionado",
+      "https://origin.cigaraficionado.com/ratings/25910/name/charter-oak-ct-habano-lonsdale-toro",
+      "90 Cigar Aficionado CT Habano line-reference rating",
+      "line-reference product"
+    );
   }
 
-  return cigarAficionadoSearchReviewProfile(productName, `${inferBrand(productName)} cigar line`, stripPackageFromName(productName));
+  if (/^ASYLUM\b/.test(productName)) {
+    if (/^ASYLUM 13\b/.test(productName) && !/OGRE/.test(productName)) {
+      return finalCoverageProfile(
+        "Asylum",
+        "Asylum 13",
+        "CIGAR.com",
+        "https://www.cigar.com/product/asylum-13-cigars/TU2-PM.html",
+        "5/5 from 25 CIGAR.com customer reviews",
+        "line-level"
+      );
+    }
+
+    if (/OGRE/.test(productName)) {
+      return finalCoverageProfile(
+        "Asylum",
+        "Asylum 13 Ogre 7x70",
+        "Cigars Daily",
+        "https://cigarsdaily.com/product/asylum-13-ogre-7x70/",
+        "4/5 from 2 Cigars Daily customer reviews",
+        "line-reference product"
+      );
+    }
+
+    if (/INSIDIOUS/.test(productName) && !/MADURO/.test(productName)) {
+      return finalCoverageProfile(
+        "Asylum",
+        "Asylum Insidious",
+        "Cigars International",
+        "https://www.cigarsinternational.com/product/asylum-insidious/T12-PM.html",
+        "5/5 from 67 Cigars International customer ratings",
+        "line-level"
+      );
+    }
+
+    if (/INSIDIOUS MADURO/.test(productName)) {
+      return finalCoverageProfile(
+        "Asylum",
+        "Asylum Insidious Maduro",
+        "Cigars International",
+        "https://www.cigarsinternational.com/product/asylum-insidious-maduro/T15-PM.html",
+        "4.5/5 from 28 Cigars International customer ratings",
+        "line-level"
+      );
+    }
+  }
+
+  if (/^KAREN BERGER CONNECTICUT/.test(productName)) {
+    return finalCoverageProfile(
+      "Karen Berger",
+      "K by Karen Berger Connecticut",
+      "Karen Berger Cigars",
+      "https://karenbergercigars.com/connecticut/",
+      "93 Cigar Journal line rating",
+      "line-level"
+    );
+  }
+
+  if (/^KAREN BERGER HABANO/.test(productName)) {
+    return finalCoverageProfile(
+      "Karen Berger",
+      "K by Karen Berger Habano",
+      "Neptune Cigar",
+      "https://www.neptunecigar.com/cigar/k-by-karen-berger-habano",
+      "Neptune Habano customer-review line page",
+      "line-level"
+    );
+  }
+
+  if (/^KAREN BERGER SAMPLER/.test(productName)) {
+    return finalCoverageProfile(
+      "Karen Berger",
+      "K by Karen Berger Connecticut",
+      "Karen Berger Cigars",
+      "https://karenbergercigars.com/connecticut/",
+      "93 Cigar Journal component-line rating",
+      "component line-reference"
+    );
+  }
+
+  if (/^KAREN BERGER MADURO/.test(productName)) {
+    return finalCoverageProfile(
+      "Karen Berger",
+      "Karen Berger Maduro Toro",
+      "Cigarworld.de",
+      "https://www.cigarworld.de/en/zigarren/nicaragua/karen-berger-maduro-toro-90017430_50933",
+      "92 Cigar Journal exact Toro rating",
+      "line-reference product"
+    );
+  }
+
+  if (/^NEW CUBA CONNECTICUT|^NEW CUBA SUPERIOR CONNECTICUT/.test(productName)) {
+    return finalCoverageProfile(
+      "New Cuba",
+      "New Cuba Connecticut",
+      "Neptune Cigar",
+      "https://www.neptunecigar.com/cigar/new-cuba-connecticut",
+      "Overall 3.9/5 from 49 Neptune customer reviews",
+      "line-level"
+    );
+  }
+
+  if (/^NEW CUBA COROJO/.test(productName)) {
+    if (/TORO/.test(productName)) {
+      return finalCoverageProfile(
+        "New Cuba",
+        "New Cuba Corojo Toro",
+        "Neptune Cigar",
+        "https://www.neptunecigar.com/cigars/new-cuba-corojo-toro",
+        "Neptune exact product page with User Ratings & Reviews",
+        "exact product"
+      );
+    }
+
+    return finalCoverageProfile(
+      "New Cuba",
+      "New Cuba Corojo Titan",
+      "Neptune Cigar",
+      "https://www.neptunecigar.com/cigars/new-cuba-corojo-titan",
+      "Overall 3.67/5 from 21 Neptune customer reviews",
+      "line-reference product"
+    );
+  }
+
+  if (/^PERLA DEL MAR MADURO|^PERLA DEL MAR TORO GRANDE MADURO/.test(productName)) {
+    return finalCoverageProfile(
+      "Perla del Mar",
+      "Perla del Mar Maduro",
+      "Cigars International",
+      "https://www.cigarsinternational.com/product/perla-del-mar-maduro/PDU-PM.html",
+      "4.5/5 from 27 Cigars International customer ratings",
+      "line-level"
+    );
+  }
+
+  if (/^PERLA DEL MAR SHADE/.test(productName)) {
+    return finalCoverageProfile(
+      "Perla del Mar",
+      "Perla del Mar Shade",
+      "Neptune Cigar",
+      "https://www.neptunecigar.com/cigar/perla-del-mar-shade",
+      "Overall 4.35/5 from 128 Neptune customer reviews",
+      "line-level"
+    );
+  }
+
+  if (/^BACCARAT MADURO/.test(productName)) {
+    return finalCoverageProfile(
+      "Baccarat",
+      "Baccarat The Game Maduro Rothschild",
+      "Cigars Daily",
+      "https://cigarsdaily.com/product/baccarat-the-game-maduro-rothschild-5x50/",
+      "4.57/5 from 7 Cigars Daily customer reviews",
+      "line-reference product"
+    );
+  }
+
+  if (/^BACCARAT NATURAL/.test(productName)) {
+    return finalCoverageProfile(
+      "Baccarat",
+      "Baccarat Natural",
+      "Cigar World",
+      "https://www.cigarworld.com/cigars/baccarat/baccarat-natural/reviews/",
+      "Cigar World customer review page",
+      "line-level"
+    );
+  }
+
+  if (/^NEW CUBA COROJO TITAN/.test(productName)) {
+    return finalCoverageProfile(
+      "New Cuba",
+      "New Cuba Corojo Titan",
+      "Neptune Cigar",
+      "https://www.neptunecigar.com/cigars/new-cuba-corojo-titan",
+      "Overall 3.67/5 from 21 Neptune customer reviews",
+      "exact product"
+    );
+  }
+
+  if (/^CACTUS JOE COFFEE/.test(productName)) {
+    return noPublicReviewStatusProfile(
+      "Cactus Joe",
+      "Cactus Joe Coffee",
+      "Sunset Wholesale West",
+      "https://sunsetwholesalewest.com/premium-cigars/"
+    );
+  }
+
+  if (/^ASYLUM SERENITY INSANITY/.test(productName)) {
+    return finalCoverageProfile(
+      "Asylum",
+      "Asylum Serenity Now",
+      "Cigar Dojo",
+      "https://cigardojo.com/2025/03/asylum-serenity-now-54x6/",
+      "89% Cigar Dojo Serenity Now 54x6 review",
+      "line-reference product"
+    );
+  }
+
+  if (/^SCHIZO MADURO/.test(productName)) {
+    return finalCoverageProfile(
+      "Schizo",
+      "Schizo Maduro",
+      "Cigars International",
+      "https://www.cigarsinternational.com/product/schizo-maduro/SZP-PM.html",
+      "4.5/5 from 176 Cigars International customer ratings",
+      "line-level"
+    );
+  }
+
+  if (/^SCHIZO\b/.test(productName)) {
+    return finalCoverageProfile(
+      "Schizo",
+      "Schizo",
+      "Cigars International",
+      "https://www.cigarsinternational.com/product/schizo/SZO-PM.html",
+      "4.5/5 from 137 Cigars International customer ratings",
+      "line-level"
+    );
+  }
+
+  if (/^GRAN HABANO/.test(productName)) {
+    if (/#?1\b/.test(productName)) {
+      return finalCoverageProfile(
+        "Gran Habano",
+        "Gran Habano #1 Connecticut",
+        "CIGAR.com",
+        "https://www.cigar.com/p/gran-habano-1-connecticut-cigars/1411176/",
+        "CIGAR.com customer-review line page",
+        "line-level"
+      );
+    }
+
+    return finalCoverageProfile(
+      "Gran Habano",
+      "Gran Habano #5 Corojo",
+      "CIGAR.com",
+      "https://www.cigar.com/product/gran-habano-5-corojo/GAL-PM.html",
+      "5/5 from 16 CIGAR.com customer reviews",
+      "line-level"
+    );
+  }
+
+  if (/^DIESEL\b/.test(productName)) {
+    if (/SHERRY CASK/.test(productName)) {
+      return finalCoverageProfile(
+        "Diesel",
+        "Diesel Whiskey Row Sherry Cask",
+        "Cigars International",
+        "https://www.cigarsinternational.com/p/diesel-whiskey-row-sherry-cask/2024169/",
+        "4.5/5 from 131 Cigars International customer ratings",
+        "line-level"
+      );
+    }
+
+    return finalCoverageProfile(
+      "Diesel",
+      "Diesel Whiskey Row",
+      "CIGAR.com",
+      "https://www.cigar.com/product/diesel-whiskey-row/J64-PM.html",
+      "4.5/5 from 111 CIGAR.com customer reviews",
+      "line-level"
+    );
+  }
+
+  if (/^CHILLIN MOOSE/.test(productName)) {
+    return finalCoverageProfile(
+      "Chillin' Moose",
+      "Chillin' Moose",
+      "Cigars International",
+      "https://www.cigarsinternational.com/p/chillin-moose-cigars/2067500/",
+      "4.56/5 from 267 Cigars International customer ratings",
+      "line-level"
+    );
+  }
+
+  if (/^SHADY MOOSE/.test(productName)) {
+    return finalCoverageProfile(
+      "Chillin' Moose",
+      "Shady Moose",
+      "CIGAR.com",
+      "https://www.cigar.com/p/shady-moose-cigars/2043169/",
+      "4.5/5 from 13 CIGAR.com customer reviews",
+      "line-level"
+    );
+  }
+
+  if (/^CAZADORES\b/.test(productName)) {
+    return finalCoverageProfile(
+      "Alec Bradley",
+      "Alec Bradley Cazadores Toro",
+      "Cigars International",
+      "https://www.cigarsinternational.com/p/alec-bradley-cazadores-cigar/2066946/",
+      "4.23/5 from 84 Cigars International customer ratings",
+      "line-level"
+    );
+  }
+
+  if (/^H UPMANN THE BANKER DAYTRADER/.test(productName)) {
+    return finalCoverageProfile(
+      "H. Upmann",
+      "H. Upmann The Banker Day Trader",
+      "CIGAR.com",
+      "https://www.cigar.com/product/h-upmann-banker-day-trader/HBD-PM.html",
+      "5/5 from 1 CIGAR.com customer review",
+      "line-level"
+    );
+  }
+
+  if (/^H\.?UPMANN ROBUSTO BY AJ/.test(productName)) {
+    return finalCoverageProfile(
+      "H. Upmann",
+      "H. Upmann by AJ Fernandez",
+      "CIGAR.com",
+      "https://www.cigar.com/product/h-upmann-by-aj-fernandez/HUU-PM.html",
+      "4.5/5 from 64 CIGAR.com customer reviews",
+      "line-level"
+    );
+  }
+
+  if (/^VILLIGER MINI/.test(productName)) {
+    if (/ESPRESSO/.test(productName)) {
+      return finalCoverageProfile(
+        "Villiger",
+        "Villiger Mini Espresso",
+        "Cigar Smoke Shop",
+        "https://cigarsmokeshop.net/proddetail.php?prod=Villiger+Mini+Espresso",
+        "3/5 from 25 Cigar Smoke Shop user ratings",
+        "exact product"
+      );
+    }
+
+    return finalCoverageProfile(
+      "Villiger",
+      "Villiger Mini Cigarillos",
+      "Cigars International",
+      "https://www.cigarsinternational.com/p/villiger-mini-red-vanilla-cigarillos-cigars/2019937/",
+      "4.5/5 from 68 Cigars International customer ratings",
+      "line-level"
+    );
+  }
+
+  if (/^JOYA.*CABINETTA/.test(productName)) {
+    return finalCoverageProfile(
+      "Joya de Nicaragua",
+      "Joya de Nicaragua Cabinetta",
+      "CIGAR.com",
+      "https://www.cigar.com/product/joya-de-nicaragua-cabinetta/JNC-PM.html",
+      "4.5/5 from 18 CIGAR.com customer reviews",
+      "line-level"
+    );
+  }
+
+  if (/^6 X 60 SAMPLER/.test(productName)) {
+    return finalCoverageProfile(
+      "J.C. Newman",
+      "J.C. Newman 6x60 Sesenta Sampler",
+      "Best Cigar Prices",
+      "https://www.bestcigarprices.com/cigar-directory/samplers-cigars/j.c.-newman-6x60-sesenta-4-pack-sampler-221712/",
+      "5/5 from 12 Best Cigar Prices customer ratings",
+      "exact sampler"
+    );
+  }
+
+  if (/^AGING ROOM NICARAGUA MAESTRO SAMPLER/.test(productName)) {
+    return finalCoverageProfile(
+      "Aging Room",
+      "Aging Room Quattro Nicaragua Maestro",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/top25cigar/aging-room-quattro-nicaragua-maestro-2019",
+      "96 Cigar Aficionado Cigar of the Year component rating",
+      "component line-reference"
+    );
+  }
+
+  if (/^OMAR ORTEZ/.test(productName)) {
+    return finalCoverageProfile(
+      "Omar Ortez",
+      "Omar Ortez",
+      "Cigars.com",
+      "https://www.cigars.com/cigars/handmade-cigars/omar-ortez-cigars/",
+      "4.8 average Cigars.com customer review across Omar Ortez lines",
+      "component line-level"
+    );
+  }
+
+  if (/^COJIMAR HONEY BLUEBERRY/.test(productName)) {
+    return noPublicReviewStatusProfile(
+      "Cojimar",
+      "Cojimar Honey Blueberry",
+      "Cojimar",
+      "https://www.cojimars.com/cigars"
+    );
+  }
+
+  if (/^OUTCAST/.test(productName)) {
+    return finalCoverageProfile(
+      "Outcast",
+      "Outcast",
+      "Mike's Cigars",
+      "https://mikescigars.com/cigars/brands/outcast",
+      "100% from 4 Mike's Cigars customer reviews",
+      "line-level"
+    );
+  }
+
+  if (/^ALEC BRADLEY TORO.*FRESH PACK/.test(productName)) {
+    return finalCoverageProfile(
+      "Alec Bradley",
+      "Alec Bradley Toro Fresh Pack",
+      "Cigars.com",
+      "https://www.cigars.com/item/alec-bradley-cigars/toro-fresh-pack-54pks/AB4TFP.html",
+      "Cigars.com fresh-pack page cites all components above 90 rating",
+      "component line-reference"
+    );
+  }
+
+  if (/^ODYSSEY CONNECTICUT/.test(productName)) {
+    return finalCoverageProfile(
+      "Odyssey",
+      "Odyssey Connecticut",
+      "Cigars International",
+      "https://www.cigarsinternational.com/p/odyssey-connecticut-cigars/1510048/",
+      "4.5/5 from 304 Cigars International customer ratings",
+      "line-level"
+    );
+  }
+
+  if (/^CASA MAGNA COLORADO/.test(productName)) {
+    return finalCoverageProfile(
+      "Casa Magna",
+      "Casa Magna Colorado Robusto",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/16482/name/casa-magna-colorado-robusto",
+      "94 Cigar Aficionado listed review / 93 Cigar of the Year context",
+      "exact product"
+    );
+  }
+
+  if (/^TATASCAN CONNECTICUT/.test(productName)) {
+    return finalCoverageProfile(
+      "Tatascan",
+      "Tatascan Connecticut",
+      "JR Cigars",
+      "https://www.jrcigars.com/cigars/handmade-cigars/tatascan-connecticut/",
+      "5/5 from 1 JR Cigars customer review",
+      "line-level"
+    );
+  }
+
+  if (/^TRINIDAD ESPIRITU SERIES 3/.test(productName)) {
+    return finalCoverageProfile(
+      "Trinidad",
+      "Trinidad Espiritu Series No. 3",
+      "CIGAR.com",
+      "https://www.cigar.com/p/trinidad-espiritu-series-no-3-cigars/2045559/",
+      "5/5 from 1 CIGAR.com customer review and 95 Cigar Aficionado rating context",
+      "line-level"
+    );
+  }
+
+  if (/^TRADER JACKS MIDNIGHT/.test(productName)) {
+    return finalCoverageProfile(
+      "Trader Jack's",
+      "Trader Jack's Midnight",
+      "Cigar World",
+      "https://www.cigarworld.com/cigars/trader-jacks/midnight/reviews/",
+      "Cigar World customer review page",
+      "line-level"
+    );
+  }
+
+  if (/^TRADER JACKS/.test(productName)) {
+    return finalCoverageProfile(
+      "Trader Jack's",
+      "Trader Jack's Bag",
+      "LM Cigars",
+      "https://lmcigars.com/product/trader-jacks-bag/",
+      "4.96/5 from 27 LM Cigars customer reviews",
+      "line-level"
+    );
+  }
+
+  if (/^HAVANA Q/.test(productName)) {
+    return finalCoverageProfile(
+      "Havana Q",
+      "Havana Q by Quorum Double Robusto",
+      "Leaf Enthusiast",
+      "https://www.leafenthusiast.com/cigar-review-havana-q-by-quorum/",
+      "8.5/10 Leaf Enthusiast Double Robusto review",
+      "line-reference product"
+    );
+  }
+
+  if (/^CAZADORES NICARAGUA/.test(productName)) {
+    return finalCoverageProfile(
+      "La Aurora",
+      "La Aurora Cazadores Nicaragua Robusto",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/ratings/25862/name/la-aurora-cazadores-nicaragua-robusto-robusto",
+      "89 Cigar Aficionado Nicaragua Robusto line-reference rating",
+      "line-reference product"
+    );
+  }
+
+  if (/^NATIONAL BRAND.*IMPERIAL MADURO/.test(productName)) {
+    return finalCoverageProfile(
+      "National Brand",
+      "National Imperial Maduro",
+      "Best Cigar Prices",
+      "https://www.bestcigarprices.com/cigar-directory/national-cigars/national-imperial-maduro-9824/",
+      "5/5 from 8 Best Cigar Prices customer ratings",
+      "exact product"
+    );
+  }
+
+  if (/^NATIONAL BRAND CHURCHILL/.test(productName)) {
+    return finalCoverageProfile(
+      "National Brand",
+      "National Brand Churchill",
+      "Neptune Cigar",
+      "https://www.neptunecigar.com/cigars/national-brand-churchill",
+      "Overall 4.18/5 from 52 Neptune customer reviews",
+      "exact product"
+    );
+  }
+
+  if (/^BRIOSO/.test(productName)) {
+    return finalCoverageProfile(
+      "Brioso",
+      "Brioso",
+      "Cigar World",
+      "https://www.cigarworld.com/cigars/brioso/brioso/reviews/",
+      "Cigar World customer review page",
+      "line-level"
+    );
+  }
+
+  if (/^AL CAPONE/.test(productName)) {
+    return finalCoverageProfile(
+      "Al Capone",
+      "Al Capone Sweets Filtered",
+      "Cigar Chief",
+      "https://cigarchief.com/shop/al-capone-sweets-filtered/",
+      "3.50/5 from 2 Cigar Chief customer reviews",
+      "line-reference product"
+    );
+  }
+
+  return undefined;
 }
 
 function getArturoFuenteDonCarlosReviewProfile(productName: string) {

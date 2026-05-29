@@ -61,6 +61,21 @@ const recorderMimeTypes = [
 
 type ConciergeResponse = ConciergeChatResponse | ConciergeVoiceResponse;
 
+type ConciergeReplyListItem = {
+  title: string;
+  body: string;
+};
+
+type ConciergeReplyBlock =
+  | {
+      type: "paragraph";
+      text: string;
+    }
+  | {
+      type: "list";
+      items: ConciergeReplyListItem[];
+    };
+
 export function FloatingConcierge() {
   const auth = useBackupAuth();
   const pathname = usePathname();
@@ -80,12 +95,14 @@ export function FloatingConcierge() {
   const finalTranscriptPartsRef = useRef<string[]>([]);
   const speechRecognitionRef = useRef<BrowserSpeechRecognition | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioObjectUrlRef = useRef<string | null>(null);
 
   useEffect(() => {
     return () => {
       stopRecordingTracks();
       speechRecognitionRef.current?.abort();
       audioRef.current?.pause();
+      releaseSpeechAudio();
     };
   }, []);
 
@@ -226,19 +243,42 @@ export function FloatingConcierge() {
   }
 
   async function playSpeech(speech?: ConciergeSpeechOutput | null) {
-    if (!voiceEnabled || !speech?.audioBase64 || speech.status !== "synthesized") {
+    if (!speech?.audioBase64 || speech.status !== "synthesized") {
       return;
     }
 
     audioRef.current?.pause();
-    const audio = new Audio(`data:${speech.mimeType || "audio/mpeg"};base64,${speech.audioBase64}`);
-    audioRef.current = audio;
+    releaseSpeechAudio();
+
+    const speechAudio = createSpeechAudio(speech);
+    if (!speechAudio) {
+      setStatusMessage("Reply audio was not available. Try sending the question again.");
+      return;
+    }
+
+    audioObjectUrlRef.current = speechAudio.objectUrl;
+    audioRef.current = speechAudio.audio;
+    speechAudio.audio.onended = () => {
+      if (audioObjectUrlRef.current === speechAudio.objectUrl) {
+        releaseSpeechAudio();
+      }
+    };
 
     try {
-      await audio.play();
+      await speechAudio.audio.play();
+      setStatusMessage("Playing reply.");
     } catch {
       setStatusMessage("Reply ready. Tap play to hear it.");
     }
+  }
+
+  function releaseSpeechAudio() {
+    if (!audioObjectUrlRef.current) {
+      return;
+    }
+
+    URL.revokeObjectURL(audioObjectUrlRef.current);
+    audioObjectUrlRef.current = null;
   }
 
   function startSpeechRecognition() {
@@ -284,6 +324,7 @@ export function FloatingConcierge() {
 
   const canSendText = Boolean(message.trim()) && !isSending && !isRecording;
   const speech = response?.voice?.speech ?? null;
+  const replyBlocks = response ? formatConciergeReply(response.reply) : [];
   const isLiveReady = canUseLiveConcierge(auth.authSource);
   const isCartRoute = pathname.startsWith("/cart");
 
@@ -380,7 +421,22 @@ export function FloatingConcierge() {
                   {response.voice && "transcription" in response.voice ? (
                     <p className="text-xs leading-5 text-yuzu-muted">You said: {response.voice.transcription.transcript}</p>
                   ) : null}
-                  <p className="text-sm leading-6 text-yuzu-cream">{response.reply}</p>
+                  <div className="grid gap-3 text-sm leading-6 text-yuzu-cream">
+                    {replyBlocks.map((block, index) =>
+                      block.type === "list" ? (
+                        <ul key={`reply-list-${index}`} className="grid gap-2 border-l border-yuzu-gold/45 pl-3">
+                          {block.items.map((item, itemIndex) => (
+                            <li key={`${item.title || "reply"}-${itemIndex}`} className="grid gap-1">
+                              {item.title ? <span className="font-bold text-yuzu-gold">{item.title}</span> : null}
+                              {item.body ? <span>{item.body}</span> : null}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p key={`reply-paragraph-${index}`}>{block.text}</p>
+                      )
+                    )}
+                  </div>
                   {speech?.audioBase64 ? (
                     <Button className="w-fit border-yuzu-line text-yuzu-cream" size="sm" type="button" variant="outline" onClick={() => playSpeech(speech)}>
                       <Volume2 data-icon="inline-start" />
@@ -440,6 +496,168 @@ function readBlobAsBase64(blob: Blob) {
     };
     reader.readAsDataURL(blob);
   });
+}
+
+function createSpeechAudio(speech: ConciergeSpeechOutput) {
+  const audioBytes = decodeBase64Audio(speech.audioBase64 || "");
+  if (!audioBytes) {
+    return null;
+  }
+
+  const blob = new Blob([audioBytes], { type: speech.mimeType || "audio/mpeg" });
+  const objectUrl = URL.createObjectURL(blob);
+
+  return {
+    audio: new Audio(objectUrl),
+    objectUrl,
+  };
+}
+
+function decodeBase64Audio(value: string) {
+  try {
+    const binary = atob(value);
+    const bytes = new Uint8Array(binary.length);
+
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+
+    return bytes;
+  } catch {
+    return null;
+  }
+}
+
+function formatConciergeReply(reply: string): ConciergeReplyBlock[] {
+  const chunks = reply
+    .replace(/\r\n/g, "\n")
+    .trim()
+    .split(/\n{2,}/)
+    .map((chunk) => chunk.trim())
+    .filter(Boolean);
+  const blocks: ConciergeReplyBlock[] = [];
+
+  for (const chunk of chunks) {
+    const emphasizedBlocks = splitEmphasizedRecommendationRun(chunk);
+    if (emphasizedBlocks) {
+      blocks.push(...emphasizedBlocks);
+      continue;
+    }
+
+    const lines = chunk
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    if (lines.length > 1 && lines.every(isConciergeListLine)) {
+      const items = lines.map(parseConciergeListLine).filter((item) => item.title || item.body);
+      if (items.length > 0) {
+        blocks.push({ type: "list", items });
+        continue;
+      }
+    }
+
+    const text = cleanConciergeText(chunk.replace(/\s*\n\s*/g, " "));
+    if (text) {
+      blocks.push({ type: "paragraph", text });
+    }
+  }
+
+  if (blocks.length > 0) {
+    return blocks;
+  }
+
+  const fallback = cleanConciergeText(reply);
+  return fallback ? [{ type: "paragraph", text: fallback }] : [];
+}
+
+function splitEmphasizedRecommendationRun(value: string): ConciergeReplyBlock[] | null {
+  const matches = Array.from(value.matchAll(/\*\*([^*]+?)\*\*\s*:?\s*/g));
+  if (matches.length < 2) {
+    return null;
+  }
+
+  const blocks: ConciergeReplyBlock[] = [];
+  const firstMatchIndex = matches[0].index ?? 0;
+  const intro = cleanConciergeText(value.slice(0, firstMatchIndex));
+  if (intro) {
+    blocks.push({ type: "paragraph", text: intro });
+  }
+
+  let trailing = "";
+  const items = matches
+    .map((match, index) => {
+      const nextMatch = matches[index + 1];
+      const bodyStart = (match.index ?? 0) + match[0].length;
+      const bodyEnd = nextMatch?.index ?? value.length;
+      const title = cleanConciergeText(match[1] || "");
+      let body = cleanConciergeText(value.slice(bodyStart, bodyEnd));
+
+      if (index === matches.length - 1) {
+        const sentences = splitConciergeSentences(body);
+        if (sentences.length >= 3) {
+          body = sentences[0];
+          trailing = sentences.slice(1).join(" ");
+        }
+      }
+
+      return { title, body };
+    })
+    .filter((item) => item.title || item.body);
+
+  if (items.length > 0) {
+    blocks.push({ type: "list", items });
+  }
+
+  const cleanTrailing = cleanConciergeText(trailing);
+  if (cleanTrailing) {
+    blocks.push({ type: "paragraph", text: cleanTrailing });
+  }
+
+  return blocks.length > 0 ? blocks : null;
+}
+
+function isConciergeListLine(value: string) {
+  return /^\s*(?:[-*]\s+|\d+[.)]\s+)/.test(value);
+}
+
+function parseConciergeListLine(value: string): ConciergeReplyListItem {
+  const cleaned = value.replace(/^\s*(?:[-*]\s+|\d+[.)]\s+)/, "").trim();
+  const emphasized = cleaned.match(/^\*\*([^*]+?)\*\*\s*:?\s*(.*)$/);
+  if (emphasized) {
+    return {
+      title: cleanConciergeText(emphasized[1] || ""),
+      body: cleanConciergeText(emphasized[2] || ""),
+    };
+  }
+
+  const titled = cleaned.match(/^([^:]{3,80}):\s+(.+)$/);
+  if (titled) {
+    return {
+      title: cleanConciergeText(titled[1] || ""),
+      body: cleanConciergeText(titled[2] || ""),
+    };
+  }
+
+  return {
+    title: "",
+    body: cleanConciergeText(cleaned),
+  };
+}
+
+function splitConciergeSentences(value: string) {
+  return (value.match(/[^.!?]+(?:[.!?]+|$)/g) || []).map(cleanConciergeText).filter(Boolean);
+}
+
+function cleanConciergeText(value: string) {
+  return value
+    .replace(/\*\*([^*]+?)\*\*/g, "$1")
+    .replace(/__([^_]+?)__/g, "$1")
+    .replace(/`([^`]+?)`/g, "$1")
+    .replace(/^\s*[:;-]\s*/, "")
+    .replace(/\s+/g, " ")
+    .replace(/\s+([.,;:!?])/g, "$1")
+    .trim();
 }
 
 function formatStatusLabel(value: string) {
