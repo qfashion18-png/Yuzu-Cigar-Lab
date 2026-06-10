@@ -567,6 +567,12 @@ function buildImageSearchTargets(story: NewsStory): ImageSearchTarget[] {
     }
   }
 
+  for (const hint of localCacheHints) {
+    if (hint.pattern.test(storyText)) {
+      targets.push({ label: hint.label, url: hint.localPath, source: "local_cache", localPath: hint.localPath });
+    }
+  }
+
   return uniqueTargets(targets);
 }
 
@@ -791,7 +797,7 @@ async function copyLocalCandidate(target: ImageSearchTarget, imageDir: string): 
     label: target.label,
     sourcePageUrl: target.localPath,
     imageUrl: target.localPath,
-    score: 42,
+    score: 66,
     reasons: [`copied ${target.source.replaceAll("_", " ")} image from project cache`],
     status: "downloaded",
     localPath,

@@ -116,6 +116,15 @@ Project memory: `AGENTS.md` now requires Codex to use this file as the persisten
   - `output/social/yuzu-business-message-access-2026-06-10/provided-token-validation.json`
   - `output/social/yuzu-business-message-access-2026-06-10/provided-token-update-decision.json`
 
+### Post-Deploy Social Runner Cache Hint Update
+
+- During deploy cleanup, `scripts/cigar-flow-facebook-run.ts` received an additional local-cache image selection update.
+- Preserved the change instead of reverting it:
+  - Local cache hints are now emitted as image search targets when their pattern matches story text.
+  - Copied local-cache candidates now score higher so they can fill image slots more reliably.
+- Verification:
+  - `node --import tsx --test tests/cigar-flow-facebook-run.test.ts` passed 3/3.
+
 ## 2026-06-10 Friends & Family Box Pass Hidden Invite Page
 
 - Goal: create a visually appealing unlinked Friends & Family page where invited users can claim 1 year of Box Access Pass access.
