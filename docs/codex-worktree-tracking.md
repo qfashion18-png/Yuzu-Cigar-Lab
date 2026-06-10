@@ -6,6 +6,35 @@ Purpose: track the dirty worktree I encounter while expanding and verifying the 
 
 Project memory: `AGENTS.md` now requires Codex to use this file as the persistent worktree ledger. Every meaningful update, fix, audit, verification pass, or newly discovered dirty/untracked area should be recorded here in the same turn.
 
+## 2026-06-10 Strength Is The Blend Education Guide
+
+- Goal: respond to the user's reference image that incorrectly presented wrapper categories as a nicotine ladder and create a researched guide explaining that cigar strength is based on the full blend and related attributes.
+- Research checked:
+  - Tobacconist University flavor chart for separating body, flavor, and strength.
+  - Tobacconist University wrapper color FAQ for Maduro as a color/fermentation cue.
+  - Cigar Aficionado blend anatomy article for wrapper, binder, filler, and format roles.
+  - Cigar Aficionado tobacco priming reporting for ligero/medio tiempo as higher-priming, higher-nicotine leaves.
+  - Cigar Advisor strength/body guide for wrapper color not being a reliable strength verdict.
+  - FDA Tobacco 21 for adult 21+ cigar/tobacco compliance framing.
+- Patched:
+  - Updated `src/lib/seo-content.ts` cigar-strength guide copy to explicitly say strength is not a wrapper-color ladder, add blend/priming/source-backed notes, and clarify strength vs body vs flavor.
+  - Added `scripts/render-yuzu-strength-guide-assets.mjs`, a Playwright screenshot renderer that avoids the removed `sharp` dependency by embedding local image assets as data URIs.
+  - Rendered six feed cards and six story cards under `output/social/facebook-planner-month-2026-06-09/strength-is-the-blend-guide/`.
+  - Refreshed the local scheduled Page cover asset at `output/social/facebook-planner-month-2026-06-09/page-assets/2026-06-17-strength-vs-body-fb-page-4x5.jpg`.
+  - Added a caption and manifest with research sources and compliance notes.
+  - Updated `docs/yuzu-facebook-first-month-post-schedule-2026-06-09.csv` so the June 17 Strength vs body row points to the finished guide package.
+  - Updated `docs/yuzu-luxury-social-creative-standard-2026-06-08.md` with the new strength/blend fact-checking sources.
+- Visual QA:
+  - Inspected the feed contact sheet, story contact sheet, feed cover, blend-impact card, final choose-better card, and story cover.
+  - First render exposed blocked local file URLs; fixed the renderer to embed source and contact-sheet images as data URIs.
+  - Final assets load photography and logo correctly, text fits, and the compliance/footer line is not cropped.
+- Verification completed:
+  - `node --check scripts/render-yuzu-strength-guide-assets.mjs`
+  - `node scripts\render-yuzu-strength-guide-assets.mjs`
+  - `node --import tsx --test tests\seo-content-architecture.test.ts tests\seo-metadata.test.ts`
+- Dirty worktree note:
+  - The workspace was already broadly dirty before this pass. This pass intentionally touched only the cigar-strength guide content, the new strength social renderer/assets, the June 17 social schedule row, the social creative standard source list, and this ledger.
+
 ## 2026-06-10 Ash Group Comment API Probe
 
 - Goal: interact with comments on the June 9 ash guide post inside the Facebook group using the API.
@@ -67,6 +96,25 @@ Project memory: `AGENTS.md` now requires Codex to use this file as the persisten
 - Next operator path:
   - Store/provide the Meta app secret for app `826335403603875` so `appsecret_proof = HMAC-SHA256(access_token, app_secret)` can be computed, then retry token generation.
   - Even with `appsecret_proof`, Meta will only return permissions that the app/business is allowed to grant; unavailable or unapproved permissions such as `pages_messaging` may still require Meta App Review and cannot be force-added by editing the secret.
+
+### User-Provided Meta Token Validation
+
+- Goal: validate the user-provided Meta token that was described as having full control and decide whether to replace the AWS-stored token.
+- Handling:
+  - Treated the token as a secret and did not write it to repo files or command output.
+  - Picked it up from the local clipboard to avoid embedding it directly in shell command text.
+- Validation result:
+  - Token is valid and resolves to the Meta actor `Yuzu Automation`.
+  - It can derive a Yuzu Cigar Club Page token from `/me/accounts`.
+  - It is different from the currently stored AWS token, but grants the same 19 permissions as the stored token.
+  - It still does not grant `pages_messaging`.
+  - Yuzu Page tasks include `MESSAGING`, but `GET /1148511071677542/conversations` still fails because the app/token lacks `pages_messaging`.
+  - Ash group post comments remain inaccessible through Graph API with the provided token.
+- Decision:
+  - Did not update `ycc/social/facebook/prod` because replacing the stored token would not add message or group-comment API access.
+- Saved sanitized outputs:
+  - `output/social/yuzu-business-message-access-2026-06-10/provided-token-validation.json`
+  - `output/social/yuzu-business-message-access-2026-06-10/provided-token-update-decision.json`
 
 ## 2026-06-10 Friends & Family Box Pass Hidden Invite Page
 

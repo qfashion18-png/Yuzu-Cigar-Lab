@@ -108,6 +108,10 @@ Recommended dimensions:
 Use these as starting points before generating any specific educational graphic:
 
 - Tobacconist University wrapper color FAQ: `https://tobacconistuniversity.org/faq_cigar_wrapper_color.php`
+- Tobacconist University flavor chart: `https://www.tobacconistuniversity.org/pdf/flavorchart.pdf`
+- Cigar Aficionado blend anatomy: `https://www.cigaraficionado.com/article/what-s-the-most-important-part-of-a-cigar`
+- Cigar Aficionado high-priming/ligero explanation: `https://www.cigaraficionado.com/article/drought-in-dominican-republic-means-smaller-but-better-tobacco-harvest`
+- Cigar Advisor strength vs body guide: `https://www.famous-smoke.com/cigaradvisor/cigars-101/difference-between-cigar-strength-and-body`
 - Cigar Chief wrapper, binder, filler guide: `https://cigarchief.com/guides/wrappers-binders-fillers-explained/`
 - Cigars.com ash etiquette guide: `https://www.cigars.com/embers-insights/article/how-to-ash-a-cigar/`
 - Boozemakers wrapper explainer: `https://www.boozemakers.com/articles/cigar-wrapper-types-explained`

@@ -457,6 +457,7 @@ export async function findRelatedImagesForStory(story: NewsStory, storyOutputDir
 
   const downloaded: ImageSearchCandidate[] = [];
   const seenUrls = new Set<string>();
+  const selectedLabels = new Set<string>();
   const orderedCandidates = candidates
     .filter((candidate) => candidate.status === "candidate" || candidate.status === "downloaded")
     .filter((candidate) => {
@@ -469,21 +470,23 @@ export async function findRelatedImagesForStory(story: NewsStory, storyOutputDir
     })
     .sort((left, right) => right.score - left.score);
 
-  for (const candidate of orderedCandidates) {
-    if (downloaded.length >= imageLimit) {
-      break;
-    }
+  await downloadCandidatesUntil({
+    orderedCandidates,
+    imageDir,
+    downloaded,
+    imageLimit,
+    selectedLabels,
+    requireNewLabel: true,
+  });
 
-    if (candidate.status === "downloaded" && candidate.localPath) {
-      downloaded.push(candidate);
-      continue;
-    }
-
-    const downloadedCandidate = await downloadImageCandidate(candidate, imageDir);
-    if (downloadedCandidate.status === "downloaded") {
-      downloaded.push(downloadedCandidate);
-    }
-  }
+  await downloadCandidatesUntil({
+    orderedCandidates,
+    imageDir,
+    downloaded,
+    imageLimit,
+    selectedLabels,
+    requireNewLabel: false,
+  });
 
   if (downloaded.length < imageLimit) {
     const cacheCandidates = await copyLocalCacheFallbacks(story, imageDir, imageLimit - downloaded.length, downloaded);
@@ -491,6 +494,47 @@ export async function findRelatedImagesForStory(story: NewsStory, storyOutputDir
   }
 
   return downloaded.slice(0, imageLimit);
+}
+
+async function downloadCandidatesUntil({
+  orderedCandidates,
+  imageDir,
+  downloaded,
+  imageLimit,
+  selectedLabels,
+  requireNewLabel,
+}: {
+  orderedCandidates: readonly ImageSearchCandidate[];
+  imageDir: string;
+  downloaded: ImageSearchCandidate[];
+  imageLimit: number;
+  selectedLabels: Set<string>;
+  requireNewLabel: boolean;
+}) {
+  const selectedUrls = new Set(downloaded.map((candidate) => candidate.imageUrl.toLowerCase()));
+
+  for (const candidate of orderedCandidates) {
+    if (downloaded.length >= imageLimit) {
+      break;
+    }
+
+    if (selectedUrls.has(candidate.imageUrl.toLowerCase())) {
+      continue;
+    }
+
+    const labelKey = slugify(candidate.label);
+    if (requireNewLabel && selectedLabels.has(labelKey)) {
+      continue;
+    }
+
+    const downloadedCandidate =
+      candidate.status === "downloaded" && candidate.localPath ? candidate : await downloadImageCandidate(candidate, imageDir);
+    if (downloadedCandidate.status === "downloaded") {
+      downloaded.push(downloadedCandidate);
+      selectedUrls.add(downloadedCandidate.imageUrl.toLowerCase());
+      selectedLabels.add(labelKey);
+    }
+  }
 }
 
 function buildImageSearchTargets(story: NewsStory): ImageSearchTarget[] {
@@ -639,6 +683,12 @@ function scoreImageCandidate({
     } else if (width < 120 || height < 120) {
       score -= 35;
       reasons.push(`too small ${width}x${height}`);
+    }
+
+    const aspectRatio = width / height;
+    if (aspectRatio > 3.5 || aspectRatio < 0.25) {
+      score -= 28;
+      reasons.push(`awkward social aspect ratio ${aspectRatio.toFixed(2)}`);
     }
   }
 
