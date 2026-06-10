@@ -71,6 +71,10 @@ const sourceMissingImageSkus = new Set([
   "48443",
   "572590",
   "572576",
+  "777298",
+  "777299",
+  "777300",
+  "777301",
 ]);
 
 const nonProductInventorySkus = new Set(["MISSING-SKU-1757", "MISSING-SKU-10587"]);
@@ -235,13 +239,22 @@ const catalogImageOverrides: Record<string, string> = {
   "777149": "/assets/inventory/cigars/my-father-blue-toro-gordo-20-bx.jpg",
   "113887": "/assets/inventory/cigars/flor-de-las-antillas-toro-20-bx.jpg",
   "113886": "/assets/inventory/cigars/flor-de-las-antillas-robusto-20-bx.jpg",
+  "572685": "/assets/inventory/cigars/fonseca-mx-edition-robusto-20-bx.jpg",
+  "572686": "/assets/inventory/cigars/fonseca-mx-edition-toro-20-bx.jpg",
+  "777199": "/assets/inventory/cigars/nica-rustica-connecticut-short-robusto-25-bx.jpg",
+  "572409": "/assets/inventory/cigars/nica-rustica-adobe-toro-25-bx.jpg",
+  "572410": "/assets/inventory/cigars/nica-rustica-adobe-gordo-25-bx.jpg",
+  "572356": "/assets/inventory/cigars/nica-rustica-toro-25-bx.jpg",
   "MISSING-SKU-NICA-RUSTICA-GORDO": "/assets/inventory/cigars/nica-rustica-gordo-25-bx.jpg",
   "MISSING-SKU-UNDERCROWN-SHADE-GORDITO": "/assets/inventory/cigars/undercrown-shade-gordito.jpg",
+  "572493": "/assets/inventory/cigars/liga-undercrown-shade-robusto-25-bx.jpg",
   "572429": "/assets/inventory/cigars/undercrown-maduro-robusto.jpg",
   "MISSING-SKU-UNDERCROWN-MADURO-TORO": "/assets/inventory/cigars/undercrown-maduro-toro.jpg",
   "572749": "/assets/inventory/cigars/deadwood-dia-de-los-muertos-20-bx.jpg",
   "572753": "/assets/inventory/cigars/deadwood-girl-with-no-name-lonsdale-20-bx.jpg",
+  "777141": "/assets/inventory/cigars/deadwood-dominicana-gordo-10-bx.jpg",
   "777229": "/assets/inventory/cigars/aging-room-nicaragua-sonata-maestro-10-bx.jpg",
+  "572305": "/assets/inventory/cigars/aging-room-quattro-nicaragua-maestro-10-bx.jpg",
   "777230": "/assets/inventory/cigars/aging-room-nicaragua-concerto-maestro-10-bx.jpg",
   "777242": "/assets/inventory/cigars/cao-flathead-speed-shop-v554-24-bx.jpg",
   "777243": "/assets/inventory/cigars/cao-flathead-speed-shop-v660-24-bx.jpg",
@@ -251,6 +264,10 @@ const catalogImageOverrides: Record<string, string> = {
   "777295": "/assets/inventory/cigars/plasencia-triunfal-2026-10-bx.jpg",
   "777296": "/assets/inventory/cigars/montecristo-1935-winners-club-sampler-6-pk.jpg",
   "777297": "/assets/inventory/cigars/olmec-maduro-toro-12-bx.jpg",
+  "777298": "/assets/inventory/cigars/the-tabernacle-broadleaf-robusto-24-bx.png",
+  "777299": "/assets/inventory/cigars/the-tabernacle-broadleaf-toro-24-bx.png",
+  "777300": "/assets/inventory/cigars/the-tabernacle-ct-142-robusto-24-bx.png",
+  "777301": "/assets/inventory/cigars/the-tabernacle-ct-142-toro-24-bx.png",
   "777303": "/assets/inventory/cigars/plasencia-alma-fuerte-salomon-10-bx.jpg",
   "572744": "/assets/inventory/cigars/liga-privada-h99-papas-fritas-10-bx.jpg",
   "572745": "/assets/inventory/cigars/liga-privada-h99-papas-fritas-10-bx.jpg",
@@ -305,6 +322,7 @@ const brandPrefixes: Array<[prefix: string, label: string]> = [
   ["TECHNO", "Techno"],
   ["TESLA", "Tesla"],
   ["VECTOR", "Vector"],
+  ["THE TABERNACLE", "The Tabernacle"],
 ];
 
 const cigarAficionadoSearchBaseUrl = "https://www.cigaraficionado.com/ratings/search";
@@ -407,6 +425,7 @@ export type CatalogListingProduct = Pick<
   | "status"
   | "packageLabel"
   | "availability"
+  | "wrapper"
   | "vitola"
   | "length"
   | "gauge"
@@ -898,6 +917,46 @@ const researchedCatalogEnrichment: Record<string, Partial<CatalogProductEnrichme
     strength: "Medium-Full",
     filler: "Nicaragua",
     binder: "Nicaragua",
+  },
+  "the-tabernacle-broadleaf-robusto-24-bx": {
+    origin: "Nicaragua",
+    wrapper: "CT Broadleaf",
+    vitola: "Robusto",
+    length: '5"',
+    gauge: "50",
+    strength: "Full",
+    filler: "Esteli / Jalapa / Jamastran",
+    binder: "San Andres Mexican",
+  },
+  "the-tabernacle-broadleaf-toro-24-bx": {
+    origin: "Nicaragua",
+    wrapper: "CT Broadleaf",
+    vitola: "Toro",
+    length: '6"',
+    gauge: "52",
+    strength: "Full",
+    filler: "Esteli / Jalapa / Jamastran",
+    binder: "San Andres Mexican",
+  },
+  "the-tabernacle-ct-142-robusto-24-bx": {
+    origin: "Nicaragua",
+    wrapper: "Havana Seed CT No. 142",
+    vitola: "Robusto",
+    length: '5"',
+    gauge: "50",
+    strength: "Medium",
+    filler: "Esteli / Jalapa / Jamastran",
+    binder: "San Andres Mexican",
+  },
+  "the-tabernacle-ct-142-toro-24-bx": {
+    origin: "Nicaragua",
+    wrapper: "Havana Seed CT No. 142",
+    vitola: "Toro",
+    length: '6"',
+    gauge: "52",
+    strength: "Medium",
+    filler: "Esteli / Jalapa / Jamastran",
+    binder: "San Andres Mexican",
   },
   "montecristo-1935-winners-club-sampler-6-pk": {
     origin: "Nicaragua",
@@ -2432,6 +2491,21 @@ function getMontecristoReviewProfile(productName: string) {
 }
 
 function getMyFatherReviewProfile(productName: string) {
+  if (/FONSECA.*MX EDITION/.test(productName)) {
+    return sourcedBrandReviewProfile(
+      "My Father",
+      "Fonseca MX Edition",
+      "Cigar Aficionado",
+      "https://www.cigaraficionado.com/rating/fonseca-mx-edition-robusto",
+      "90 Cigar Aficionado MX Edition line-reference rating",
+      [
+        "Cigar Aficionado rates the Fonseca MX Edition at 90 points.",
+        "The page identifies the blend as Nicaraguan-made with Mexican wrapper over Nicaraguan binder and filler.",
+        "Use this as exact coverage for the reviewed size and line-reference coverage for adjacent MX Edition formats.",
+      ]
+    );
+  }
+
   if (/CONNECTICUT/.test(productName)) {
     return sourcedBrandReviewProfile(
       "My Father",
@@ -3301,6 +3375,28 @@ function getFinalCoverageReviewProfile(productName: string) {
       "https://www.cigar.com/product/the-upsetters/UPS-PM.html",
       "4.5/5 from 24 CIGAR.com customer reviews",
       "line-level"
+    );
+  }
+
+  if (/^THE TABERNACLE\b/.test(productName)) {
+    if (/CT-?142|HAVANA SEED/.test(productName)) {
+      return finalCoverageProfile(
+        "Foundation",
+        "The Tabernacle Havana Seed CT No. 142",
+        "Foundation Cigar Company",
+        "https://foundationcigarcompany.com/tabernacle-havana-seed-ct-142/",
+        "Official product page with blend, size, strength, and 24-count box details",
+        "exact line"
+      );
+    }
+
+    return finalCoverageProfile(
+      "Foundation",
+      "The Tabernacle CT Broadleaf",
+      "Foundation Cigar Company",
+      "https://foundationcigarcompany.com/the-tabernacle-ct-broadleaf/",
+      "Official product page with blend, size, strength, and 24-count box details",
+      "exact line"
     );
   }
 
@@ -6469,7 +6565,15 @@ function getAgingRoomResearch(productName: string) {
         [/SONATA MAESTRO/, "Maestro Torpedo", '5"', "52"],
         [/CONCERTO MAESTRO/, "Maestro Torpedo", '6"', "52"],
         [/MAESTRO/, "Maestro Torpedo", '5"', "56"],
-      ])
+      ]),
+      finalCoverageProfile(
+        "Aging Room",
+        "Aging Room Quattro Nicaragua Maestro",
+        "Cigar Aficionado",
+        "https://www.cigaraficionado.com/top25cigar/aging-room-quattro-nicaragua-maestro-2019",
+        "96 Cigar Aficionado Cigar of the Year line-reference rating",
+        "line-reference"
+      )
     );
   }
 
@@ -6639,7 +6743,7 @@ function getMyFatherFamilyResearch(productName: string) {
     return undefined;
   }
 
-  const reviewProfile = /^MY FATHER\b/.test(productName) ? getMyFatherReviewProfile(productName) : undefined;
+  const reviewProfile = /^MY FATHER\b|^FONSECA\b/.test(productName) ? getMyFatherReviewProfile(productName) : undefined;
 
   if (/SAMPLER/.test(productName)) {
     return combineResearchDetails(assortedResearchDetails(), reviewProfile);
@@ -7187,7 +7291,7 @@ function getMyFatherRemainingResearch(productName: string) {
     return undefined;
   }
 
-  const reviewProfile = /^MY FATHER\b/.test(productName) ? getMyFatherReviewProfile(productName) : undefined;
+  const reviewProfile = /^MY FATHER\b|^FONSECA\b/.test(productName) ? getMyFatherReviewProfile(productName) : undefined;
 
   if (/SAMPLER|HUMID BAG/.test(productName)) {
     return combineResearchDetails(assortedResearchDetails(), reviewProfile);
@@ -7659,7 +7763,15 @@ function getUndercrownRemainingResearch(productName: string) {
   if (/H99.*PAPAS FRITAS/.test(productName)) {
     return combineResearchDetails(
       researchedBlend("Nicaragua", "Connecticut Corojo", "Mexican San Andres", "Nicaragua, Honduras", "Medium-Full"),
-      researchedSize("Papas Fritas", '4.5"', "44")
+      researchedSize("Papas Fritas", '4.5"', "44"),
+      finalCoverageProfile(
+        "Drew Estate",
+        "Liga Privada H99 Papas Fritas",
+        "Smokin' Tabacco",
+        "https://smokintabacco.com/cigar-review-drew-estate-liga-privada-h99-papas-fritas/",
+        "Smokin' Tabacco exact review coverage",
+        "exact product"
+      )
     );
   }
 
@@ -8378,6 +8490,7 @@ export function toCatalogListingProduct(product: CatalogProduct): CatalogListing
     tags: product.tags,
     memberOnly: product.memberOnly,
     status: product.status,
+    wrapper: product.wrapper,
     vitola: product.vitola,
     length: product.length,
     gauge: product.gauge,

@@ -39,13 +39,14 @@ type RevealProps = MotionDivProps & {
 
 export function Reveal({ children, className, delay = 0, y = 28, ...props }: RevealProps) {
   const shouldReduceMotion = useReducedMotion();
+  void y;
 
   return (
     <motion.div
-      initial={shouldReduceMotion ? false : { opacity: 0, y }}
+      initial={false}
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true, margin: "-80px" }}
-      transition={{ ...softSpring, delay }}
+      transition={shouldReduceMotion ? { duration: 0 } : { ...softSpring, delay }}
       className={className}
       {...props}
     >
@@ -73,7 +74,7 @@ export function Cascade({ children, className, delay = 0, stagger = 0.07, ...pro
 
   return (
     <motion.div
-      initial={shouldReduceMotion ? false : "hidden"}
+      initial={false}
       whileInView="show"
       viewport={{ once: true, margin: "-70px" }}
       variants={variants}
@@ -116,7 +117,6 @@ export function HoverLift({
   return (
     <motion.div
       whileHover={shouldReduceMotion ? undefined : { y: hoverY, scale: hoverScale }}
-      whileTap={shouldReduceMotion ? undefined : { scale: 0.995 }}
       transition={softSpring}
       className={cn("motion-safe:will-change-transform", className)}
       {...props}

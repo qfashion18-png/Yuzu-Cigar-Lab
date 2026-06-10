@@ -108,6 +108,22 @@ function buildMembershipSessionParams(input = {}, env = process.env) {
   const billingPeriod = input.billingPeriod || "monthly";
   const statusToken = toMetadataString(input.statusToken, 120);
   const customerEmail = toMetadataString(input.customer?.email, 160);
+  const membershipOffer = normalizeMembershipOffer(input.membershipOffer);
+  const metadata = {
+    order_kind: "membership",
+    tier_key: tierKey,
+    billing_period: billingPeriod,
+    customer_email: customerEmail,
+    checkout_status_token: statusToken,
+    ...buildMembershipOfferMetadata(membershipOffer),
+  };
+  const subscriptionData = {
+    metadata,
+  };
+
+  if (membershipOffer?.trialPeriodDays) {
+    subscriptionData.trial_period_days = membershipOffer.trialPeriodDays;
+  }
 
   return {
     mode: "subscription",
@@ -116,20 +132,41 @@ function buildMembershipSessionParams(input = {}, env = process.env) {
     allow_promotion_codes: true,
     success_url: `${siteUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}&status_token=${encodeURIComponent(statusToken)}`,
     cancel_url: `${siteUrl}/checkout/cancel`,
-    metadata: {
-      order_kind: "membership",
-      tier_key: tierKey,
-      billing_period: billingPeriod,
-      customer_email: customerEmail,
-      checkout_status_token: statusToken,
-    },
-    subscription_data: {
-      metadata: {
-        tier_key: tierKey,
-        billing_period: billingPeriod,
-        customer_email: customerEmail,
-      },
-    },
+    metadata,
+    subscription_data: subscriptionData,
+  };
+}
+
+function normalizeMembershipOffer(offer = {}) {
+  if (!offer || typeof offer !== "object") {
+    return null;
+  }
+
+  const trialPeriodDays = Math.min(toNonNegativeInteger(offer.trialPeriodDays), 365);
+  const normalized = {
+    code: toMetadataString(offer.code || offer.offerCode, 80),
+    source: toMetadataString(offer.source, 80),
+    campaign: toMetadataString(offer.campaign, 80),
+    landingPath: toMetadataString(offer.landingPath || offer.landing_path, 120),
+    access: toMetadataString(offer.access, 80),
+    trialPeriodDays,
+  };
+
+  return Object.values(normalized).some(Boolean) ? normalized : null;
+}
+
+function buildMembershipOfferMetadata(offer) {
+  if (!offer) {
+    return {};
+  }
+
+  return {
+    membership_offer_code: offer.code,
+    membership_offer_source: offer.source,
+    membership_offer_campaign: offer.campaign,
+    membership_offer_landing_path: offer.landingPath,
+    membership_offer_access: offer.access,
+    membership_offer_trial_days: offer.trialPeriodDays ? String(offer.trialPeriodDays) : "",
   };
 }
 

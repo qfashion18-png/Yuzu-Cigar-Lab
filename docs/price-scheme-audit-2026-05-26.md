@@ -91,6 +91,23 @@ Before the fix, these 40 rows were published with public/non-member price equal 
 - Added new inventory rows for SKUs `777295`, `777296`, `777297`, and `777303`, each with explicit public/non-member pricing at or above the member/current price.
 - The requested catalog expansion raises the expected published catalog scale from 921 to 928 rows.
 
+## 2026-05-30 Follow-Up
+
+- Corrected the Tabernacle additions so the supplied prices remain member/current prices while researched public/non-member prices come from explicit market references.
+- Added/updated explicit public prices:
+  - `777298` THE TABERNACLE BROADLEAF ROBUSTO 24/BX: `$300.95`
+  - `777299` THE TABERNACLE BROADLEAF TORO 24/BX: `$324.95`
+  - `777300` THE TABERNACLE CT-142 ROBUSTO 24/BX: `$300.95`
+  - `777301` THE TABERNACLE CT-142 TORO 24/BX: `$324.95`
+
+## 2026-06-09 Follow-Up
+
+- Applied the same pricing scheme to the 24 real-SKU rows from the 2026-06-08 inventory photo audit.
+- Replaced temporary public prices that matched member/source prices with researched public/non-member prices in `src/lib/imported-market-prices.ts`.
+- Member/source prices remain in `src/lib/imported-inventory.ts`; public prices now come from explicit retailer or release pricing references documented in `docs/inventory-pricing-scheme-2026-06-09.md`.
+- The three placeholder-SKU rows from the photo audit remain unpublished until real POS/Sunset SKUs are reconciled.
+- Verification passed: focused pricing/product suites 53/53, full `npm test` 546/546, TypeScript, static build, Amplify job `151`, and live 24/24 audited product price-token smoke.
+
 ## Verification
 
 - Red regression before fix: `node --import tsx --test --test-name-pattern "explicit public market pricing" tests/product-pricing.test.ts` failed with the 40 fallback-priced SKUs.

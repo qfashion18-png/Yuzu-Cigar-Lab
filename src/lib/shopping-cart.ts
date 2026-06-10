@@ -8,6 +8,10 @@ export type ShoppingCartItemInput = {
   imagePosition: string;
   packageLabel: string;
   category: string;
+  brand?: string;
+  wrapper?: string;
+  vitola?: string;
+  strength?: string;
   unitPrice: number;
   maxQuantity: number;
   memberOnly?: boolean;

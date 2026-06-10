@@ -133,6 +133,8 @@ function buildDailyCigarFlowDraftInput(sourceBatch: DailyCigarFlowSourceBatch, s
     sourceNotes: [
       `Automated daily flow draft run from approved source set: ${sourceBatch.sourceNames.join(", ")}.`,
       `Daily cigar press-release search: search ${searchSourceNames} for ${searchQueries} to find source-safe leads to write stories on. Treat search pages as discovery surfaces and draft only from primary release, wire, or official maker pages.`,
+      "Cigar Flow editorial format: write sectioned markdown with ## headings for the split hero/inline-image layout, and return 3-6 real source-aligned story images for hero and inline placement.",
+      "image web/source-page search: use accepted source pages or primary release pages to find actual image URLs; each image must include label, image, imagePosition, alt, and sourceUrl. Do not invent image URLs.",
     ],
     ...(storyImages.length ? { storyImages } : {}),
   };

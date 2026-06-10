@@ -16,9 +16,12 @@
     "launch:check": "npm run lint && npx tsc --noEmit && npm test && npm run build && npm audit --omit=dev",
     "launch:ops-check": "tsx scripts/launch-readiness.ts",
     "launch:go-live-check": "tsx scripts/launch-readiness.ts --strict",
+    "facebook:organic-check": "tsx scripts/facebook-organic-growth-check.ts",
+    "facebook:month-check": "tsx scripts/facebook-organic-growth-check.ts docs/yuzu-facebook-first-month-post-schedule-2026-06-09.csv",
     "lambda:package": "node scripts/package-ycc-api-lambda.mjs",
     "db:check": "tsx scripts/check-rds-connection.ts",
     "cigar-flow:daily": "tsx scripts/daily-cigar-news-run.ts",
+    "cigar-flow:facebook": "tsx scripts/cigar-flow-facebook-run.ts",
     "nova-act:e2e": "python scripts/nova_act_cigar_enrichment_e2e.py"
   },
   "dependencies": {
@@ -57,6 +60,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.6",
+    "playwright": "^1.60.0",
     "serve": "^14.2.6",
     "shadcn": "^4.6.0",
     "tailwindcss": "^4",

@@ -71,7 +71,7 @@ export const livePageEditorConfigs: LivePageEditorConfig[] = [
         label: "Hero copy",
         control: "textarea",
         defaultValue:
-          "Every member can buy cigar boxes at direct member cost. Curated monthly cigars, non-box store perks, shipping value, concierge access, and VIP allocations scale by tier.",
+          "Every member can buy cigar boxes at direct member cost. Kisha, Sensei, and Daimyo members can select monthly cigars from a preselected online list, while store perks, shipping value, concierge access, and VIP allocations scale by tier.",
       },
       {
         id: "membership.hero.primaryCta",

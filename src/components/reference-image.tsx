@@ -9,6 +9,7 @@ type ReferenceImageProps = {
   imageClassName?: string;
   objectPosition?: string;
   priority?: boolean;
+  sizes?: string;
 };
 
 export function ReferenceImage({
@@ -18,6 +19,7 @@ export function ReferenceImage({
   imageClassName,
   objectPosition = "center",
   priority = false,
+  sizes = "(max-width: 768px) 100vw, 50vw",
 }: ReferenceImageProps) {
   return (
     <div className={cn("luxury-image-frame relative overflow-hidden bg-yuzu-ink", className)}>
@@ -26,9 +28,10 @@ export function ReferenceImage({
         src={src}
         alt={alt}
         fill
-        priority={priority}
-        loading={priority ? "eager" : "lazy"}
-        sizes="(max-width: 768px) 100vw, 50vw"
+        preload={priority}
+        loading={priority ? undefined : "lazy"}
+        decoding={priority ? "sync" : "async"}
+        sizes={sizes}
         className={cn("relative z-10 object-cover", imageClassName)}
         style={{ objectPosition }}
       />

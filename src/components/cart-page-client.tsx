@@ -17,6 +17,7 @@ import {
   isMemberOnlyCart,
   type ShoppingCartItem,
 } from "@/lib/shopping-cart";
+import { buildProductImageAlt } from "@/lib/image-seo";
 
 export function CartPageClient() {
   const {
@@ -88,9 +89,10 @@ export function CartPageClient() {
               <Link href={getCartItemHref(item)} className="block">
                 <ReferenceImage
                   src={item.image}
-                  alt={`${item.name} cart item`}
+                  alt={buildProductImageAlt(item)}
                   objectPosition={item.imagePosition}
                   className="aspect-square border border-yuzu-line"
+                  sizes="112px"
                 />
               </Link>
               <div className="grid gap-3">

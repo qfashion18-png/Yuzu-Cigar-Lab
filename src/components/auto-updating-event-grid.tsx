@@ -9,6 +9,7 @@ import Link from "@/components/static-link";
 import { Card, CardContent } from "@/components/ui/card";
 import type { EventExperience } from "@/lib/data";
 import { getAutoUpdatedEvents, getEventTimingLabel, getEventTimingStatus } from "@/lib/event-schedule";
+import { buildEventImageAlt } from "@/lib/image-seo";
 
 type AutoUpdatingEventGridProps = {
   events: EventExperience[];
@@ -40,7 +41,7 @@ export function AutoUpdatingEventGrid({ events, initialNowIso }: AutoUpdatingEve
           <Card className="luxury-card h-full py-0 transition duration-300 group-hover:-translate-y-0.5 group-hover:border-yuzu-gold/80 group-hover:shadow-[0_24px_70px_rgba(0,0,0,0.35)]">
             <ReferenceImage
               src={event.image}
-              alt={`${event.title} event preview`}
+              alt={buildEventImageAlt(event)}
               className="min-h-56 border-b border-yuzu-line"
               imageClassName="transition duration-500 group-hover:scale-105"
               objectPosition={event.imagePosition}

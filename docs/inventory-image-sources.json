@@ -334,5 +334,53 @@
     "originalHeight": 800,
     "width": 800,
     "height": 800
+  },
+  {
+    "sku": "777298",
+    "title": "The Tabernacle Broadleaf Robusto 24/BX",
+    "handle": "the-tabernacle-broadleaf-robusto-24-bx",
+    "productUrl": "https://foundationcigarcompany.com/the-tabernacle-ct-broadleaf/",
+    "sourceImage": "https://foundationcigarcompany.com/wp-content/uploads/2025/03/Robusto-5x50-1.png",
+    "asset": "/assets/inventory/cigars/the-tabernacle-broadleaf-robusto-24-bx.png",
+    "originalWidth": 73,
+    "originalHeight": 470,
+    "width": 73,
+    "height": 470
+  },
+  {
+    "sku": "777299",
+    "title": "The Tabernacle Broadleaf Toro 24/BX",
+    "handle": "the-tabernacle-broadleaf-toro-24-bx",
+    "productUrl": "https://foundationcigarcompany.com/the-tabernacle-ct-broadleaf/",
+    "sourceImage": "https://foundationcigarcompany.com/wp-content/uploads/2025/03/Toro-6x52-1.png",
+    "asset": "/assets/inventory/cigars/the-tabernacle-broadleaf-toro-24-bx.png",
+    "originalWidth": 74,
+    "originalHeight": 550,
+    "width": 74,
+    "height": 550
+  },
+  {
+    "sku": "777300",
+    "title": "The Tabernacle CT-142 Robusto 24/BX",
+    "handle": "the-tabernacle-ct-142-robusto-24-bx",
+    "productUrl": "https://foundationcigarcompany.com/tabernacle-havana-seed-ct-142/",
+    "sourceImage": "https://foundationcigarcompany.com/wp-content/uploads/2025/02/tab-havana-seed-142-Robusto-5x50-1.png",
+    "asset": "/assets/inventory/cigars/the-tabernacle-ct-142-robusto-24-bx.png",
+    "originalWidth": 70,
+    "originalHeight": 470,
+    "width": 70,
+    "height": 470
+  },
+  {
+    "sku": "777301",
+    "title": "The Tabernacle CT-142 Toro 24/BX",
+    "handle": "the-tabernacle-ct-142-toro-24-bx",
+    "productUrl": "https://foundationcigarcompany.com/tabernacle-havana-seed-ct-142/",
+    "sourceImage": "https://foundationcigarcompany.com/wp-content/uploads/2025/02/tab-havana-seed-142-Toro-6x52-1.png",
+    "asset": "/assets/inventory/cigars/the-tabernacle-ct-142-toro-24-bx.png",
+    "originalWidth": 73,
+    "originalHeight": 540,
+    "width": 73,
+    "height": 540
   }
 ]

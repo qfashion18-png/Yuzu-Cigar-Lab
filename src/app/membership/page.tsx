@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "@/components/static-link";
-import { ArrowRight, CalendarDays, Star } from "lucide-react";
+import { ArrowRight, CalendarCheck2, CalendarDays, ListChecks, ShieldCheck, Star } from "lucide-react";
 
 import { BenefitStrip } from "@/components/benefit-strip";
 import { MembershipJoinButton } from "@/components/membership-join-button";
@@ -13,14 +13,32 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { benefits, membershipPrepaidPricing, tiers, welcomeKitRecommendations, wholesaleCostDefinition } from "@/lib/data";
 import { buildPageMetadata } from "@/lib/seo";
 
+const monthlySelectionDetails = [
+  {
+    title: "Preselected list",
+    copy: "The monthly menu is curated before it goes live, so members know the premium cigars they are choosing from.",
+    icon: ListChecks,
+  },
+  {
+    title: "Selection day",
+    copy: "When the online window opens, choices are claimed from the live list in order of request.",
+    icon: CalendarCheck2,
+  },
+  {
+    title: "Always covered",
+    copy: "We hold enough monthly cigars for active members; waiting just means the most sought-after options may be gone.",
+    icon: ShieldCheck,
+  },
+];
+
 export const metadata: Metadata = buildPageMetadata({
   title: "Membership | Yuzu Cigar Club",
   description:
-    "Compare Yuzu Cigar Club membership tiers for curated monthly cigars, member-cost box access, private allocations, and digital humidor tools.",
+    "Compare Yuzu Cigar Club membership tiers for monthly cigar selection windows, member-cost box access, private allocations, and digital humidor tools.",
   path: "/membership",
   image: "/assets/membership-boxes.png",
   imageAlt: "Yuzu Cigar Club membership cigar boxes",
-  keywords: ["cigar membership", "member-cost cigar boxes", "curated monthly cigars"],
+  keywords: ["cigar membership", "member-cost cigar boxes", "monthly cigar selection windows", "monthly cigar selection"],
 });
 
 export default function MembershipPage() {
@@ -29,14 +47,14 @@ export default function MembershipPage() {
   return (
     <>
       <section className="relative overflow-hidden border-b border-yuzu-line">
-        <ReferenceImage src="/assets/membership-boxes.png" alt="Yuzu membership cigar boxes" className="absolute inset-y-0 right-0 w-full opacity-75" objectPosition="center" priority />
+        <ReferenceImage src="/assets/membership-boxes.png" alt="Yuzu membership cigar boxes prepared for club allocations" className="absolute inset-y-0 right-0 w-full opacity-75" objectPosition="center" priority />
         <div className="absolute inset-0 bg-[linear-gradient(90deg,#030504_0%,rgba(3,5,4,0.94)_38%,rgba(3,5,4,0.45)_70%,rgba(3,5,4,0.2)_100%)]" />
         <div className="relative mx-auto flex min-h-[520px] max-w-[1520px] items-center px-5 py-16 lg:px-10">
           <div className="max-w-3xl">
             <SectionHeading
               kicker="The Yuzu Cigar Club"
               title="Membership, built around member-cost boxes."
-              copy="Every member can buy cigar boxes at direct member cost. Curated monthly cigars, non-box store perks, shipping value, concierge access, and VIP allocations scale by tier."
+              copy="Every member can buy cigar boxes at direct member cost. Kisha, Sensei, and Daimyo members can select monthly cigars from a preselected online list, while store perks, shipping value, concierge access, and VIP allocations scale by tier."
               editableIds={{
                 kicker: "membership.hero.kicker",
                 title: "membership.hero.title",
@@ -64,6 +82,29 @@ export default function MembershipPage() {
 
       <section id="tiers" className="mx-auto max-w-[1520px] px-5 py-14 lg:px-10">
         <MembershipTierGrid />
+      </section>
+
+      <section className="border-y border-yuzu-line/70 bg-yuzu-night/45">
+        <div className="mx-auto grid max-w-[1520px] gap-8 px-5 py-14 lg:grid-cols-[0.78fr_1.22fr] lg:px-10">
+          <SectionHeading
+            kicker="Monthly Selection Window"
+            title="Pick from the curated list before your box ships."
+            copy="On the monthly selection day, eligible members see the available premium cigar list online and choose what they want in their shipment."
+          />
+          <div className="grid gap-4 md:grid-cols-3">
+            {monthlySelectionDetails.map((detail) => {
+              const Icon = detail.icon;
+
+              return (
+                <div key={detail.title} className="border border-yuzu-line/65 bg-yuzu-panel/80 p-5">
+                  <Icon className="text-yuzu-gold" />
+                  <h3 className="mt-4 font-heading text-2xl leading-tight text-yuzu-cream">{detail.title}</h3>
+                  <p className="mt-3 text-sm leading-6 text-yuzu-muted">{detail.copy}</p>
+                </div>
+              );
+            })}
+          </div>
+        </div>
       </section>
 
       <section className="border-y border-yuzu-line/70 bg-yuzu-forest/80">
@@ -173,7 +214,7 @@ export default function MembershipPage() {
         </Card>
 
         <Card className="luxury-card overflow-hidden">
-          <ReferenceImage src="/assets/membership-boxes.png" alt="Membership box detail" className="h-64" objectPosition="center" />
+          <ReferenceImage src="/assets/membership-boxes.png" alt="Yuzu club membership cigar box allocation detail" className="h-64" objectPosition="center" />
           <CardContent className="grid gap-4 p-6">
             <div className="flex items-center gap-3">
               <Star className="text-yuzu-gold" />

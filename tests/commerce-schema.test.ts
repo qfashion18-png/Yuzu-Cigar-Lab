@@ -66,7 +66,7 @@ test("catalog products expose launch commerce controls without losing imported c
   const catalogItem = catalogProducts.find((product) => product.sku === "39919");
   const storefrontItem = storefrontProducts.find((product) => product.sku === "39919");
 
-  assert.equal(catalogProducts.length, 928);
+  assert.equal(catalogProducts.length, 956);
   assert.ok(catalogItem);
   assert.ok(storefrontItem);
 

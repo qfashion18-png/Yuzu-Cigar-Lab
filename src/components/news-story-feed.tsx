@@ -7,6 +7,7 @@ import { useOptionalBackupAuth } from "@/components/backup-auth-provider";
 import { ReferenceImage } from "@/components/reference-image";
 import { Button } from "@/components/ui/button";
 import { fetchPublishedNewsStories, getLiveApiErrorMessage } from "@/lib/live-api";
+import { buildEditorialImageAlt } from "@/lib/image-seo";
 import type { NewsStory, NewsStoryImage } from "@/lib/newsroom";
 import { cn } from "@/lib/utils";
 
@@ -46,7 +47,7 @@ export function NewsStoryFeed({
   const [error, setError] = useState("");
   const auth = useOptionalBackupAuth();
   const intro = getFeedIntro(variant);
-  const storyCards = useMemo(() => buildStoryCardModels(stories), [stories]);
+  const storyCards = useMemo(() => buildStoryCardModels(stories, variant), [stories, variant]);
   const canUseReadAloud = Boolean(auth?.isReady && auth.isMember && variant === "cigarFlow");
 
   useEffect(() => {
@@ -144,11 +145,24 @@ export function NewsStoryFeed({
         </div>
       </div>
 
-      <div className="grid gap-5 lg:grid-cols-2">
-        {storyCards.map(({ story, visuals }, index) => (
-          <StoryCard key={story.id || story.slug || story.title} featured={index === 0} story={story} visuals={visuals} />
-        ))}
-      </div>
+      {variant === "cigarFlow" ? (
+        <div className="grid gap-6" data-cigar-flow-editorial-feed="true">
+          {storyCards.map(({ story, visuals }, index) => (
+            <CigarFlowEditorialStory
+              key={story.id || story.slug || story.title}
+              featured={index === 0}
+              story={story}
+              visuals={visuals}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="grid gap-5 lg:grid-cols-2">
+          {storyCards.map(({ story, visuals }, index) => (
+            <StoryCard key={story.id || story.slug || story.title} featured={index === 0} story={story} visuals={visuals} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -283,6 +297,132 @@ function StoryCard({ story, featured, visuals }: { story: NewsStory; featured: b
   );
 }
 
+function CigarFlowEditorialStory({
+  story,
+  featured,
+  visuals,
+}: {
+  story: NewsStory;
+  featured: boolean;
+  visuals: NewsStoryVisual[];
+}) {
+  const sections = useMemo(() => markdownSections(story.bodyMarkdown), [story.bodyMarkdown]);
+  const publishedDate = story.publishedAt
+    ? new Intl.DateTimeFormat("en", { month: "short", day: "numeric", year: "numeric" }).format(new Date(story.publishedAt))
+    : "Recently";
+  const [hero, ...supportingVisuals] = visuals;
+
+  if (!hero) {
+    return null;
+  }
+
+  const brandPlate = hero.brandLogo ?? brandLogoForText(hero.label);
+  const brandLabel = brandPlate?.label ?? hero.label;
+  const remainingVisuals = supportingVisuals.slice(sections.length);
+
+  return (
+    <article
+      className={cn(
+        "overflow-hidden border border-yuzu-gold/35 bg-[#07110d] shadow-[0_28px_80px_rgba(0,0,0,0.38)]",
+        featured ? "lg:grid lg:grid-cols-[minmax(320px,0.41fr)_minmax(0,0.59fr)]" : "lg:grid lg:grid-cols-[minmax(260px,0.34fr)_minmax(0,0.66fr)]",
+      )}
+      data-cigar-flow-editorial-story="true"
+    >
+      <div
+        className={cn(
+          "relative min-h-[24rem] border-b border-yuzu-gold/35 bg-yuzu-night lg:min-h-full lg:border-b-0 lg:border-r",
+          featured ? "sm:min-h-[32rem]" : "sm:min-h-[26rem]",
+        )}
+        data-news-story-images={getVisualImageSource(visuals)}
+      >
+        <ReferenceImage
+          src={hero.image}
+          alt={hero.alt ?? buildEditorialImageAlt({ title: story.title, label: hero.label })}
+          className="absolute inset-0"
+          imageClassName="opacity-94"
+          objectPosition={hero.imagePosition}
+          priority={featured}
+          sizes="(max-width: 1024px) 100vw, 42vw"
+        />
+        <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(3,5,4,0.05)_0%,rgba(3,5,4,0.12)_48%,rgba(3,5,4,0.78)_100%)]" />
+        <div
+          className="absolute right-4 top-4 z-20 grid min-w-24 place-items-center border border-yuzu-gold/75 bg-yuzu-night/84 px-3 py-2 text-center shadow-[0_14px_38px_rgba(0,0,0,0.42)] backdrop-blur"
+          data-cigar-flow-brand-plate={brandLabel}
+          data-news-brand-logo={brandLabel}
+        >
+          <span className="font-heading text-xl leading-none text-yuzu-cream">{brandPlate?.mark ?? brandLabel.slice(0, 1)}</span>
+          <span className="mt-1 max-w-28 truncate text-[0.58rem] font-black uppercase tracking-[0.12em] text-yuzu-gold">
+            {brandLabel}
+          </span>
+        </div>
+        <span className="absolute bottom-4 left-4 z-20 max-w-[calc(100%-2rem)] truncate border border-yuzu-gold/70 bg-yuzu-night/80 px-3 py-2 text-[0.68rem] font-black uppercase tracking-[0.16em] text-yuzu-gold backdrop-blur">
+          {hero.label}
+        </span>
+      </div>
+
+      <div className="bg-[radial-gradient(circle_at_100%_0%,rgba(220,169,58,0.1),transparent_24rem),linear-gradient(180deg,rgba(16,24,18,0.98),#07110d)] p-5 sm:p-7 lg:p-8">
+        <div className="flex flex-wrap items-center gap-3 text-[0.68rem] font-black uppercase tracking-[0.18em] text-yuzu-muted">
+          <span className="text-yuzu-gold">{story.category.toUpperCase()}</span>
+          <span className="h-4 w-px bg-yuzu-line" />
+          <span>{publishedDate.toUpperCase()}</span>
+        </div>
+        <h3
+          className={cn(
+            "mt-4 max-w-5xl font-heading leading-[0.98] text-yuzu-cream",
+            featured ? "text-4xl sm:text-5xl xl:text-6xl" : "text-3xl sm:text-4xl",
+          )}
+        >
+          {story.title}
+        </h3>
+        <p className="mt-5 max-w-4xl text-sm leading-7 text-yuzu-cream/84 sm:text-base sm:leading-8">{story.dek}</p>
+        <div className="mt-6 h-px bg-yuzu-line/75" />
+
+        <div className="mt-6 grid gap-6" data-cigar-flow-story-body="true">
+          {sections.map((section, index) => (
+            <section key={section.heading} className="grid gap-4" data-cigar-flow-story-section={section.heading}>
+              <div>
+                <h4 className="text-sm font-black uppercase tracking-[0.18em] text-yuzu-gold">{section.heading}</h4>
+                <p className="mt-3 text-sm leading-7 text-yuzu-muted sm:text-[0.95rem] sm:leading-8">{section.body}</p>
+              </div>
+              {supportingVisuals[index] ? (
+                <EditorialInlineImage storyTitle={story.title} visual={supportingVisuals[index]} />
+              ) : null}
+            </section>
+          ))}
+          {remainingVisuals.length ? (
+            <div className="grid gap-4 sm:grid-cols-2" data-cigar-flow-image-strip="true">
+              {remainingVisuals.map((visual) => (
+                <EditorialInlineImage key={`${visual.label}-${visual.image}`} storyTitle={story.title} visual={visual} />
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function EditorialInlineImage({ storyTitle, visual }: { storyTitle: string; visual: NewsStoryVisual }) {
+  return (
+    <figure
+      className="grid gap-2 border border-yuzu-line/70 bg-yuzu-night/52 p-2 sm:grid-cols-[minmax(12rem,0.42fr)_minmax(0,0.58fr)] sm:items-stretch"
+      data-cigar-flow-inline-image={visual.label}
+    >
+      <ReferenceImage
+        src={visual.image}
+        alt={visual.alt ?? buildEditorialImageAlt({ title: storyTitle, label: visual.label })}
+        className="min-h-40"
+        imageClassName="opacity-88"
+        objectPosition={visual.imagePosition}
+        sizes="(max-width: 768px) 100vw, 28vw"
+      />
+      <figcaption className="flex items-center border border-yuzu-line/55 bg-yuzu-ink/80 px-4 py-3 text-xs font-black uppercase tracking-[0.16em] text-yuzu-cream">
+        <span className="text-yuzu-gold">{visual.label}</span>
+      </figcaption>
+    </figure>
+  );
+}
+
 function StoryVisualPanel({
   featured,
   title,
@@ -293,9 +433,6 @@ function StoryVisualPanel({
   visuals: NewsStoryVisual[];
 }) {
   const [hero, ...supportingVisuals] = visuals;
-  const hasStoryImages = visuals.some((visual) => visual.isStoryImage);
-  const hasGeneratedStoryImages = visuals.some((visual) => visual.isGeneratedStoryImage);
-  const imageSource = hasStoryImages ? "story-provided" : hasGeneratedStoryImages ? "generated-story" : "source-derived";
 
   return (
     <div
@@ -303,11 +440,11 @@ function StoryVisualPanel({
         "relative min-h-72 border-b border-yuzu-line bg-yuzu-ink",
         featured ? "lg:min-h-full lg:border-b-0 lg:border-r" : "",
       )}
-      data-news-story-images={imageSource}
+      data-news-story-images={getVisualImageSource(visuals)}
     >
       <ReferenceImage
         src={hero.image}
-        alt={hero.alt ?? `${title} visual`}
+        alt={hero.alt ?? buildEditorialImageAlt({ title, label: hero.label })}
         className="absolute inset-0"
         imageClassName="opacity-92"
         objectPosition={hero.imagePosition}
@@ -325,7 +462,7 @@ function StoryVisualPanel({
               <div key={`${visual.label}-${visual.image}`} className="relative min-h-20 overflow-hidden border border-yuzu-line/80 bg-yuzu-night">
                 <ReferenceImage
                   src={visual.image}
-                  alt={visual.alt ?? `${visual.label} story visual`}
+                  alt={visual.alt ?? buildEditorialImageAlt({ title, label: visual.label })}
                   className="absolute inset-0"
                   imageClassName="opacity-72"
                   objectPosition={visual.imagePosition}
@@ -402,16 +539,22 @@ function storyIdentityKeys(story: NewsStory) {
   return [story.id, story.slug, story.title].filter((value): value is string => Boolean(value));
 }
 
-function buildStoryCardModels(stories: NewsStory[]): NewsStoryCardModel[] {
+function buildStoryCardModels(stories: NewsStory[], variant: NewsStoryFeedProps["variant"]): NewsStoryCardModel[] {
   const usedGeneratedImages = new Set<string>();
+  const minimumVisualCount = variant === "cigarFlow" ? 3 : 1;
 
   return stories.map((story, index) => ({
     story,
-    visuals: storyVisuals(story, index, usedGeneratedImages),
+    visuals: storyVisuals(story, index, usedGeneratedImages, minimumVisualCount),
   }));
 }
 
-function storyVisuals(story: NewsStory, storyIndex: number, usedGeneratedImages: Set<string>): NewsStoryVisual[] {
+function storyVisuals(
+  story: NewsStory,
+  storyIndex: number,
+  usedGeneratedImages: Set<string>,
+  minimumVisualCount: number,
+): NewsStoryVisual[] {
   const generatedBrandLogo = brandLogoForStory(story);
   const storyImages = (story.images ?? [])
     .filter((visual) => visual.image)
@@ -423,18 +566,25 @@ function storyVisuals(story: NewsStory, storyIndex: number, usedGeneratedImages:
     }));
 
   if (storyImages.length) {
-    return storyImages.slice(0, 3);
+    const maxVisualCount = minimumVisualCount > 1 ? Math.max(minimumVisualCount, storyImages.length) : 3;
+    const supplementalVisuals =
+      storyImages.length < minimumVisualCount
+        ? generatedVisualsForStory(story, storyIndex, usedGeneratedImages, minimumVisualCount - storyImages.length)
+        : [];
+
+    return [...storyImages, ...supplementalVisuals].slice(0, maxVisualCount);
   }
 
-  return [generatedVisualForStory(story, storyIndex, usedGeneratedImages, generatedBrandLogo)];
+  return generatedVisualsForStory(story, storyIndex, usedGeneratedImages, minimumVisualCount, generatedBrandLogo);
 }
 
-function generatedVisualForStory(
+function generatedVisualsForStory(
   story: NewsStory,
   storyIndex: number,
   usedGeneratedImages: Set<string>,
+  count: number,
   brandLogo?: NewsStoryBrandLogo,
-): NewsStoryVisual {
+): NewsStoryVisual[] {
   const normalized = storyVisualText(story).toLowerCase();
   const matchedVisuals = generatedStoryVisuals.filter((visual) => visual.keywords.some((keyword) => normalized.includes(keyword)));
   const orderedVisuals = [
@@ -442,27 +592,39 @@ function generatedVisualForStory(
     ...generatedStoryVisuals.filter((visual) => !matchedVisuals.some((matched) => matched.image === visual.image)),
   ];
   const offset = stableIndex(`${story.id || story.slug || story.title}-${storyIndex}`, orderedVisuals.length);
-  let selected = orderedVisuals[offset] ?? generatedStoryVisuals[0];
+  const selectedVisuals: NewsStoryVisual[] = [];
 
-  for (let index = 0; index < orderedVisuals.length; index += 1) {
-    const candidate = orderedVisuals[(offset + index) % orderedVisuals.length];
+  for (let selectedIndex = 0; selectedIndex < Math.max(1, count); selectedIndex += 1) {
+    let selected = orderedVisuals[(offset + selectedIndex) % orderedVisuals.length] ?? generatedStoryVisuals[0];
 
-    if (!usedGeneratedImages.has(candidate.image)) {
-      selected = candidate;
-      break;
+    for (let index = 0; index < orderedVisuals.length; index += 1) {
+      const candidate = orderedVisuals[(offset + selectedIndex + index) % orderedVisuals.length];
+
+      if (!usedGeneratedImages.has(candidate.image)) {
+        selected = candidate;
+        break;
+      }
     }
+
+    usedGeneratedImages.add(selected.image);
+    selectedVisuals.push({
+      label: selectedIndex === 0 && brandLogo ? brandLogo.label : selected.label,
+      image: selected.image,
+      imagePosition: selected.imagePosition,
+      alt: `${story.title} generated story image`,
+      isGeneratedStoryImage: true,
+      brandLogo: selectedIndex === 0 ? brandLogo : undefined,
+    });
   }
 
-  usedGeneratedImages.add(selected.image);
+  return selectedVisuals;
+}
 
-  return {
-    label: brandLogo?.label ?? selected.label,
-    image: selected.image,
-    imagePosition: selected.imagePosition,
-    alt: `${story.title} generated story image`,
-    isGeneratedStoryImage: true,
-    brandLogo,
-  };
+function getVisualImageSource(visuals: NewsStoryVisual[]) {
+  const hasStoryImages = visuals.some((visual) => visual.isStoryImage);
+  const hasGeneratedStoryImages = visuals.some((visual) => visual.isGeneratedStoryImage);
+
+  return hasStoryImages ? "story-provided" : hasGeneratedStoryImages ? "generated-story" : "source-derived";
 }
 
 function brandLogoForStory(story: NewsStory) {

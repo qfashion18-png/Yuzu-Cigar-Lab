@@ -11,6 +11,7 @@ import Link from "@/components/static-link";
 import { Button } from "@/components/ui/button";
 import type { EventExperience } from "@/lib/data";
 import { getEventTimingLabel, getEventTimingStatus, getFeaturedEvent } from "@/lib/event-schedule";
+import { buildEventImageAlt } from "@/lib/image-seo";
 
 type HomeEventFeatureProps = {
   events: EventExperience[];
@@ -46,7 +47,7 @@ export function HomeEventFeature({ events, initialNowIso }: HomeEventFeatureProp
         <AmbientPulse className="absolute inset-0 border border-yuzu-gold/25" />
         <ReferenceImage
           src={featuredEvent.image}
-          alt={`${featuredEvent.title} event preview`}
+          alt={buildEventImageAlt(featuredEvent)}
           className="absolute inset-0"
           imageClassName="opacity-92"
           objectPosition={featuredEvent.imagePosition}

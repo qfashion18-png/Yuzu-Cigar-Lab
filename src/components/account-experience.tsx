@@ -427,7 +427,7 @@ function AccountReadinessPanel({
 function MembershipBenefitsPanel({ summary }: { summary: AccountSummary | null }) {
   const tier = formatMembershipTier(summary?.membership.tier);
   const benefits = [
-    "Member-cost boxes and private allocation access",
+    "Monthly selection-list access and member-cost boxes",
     "Digital humidor tracking, aging notes, and reorder cues",
     "Concierge support with account and order context",
     "Checkout-aware shipping caps and compliance review",

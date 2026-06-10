@@ -8,7 +8,7 @@ import { ReferenceImage } from "@/components/reference-image";
 import { SectionHeading } from "@/components/section-heading";
 import Link from "@/components/static-link";
 import { Button } from "@/components/ui/button";
-import { getSeoGuide, getSeoPageProducts, seoGuides } from "@/lib/seo-content";
+import { getSeoGuide, getSeoPageProducts, seoGuides, type SeoContentPage } from "@/lib/seo-content";
 import {
   buildArticleJsonLd,
   buildBreadcrumbJsonLd,
@@ -114,6 +114,8 @@ export default async function SeoGuidePage({ params }: GuidePageProps) {
         </div>
       </section>
 
+      <GuideResearchPanel guide={guide} />
+
       <InteractiveGuideExperience guide={guide} />
 
       <section className="border-t border-yuzu-line bg-yuzu-forest/70">
@@ -132,5 +134,64 @@ export default async function SeoGuidePage({ params }: GuidePageProps) {
         </div>
       </section>
     </main>
+  );
+}
+
+function GuideResearchPanel({ guide }: { guide: SeoContentPage }) {
+  const visualLessons = guide.visualLessons ?? [];
+  const researchNotes = guide.researchNotes ?? [];
+
+  if (visualLessons.length === 0 && researchNotes.length === 0) {
+    return null;
+  }
+
+  return (
+    <section data-guide-research="field-notes" className="border-b border-yuzu-line/70 bg-yuzu-ink">
+      <div className="mx-auto grid max-w-[1520px] gap-7 px-5 py-12 lg:grid-cols-[minmax(0,0.45fr)_minmax(0,0.55fr)] lg:px-10 lg:py-14">
+        <div className="grid content-start gap-5">
+          <SectionHeading
+            kicker="Cigar field guide"
+            title="See the lesson before you light."
+            copy="Use the imagery and source-backed cues to connect the article to real wrapper, storage, pairing, and lounge decisions."
+          />
+          <div className="grid gap-3">
+            {researchNotes.map((note) => (
+              <a
+                key={`${guide.slug}-${note.sourceUrl}-${note.label}`}
+                href={note.sourceUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="group border border-yuzu-line bg-yuzu-panel/72 p-4 transition hover:border-yuzu-gold/80 hover:bg-yuzu-panel"
+              >
+                <span className="text-[0.68rem] font-black uppercase tracking-[0.18em] text-yuzu-gold">{note.label}</span>
+                <span className="mt-2 block text-sm leading-6 text-yuzu-cream/86">{note.takeaway}</span>
+                <span className="mt-3 block text-xs font-bold uppercase tracking-[0.16em] text-yuzu-muted transition group-hover:text-yuzu-gold">
+                  Source: {note.sourceLabel}
+                </span>
+              </a>
+            ))}
+          </div>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-3">
+          {visualLessons.map((lesson) => (
+            <article key={`${guide.slug}-${lesson.label}`} className="grid overflow-hidden border border-yuzu-line bg-yuzu-panel/78 shadow-[0_20px_60px_rgba(0,0,0,0.26)]">
+              <ReferenceImage
+                src={lesson.image}
+                alt={lesson.imageAlt}
+                className="aspect-[4/3] w-full"
+                imageClassName="opacity-94"
+                objectPosition={lesson.imagePosition ?? "50% 50%"}
+                sizes="(max-width: 768px) 100vw, (max-width: 1200px) 33vw, 280px"
+              />
+              <div className="p-4">
+                <p className="text-[0.68rem] font-black uppercase tracking-[0.18em] text-yuzu-gold">{lesson.label}</p>
+                <p className="mt-2 text-sm leading-6 text-yuzu-muted">{lesson.copy}</p>
+              </div>
+            </article>
+          ))}
+        </div>
+      </div>
+    </section>
   );
 }

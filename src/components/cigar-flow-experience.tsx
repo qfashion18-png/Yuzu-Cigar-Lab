@@ -15,6 +15,7 @@ import {
 import Link from "@/components/static-link";
 import { ReferenceImage } from "@/components/reference-image";
 import { type CigarFlowItem } from "@/lib/cigar-flow";
+import { buildEditorialImageAlt } from "@/lib/image-seo";
 import { cn } from "@/lib/utils";
 
 const sourceTone: Record<CigarFlowItem["kind"], string> = {
@@ -76,7 +77,7 @@ function CigarFlowCard({
       >
         <ReferenceImage
           src={item.image}
-          alt={`${item.title} visual preview`}
+          alt={buildEditorialImageAlt({ title: item.title, sourceName: item.sourceName })}
           className="absolute inset-0"
           imageClassName="opacity-92 transition duration-500 group-hover/card:scale-[1.03]"
           objectPosition={item.imagePosition}
@@ -266,7 +267,7 @@ export function CigarFlowExperience({ items }: { items: CigarFlowItem[] }) {
             <div className="relative hidden border-b border-yuzu-line/70 bg-yuzu-night lg:block lg:min-h-0 lg:border-b-0 lg:border-r">
               <ReferenceImage
                 src={activeItem.image}
-                alt={`${activeItem.title} article image`}
+                alt={buildEditorialImageAlt({ title: activeItem.title, sourceName: activeItem.sourceName })}
                 className="absolute inset-0"
                 imageClassName="opacity-95"
                 objectPosition={activeItem.imagePosition}

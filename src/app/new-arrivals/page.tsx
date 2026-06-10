@@ -30,7 +30,7 @@ export default function NewArrivalsPage() {
             copy="Latest curated boxes, inspected for wrapper integrity, box condition, age, and member value before release."
           />
         </div>
-        <ReferenceImage src="/assets/shop-hero.png" alt="New cigar arrivals" className="min-h-80" objectPosition="center" priority />
+        <ReferenceImage src="/assets/shop-hero.png" alt="New premium cigar boxes selected for Yuzu arrivals" className="min-h-80" objectPosition="center" priority />
       </section>
       <MemberViewBanner context="shop" className="mt-6" />
       <section className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">

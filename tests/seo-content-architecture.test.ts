@@ -155,3 +155,38 @@ test("editorial guides use dedicated luxury guide imagery", () => {
     "interactive guide atelier image should exist in public assets"
   );
 });
+
+test("editorial guides include research-backed visual lesson cards", () => {
+  const sourceHosts = new Set<string>();
+
+  for (const guide of seoGuides) {
+    assert.ok(guide.visualLessons, `${guide.slug} should expose visual lesson cards`);
+    assert.ok(guide.researchNotes, `${guide.slug} should expose research notes`);
+    assert.ok(guide.visualLessons.length >= 3, `${guide.slug} should include at least three visual cards`);
+    assert.ok(guide.researchNotes.length >= 2, `${guide.slug} should include at least two research-backed notes`);
+
+    for (const visual of guide.visualLessons) {
+      assert.match(visual.image, /^\/(assets|refs)\//, `${guide.slug} visual image should use a local public asset`);
+      assert.ok(existsSync(new URL(`../public${visual.image}`, import.meta.url)), `${visual.image} should exist in public assets`);
+      assert.ok(visual.imageAlt.toLowerCase().includes("cigar"), `${guide.slug} visual alt text should be cigar-specific`);
+      assert.ok(visual.copy.length >= 55, `${guide.slug} visual copy should be useful to readers`);
+    }
+
+    for (const note of guide.researchNotes) {
+      const sourceUrl = new URL(note.sourceUrl);
+
+      sourceHosts.add(sourceUrl.hostname);
+      assert.match(note.sourceUrl, /^https:\/\//, `${guide.slug} source should be HTTPS`);
+      assert.ok(note.takeaway.length >= 60, `${guide.slug} research takeaway should be substantive`);
+      assert.ok(note.sourceLabel.length >= 8, `${guide.slug} source should be named for readers`);
+    }
+  }
+
+  assert.ok(sourceHosts.has("www.fda.gov"), "guide research should include the adult-only FDA Tobacco 21 source");
+  assert.ok(sourceHosts.has("tobacconistuniversity.org"), "guide research should include Tobacconist University");
+  assert.ok(sourceHosts.has("bovedainc.com"), "guide research should include cigar storage humidity guidance");
+  assert.ok(sourceHosts.has("www.cigaraficionado.com"), "guide research should include cigar technique or pairing guidance");
+  assert.ok(guidePageSource.includes("GuideResearchPanel"), "guide pages should render the research-backed visual panel");
+  assert.ok(guidePageSource.includes("visualLessons"), "guide page should render visual lesson cards");
+  assert.ok(guidePageSource.includes("researchNotes"), "guide page should render sourced research notes");
+});

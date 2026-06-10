@@ -1,10 +1,1301 @@
 # Codex Worktree Tracking
 
-Last updated: 2026-05-29
+Last updated: 2026-06-10
 
 Purpose: track the dirty worktree I encounter while expanding and verifying the Yuzu admin/backend. This file is Codex-owned working notes, so future passes have a stable place to record what was changed, verified, and still needs audit.
 
 Project memory: `AGENTS.md` now requires Codex to use this file as the persistent worktree ledger. Every meaningful update, fix, audit, verification pass, or newly discovered dirty/untracked area should be recorded here in the same turn.
+
+## 2026-06-10 Ash Group Comment API Probe
+
+- Goal: interact with comments on the June 9 ash guide post inside the Facebook group using the API.
+- Used AWS profile `ycc-mcp` in `us-east-1` and Secrets Manager secret `ycc/social/facebook/prod`; token values were not written to project files.
+- Confirmed the stored Meta system-user token reads as `Yuzu Automation` and has Page/business/Instagram permissions including `pages_manage_engagement`, `pages_manage_posts`, `pages_read_engagement`, `pages_read_user_content`, and `business_management`.
+- Probed the owned group ash post `https://www.facebook.com/groups/1702820237822858/posts/1709921623779386/` through Graph API `v25.0` with both the system-user token and derived Yuzu Page token:
+  - `1702820237822858_1709921623779386` and `/comments` returned unsupported object/missing-permission style errors.
+  - `1709921623779386` and `/comments` returned OAuth review-required errors for the removed/unavailable group feature surface.
+  - Additional published ash group post IDs from Tap N Ash, Cigar Connoisseurs, Black Cigar Smokers, and other logged group posts were also inaccessible through `/comments`.
+- Probed Business Manager and Page asset edges to test the user's Meta Business Suite access hypothesis:
+  - Business `188471691849361` is readable.
+  - `/owned_pages` returns the Yuzu Cigar Club Page.
+  - `/system_users` returns `Yuzu Automation`.
+  - Business `/groups` and Page `/groups` are nonexisting fields in Graph API.
+  - The owned group object/feed still returns missing permission with both token types.
+- Saved sanitized outputs:
+  - `output/social/yuzu-ash-guide-group-comments-2026-06-10/graph-api-comment-probe.json`
+  - `output/social/yuzu-ash-guide-group-comments-2026-06-10/business-suite-asset-probe.json`
+- Result:
+  - No group comments were read, liked, or replied to by API because Meta Graph API did not expose the group post/comment edges, even though Business Manager access to the Yuzu Page is valid.
+  - The official API path remains available for Page comment management, not normal Facebook Group post comment management.
+- Dirty worktree note:
+  - This pass intentionally added only sanitized social API probe artifacts and this ledger entry.
+
+### Business Message Access Check
+
+- Goal: check whether Meta Business/Page message access is available through the stored Meta API credentials.
+- Used AWS profile `ycc-mcp` in `us-east-1` and Secrets Manager secret `ycc/social/facebook/prod`; token values were not written to project files.
+- Confirmed through Graph API `v25.0`:
+  - The stored system-user token can derive a Yuzu Cigar Club Page token.
+  - The Yuzu Page token/account reports Page tasks including `MESSAGING`, plus `ADVERTISE`, `ANALYZE`, `CREATE_CONTENT`, `MODERATE`, `MANAGE`, and `VIEW_MONETIZATION_INSIGHTS`.
+  - The stored app/token permissions include `instagram_manage_messages`, `pages_manage_metadata`, `pages_read_engagement`, `pages_read_user_content`, and `pages_show_list`.
+  - The stored app/token permissions do not include `pages_messaging`.
+- Live message-access probes:
+  - `GET /1148511071677542/conversations` with the Page token returned `(#200) Requires permission: pages_messaging or User associated with the Page access token does not have an appropriate role on the Page.`
+  - `GET /1148511071677542/conversations?platform=messenger` returned the same `pages_messaging`/role error.
+  - `GET /1148511071677542/conversations?platform=instagram` returned that the Page is not linked to an Instagram account or the linked IG account is not professional.
+  - `GET /1148511071677542/subscribed_apps` returned an empty list, so no message webhook subscription is currently visible through this token.
+  - Direct Instagram conversation probes against stored IG id `17841434862337900` were unsupported/missing-permission.
+- Saved sanitized output:
+  - `output/social/yuzu-business-message-access-2026-06-10/business-message-access-probe.json`
+- Result:
+  - Business/Page asset access includes the `MESSAGING` task, but Graph API message access is not currently usable because the app/token lacks `pages_messaging`.
+  - Next operator path is Meta app permission/app-review or token regeneration that includes `pages_messaging`, plus confirming the Page/Instagram account linkage if Instagram DM access is desired.
+
+### Token Regeneration Attempt
+
+- Goal: update the stored Meta system-user token with all currently granted permissions plus missing `pages_messaging`.
+- Checked official Meta system-user token generation path: `/{SYSTEM_USER_ID}/access_tokens` with `business_app` and comma-separated `scope`.
+- Requested scope set:
+  - Current granted permissions from `ycc/social/facebook/prod`: `business_management`, `catalog_management`, branded-content scopes, Instagram publish/comment/insight/message scopes, Page read/manage scopes, `public_profile`, and `read_insights`.
+  - Added `pages_messaging` for Business/Page Inbox access.
+- Result:
+  - Meta rejected the generation request before scope evaluation with `(#100) This method must be called with appsecret_proof.`
+  - Checked AWS Secrets Manager social secrets (`ycc/social/facebook/prod`, `ycc/social/instagram/prod`, `ycc/social/threads/prod`) and local env names; no Meta app secret / client secret was present.
+  - No AWS secret token was changed.
+- Saved sanitized output:
+  - `output/social/yuzu-business-message-access-2026-06-10/token-regeneration-dry-run.json`
+- Next operator path:
+  - Store/provide the Meta app secret for app `826335403603875` so `appsecret_proof = HMAC-SHA256(access_token, app_secret)` can be computed, then retry token generation.
+  - Even with `appsecret_proof`, Meta will only return permissions that the app/business is allowed to grant; unavailable or unapproved permissions such as `pages_messaging` may still require Meta App Review and cannot be force-added by editing the secret.
+
+## 2026-06-10 Friends & Family Box Pass Hidden Invite Page
+
+- Goal: create a visually appealing unlinked Friends & Family page where invited users can claim 1 year of Box Access Pass access.
+- Next.js 16 docs checked before code:
+  - `node_modules/next/dist/docs/01-app/01-getting-started/03-layouts-and-pages.md`
+  - `node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/page.md`
+  - `node_modules/next/dist/docs/01-app/01-getting-started/14-metadata-and-og-images.md`
+  - `node_modules/next/dist/docs/01-app/02-guides/static-exports.md`
+- Visual concept:
+  - Used the frontend/imagegen workflow to create a premium dark editorial Friends & Family Box Pass design concept.
+  - Concept file inspected: `C:\Users\qfash\.codex\generated_images\019eb2a4-cb53-79e1-b1ac-0d98dfaea2d5\ig_06715b9786121419016a29a4718818819aa2990736a9400340.png`.
+- Patched:
+  - Added hidden route `src/app/friends-family/page.tsx`.
+  - Added client claim component `src/components/friends-family-pass-claim.tsx`.
+  - Extended membership checkout request typing in `src/lib/stripe-checkout.ts`.
+  - Extended Lambda Stripe membership session support in `infra/lambda/ycc-api/index.js` and `infra/lambda/ycc-api/stripe-commerce.js` so the route-specific Friends & Family Box Access Pass yearly offer carries subscription metadata and a 365-day trial.
+  - Added `/friends-family/` to `src/app/robots.ts` disallow rules and kept the route out of `src/app/sitemap.ts`.
+  - Added `tests/friends-family-page.test.ts` and targeted regressions in `tests/seo-metadata.test.ts`, `tests/stripe-commerce.test.ts`, and `tests/lambda-ycc-api.test.ts`.
+- Verification completed:
+  - `node --import tsx --test tests/friends-family-page.test.ts tests/seo-metadata.test.ts`
+  - `node --import tsx --test tests/friends-family-page.test.ts tests/stripe-commerce.test.ts tests/seo-metadata.test.ts`
+  - `node --import tsx --test --test-name-pattern "friends and family membership checkout|membership checkout rejects client-supplied" tests/lambda-ycc-api.test.ts`
+  - `npx tsc --noEmit`
+  - `npm run lint`
+  - `npm run build` twice after final mobile CTA adjustment; final build generated 1,019 static pages and included `/friends-family`.
+  - Static preview started at `http://127.0.0.1:3026/friends-family/` from `out/`.
+  - Browser plugin verification passed desktop `1440x1100` and mobile `390x844`: no horizontal overflow, no console warnings/errors, age gate confirmed through UI, hidden route absent from visible nav, desktop shows the claim panel and benefit-strip continuation, mobile first viewport shows the `Claim 1-Year Pass` jump CTA and begins the claim panel.
+  - Visual screenshots were inspected with `view_image` against the generated concept; temporary QA screenshots were created under `output/qa/` for inspection and removed after the pass.
+- Intentional product/design deviation:
+  - The concept showed an inline email field, but implementation uses the existing account/sign-in state so the pass attaches to the signed-in Yuzu account before opening membership checkout.
+- Deployment completed:
+  - Full verification passed before deploy: `npm run lint`, `npx tsc --noEmit`, `npm test` with 550/550 passing, and `npm run build`.
+  - Build used Next.js 16.2.6 and generated 1,019 static pages, including `/friends-family`.
+  - Lambda package `output/ycc-api-all-updates-friends-family-20260610.zip` was built with code hash `6Oh89wpHb7Qj2Tgi/aHhxZrj9XMAaV+PBJALTMzPObk=`.
+  - Updated Lambda `ycyyy` `$LATEST`, published version `34`, and promoted alias `ycyyy:live` to version `34` with description `Live API with Friends and Family Box Pass all updates 2026-06-10`.
+  - Live API readback confirmed alias version `34`, state `Active`, `LastUpdateStatus=Successful`, and matching code hash.
+  - Live `GET https://api.yuzucigarclub.com/health?deep=1` returned HTTP `200`, `status=ok`, and `db.proxyReachable=true`.
+  - Safe live membership-session smoke posted the yearly Box Access Pass Friends & Family request shape without an email and returned HTTP `400`, `error=missing_customer_email`, confirming the configured route/price validation path without creating a Stripe session.
+  - Amplify app `d2yxcklt245wh0`, branch `staging`, job `152` reached `SUCCEED`.
+  - Amplify smoke returned `homeStatus=200`, `assetStatus=200`, and asset path `/_next/static/chunks/0fmoh0go6ai.6.css`.
+  - Additional route smokes returned HTTP `200` for `https://staging.d2yxcklt245wh0.amplifyapp.com/friends-family/?deploy=152`, `https://www.yuzucigarclub.com/friends-family/?deploy=152`, and `https://www.yuzucigarclub.com/?deploy=152`.
+  - Live `robots.txt` disallows `/friends-family/`.
+  - Generated deploy artifacts from this pass were removed after successful deployment and smoke checks.
+- Dirty worktree note:
+  - The workspace was already broadly dirty before this pass. This pass intentionally touched only the Friends & Family route/component, membership checkout metadata/trial support, robots/tests, and this ledger.
+
+## 2026-06-09 Cognito Signup/Auth Issue Check
+
+- Goal: answer whether live Yuzu had any user signup, signup attempts, or signup/auth issues.
+- AWS context:
+  - Default AWS credentials were not loaded, so the read-only audit used profile `ycc-mcp` in `us-east-1`.
+  - Caller resolved to account `374587466106` through `CodexMcpYccOperatorRole`.
+  - Checked Cognito user pool `YCCMembers` (`us-east-1_63U9PflAX`), app client `2i2nvtt41l94n0mivc4tu4f9ms`, CloudTrail Cognito events, API Gateway access logs `/aws/apigateway/ycc-api-access`, and Lambda logs `/aws/lambda/ycyyy`.
+- Findings:
+  - Current Cognito pool has 8 enabled `CONFIRMED` users: one company/admin-looking account, one newsroom operator account, and six Codex/e2e test accounts.
+  - No `UNCONFIRMED` users were present.
+  - CloudTrail from 2026-05-01 through 2026-06-09 showed no `SignUp`, `ConfirmSignUp`, `ResendConfirmationCode`, `ForgotPassword`, or `ConfirmForgotPassword` events for Cognito.
+  - There were 184 `InitiateAuth` events for the storefront client, with 15 historical errors. The visible errors were `NotAuthorizedException` incorrect username/password and older `InvalidParameterException` `USER_PASSWORD_AUTH flow not enabled for this client`; no `InitiateAuth` errors appeared after 2026-05-29T00:42:51Z in this pass.
+  - Admin/user setup events were CLI/operator driven: 30 successful `AdminCreateUser` events, 11 `AdminCreateUser` errors for `User is required to have a password`, and 27 `AdminDeleteUser` events. This matches test/setup churn rather than customer self-signup.
+  - Logs Insights over 2026-06-01 through this pass found no API Gateway `status >= 400`, no Lambda `statusCode >= 400`, and no Lambda error/exception log entries.
+- Conclusion:
+  - No evidence of a real customer self-signup attempt or signup failure was found in the checked live Cognito/CloudWatch/CloudTrail surfaces.
+  - Historical auth issues were setup/test related and already known from prior Cognito work: inline password auth was not enabled earlier, then later live sign-ins succeeded; prior Hosted UI `invalid_scope` was documented and fixed in `docs/cognito-e2e-audit-2026-05-27.md`.
+- No application code, AWS settings, or deploy artifacts were changed in this pass.
+
+## 2026-06-09 Ash Guide Group Publishing
+
+- Goal: publish the ash guide first to available Facebook groups.
+- Used the five-card ash guide set from `output/social/facebook-planner-month-2026-06-09/how-to-ash-expanded-guide/`.
+- Created the dedicated group publishing kit:
+  - `output/social/yuzu-ash-guide-group-posts-2026-06-09/POST-KIT.md`
+  - `output/social/yuzu-ash-guide-group-posts-2026-06-09/publish-log.json`
+  - Group-specific caption files for Yuzu Lounge, Valley Cigar Club, Ash Hole Cigar Club, Tap N Ash, Cigar Connoisseurs, Black Cigar Smokers, and Hollow Down.
+- Published live through the Facebook UI using image paste for all five guide cards:
+  - Yuzu Cigar Club Lounge | 21+: `https://www.facebook.com/groups/1702820237822858/posts/1709921623779386/`
+  - Tap N Ash Social Club and Cigar Lounge Fan Club: `https://www.facebook.com/groups/707157250579467/posts/1667674117861104/`
+  - Cigar Connoisseurs: `https://www.facebook.com/groups/455005309068497/posts/1679893046579711/`
+  - Black Cigar Smokers: `https://www.facebook.com/groups/942621596899397/posts/1753941479100734/`
+- Not posted:
+  - Valley Cigar Club: the checked Facebook surface is a Page, not a group composer, and no posting composer was available.
+  - Ash Hole Cigar Club Phoenix / chapter community: no exact Phoenix group composer was found; public Ash Hole candidates checked were a global Page/site plus Nebraska/New Mexico group candidates, with Nebraska showing Join group and the other checked surfaces exposing no composer.
+  - Hollow Down Online Group: checked Facebook group surface did not expose a posting composer in this session.
+- Verification:
+  - Direct permalink readback passed for all four live posts.
+  - Readback found the expected caption opener, `21+` framing, no-marketplace/no-sales framing, and five photo signals on each live post.
+  - Posting kept captions educational/community-first and avoided buying, selling, trading, giveaways, samples, pricing, inventory, order requests, availability, and health claims.
+- Updated `docs/yuzu-facebook-first-month-post-schedule-2026-06-09.csv` with the live owned-group and external group post links for the June 9 ash guide row.
+- Dirty worktree note:
+  - The workspace remains broadly dirty with unrelated/concurrent app, docs, catalog, generated asset, browser companion, and social work. This pass intentionally touched only the ash guide group posting kit, the June 9 Facebook schedule row, and this ledger.
+
+### New Group Retry
+
+- Goal: respond after more Facebook groups were added and post the ash guide to the new postable groups.
+- Discovery:
+  - Joined/new cigar-relevant group found: `Cigars - TheCigarNetwork.com Facebook Group` at `https://www.facebook.com/groups/cigargroups/`.
+  - Already-posted joined groups remained Yuzu Lounge, Tap N Ash, Cigar Connoisseurs, and Black Cigar Smokers.
+  - Pending/not postable requests visible: `Not Gentlemanly Cigar Smokers`, `Cigars, Whiskey, and Beautiful Women`, and `International Cigar Tribe`.
+- Created `output/social/yuzu-ash-guide-group-posts-2026-06-09/caption-cigar-network.txt`.
+- Posting attempt:
+  - TheCigarNetwork group was joined and exposed `Write something...`, but the in-app browser could not inject text or image clipboard data into that specific public-group composer.
+  - Fresh tab retry and mobile URL fallback both hit the same browser input/clipboard block.
+  - No partial TheCigarNetwork post was published; empty draft composer was closed before retry.
+- Updated `output/social/yuzu-ash-guide-group-posts-2026-06-09/POST-KIT.md` and `publish-log.json` with the discovered group, pending groups, and not-posted reason.
+
+### Expanded Larger Group List Check
+
+- Goal: re-check Facebook after the user pointed out that the account showed a larger cigar group list.
+- Deeper scan result:
+  - The Facebook groups joined/pending surface showed 54 cigar-relevant group records when combined with direct group-page probes.
+  - Four groups already had the ash guide published live: Yuzu Lounge, Tap N Ash, Cigar Connoisseurs, and Black Cigar Smokers.
+  - Direct probes found 47 additional groups with a visible `Write something...` composer, including Arizona Cigar Channel, Black Cigar Aficionados of PHX, multiple Black Cigar Smokers variants, Bourbon and Cigars, Cigar Fanatics, Cigar Smokers Worldwide, The Boutique Cigar Lovers, The Cigar Family, and The Cigar Group.
+  - Three groups remained blocked/no-composer: `Cigars, Whiskey, and Beautiful Women`, `International Cigar Tribe`, and `Not Gentlemanly Cigar Smokers`.
+  - TheCigarNetwork still exposed a composer, but remains not posted because the in-app browser could not inject text or image clipboard data into that public-group composer.
+- Created `output/social/yuzu-ash-guide-group-posts-2026-06-09/group-access-scan-2026-06-09.json` with the full access map, counts, live-post links, composer-visible unpublished groups, and blocked/question groups.
+- Updated `output/social/yuzu-ash-guide-group-posts-2026-06-09/POST-KIT.md` and `publish-log.json` to reference the expanded scan.
+- Publishing status:
+  - No new Facebook group posts were published during this expanded check; this was an access/rules-readiness audit only.
+
+### Batch 01 Posting Attempt
+
+- Goal: post the ash guide to the expanded group list in batches of 10.
+- Selected the first 10 composer-visible unpublished groups after skipping TheCigarNetwork because it already had an input/clipboard blocker:
+  - Arizona Cigar Channel.
+  - Black Cigar Aficionados of PHX.
+  - Eight Black Cigar Smokers-adjacent targets from the expanded scan, including duplicate-name group IDs, Guild, United, and Society.
+- Canary attempt:
+  - Opened Arizona Cigar Channel and confirmed the account is joined with a visible `Write something...` composer.
+  - The composer opened cleanly and the Post button remained disabled before content entry.
+  - Text injection failed through Playwright `fill`, direct browser typing, browser paste, and a Windows clipboard/SendKeys fallback. The repeated browser-side blocker was `Browser Use virtual clipboard is not installed`.
+  - The empty composer was closed; no draft or partial Batch 01 post was published.
+- Created `output/social/yuzu-ash-guide-group-posts-2026-06-09/batch-01-ready-to-post.md` with the 10 target groups, five-card asset list, and group-specific captions for manual posting.
+- Created `output/social/yuzu-ash-guide-group-posts-2026-06-09/batch-01-posting-log.json` and updated `POST-KIT.md` / `publish-log.json` with the blocked live attempt.
+
+### Batch 01 Live Resume And PHX Correction
+
+- Goal: continue the expanded group batch after the user requested stopping after 10 posts and after group participation questions were answered.
+- Current batch count: Batch 01 completed at 10 submitted/pending or visible posts.
+- Submitted/pending:
+  - Arizona Cigar Channel at `https://www.facebook.com/groups/469952574389320/`; user answered the participation question and browser readback showed pending/admin-approval status.
+  - Cigars - TheCigarNetwork.com Facebook Group at `https://www.facebook.com/groups/cigargroups/`; participation review was completed and browser readback showed pending/admin-approval status.
+  - Black Cigar Aficionados of PHX at `https://www.facebook.com/groups/1887442114724319/`; corrected after the initial post body accidentally included local image file paths.
+  - Black Cigar Smokers at `https://www.facebook.com/groups/1016284215225042/`; user added the images, the post was submitted, and browser readback showed it visible in the group feed with all five image signals and no local file paths. Likely permalink: `https://www.facebook.com/groups/1016284215225042/posts/3355648157955291/`.
+  - Black Cigar Smokers at `https://www.facebook.com/groups/735608425041386/`; submitted pending admin approval after a clean pre-submit check showed all five image file attachments and no local file paths.
+  - Black Cigar Smokers at `https://www.facebook.com/groups/395217335256970/`; submitted pending admin approval after a bad image-path paste was caught and cleaned before submission. Browser readback found five unique photo attachments and no local file paths. Likely pending post URL: `https://www.facebook.com/groups/395217335256970/posts/1486069459505080/`.
+  - Black Cigar Smokers at `https://www.facebook.com/groups/476874138490306/`; posted visible after the user edited/corrected the image attachments. Browser readback found five unique photo attachments and no local file paths. Post URL: `https://www.facebook.com/groups/476874138490306/posts/977977005046681/`.
+  - Black Cigar Smokers Guild at `https://www.facebook.com/groups/8157369361006674/`; posted visible after user pasted the caption and added images in the Codex in-app browser. Browser readback found five photo links, all five image signals, and no local file paths. Post URL: `https://www.facebook.com/groups/8157369361006674/posts/27137627729220885/`.
+  - Black Cigar Smokers United at `https://www.facebook.com/groups/1093588954481061/`; posted visible after user pasted the caption and added images in the Codex in-app browser. Browser readback found five photo links, a clean caption, and no local file paths. Post URL: `https://www.facebook.com/groups/1093588954481061/posts/2407791779727432/`.
+  - Black Cigar Smokers at `https://www.facebook.com/groups/985278229212365/`; posted visible after user pasted the caption and added images in the Codex in-app browser. Browser readback found five scoped photo links, a clean caption, and no local file paths. Post URL: `https://www.facebook.com/groups/985278229212365/posts/1509135403493309/`.
+- PHX correction details:
+  - The bad PHX post was edited rather than left live/pending in the wrong layout.
+  - The caption was cleaned, the user manually added the five guide images, and the corrected post was saved.
+  - Final browser readback showed `Your post is pending`, no `C:\Users` or generated asset paths, and OCR/alt signals for all five guide cards: cover, Let It Build, Move Over Tray, Roll Gently, and Reset and Check.
+- Created and updated `output/social/yuzu-ash-guide-group-posts-2026-06-09/batch-01-live-resume-log.json`.
+- Updated `output/social/yuzu-ash-guide-group-posts-2026-06-09/POST-KIT.md` and `publish-log.json` with the resume status, PHX correction, current count, and next target.
+- Caution for the next posting pass:
+  - Do not paste Windows image paths into Facebook post text.
+  - If image upload is blocked by the Facebook composer/browser layer, pause for the user to add images manually before submitting.
+  - Batch 02 starts at `https://www.facebook.com/groups/1441070243135757/` if continuing.
+- Browser/focus issue:
+  - The controlled Codex in-app browser tab was confirmed as browser id `iab` on `https://www.facebook.com/groups/8157369361006674/`.
+  - A separate Chrome window could still steal foreground focus from Windows-level paste/file-picker fallbacks, making OS-level automation unsafe.
+  - Automated posting was paused at 7/10 before the Guild post. Safer resume path is user-driven caption/image entry in the in-app browser, with Codex verifying caption, image count/signals, no local file paths, and then logging the result.
+- Tooling audit:
+  - `tool_search` found the available browser path remains the Browser plugin through the Node-backed `iab` controller; no separate Facebook-group publishing tool or Chrome-specific upload tool was exposed in this session.
+  - Active `iab` capability check found browser capabilities `visibility` and `viewport`, tab capability `pageAssets`, and the usual clipboard/CUA/DOM/Playwright APIs.
+  - The in-app browser Playwright surface does not document a supported file-upload method such as `setInputFiles`, so Facebook group image uploads should not rely on OS-level picker automation while another browser can take focus.
+  - Official Meta documentation still points away from an API solution for normal groups: `publish_to_groups`, `groups_access_member_info`, and Groups API were deprecated/removed for all versions after April 22, 2024.
+- Guild draft verification:
+  - User prepared the Black Cigar Smokers Guild draft in the in-app browser.
+  - Browser readback confirmed the Guild caption, `21+` and no-sales guardrails, five attached ash-guide images, no local file paths, and no upload/processing state.
+  - Draft is ready for user submit; count remains 7/10 until the submitted/live/pending post is verified and logged.
+- Batch 02 setup:
+  - Created `output/social/yuzu-ash-guide-group-posts-2026-06-09/batch-02-ready-to-post.md`.
+  - Created `output/social/yuzu-ash-guide-group-posts-2026-06-09/batch-02-posting-log.json`.
+  - Batch 02 uses the next 10 composer-visible groups from `group-access-scan-2026-06-09.json` after excluding previously published and Batch 01 posted groups.
+  - Updated `output/social/yuzu-ash-guide-group-posts-2026-06-09/POST-KIT.md` and `publish-log.json` so the next batch points to the ready file, posting log, first target, and safer user-driven in-app browser workflow.
+  - Opened the Codex in-app browser to the first Batch 02 target, `https://www.facebook.com/groups/1441070243135757/` (`Black Cigars Society`), without drafting or submitting anything.
+  - Continue using the safer user-driven flow: user pastes caption/adds images in the in-app browser; Codex verifies caption, five image attachments, no file paths, and then logs.
+- Batch 03 setup:
+  - User reported Batch 02 done; individual post URLs and per-group browser verification were not captured in this pass.
+  - Updated `output/social/yuzu-ash-guide-group-posts-2026-06-09/batch-02-posting-log.json`, `POST-KIT.md`, and `publish-log.json` to mark Batch 02 complete by user report.
+  - Created `output/social/yuzu-ash-guide-group-posts-2026-06-09/batch-03-ready-to-post.md`.
+  - Created `output/social/yuzu-ash-guide-group-posts-2026-06-09/batch-03-posting-log.json`.
+  - Batch 03 uses the next 10 composer-visible groups from `group-access-scan-2026-06-09.json` after excluding previously published groups plus Batches 01 and 02.
+  - Batch 03 starts at `https://www.facebook.com/groups/949044793119217/` (`CIGAR LOVERS AND FRIENDS`).
+  - Opened the Codex in-app browser to the first Batch 03 target without drafting or submitting anything.
+
+## 2026-06-09 Meta Graph Group API Capability Probe
+
+- Goal: verify whether the AWS-stored Meta token can follow/join the discovered cigar Facebook groups or expose current group automation features.
+- AWS/secret context:
+  - Used AWS profile `ycc-mcp` in `us-east-1`.
+  - Located Secrets Manager secret `ycc/social/facebook/prod`.
+  - Secret contains a Meta Business system-user token for `Yuzu Automation` and the `Yuzu Cigar Club` Page; token values were not intentionally written to project files.
+- Live Graph API findings:
+  - Graph API `v25.0` accepted the system-user token for `/me` and `/me/permissions`.
+  - Granted permissions include Page, Instagram, business, catalog, branded-content, and insights scopes; no current Groups API scopes are present.
+  - `/me/accounts` returned the Yuzu Cigar Club Page and a Page access token; Page token readback works for Page metadata, `/feed`, and `/posts`.
+  - Sample cigar group probes against group `1784299528251000` returned `(#3) Missing Permission` for metadata, feed, and members using both the system-user token and derived Page token.
+  - Page `/{page-id}/groups` returned `(#100) Tried accessing nonexisting field (groups)`.
+  - `search?type=group&q=cigar` did not provide usable group search results.
+- Conclusion:
+  - The stored token supports Yuzu Page automation but does not support joining/following normal Facebook groups, requesting group membership, reading group feeds/members, or changing group notification/follow state through the official Graph API.
+
+### 2026-06-09 Meta Group Permission Upgrade Check
+
+- User requested updating the Meta token/app permissions to access groups and "everything."
+- Rechecked current Meta platform status: Facebook Groups API permissions/features (`publish_to_groups`, `groups_access_member_info`, and Groups API) were deprecated in Graph API v19 and removed for all versions after April 22, 2024.
+- No AWS secret or token fields were changed; adding unavailable scopes to the stored secret would not grant access and would misrepresent the actual Meta authorization state.
+- Viable path remains: generate a new Meta Business system-user/Page token only for supported Page/Instagram/business scopes if additional Page capabilities are needed; Facebook group joining/following still requires manual Facebook UI interaction.
+
+## 2026-06-09 Facebook Stories Visual Companion Mockups
+
+- Goal: respond to the request for high-visual Facebook Story collages by creating an on-screen visual direction board before scaling a 28-day, 5-10-frame-per-day Story system.
+- Created local visual companion session under ignored `.superpowers/brainstorm/yuzu-fb-stories-20260609-01/`.
+- Added `.superpowers/` to `.gitignore` so brainstorm preview files do not add more generated noise to the already-broad dirty worktree.
+- Preview URL opened in the in-app browser: `http://localhost:56320`.
+- First screen: `story-visual-systems.html`, showing three selectable Story directions:
+  - Magazine Narrative: polished 5-frame education sequence.
+  - Collage Dispatch: recommended 7-8-frame collage/storyboard sequence.
+  - Mixed Daily Pack: high-volume 10-frame daily pack.
+- User selected C / Mixed Daily Pack in chat after the first visual board.
+- Added expanded C-only storyboard screen: `.superpowers/brainstorm/yuzu-fb-stories-20260609-01/content/mixed-daily-pack-expanded.html`.
+- The expanded screen defines the 10-frame daily pack: scene opener, hook, collage, teaching cue, mistake/reset, object story, community poll, note card, soft brand close, and reply/21+ close.
+- User approved the expanded C structure.
+- Wrote approved design spec: `docs/superpowers/specs/2026-06-09-yuzu-facebook-stories-mixed-daily-pack-design.md`.
+- Committed the design spec only in commit `529c8be` (`Add Facebook Stories mixed daily pack design`).
+- Spec defines the pilot-week-first implementation approach, 28-day acceptance criteria, visual system, compliance rules, production outputs, and verification checklist.
+- No final production Story images or 28-day schedule expansion has been generated yet; next gate is user review of the written spec before implementation planning.
+
+## 2026-06-09 Group-Specific Follower Post Layout Fix
+
+- Goal: fix the Yuzu Page follower post layout, check the tracked Facebook group rule context, and create a separate post for each group to attract adults looking for cigar information.
+- Public/source check:
+  - Rechecked public surfaces for Valley Cigar Club, Ash Hole Cigar Club, Tap N Ash Social Club and Cigar Lounge Fan Club, Cigar Connoisseurs, Black Cigar Smokers, and Hollow Down Online Group.
+  - Several Facebook group rule pages remain login/private or only expose limited public descriptions, so external drafts remain admin-review and link-free.
+  - Reviewed 2026 Premium Cigar Association guidance and Halfwheel Meta policy coverage supporting education/community posts and avoiding tobacco sales, transfer, giveaway, pricing, inventory, or ad-like language.
+- Layout fix:
+  - Rebuilt `scripts/render-yuzu-page-follow-group-post.mjs` into a multi-card renderer.
+  - Corrected the owned-group card layout at `output/social/yuzu-page-follow-group-post-2026-06-09/yuzu-page-follow-group-post-square.png` with a smaller headline, centered topic chips, better bottom spacing, and a clearer 21+/no-marketplace footer.
+- Created separate group-specific prompt assets:
+  - `output/social/yuzu-page-follow-group-post-2026-06-09/group-specific-assets/valley-cigar-club-info-prompt.png`
+  - `output/social/yuzu-page-follow-group-post-2026-06-09/group-specific-assets/ash-hole-cigar-club-info-prompt.png`
+  - `output/social/yuzu-page-follow-group-post-2026-06-09/group-specific-assets/tap-n-ash-fan-club-info-prompt.png`
+  - `output/social/yuzu-page-follow-group-post-2026-06-09/group-specific-assets/cigar-connoisseurs-info-prompt.png`
+  - `output/social/yuzu-page-follow-group-post-2026-06-09/group-specific-assets/black-cigar-smokers-info-prompt.png`
+  - `output/social/yuzu-page-follow-group-post-2026-06-09/group-specific-assets/hollow-down-online-group-info-prompt.png`
+  - Contact sheet: `output/social/yuzu-page-follow-group-post-2026-06-09/yuzu-group-follower-posts-contact-sheet.jpg`
+- Created separate caption files:
+  - `caption-yuzu-lounge.txt`
+  - `caption-valley-cigar-club.txt`
+  - `caption-ash-hole-cigar-club.txt`
+  - `caption-tap-n-ash-fan-club.txt`
+  - `caption-cigar-connoisseurs.txt`
+  - `caption-black-cigar-smokers.txt`
+  - `caption-hollow-down-online-group.txt`
+- Updated documentation:
+  - `output/social/yuzu-page-follow-group-post-2026-06-09/POST-KIT.md`
+  - `docs/facebook-external-group-post-kit-2026-06-02.md`
+  - `docs/facebook-organic-growth-implementation-2026-06-01.md`
+- Compliance:
+  - All captions include adult `21+ only` framing and avoid buying, selling, trading, giveaways, free samples, pricing, inventory, order requests, and health claims.
+  - Each external post uses no direct website link and starts with a group-specific information prompt before the soft follow mention.
+  - External group drafts are not marked ready for direct posting unless a moderator/admin allows branded or self-referential prompts.
+- Verification:
+  - Visual review completed on `yuzu-group-follower-posts-contact-sheet.jpg` and the corrected owned-group card; layout is readable, chips are centered, and footer text is visible.
+  - `node scripts/render-yuzu-page-follow-group-post.mjs` passed.
+  - `node --check scripts/render-yuzu-page-follow-group-post.mjs` passed.
+  - `npx eslint scripts/render-yuzu-page-follow-group-post.mjs` passed with no output after a longer timeout.
+  - Dimension check passed: all seven prompt cards are `1080x1080`; contact sheet is `1160x688`.
+  - Caption scan passed: all seven caption files include `21+`; external caption files contain no URLs.
+  - `npm run facebook:organic-check` passed with 44 rows: Admin 3, External Group 6, Group 11, Outreach 7, Page 17.
+- Publishing status:
+  - Draft package created locally; not published live because external group moderator approval and final target selection were not provided in this turn.
+- Dirty worktree note:
+  - The workspace remains broadly dirty with unrelated/concurrent app, docs, catalog, generated asset, and social work. This pass intentionally touched only the Yuzu follower post package, external/group organic docs, the renderer script, and this ledger.
+
+## 2026-06-09 Yuzu Page Follow Group Post Draft
+
+- Goal: create a group-rule-compliant post that can encourage adult members to follow the Yuzu Cigar Club Page without marketplace, pricing, inventory, giveaway, order, or health-claim language.
+- Reviewed the active Yuzu Facebook organic growth docs, Yuzu Group rules, external group admin-review guardrails, and the luxury social creative standard.
+- Created a square group prompt card and post kit:
+  - `output/social/yuzu-page-follow-group-post-2026-06-09/yuzu-page-follow-group-post-square.png`
+  - `output/social/yuzu-page-follow-group-post-2026-06-09/facebook-caption-yuzu-page-follow-group-post.txt`
+  - `output/social/yuzu-page-follow-group-post-2026-06-09/POST-KIT.md`
+  - Renderer: `scripts/render-yuzu-page-follow-group-post.mjs`
+- Compliance:
+  - Caption and asset include `21+ only` framing.
+  - Caption avoids buying, selling, trading, giveaways, free samples, pricing, inventory, order requests, and health claims.
+  - The post uses a soft follow prompt and topic vote instead of a link-first or sales-forward CTA.
+  - External-group posting remains admin-review only because several external group rule surfaces are private or unclear.
+- Verification:
+  - Visual review completed on the square prompt card; text fits and the 21+/no-marketplace footer is visible.
+  - `node scripts/render-yuzu-page-follow-group-post.mjs` passed.
+  - `node --check scripts/render-yuzu-page-follow-group-post.mjs` passed.
+- Publishing status:
+  - Draft package created locally; not published because no specific target group/publishing approval was provided in this turn.
+- Dirty worktree note:
+  - The workspace remains broadly dirty with unrelated/concurrent app, docs, catalog, generated asset, and social work. This pass intentionally touched only the new Yuzu Page follower-growth group post package, its renderer script, and this ledger.
+
+## 2026-06-09 Liga Privada T52 Flying Pig Review Card And Facebook Post
+
+- Goal: create a Yuzu review card for Liga Privada T52 Flying Pig by Drew Estate using the user's real product photo and publish it to Facebook.
+- Source/fact check:
+  - User-provided real product image: `C:\Users\qfash\Downloads\Liga-Privada-T52-Flying-Pig.jpeg`.
+  - Official Drew Estate T52 page confirmed Flying Pig as a seasonal `3 15/16 x 60` size.
+  - Official blend/specs used: Connecticut stalk-cut and stalk-cured Habano wrapper, plantation-grown Brazilian Mata Fina binder, Honduran and Nicaraguan filler, full body, profile notes of earth, black pepper, and caramel sweetness.
+- Created social package:
+  - Folder: `output/social/liga-privada-t52-flying-pig-review-2026-06-09/`.
+  - Source copy: `source-liga-privada-t52-flying-pig.jpeg`.
+  - 4:5 Page asset: `yuzu-liga-privada-t52-flying-pig-review-card-4x5.jpg`.
+  - Square support asset: `yuzu-liga-privada-t52-flying-pig-review-card-square.jpg`.
+  - Contact sheet: `liga-privada-t52-flying-pig-review-card-contact-sheet.jpg`.
+  - Caption: `facebook-caption-liga-privada-t52-flying-pig-review-card.txt`.
+  - Manifest: `liga-privada-t52-flying-pig-review-card-manifest.json`.
+  - Renderer: `scripts/render-liga-t52-flying-pig-review-card.mjs`.
+- Publishing:
+  - Published the 4:5 asset to the Yuzu Cigar Club Facebook Page through the Graph API.
+  - Post ID: `1148511071677542_122105262927350335`.
+  - Photo ID: `122105262879350335`.
+  - Permalink: `https://www.facebook.com/122099394543350335/posts/122105262927350335`.
+  - Sanitized publish/readback files saved as `facebook-page-post-result.json` and `facebook-page-post-live-readback.json`.
+  - Initial Node native `FormData` upload returned Meta Graph `code 1` / "Please reduce the amount of data"; the image was smaller than the prior successful Don Pepin asset, and a standard `curl.exe -F source=@file` multipart upload succeeded. The successful post was recovered from Page feed readback to avoid duplicate upload.
+- Compliance:
+  - Caption includes `21+ only`.
+  - Image/caption avoid price, inventory status, order language, discounts, giveaways, samples, health claims, and direct sales imperatives.
+  - Caption uses review/education framing and a pairing question, not marketplace framing.
+- Verification:
+  - Visual QA completed on the 4:5 asset and contact sheet after tightening an early text layout.
+  - Dimension/nonblank check passed: feed `1080x1350`, square `1080x1080`, contact sheet `1440x980`.
+  - `node --check scripts/render-liga-t52-flying-pig-review-card.mjs` passed.
+  - `npx eslint scripts/render-liga-t52-flying-pig-review-card.mjs` passed with no output.
+  - Facebook readback check passed for post `1148511071677542_122105262927350335`, permalink, caption headline, and `21+ only` framing.
+- Dirty worktree note:
+  - The workspace remains broadly dirty with unrelated/concurrent app, catalog, docs, social, generated asset, and deploy artifact work. This pass intentionally touched only the new Liga T52 social package, its renderer script, Meta Page post, and this ledger.
+
+### 2026-06-09 Caramel Chip Visual Correction
+
+- Goal: fix the crowded `CARAMEL SWEETNESS` flavor chip on the Liga Privada T52 Flying Pig review card after the user flagged it.
+- Visual change:
+  - Updated `scripts/render-liga-t52-flying-pig-review-card.mjs` so the card chip row displays `EARTH`, `BLACK PEPPER`, and `CARAMEL` while the caption/manifest still preserve the official `caramel sweetness` profile note.
+  - Regenerated the 4:5 feed asset, square support asset, contact sheet, caption, and manifest in `output/social/liga-privada-t52-flying-pig-review-2026-06-09/`.
+- Facebook replacement:
+  - Published corrected Page post `1148511071677542_122105266047350335` with photo `122105266023350335`.
+  - Corrected permalink: `https://www.facebook.com/122099394543350335/posts/122105266047350335`.
+  - Archived the superseded result/readback as `facebook-page-post-result-superseded-before-caramel-chip-fix.json` and `facebook-page-post-live-readback-superseded-before-caramel-chip-fix.json`.
+  - Superseded post was `1148511071677542_122105262927350335`; direct delete returned Meta `GraphMethodException code 100/subcode 33`, but follow-up Page feed readback showed only one Liga T52 Flying Pig post and it was the corrected post.
+  - Replacement log saved to `facebook-page-post-replacement-caramel-chip-fix.json`.
+- Verification:
+  - Visual QA completed on corrected 4:5 and contact-sheet assets; the flavor chips now fit inside the panel.
+  - `node scripts/render-liga-t52-flying-pig-review-card.mjs` passed.
+  - `node --check scripts/render-liga-t52-flying-pig-review-card.mjs` passed.
+  - `npx eslint scripts/render-liga-t52-flying-pig-review-card.mjs` passed with no output.
+  - Dimension/nonblank check passed: feed `1080x1350`, square `1080x1080`, contact sheet `1440x980`.
+  - Meta Page feed readback returned exactly one Liga T52 Flying Pig post: corrected post `1148511071677542_122105266047350335`.
+
+### 2026-06-09 Facebook Story Publish
+
+- Goal: post the corrected Liga Privada T52 Flying Pig review creative to Facebook Stories.
+- Story asset:
+  - Added 9:16 Story output to `scripts/render-liga-t52-flying-pig-review-card.mjs` using the same real product photo and corrected `CARAMEL` chip.
+  - Story asset: `output/social/liga-privada-t52-flying-pig-review-2026-06-09/yuzu-liga-privada-t52-flying-pig-review-story-9x16.jpg`.
+  - Story manifest: `output/social/liga-privada-t52-flying-pig-review-2026-06-09/liga-privada-t52-flying-pig-review-story-manifest.json`.
+  - Contact sheet updated to include feed, square, and Story previews; new contact-sheet dimensions are `1880x1080`.
+- Publishing:
+  - Published through the Facebook Page `photo_stories` flow after uploading the Story image as an unpublished Page photo.
+  - Story photo ID: `122105279457350335`.
+  - Story post ID: `803820079347960`.
+  - Related corrected Page post remains `https://www.facebook.com/122099394543350335/posts/122105266047350335`.
+  - Sanitized Story result/readback saved as `facebook-page-story-result.json` and `facebook-page-story-readback.json`.
+- Verification:
+  - Visual QA completed on the 9:16 Story asset and updated contact sheet.
+  - `node scripts/render-liga-t52-flying-pig-review-card.mjs` passed.
+  - `node --check scripts/render-liga-t52-flying-pig-review-card.mjs` passed.
+  - `npx eslint scripts/render-liga-t52-flying-pig-review-card.mjs` passed with no output.
+  - Dimension/nonblank check passed: feed `1080x1350`, square `1080x1080`, Story `1080x1920`, contact sheet `1880x1080`.
+  - Story Graph publish returned `success: true` with post ID `803820079347960`; Page stories readback returned published statuses.
+
+## 2026-06-09 Facebook Education Post Detail Upgrade
+
+- Goal: respond to the user's screenshot of the June 9 "How to ash" Facebook post by adding more detailed instructions, stronger visual guidance, and a future-post standard so education posts are not thin captions plus a single vague cover image.
+- Live Meta updates:
+  - Edited the live June 9 Page photo post `1148511071677542_122104372509350335` with a full numbered caption covering let it build, move over tray, roll gently, reset/check burn line, and adult/no-marketplace framing.
+  - Added a Yuzu Page comment with an attached expanded visual guide image.
+  - Comment ID: `122104372509350335_2377129272698480`.
+  - Post readback saved to `output/social/facebook-planner-month-2026-06-09/meta-page-ash-post-expanded-readback-2026-06-09.json`.
+- Generated/updated assets:
+  - Added `scripts/render-yuzu-social-guide-assets.mjs` to render the ash guide set from the existing luxury source image and Yuzu logo.
+  - Replaced the local June 9 Page asset at `output/social/facebook-planner-month-2026-06-09/page-assets/2026-06-09-how-to-ash-a-cigar-fb-page-4x5.jpg` with a more detailed visual guide cover.
+  - Created five 4:5 ash guide cards plus contact sheet, caption, and manifest under `output/social/facebook-planner-month-2026-06-09/how-to-ash-expanded-guide/`.
+- Future-post adjustments:
+  - Expanded all Page captions in `docs/yuzu-facebook-first-month-post-schedule-2026-06-09.csv` from short prompts into instruction-rich education captions.
+  - Expanded Group prompts in the same schedule with more concrete visual/detail cues.
+  - Updated `output/social/facebook-planner-month-2026-06-09/page-assets-manifest.json` with refreshed captions and the new visual guide standard.
+  - Updated `docs/yuzu-luxury-social-creative-standard-2026-06-08.md` and `docs/facebook-organic-growth-implementation-2026-06-01.md` so future education posts require fuller captions and visual guide/detail cards.
+- Meta scheduled-caption refresh:
+  - Used AWS Secrets Manager secret `ycc/social/facebook/prod` with profile `ycc-mcp`, deriving a Page token in memory only.
+  - Updated 14 Page captions through Graph API: live June 9 plus scheduled posts from June 11 through July 5.
+  - Skipped July 7 because Meta had not accepted/scheduled that post and there is no `facebook_page` post id in the CSV status.
+  - Sanitized update result saved to `output/social/facebook-planner-month-2026-06-09/meta-page-caption-refresh-2026-06-09.json`.
+- Verification:
+  - Visual QA completed on the regenerated June 9 4:5 asset and the five-card contact sheet with no visible text overlap after a cover layout correction.
+  - Dimension/nonblank check passed for the updated `1080x1350` Page asset and contact sheet.
+  - `node --check scripts/render-yuzu-social-guide-assets.mjs` passed.
+  - `npx eslint scripts/render-yuzu-social-guide-assets.mjs scripts/facebook-organic-growth-check.ts` passed with no output.
+  - `npm run facebook:month-check` passed with 30 rows: Group 15, Page 15.
+  - `npm run facebook:organic-check` passed with 44 rows: Admin 3, External Group 6, Group 11, Outreach 7, Page 17.
+- Dirty worktree note:
+  - The workspace remains broadly dirty with unrelated/concurrent app, catalog, docs, social, generated asset, and deploy artifact work. This pass intentionally touched only social docs/schedule/manifests, generated ash-guide assets, the new renderer script, Meta Page captions/comment, and this ledger.
+
+### 2026-06-09 Premium Photo Follow-Up
+
+- User clarified: create the highest image quality and avoid clipart.
+- Generated high-quality photorealistic macro source photos through the built-in image generation tool, then copied them into the project while preserving the originals under `C:\Users\qfash\.codex\generated_images\019ead98-4ff4-7d13-968a-125af08bbe86`.
+- Project source-photo copies:
+  - `output/social/facebook-planner-month-2026-06-09/how-to-ash-expanded-guide/source-photos/how-to-ash-premium-photoreal-source.png`
+  - `output/social/facebook-planner-month-2026-06-09/how-to-ash-expanded-guide/source-photos/how-to-ash-step-1-let-it-build-photo.png`
+  - `output/social/facebook-planner-month-2026-06-09/how-to-ash-expanded-guide/source-photos/how-to-ash-step-2-move-over-tray-photo.png`
+  - `output/social/facebook-planner-month-2026-06-09/how-to-ash-expanded-guide/source-photos/how-to-ash-step-3-roll-gently-photo.png`
+  - `output/social/facebook-planner-month-2026-06-09/how-to-ash-expanded-guide/source-photos/how-to-ash-step-4-reset-check-photo.png`
+- Updated `scripts/render-yuzu-social-guide-assets.mjs` so the final cards are photo-backed, with no clipart/vector cigar or tray diagrams.
+- Removed the temporary visible `PHOTO GUIDE / NO CLIPART` wording from public assets and verified no `NO CLIPART`, `no clipart`, or `PHOTO GUIDE` strings remain in the renderer or generated guide package.
+- Visually checked each step card full-size:
+  - Step 1: fixed third-bullet overflow by tightening to two on-image cues.
+  - Step 2: moved the number badge away from the long title and kept bullets inside the panel.
+  - Step 3: fixed panel overflow while preserving the ash-release focal photo.
+  - Step 4: moved badge away from the title and fixed bullet overflow.
+  - Refreshed the contact sheet after the layout fixes.
+- Updated `docs/yuzu-luxury-social-creative-standard-2026-06-08.md` so final public education assets must use premium photoreal/editorial photography and avoid clipart/vector-style instruction graphics.
+- Meta note:
+  - Attempted to replace the earlier live-post visual comment with the premium photo cover, but Graph API returned `code 100 / subcode 33` for the original ash post object.
+  - Follow-up Page `feed` and uploaded `photos` readbacks no longer returned the original ash post/photo IDs, so no further live Meta mutation was attempted in this pass.
+- Verification:
+  - Full-size visual QA completed on cover, Step 1, Step 2, Step 3, Step 4, and refreshed contact sheet.
+  - All final guide cards are `1080x1350` and nonblank.
+  - `rg -n "NO CLIPART|no clipart|PHOTO GUIDE" scripts/render-yuzu-social-guide-assets.mjs output/social/facebook-planner-month-2026-06-09/how-to-ash-expanded-guide` returned no matches.
+  - `node --check scripts/render-yuzu-social-guide-assets.mjs` passed.
+  - `npx eslint scripts/render-yuzu-social-guide-assets.mjs scripts/facebook-organic-growth-check.ts` passed with no output.
+  - `npm run facebook:month-check` passed with 30 rows: Group 15, Page 15.
+  - `npm run facebook:organic-check` passed with 44 rows: Admin 3, External Group 6, Group 11, Outreach 7, Page 17.
+
+### 2026-06-09 Premium Ash Guide New Page Post
+
+- User requested uploading the premium guide to a new post after the original ash post object could not be mutated further through Graph API.
+- Published a new Yuzu Cigar Club Facebook Page multi-image post with all five premium photo-backed 4:5 guide cards:
+  - Post ID: `1148511071677542_122105275605350335`.
+  - Permalink: `https://www.facebook.com/122099394543350335/posts/122105275605350335`.
+  - Photo IDs: `122105275341350335`, `122105275389350335`, `122105275443350335`, `122105275491350335`, `122105275551350335`.
+- Publishing artifacts:
+  - Sanitized result: `output/social/facebook-planner-month-2026-06-09/facebook-how-to-ash-premium-guide-post-result-2026-06-09.json`.
+  - Sanitized readback: `output/social/facebook-planner-month-2026-06-09/facebook-how-to-ash-premium-guide-post-readback-2026-06-09.json`.
+  - Progress log: `output/social/facebook-planner-month-2026-06-09/facebook-how-to-ash-premium-guide-post-progress-2026-06-09.jsonl`.
+- Readback verification:
+  - Facebook returned the post as `status_type: added_photos`.
+  - The attachment is an album with five photo subattachments, matching the five uploaded guide cards.
+  - Caption includes the detailed four-step instructions, `21+ only`, and no marketplace, pricing, inventory, or health-claim language.
+
+### 2026-06-09 Premium Ash Guide Facebook Story Sequence
+
+- User requested adding the guide to Stories and noted the layout might need adjustment.
+- Added native 9:16 Story rendering to `scripts/render-yuzu-social-guide-assets.mjs` instead of stretching the 4:5 feed cards.
+- Created a five-frame Story sequence under `output/social/facebook-planner-month-2026-06-09/how-to-ash-expanded-guide/story-assets/`:
+  - `story-01-how-to-ash-cover-9x16.jpg`
+  - `story-02-let-it-build-9x16.jpg`
+  - `story-03-move-over-the-tray-9x16.jpg`
+  - `story-04-roll-gently-9x16.jpg`
+  - `story-05-reset-and-check-9x16.jpg`
+  - Contact sheet: `how-to-ash-story-contact-sheet.jpg`
+- Layout QA:
+  - Visually checked the Story contact sheet plus full-size cover, Step 2, and Step 4 frames.
+  - Adjusted footer/CTA/legal placement upward so Facebook Story reply controls are less likely to cover it.
+  - Verified all five Story frames are `1080x1920` and nonblank.
+- Publishing:
+  - Published the five frames in order through the Facebook Page `photo_stories` flow after uploading each as an unpublished Page photo.
+  - Related Page post: `https://www.facebook.com/122099394543350335/posts/122105275605350335`.
+  - Story post IDs: `884238763973489`, `1663965351504123`, `1561567721992140`, `853484907829465`, `1328713072697769`.
+  - Story photo IDs: `122105284125350335`, `122105284209350335`, `122105284395350335`, `122105284521350335`, `122105284593350335`.
+  - Sanitized result: `output/social/facebook-planner-month-2026-06-09/how-to-ash-expanded-guide/story-assets/facebook-how-to-ash-story-result-2026-06-09.json`.
+  - Progress log: `output/social/facebook-planner-month-2026-06-09/how-to-ash-expanded-guide/story-assets/facebook-how-to-ash-story-progress-2026-06-09.jsonl`.
+- Future Story schedule/standard updates:
+  - Updated the 2026-06-09 09:00 ash-technique row in `docs/yuzu-facebook-stories-posting-schedule-2026-06-09.csv` to `published:graph-api-story-sequence-2026-06-09`.
+  - Updated `docs/yuzu-luxury-social-creative-standard-2026-06-08.md` so future education guides require native Story-safe `1080x1920` layouts and Story contact-sheet QA.
+- Token hygiene:
+  - While inspecting older Story/Page examples, found one prior saved Meta readback with a tokenized `paging.next` URL.
+  - Sanitized `output/social/facebook-may-2026-release-radar/facebook-may-2026-release-radar-readback.json` by replacing the query token value with `REDACTED`.
+  - Normalized generated Meta JSON/JSONL files touched in this pass to remove UTF-8 BOMs and confirmed no raw `access_token=` query strings remain under `output/social`.
+- Verification:
+  - `node --check scripts/render-yuzu-social-guide-assets.mjs` passed.
+  - `npx eslint scripts/render-yuzu-social-guide-assets.mjs scripts/facebook-organic-growth-check.ts` passed with no output.
+  - `npm run facebook:month-check` passed with 30 rows: Group 15, Page 15.
+  - `npm run facebook:organic-check` passed with 44 rows: Admin 3, External Group 6, Group 11, Outreach 7, Page 17.
+  - Story schedule sanity check passed with 68 rows and the 2026-06-09 09:00 row marked as the published Graph API Story sequence.
+  - Story result verification passed for five published Story post IDs and five `1080x1920` image assets.
+  - `rg -l "access_token=" output/social` returned no matches after sanitization.
+
+## 2026-06-08 Monthly Member Selection Copy Sweep
+
+- Goal: update all user-facing membership/drop messaging to explain that Kisha, Sensei, and Daimyo members choose monthly cigars from a preselected online list during the monthly selection window.
+- Implemented the selection-window promise across:
+  - `src/app/membership/page.tsx`
+  - `src/app/member-drops/page.tsx`
+  - `src/app/page.tsx`
+  - `src/app/shop/page.tsx`
+  - `src/components/account-experience.tsx`
+  - `src/components/member-view-banner.tsx`
+  - `src/components/motion-primitives.tsx`
+  - `src/lib/data.ts`
+  - `src/lib/live-page-editor.ts`
+  - `src/lib/seo-content.ts`
+  - `knowledge/ycc-kb/membership.md`
+  - `docs/tap-that-ash-yuzu-membership-offer-email.md`
+- Added regression coverage in `tests/membership-data.test.ts` for monthly selection-list cadence, first-come selection language, and the guarantee that active monthly members still have cigars available to select.
+- Search/audit notes:
+  - Replaced stale generic hand-selected/curated monthly membership copy on visible app, SEO, live-editor, knowledge-base, and outreach surfaces.
+  - Remaining monthly cigar shipping and no monthly cigars references are intentional tier/shipping facts.
+  - During rendered QA, found and fixed a shared Framer Motion hydration mismatch caused by tap gesture attributes differing under reduced-motion settings.
+- Verification:
+  - `node --import tsx --test --test-concurrency=1 tests/membership-data.test.ts tests/live-page-editor.test.ts tests/shop-categories.test.ts tests/account-auth-boundary.test.ts` passed: 39/39.
+  - `npx tsc --noEmit --pretty false` passed.
+  - `npx eslint src/components/motion-primitives.tsx src/app/membership/page.tsx src/app/member-drops/page.tsx src/app/page.tsx src/app/shop/page.tsx src/components/account-experience.tsx src/components/member-view-banner.tsx src/lib/data.ts src/lib/live-page-editor.ts src/lib/seo-content.ts tests/membership-data.test.ts` passed with no warnings.
+  - `npm run build` passed on Next.js 16.2.6 with 994 static pages generated.
+  - In-app Browser QA against `http://127.0.0.1:3000/membership/` verified the hero copy, tier-card selection-list cadence, and new Monthly Selection Window band with no framework overlay and no hydration errors.
+  - In-app Browser QA against `http://127.0.0.1:3000/member-drops/` verified first-come monthly-list copy, June 8 selection reminder copy, completed reminder state, no framework overlay, and no hydration errors.
+  - Browser logs still show Framer Motion's reduced-motion warning in this environment; no current console errors remained after the motion fix.
+- Dirty worktree note:
+  - The workspace remains broadly dirty with unrelated/concurrent app, catalog, docs, social, and generated asset work. This pass intentionally touched only monthly-selection copy/test surfaces and this ledger.
+
+## 2026-06-08 Don Pepin Garcia Clasico 20th Anniversary Detail Card And Post
+
+- Goal: research, create, and publish a Facebook social details card for the Don Pepin Garcia Clasico 20th Anniversary item with the Yuzu product link in the caption.
+- Research facts used:
+  - Product: Don Pepin Garcia Clasico 20th Anniversary Limited Edition 2026.
+  - Tribute: 20 years of the Don Pepin Garcia Cuban Classic / Black Label line.
+  - Origin/factory: made in Nicaragua at My Father Cigars S.A.
+  - Blend/specs: Garcia-family Nicaraguan puro, Nicaraguan Habano wrapper, Nicaraguan binder/filler, Pelo de Oro in the blend, Toro Extra 6.5 x 52.
+  - Packaging/production: 20-count numbered box with commemorative cutter; 2,500 boxes total.
+  - Sources recorded in the manifest: Cigar Coop PCA 2026 coverage, Cigar Aficionado PCA highlights, and local `src/lib/catalog.ts`.
+- Created social package:
+  - Folder: `output/social/don-pepin-20th-clasico-detail-2026-06-08/`.
+  - 4:5 Page asset: `yuzu-don-pepin-garcia-clasico-20th-detail-card-4x5.jpg`.
+  - Square support asset: `yuzu-don-pepin-garcia-clasico-20th-detail-card-square.jpg`.
+  - Contact sheet: `don-pepin-clasico-20th-detail-card-contact-sheet.jpg`.
+  - Caption: `facebook-caption-don-pepin-clasico-20th-detail-card.txt`.
+  - Manifest: `don-pepin-clasico-20th-detail-card-manifest.json`.
+- Publishing:
+  - Published the 4:5 asset to the Yuzu Cigar Club Facebook Page through the Graph API.
+  - Post ID: `1148511071677542_122104480737350335`.
+  - Photo ID: `122104480689350335`.
+  - Permalink: `https://www.facebook.com/122099394543350335/posts/122104480737350335`.
+  - Sanitized publish/readback files saved as `facebook-page-post-result.json` and `facebook-page-post-live-readback.json`.
+- Story follow-up:
+  - Created a 9:16 Facebook Story version: `yuzu-don-pepin-garcia-clasico-20th-story-9x16.jpg`.
+  - Story manifest: `don-pepin-clasico-20th-story-manifest.json`.
+  - Published through the Facebook Page `photo_stories` flow.
+  - Story photo ID: `122104502091350335`.
+  - Story post ID: `1686687019281824`.
+  - Sanitized Story result/readback saved as `facebook-page-story-result.json` and `facebook-page-story-readback.json`.
+  - First Story publish attempt hit Meta Graph `code 1 / subcode 99`; retrying with URL-encoded finish call after media upload succeeded.
+  - The Graph Story flow did not attach a clickable item-link sticker, so the Story image points viewers back to the Page post where the item URL remains in the caption.
+- Verification:
+  - Visual QA completed on the 4:5, square, and contact-sheet assets.
+  - Dimension/nonblank check passed: feed `1080x1350`, square `1080x1080`, Story `1080x1920`, contact sheet `1600x980`.
+  - Corrected an early render where the bottom/footer text overlapped and a small-font accented `Clasico` rendered incorrectly.
+  - Public caption includes `21+ only`; image/caption avoid price, inventory status, order language, discounts, and direct sales imperatives while including the item URL as a neutral `Details:` link.
+
+## 2026-06-08 Oliva Brand Category Social Post Asset
+
+- Goal: create a Facebook/social image post style that promotes a cigar brand/category with product-detail tiles and keeps the category URL in the caption rather than cluttering the image.
+- Created/revised campaign folder:
+  - `output/social/oliva-brand-category-post-2026-06-08/`
+  - Final 4:5 feed asset: `yuzu-oliva-cigars-brand-category-post-more-product-details-4x5.jpg`.
+  - Final square asset: `yuzu-oliva-cigars-brand-category-post-more-product-details-square.jpg`.
+  - Contact sheet: `oliva-brand-category-post-more-product-details-contact-sheet.jpg`.
+  - Caption: `facebook-caption-oliva-category-more-product-details.txt`.
+  - Manifest: `more-product-details-manifest.json`.
+- User-directed revisions completed:
+  - Changed the table/header wording from `BRAND LOGOS` to `BRANDS` in the early draft.
+  - Changed the format to a top row of product images with details embedded inside each image tile.
+  - Added richer product details from `src/lib/catalog.ts`: size, box count, wrapper, origin, strength, and profile notes.
+  - Fixed covered profile text by removing the footer line overlap inside each product tile.
+  - Removed the category-link block from the image and replaced it with a cigar/product image plus Oliva Serie V brand strip; the category URL remains in the caption only.
+- Verification:
+  - Visual QA completed with `view_image` on the final 4:5, square, and contact-sheet assets.
+  - Dimension/nonblank check passed: final feed `1080x1350`, square `1080x1080`, contact sheet `1680x920`.
+  - No app code changed for this asset package.
+
+## 2026-06-08 Facebook API Monetization-Readiness Setup
+
+- Goal: use the stored Facebook/Meta Graph API credentials to get the Yuzu Cigar Club Page as ready as the API allows for monetization review/setup.
+- Secret/token handling:
+  - Read AWS Secrets Manager secret `ycc/social/facebook/prod` with profile `ycc-mcp` in region `us-east-1`.
+  - Derived the Page access token from `/me/accounts`; no token value was written to repo files.
+- Graph API findings:
+  - Page access returned tasks: `ADVERTISE`, `ANALYZE`, `CREATE_CONTENT`, `MESSAGING`, `MODERATE`, `MANAGE`, and `VIEW_MONETIZATION_INSIGHTS`.
+  - Page settings readback confirmed `AGE_RESTRICTIONS` is still `People 21 and over`.
+  - Visitor posting, visitor photo posting, and visitor photo tagging remain off.
+  - Page is published, can post, has website `https://www.yuzucigarclub.com/`, and currently has 22 followers.
+  - `is_eligible_for_branded_content` returned `true`, but cigar/tobacco partnership content remains policy-sensitive and should stay non-sales/community-forward.
+- API-side setup completed:
+  - Updated Page About to: `Premium cigar culture, digital humidor tools, events, and education for adults 21+.`
+  - Updated Page Description to: `Yuzu Cigar Club is an adult 21+ cigar community built around humidor care, cigar education, events, curated member experiences, and respectful lounge culture. This Page is not a marketplace. No buying, selling, trading, giveaways, free samples, pricing, inventory posts, or health claims.`
+  - Verified the updated About, Description, and website by Graph API readback.
+- Monetization API limit:
+  - Probed Page `monetization_products`, `monetization_insights`, `payouts`, `monetization_eligibility`, `content_monetization`, and `monetization_status`.
+  - Graph returned unknown/nonexistent endpoint or field errors for those monetization/payout setup surfaces.
+  - Practical next step remains manual Meta Business Suite / Professional Dashboard onboarding for Content Monetization, Stars, Subscriptions, payout, tax, and eligibility review.
+- Dirty worktree note:
+  - This pass intentionally changed the live Facebook Page metadata through Graph API and updated this ledger only. No application code was changed.
+
+## 2026-06-08 Facebook-First Luxury Month Schedule
+
+- Goal: follow the user's request to stop planning around Instagram because the IG page is disabled, and set up a full month of more luxury, eye-catching Facebook Page and Facebook Group posts.
+- Added the active 30-day Facebook-first schedule:
+  - `docs/yuzu-facebook-first-month-post-schedule-2026-06-09.csv`
+  - Date range: 2026-06-09 through 2026-07-08.
+  - Active targets: Facebook Page + Facebook Group.
+  - Statuses are `planned:needs-luxury-asset` so the schedule does not publish automatically before the luxury assets are generated and checked.
+- Content focus:
+  - Cigar infographics and education: how to ash, wrapper meaning, cut styles, humidor consistency, strength vs body, toast/light, pairing wheel, resting timeline, ash color, cigar anatomy, ring gauge, tasting notes, patio etiquette, travel humidor checklist, and Cigar Flow signals.
+  - Group prompts mirror the education topics with discussion-first copy and no marketplace language.
+- Added the luxury social standard:
+  - `docs/yuzu-luxury-social-creative-standard-2026-06-08.md`
+  - Defines Facebook-first channel rules, luxury visual rules, text limits, dimensions, fact-checking sources, image prompt pattern, video/audio gate, and compliance guardrails.
+- Updated:
+  - `scripts/facebook-organic-growth-check.ts` so Instagram is no longer a required public target and infographic assets pass validation.
+  - `package.json` with `npm run facebook:month-check`.
+  - `docs/facebook-organic-growth-implementation-2026-06-01.md` with the disabled-Instagram note and active schedule pointers.
+- Verification:
+  - Pending in this turn: run default organic check and new month check after file updates.
+- Dirty worktree note:
+  - The workspace remains broadly dirty with unrelated/concurrent app, catalog, docs, social, and generated asset work. This pass intentionally touched only the social schedule/docs/checker/package metadata and this ledger.
+
+## 2026-06-05 NBA Finals Game 2 Watch Thread Social Package
+
+- Goal: make a timely adult 21+ "What are you smoking?" watch-thread post for NBA Finals Game 2 and publish it across available Yuzu social outlets.
+- Verified the current Game 2 schedule before posting:
+  - Official NBA schedule listed NBA Finals Game 2 as New York at San Antonio on June 5, 2026 at 8:30 PM ET.
+  - Converted for the project/user context as 5:30 PM Phoenix time.
+- Created the visual package without NBA/team logos or official marks:
+  - `output/social/nba-finals-game-2-2026-06-05/nba-finals-game-2-ig-4x5.jpg`
+  - `output/social/nba-finals-game-2-2026-06-05/nba-finals-game-2-fb-page-landscape.jpg`
+  - `output/social/nba-finals-game-2-2026-06-05/nba-finals-game-2-fb-group-square.jpg`
+  - `output/social/nba-finals-game-2-2026-06-05/nba-finals-game-2-contact-sheet.jpg`
+  - `output/social/nba-finals-game-2-2026-06-05/caption.txt`
+  - `output/social/nba-finals-game-2-2026-06-05/meta-publish-progress.jsonl`
+- Published:
+  - Instagram image post: `https://www.instagram.com/p/DZOQDATAeHD/` (`18137894764553684`).
+  - Facebook Page image post: `https://www.facebook.com/122099394543350335/posts/122102403957350335` (`1148511071677542_122102403957350335`).
+- Blocked:
+  - Facebook Group: Graph API returned missing-permission/unsupported-operation error for group `1702820237822858`; the in-app browser composer also could not type/paste text, images, or link shares because Browser Use virtual clipboard was unavailable. Reloaded the group tab afterward and verified no partial Game 2 post text remained.
+  - Threads: `https://www.threads.com/@yuzucigarclub` loaded logged out, and existing project notes/secret state still show no Threads API access token or account id.
+- Updated:
+  - `docs/facebook-organic-growth-implementation-2026-06-01.md`.
+  - `docs/facebook-organic-content-calendar-2026-06.csv`.
+  - `docs/codex-worktree-tracking.md`.
+- Verification:
+  - Visual contact sheet review confirmed the three images are readable, image-rich, adult 21+ framed, and avoid marketplace/pricing/inventory/claim language.
+  - Dimension/nonblank check passed: IG `1080x1350`, Group `1080x1080`, Facebook Page `1200x628`.
+  - Instagram Graph readback returned permalink, media type `IMAGE`, and timestamp.
+  - Facebook Page feed readback returned the live post id, permalink, created time, and message start.
+  - `npm run facebook:organic-check` passed with 44 rows: Admin 3, External Group 6, Group 11, Outreach 7, Page 17.
+- Dirty worktree note:
+  - The workspace remains broadly dirty with unrelated/concurrent app, catalog, docs, social, and generated asset work. This pass intentionally touched only the social implementation doc, content calendar, generated Game 2 assets, publish progress log, and this ledger.
+
+## 2026-06-05 Cigar Flow June 1-5 Cross-Channel Publish
+
+- Goal: create and publish a high-marketing-level June 1-5 Cigar Flow package for Yuzu Cigar Club across Instagram feed, Instagram Stories, Facebook Page, and Facebook Group.
+- Created generated-image carousel assets, Facebook Page copies, contact sheet, and a HyperFrames vertical Story video under `output/social/cigar-flow-june-1-5-2026/`.
+- Created a campaign post kit:
+  - `output/social/cigar-flow-june-1-5-2026/POST-KIT.md`
+- Published and verified:
+  - Instagram carousel: `https://www.instagram.com/p/DZOPbEKAQs8/`
+  - Instagram carousel media ID: `18092669123590040`
+  - Instagram Story media ID: `17990943923975534`
+  - Facebook Page album: `https://www.facebook.com/122099394543350335/posts/122102402739350335`
+  - Facebook Page post ID: `1148511071677542_122102402739350335`
+  - Facebook Page media IDs: `122102402463350335`, `122102402511350335`, `122102402559350335`, `122102402607350335`, `122102402667350335`
+- Audio verification:
+  - Caught an initial render with an overly quiet audio tail before posting.
+  - Rebuilt the audio bed as `hyperframes/assets/cigar-flow-clean-audio-24s.wav`, re-rendered the Story video, and verified the final MP4 before publishing.
+  - Final gate passed: AAC stereo, 24.021s, integrated loudness `-25.8 LUFS`, true peak `-6.9 dBFS`, clip ratio `0.0`, no `silencedetect` events, static-like spectral flag `false`, `audio_gate_passed: true`.
+- HyperFrames verification:
+  - `lint` returned 0 errors and one non-blocking dense-track warning.
+  - `validate` returned 0 errors and one non-blocking browser AudioContext warning.
+  - `inspect --strict` returned 0 layout issues across 9 sampled timeline points.
+- Final hygiene and scheduler verification:
+  - Removed the short-lived `presigned-upload-urls.tmp.json` file from the campaign output folder.
+  - Secret/temporary URL scan found no `X-Amz`, access-token, secret-key, or signature strings under `output/social/cigar-flow-june-1-5-2026/`.
+  - `npm run facebook:organic-check` passed with 43 rows: Admin 3, External Group 6, Group 11, Outreach 7, Page 16.
+- Facebook Group status:
+  - Attempted Graph publishing to `https://www.facebook.com/groups/1702820237822858` with both the derived Page token and stored system-user token.
+  - Meta returned unsupported group feed requests for both attempts, matching earlier project notes that owned group posts require the Facebook UI in this workspace.
+  - Wrote the prepared group share copy and live Page album link into `POST-KIT.md`.
+- Updated tracking docs:
+  - `docs/facebook-organic-content-calendar-2026-06.csv`
+  - `docs/facebook-organic-growth-implementation-2026-06-01.md`
+  - `docs/codex-worktree-tracking.md`
+- Dirty worktree note:
+  - The workspace remains broadly dirty with unrelated app/catalog/docs/social changes. This pass intentionally added the Cigar Flow campaign output and touched only the social calendar, implementation note, and this ledger.
+
+## 2026-06-05 Yuzu Group Interest Post Draft And Publish
+
+- Goal: create and publish a group-rule-compliant post to interest adult members in Yuzu Cigar Club without sales, pricing, inventory, checkout, giveaway, or health-claim language.
+- Reviewed the existing Facebook Group setup/rules and external group posting guardrails from `docs/facebook-organic-growth-implementation-2026-06-01.md` and `docs/facebook-external-group-post-kit-2026-06-02.md`.
+- Added a `Group Interest Post` section to `docs/facebook-organic-growth-implementation-2026-06-01.md`.
+- Added a matching 2026-06-05 `Group` calendar row to `docs/facebook-organic-content-calendar-2026-06.csv`.
+- Created the visual prompt card:
+  - `output/social/yuzu-group-interest-2026-06-05/yuzu-group-interest-fb-group-square.png`
+- Published the post through the Facebook Group UI because previous project notes show Group Graph API posting is blocked by Meta permissions.
+- Live post:
+  - `https://www.facebook.com/groups/1702820237822858/posts/1706593970778818/`
+- Verification:
+  - Visual review confirmed the prompt card text fits and includes `21+ ONLY` plus `No marketplace posts`.
+  - Facebook feed verification found the post caption and attached prompt image in `Yuzu Cigar Club Lounge | 21+`.
+  - Direct permalink verification found the post title/caption, image text, and group identity at `https://www.facebook.com/groups/1702820237822858/posts/1706593970778818/`.
+  - `npm run facebook:organic-check` passed with 42 rows: Admin 3, External Group 6, Group 11, Outreach 7, Page 15.
+- Publishing status:
+  - Published to the live Yuzu Facebook Group on 2026-06-05.
+- Dirty worktree note:
+  - The workspace remains broadly dirty with unrelated app/catalog/docs/social work. This pass intentionally touched only the Facebook organic implementation doc, content calendar, social image output, and this ledger.
+
+## 2026-06-02 External Facebook Group Post Kit
+
+- Goal: add more Facebook group/community posting targets with group-guideline-aware post drafts, generated images, and the Yuzu logo on each image.
+- Researched public surfaces for Valley Cigar Club, Ash Hole Cigar Club, Tap N Ash Social Club and Cigar Lounge Fan Club, Cigar Connoisseurs, Black Cigar Smokers, and Hollow Down Online Group. Several Facebook group rule pages are private/not reliably public, so the new kit marks every external group draft as admin-review before posting.
+- Generated six square lifestyle images with the built-in image generation tool:
+  - Arizona patio humidor check.
+  - Phoenix community lounge table.
+  - Vegas live-music cigar lounge.
+  - Connoisseur tasting journal.
+  - Community lounge fellowship/mentorship.
+  - Podcast-style cigar conversation table.
+- Added the Yuzu logo locally to each generated image using `public/assets/yuzu-logo.png`, saving final assets in `output/social/facebook-group-posts-2026-06/` plus a visual QA contact sheet.
+- Added:
+  - `docs/facebook-external-group-post-kit-2026-06-02.md`
+  - `output/social/facebook-group-posts-2026-06/`
+- Updated:
+  - `docs/facebook-organic-content-calendar-2026-06.csv` with six `External Group` admin-review rows.
+  - `docs/facebook-organic-growth-implementation-2026-06-01.md` with the external group wave status.
+  - `docs/codex-worktree-tracking.md`.
+- Verification:
+  - Visual contact-sheet review confirmed all six images have a small Yuzu logo badge and no visible promotional text.
+  - `npm run facebook:organic-check` passed with 41 rows: Admin 3, External Group 6, Group 10, Outreach 7, Page 15.
+- Dirty worktree note:
+  - The workspace remains broadly dirty with unrelated app/catalog/docs/social work. This pass intentionally touched only Facebook social planning docs/calendar/ledger and added the external group image assets.
+
+## 2026-06-01 Facebook Organic Growth Research
+
+- Goal: research no-ads ways to grow the Yuzu Cigar Club Facebook Page, especially through groups, community posting, events, and other organic channels.
+- Current constraints found:
+  - Meta paid ads and branded-content paths remain high-risk/prohibited for promoting tobacco/cigar sales or use.
+  - The best-fit Meta posture is brand awareness, education, lifestyle, community, events, and non-transactional storytelling rather than direct purchase prompts.
+  - Facebook Page/group mechanics matter for an age-gated tobacco Page; a Page with age restrictions may not be connectable to a group, so a human-administered 21+ community group is likely safer than depending on Page-linked group features.
+- Sources checked:
+  - Meta/Facebook help and policy surfaces for Pages, Groups, Page-created groups, Pages/Groups/Events policy, branded content, and ad standards.
+  - Premium Cigar Association 2026 Meta Posting Guidance Toolkit.
+  - FDA Tobacco 21 guidance for the US minimum tobacco sales age.
+  - Public Yuzu website positioning for membership, boxes, digital humidor, events, and compliance stack.
+- Output: delivered an in-chat organic Facebook growth playbook with group strategy, posting pillars, local/community outreach, creator/partner collaborations, event loops, and compliance guardrails.
+- Code/test impact: research-only; no application code or tests changed.
+
+## 2026-06-01 Facebook Organic Growth Implementation
+
+- Goal: implement the no-ads Facebook growth plan as concrete, reusable Yuzu operating assets without publishing unapproved public Facebook content.
+- Added:
+  - `docs/facebook-organic-growth-implementation-2026-06-01.md`
+  - `docs/facebook-organic-content-calendar-2026-06.csv`
+  - `scripts/facebook-organic-growth-check.ts`
+- Updated:
+  - `package.json` with `npm run facebook:organic-check`.
+- Implementation details:
+  - Wrote the full 21+ Facebook Group setup kit: name, privacy/visibility, description, membership questions, rules, and pinned welcome post.
+  - Wrote the first Page seed post copy and weekly Page/Group/outreach cadence.
+  - Wrote a 30-row June/early July content calendar covering 13 Page posts, 8 Group threads, 7 partner outreach tasks, and 2 admin tasks.
+  - Added a local checker that validates required calendar columns, row count, date shape, 21+ public copy framing, 21+ compliance notes, and blocked transactional or reduced-risk language.
+- Platform-side status:
+  - Verified stored Meta Page credentials can read the Yuzu Cigar Club Page through Graph API without writing the access token to repo files.
+  - After explicit user approval, published the first humidor-check Page seed post via Graph API using a derived Page access token.
+  - Published post ID: `1148511071677542_122099408559350335`.
+  - Published post permalink: `https://www.facebook.com/122099394543350335/posts/122099408559350335`.
+  - After explicit user approval to finish creation end to end, created the Facebook Group `Yuzu Cigar Club Lounge | 21+`.
+  - Group URL: `https://www.facebook.com/groups/1702820237822858`.
+  - Group setup completed in Facebook UI:
+    - Privacy: Private.
+    - Discoverability: Visible.
+    - Description: 21+ Yuzu community framing with no marketplace, giveaway, pricing, inventory, or reduced-risk claims.
+    - Membership questions: 21+ age gate, reason for joining, and agreement to no marketplace/claim content.
+    - Group rules: six 21+ and compliance/community rules.
+    - Welcome post: published and pinned to Featured.
+    - Assets: uploaded a `Yuzu launch assets` media album with `output/facebook/yuzu-facebook-cover-1640x624.png`, `output/facebook/yuzu-facebook-launch-square-1080.png`, and `output/facebook/yuzu-facebook-profile-1024.png`.
+    - Media album URL: `https://www.facebook.com/media/set/?set=oa.27647210981530422&type=3`.
+    - Group cover now displays the Yuzu cover/cigar box image.
+  - Updated the organic implementation doc and calendar so the seed post and Group creation are marked live instead of ready.
+- Verification:
+  - `npm run facebook:organic-check` passed with 30 rows: Admin 2, Group 8, Outreach 7, Page 13.
+  - `npx eslint scripts/facebook-organic-growth-check.ts` passed.
+  - `npx tsc --noEmit --pretty false` passed.
+- Dirty worktree note:
+  - The workspace was already broadly dirty with unrelated app/catalog/docs/social setup changes. This pass intentionally touched only the Facebook organic docs/script, `package.json`, and this ledger entry.
+
+## 2026-06-01 Meta Cigar Flow Page And Group Image Post
+
+- Goal: publish the May 31 Cigar Flow story to the Yuzu Facebook Page and the Yuzu Cigar Club Lounge group using the new editorial/image format.
+- Published:
+  - Page Cigar Flow image post via Graph API using the stored Meta Page credentials and a derived Page access token.
+  - Page post ID: `1148511071677542_122099433969350335`.
+  - Page post permalink: `https://www.facebook.com/122099394543350335/posts/122099433969350335`.
+  - Group album: `Cigar Flow | May 31 industry highlights`.
+  - Group album URL: `https://www.facebook.com/media/set/?set=oa.2797279673982804&type=3`.
+  - Group album images: `oliva-serie-v-maduro.jpg`, `perdomo-20th-anniversary-maduro.jpg`, `foundation-wise-man-maduro.jpg`, and `pca-2026-trade-show.jpg`.
+- Updated:
+  - `docs/facebook-organic-growth-implementation-2026-06-01.md`
+  - `docs/facebook-organic-content-calendar-2026-06.csv`
+  - `docs/codex-worktree-tracking.md`
+- Verification:
+  - Page Graph API readback returned the live post ID, permalink, message, and four attached photos.
+  - In-app Browser verified the Group album URL, title, and four uploaded images; a failed one-character comment attempt was deleted, leaving the album clean.
+  - Follow-up group-story fix: edited the Group album description so the story text appears on the album post itself, then expanded `See more` and verified `New Releases`, `Upcoming Events`, `Flow Note`, `21+ only`, and four photo links on the live album.
+  - `npm run facebook:organic-check` passed with 33 rows: Admin 3, Group 9, Outreach 7, Page 14.
+- Dirty worktree note:
+  - The workspace remains broadly dirty with unrelated app/catalog/docs/social setup changes. This pass intentionally changed only the Facebook organic docs/calendar/ledger while publishing live Meta content.
+
+## 2026-06-01 Yuzu Facebook Group Setup Verification
+
+- Goal: make sure the Yuzu Cigar Club Lounge group is fully set up after the Page/Group publishing work.
+- Live fixes made:
+  - Changed member-request approval from `Anyone in the group` to `Only admins and moderators`.
+  - Turned anonymous participation off.
+  - Turned post approval on for all posts.
+  - Turned new member intro on with a 21+ welcome/no-marketplace message and kept group rules shown after the intro.
+- Verified live in Facebook:
+  - Group name: `Yuzu Cigar Club Lounge | 21+`.
+  - Privacy/discoverability: Private and Visible.
+  - Membership questions: 21+ age gate, reason-for-joining prompt, and no buying/selling/trading/giveaway/pricing/inventory/order/health-claim agreement.
+  - Rules: all six adult-only/no-marketplace/no-health-claim/community rules visible.
+  - Featured welcome post: visible, 21+ framed, and includes no buying/selling/trading/giveaway/free sample/pricing/inventory/health-claim reminder.
+  - Media albums: `Yuzu launch assets` with 3 photos and `Cigar Flow | May 31 industry highlights` with 4 photos.
+  - Cigar Flow album story: `New Releases`, `Upcoming Events`, `Flow Note`, `21+ only`, and four photo links present on the live album.
+- Updated:
+  - `docs/facebook-organic-growth-implementation-2026-06-01.md`
+  - `docs/codex-worktree-tracking.md`
+- Dirty worktree note:
+  - The workspace remains broadly dirty with unrelated app/catalog/docs/social setup changes. This pass intentionally changed only the Facebook organic implementation doc and this ledger while tightening live Facebook group settings.
+
+## 2026-06-01 Yuzu Facebook Page Setup Verification
+
+- Goal: review the live Yuzu Cigar Club Facebook Page end to end after Page, Group, and Cigar Flow publishing.
+- Live fixes made:
+  - Switched into the Yuzu Cigar Club Page context and changed Page age restrictions from `Public` to `People 21 and over`.
+  - Deleted two unintended Page feed items: a blank/borrowed Oliva-photo feed item and a broken `updated their status` item.
+- Verified live in Facebook and through Graph API:
+  - Page name: `Yuzu Cigar Club`.
+  - Public profile URL: `https://www.facebook.com/profile.php?id=61590510062739`.
+  - Graph Page ID: `1148511071677542`.
+  - Page is published.
+  - Page age restriction readback now returns `People 21 and over`.
+  - Website: `https://www.yuzucigarclub.com/`.
+  - Contact email: `support@yuzucigarclub.com`.
+  - Category: `Shopping & retail`.
+  - Adult 21+ about/description copy is live.
+  - Profile image and cover image are live.
+  - Visitor posting, visitor photo posting, and visitor photo tagging are off; Page messaging remains on.
+  - Remaining feed items are the intentional intro, humidor-check, Cigar Flow post, plus Meta's automatic profile/cover updates.
+  - Browser surface shows the Page name, adult 21+ bio, website link, profile/cover imagery, and no deleted/broken feed item text.
+- Setup decision:
+  - Facebook still prompts for optional physical address and phone fields. Left both blank because the project metadata exposes `support@yuzucigarclub.com` but explicitly has no public address or telephone value to publish.
+- Updated:
+  - `docs/facebook-organic-growth-implementation-2026-06-01.md`
+  - `docs/codex-worktree-tracking.md`
+- Dirty worktree note:
+  - The workspace remains broadly dirty with unrelated app/catalog/docs/social setup changes. This pass intentionally changed only the Facebook organic implementation doc and this ledger while tightening and verifying the live Facebook Page.
+
+## 2026-06-01 Cigar Flow Editorial Story Formatting
+
+- Goal: reformat the Cigar Flow news story surface to match the provided dark editorial reference, with a large hero image/brand plate, gold metadata rules, serif headline hierarchy, sectioned story text, and images placed throughout the story.
+- User-provided references:
+  - Visual reference: `C:\Users\qfash\Desktop\gdhfjtjykgy.PNG`.
+  - Story copy source: `C:\Users\qfash\Downloads\Untitled document (2).docx`, parsed locally as the May 31 cigar industry highlights brief.
+- Local Next.js 16.2.6 docs checked before code edits:
+  - `node_modules/next/dist/docs/01-app/01-getting-started/12-images.md`
+  - `node_modules/next/dist/docs/01-app/03-api-reference/02-components/image.md`
+- TDD:
+  - Added red coverage in `tests/newsroom-ui.test.ts` for the Cigar Flow variant rendering a dedicated editorial story spread with `data-cigar-flow-editorial-story`, a brand plate, formatted markdown sections, and inline story images.
+  - Tightened the generated-image test so image-less Cigar Flow stories receive a hero visual plus inline visuals instead of a single repeated-looking fallback image.
+  - Added red coverage in `tests/cigar-flow.test.ts` for the May 31 Oliva/Perdomo/Foundation story copy and inline-ready story images.
+- Implementation:
+  - Updated `src/components/news-story-feed.tsx` so public `/news` keeps the existing card layout, while `variant="cigarFlow"` renders a wide editorial story layout inspired by the reference.
+  - Added generated supporting visuals for Cigar Flow stories that lack enough story-provided images, then renders remaining visuals in an image strip so short stories still feel image-rich.
+  - Updated `src/lib/cigar-flow.ts` fallback story content to the May 31 brief with local `/assets/news/` visuals and official brand verification links for Oliva, Perdomo, and Foundation Cigar Company.
+- Verification:
+  - Red run failed as expected before implementation: `node --import tsx --test --test-name-pattern "generated images|editorial story spread" tests\newsroom-ui.test.ts`.
+  - Focused component run passed after implementation: `node --import tsx --test --test-name-pattern "generated images|editorial story spread" tests\newsroom-ui.test.ts`.
+  - Focused static data run passed after implementation: `node --import tsx --test --test-name-pattern "daily newsroom automation target" tests\cigar-flow.test.ts`.
+  - Combined focused run initially caught a regression where the Cigar Flow editorial brand plate could borrow an unrelated source-note brand for story-provided images. Fixed the plate to follow the hero image label/brand, then `node --import tsx --test tests\newsroom-ui.test.ts tests\cigar-flow.test.ts` passed 20/20.
+  - `npx eslint src\components\news-story-feed.tsx src\lib\cigar-flow.ts tests\newsroom-ui.test.ts tests\cigar-flow.test.ts` passed.
+  - `npx tsc --noEmit --pretty false` passed.
+  - `npm run build` passed with Next.js 16.2.6 static export and 994 generated pages.
+  - Started a fresh static preview on `http://127.0.0.1:4176` because port `4175` was already in use by an older preview.
+  - In-app Browser verified `http://127.0.0.1:4176/cigar-flow/#cigar-flow-news` at the default desktop viewport and at `390x844` mobile:
+    - Page identity matched `Cigar Flow | Yuzu Cigar Club`.
+    - No framework overlay appeared.
+    - Console warning/error log count was `0` in both viewport checks.
+    - DOM checks found one `data-cigar-flow-editorial-story`, two inline story image markers, the May 31 headline, and the `New Releases` / `Upcoming Events` inline labels.
+    - Browser screenshots were visually inspected against the provided reference plus the scrolled inline-image and mobile states.
+- Dirty worktree note:
+  - The workspace was already broadly dirty with unrelated app, catalog, docs, image SEO, Tabernacle inventory, and generated asset work. This pass intentionally touched only `src/components/news-story-feed.tsx`, `src/lib/cigar-flow.ts`, `tests/newsroom-ui.test.ts`, `tests/cigar-flow.test.ts`, and this ledger entry.
+
+## 2026-06-01 Cigar Flow Real Image Web Search
+
+- Goal: replace the May 31 Cigar Flow story's generic local visuals with real web-researched images associated with the story references.
+- Web/image sources used:
+  - Oliva Serie V Maduro: `https://olivacigar.com/cigars/serie-v-maduro/`.
+  - Perdomo 20th Anniversary: `https://www.perdomocigars.com/20th-anniversary`.
+  - Foundation Wise Man Maduro: `https://foundationcigarcompany.com/the-wise-man-maduro/`.
+  - Cigar Aficionado 2026 PCA Trade Show: `https://www.cigaraficionado.com/article/highlights-from-the-pca-trade-show`.
+- Added researched static assets:
+  - `public/assets/news/researched/oliva-serie-v-maduro.jpg`
+  - `public/assets/news/researched/perdomo-20th-anniversary-maduro.jpg`
+  - `public/assets/news/researched/foundation-wise-man-maduro.jpg`
+  - `public/assets/news/researched/pca-2026-trade-show.jpg`
+- Implementation:
+  - Updated `src/lib/cigar-flow.ts` so the May 31 story uses the researched assets and precise source URLs.
+  - Replaced the unverified `Foundation 1876 Maduro` draft wording with Foundation's real `Wise Man Maduro` product reference.
+  - Updated `src/components/news-story-feed.tsx` so Cigar Flow editorial stories render all story-provided images instead of trimming researched image sets to three.
+  - Added tests proving the researched images exist locally, use `/assets/news/researched/`, preserve source URLs, and render the fourth story-provided editorial image.
+- Verification:
+  - Red tests failed before implementation for missing `Wise Man Maduro`, missing researched image assets, and the renderer trimming the fourth image.
+  - `node --import tsx --test --test-name-pattern "real researched web images|daily newsroom automation target" tests\cigar-flow.test.ts` passed.
+  - `node --import tsx --test tests\newsroom-ui.test.ts tests\cigar-flow.test.ts` passed 21/21.
+  - `npx eslint src\components\news-story-feed.tsx src\lib\cigar-flow.ts tests\newsroom-ui.test.ts tests\cigar-flow.test.ts` passed.
+  - `npx tsc --noEmit --pretty false` passed.
+  - `npm run build` passed with Next.js 16.2.6 static export and 994 generated pages.
+  - `git diff --check` passed with existing LF-to-CRLF warnings only.
+  - In-app Browser verified `http://127.0.0.1:4176/cigar-flow/#cigar-flow-news` after rebuild:
+    - Page title was `Cigar Flow | Yuzu Cigar Club`.
+    - One editorial story rendered.
+    - Four researched images rendered, with three inline labels: `Perdomo 20th Anniversary`, `Foundation Wise Man Maduro`, and `PCA Trade Show`.
+    - The story text includes `Wise Man Maduro` and `2026 PCA Trade Show`.
+    - Console warning/error log count was `0`.
+    - Screenshot: `C:\Users\qfash\AppData\Local\Temp\cigar-flow-researched-images-final.png`.
+- Dirty worktree note:
+  - The workspace remains broadly dirty from unrelated app/catalog/docs/social work. This pass intentionally touched only the Cigar Flow story/component/tests, added `public/assets/news/researched/`, and updated this ledger entry.
+
+## 2026-06-01 Cigar Flow Editorial Deploy
+
+- Goal: deploy the Cigar Flow editorial/image updates and confirm current and future Cigar Flow surfaces keep the new format.
+- Implementation:
+  - Updated `scripts/daily-cigar-news-run.ts` so future daily Cigar Flow draft requests explicitly ask for the `Cigar Flow editorial format`, sectioned `##` markdown, and `3-6 real source-aligned story images`.
+  - Updated `src/lib/cigar-flow.ts` automation metadata to require the editorial split-hero layout with inline images throughout the story body.
+  - Added tests in `tests/cigar-flow.test.ts` and `tests/daily-cigar-news-run.test.ts` to keep the future-story instructions from regressing.
+- Verification:
+  - Red coverage failed first for missing future-format automation and daily-writer instructions.
+  - `node --import tsx --test tests\newsroom-ui.test.ts tests\cigar-flow.test.ts tests\daily-cigar-news-run.test.ts` passed 25/25.
+  - `npx eslint src\components\news-story-feed.tsx src\lib\cigar-flow.ts scripts\daily-cigar-news-run.ts tests\newsroom-ui.test.ts tests\cigar-flow.test.ts tests\daily-cigar-news-run.test.ts` passed.
+  - `npx tsc --noEmit --pretty false` passed.
+  - `npm run build` passed with Next.js 16.2.6 static export and 994 generated pages.
+  - Local in-app Browser smoke at `http://127.0.0.1:4176/cigar-flow/#cigar-flow-news` found one editorial story, four researched images, nine Cigar Flow grid cards, a working in-Yuzu reader, and zero console warnings/errors.
+- Deploy:
+  - First deploy-script attempt failed because Python could not execute the Windows `npm` shim directly; the already-run build satisfied the build gate, so the deploy was retried with `--skip-build`.
+  - Ran `python C:\Users\qfash\.codex\skills\deploy-yuzu-amplify\scripts\deploy_amplify_static.py --skip-build --label cigar-flow-editorial-images`.
+  - The script created a POSIX-path Amplify zip with 9,212 entries, no forbidden parent paths, and `_next/static/` assets at the archive root.
+  - Amplify staging deployment succeeded: app `d2yxcklt245wh0`, branch `staging`, job `145`, final status `SUCCEED`.
+  - Deploy smoke checks returned `homeStatus=200` and `_next/static` `assetStatus=200`.
+  - Removed the generated deploy zip after upload to avoid leaving a large untracked archive in the workspace.
+- Live staging smoke:
+  - `https://staging.d2yxcklt245wh0.amplifyapp.com/cigar-flow/#cigar-flow-news` rendered title `Cigar Flow | Yuzu Cigar Club`.
+  - DOM checks behind the staging age gate found eight editorial stories from the live feed, four researched images, 17 inline-image placements, nine Cigar Flow grid cards, and zero console warnings/errors.
+  - The age gate prevented a live visual reader-click smoke without submitting age verification; the local reader interaction was verified before deploy.
+  - Screenshots:
+    - Local: `C:\Users\qfash\AppData\Local\Temp\cigar-flow-deploy-qa.png`
+    - Staging: `C:\Users\qfash\AppData\Local\Temp\cigar-flow-staging-smoke.png`
+- Dirty worktree note:
+  - The workspace remains broadly dirty from unrelated app/catalog/docs/social work. This pass intentionally touched only Cigar Flow source/tests, daily automation, researched images, and this ledger entry.
+
+## 2026-06-01 Meta Intro Post
+
+- Goal: publish the first intro post on the Yuzu Cigar Club Facebook Page.
+- Asset used:
+  - `output/facebook/yuzu-facebook-launch-square-1080.png`.
+- Published post:
+  - Page Graph ID: `1148511071677542`.
+  - Post ID: `1148511071677542_122099394345350335`.
+  - Permalink: `https://www.facebook.com/122099394543350335/posts/122099394345350335`.
+  - Copy opens with `Welcome to Yuzu Cigar Club.` and keeps the Page positioned for adults 21+ with no giveaway, medical, modified-risk, or youth-oriented claims.
+- Cleanup:
+  - A first publish attempt created a duplicate even though the client reported a readback error. Deleted the older duplicate post `1148511071677542_122099394045350335`.
+- Verification:
+  - Graph API feed readback confirmed exactly one intro post remains.
+
+## 2026-06-01 Meta Page Asset Setup
+
+- Goal: generate and install properly sized Facebook Page assets for the new Yuzu Cigar Club Page.
+- Generated local assets:
+  - `output/facebook/yuzu-facebook-profile-1024.png` at `1024x1024`.
+  - `output/facebook/yuzu-facebook-cover-1640x624.png` at `1640x624`.
+  - `output/facebook/yuzu-facebook-launch-square-1080.png` at `1080x1080` for future launch/social use.
+- Source assets:
+  - Used the real Yuzu logo from `public/assets/yuzu-logo.png`.
+  - Used existing Yuzu premium cigar box photography from `public/assets/membership-boxes.png` and `public/assets/hero-boxes.png`.
+- Meta Page setup:
+  - Resolved the Graph API Page ID as `1148511071677542`.
+  - Confirmed the visible Facebook profile URL redirects to `https://www.facebook.com/profile.php?id=61590510062739`.
+  - Updated Page website to `https://www.yuzucigarclub.com/`.
+  - Updated Page about/description with adult 21+ Yuzu Cigar Club positioning.
+  - Uploaded and set cover photo ID `122099386929350335`.
+  - Uploaded and set profile photo ID `122099386971350335`.
+  - Left Meta's automatic "updated their profile picture" post in place and did not publish any extra launch post.
+- Secret metadata:
+  - Updated AWS Secrets Manager secret `ycc/social/facebook/prod` with `page_graph_id`, `page_profile_id`, asset photo IDs, local asset paths, and the generated asset timestamp.
+- Verification:
+  - Graph API readback confirmed the Page has website, description, cover source, and picture URL.
+  - In-app Browser visual check confirmed the live Page displays the new cover, profile image, bio, category, and website link.
+
+## 2026-06-01 Meta Page Automation Token Setup
+
+- Goal: finish Meta/Facebook automation access for the newly created Yuzu Cigar Club Page.
+- Meta Business setup:
+  - Created/confirmed Page asset `Yuzu Cigar Club` with page ID `61590510062739`.
+  - Confirmed system user `Yuzu Automation` with system user ID `61590184157110`.
+  - Confirmed app `Yuzu Cigar Club Automation` with app ID `826335403603875`.
+  - Assigned the Page and app to the system user with full control.
+  - Added the app's Page API use-case permissions needed for automation testing.
+- Token:
+  - Generated a 60-day recommended system-user token through Meta Business Suite.
+  - Selected permissions: `business_management`, `pages_manage_posts`, `pages_read_engagement`, `pages_manage_metadata`, `pages_manage_engagement`, `pages_read_user_content`, `pages_show_list`, and `read_insights`.
+  - Stored the token in AWS Secrets Manager secret `ycc/social/facebook/prod` in account `374587466106`, region `us-east-1`.
+  - Secret ARN: `arn:aws:secretsmanager:us-east-1:374587466106:secret:ycc/social/facebook/prod-nCF28y`.
+  - Estimated token expiration stored in secret metadata: `2026-07-31T17:06:42.357Z`.
+- Safety note:
+  - The token value was not committed to the repo or written into this ledger. The temporary local JSON file used for the AWS CLI `create-secret` call was removed immediately after storage.
+- Verification:
+  - `aws sts get-caller-identity --profile ycc-mcp --region us-east-1` confirmed access through `CodexMcpYccOperatorRole`.
+  - `aws secretsmanager describe-secret --secret-id ycc/social/facebook/prod --profile ycc-mcp --region us-east-1` confirmed the secret exists after creation.
+  - Closed the Meta token dialog and confirmed the token is no longer visible in the browser DOM.
+
+## 2026-05-30 Deploy All Current Updates to Amplify
+
+- Goal: deploy the full current dirty workspace/static storefront state to the Yuzu Amplify `staging` branch after the user requested "Deploy all updates."
+- Guidance used:
+  - `deploy-yuzu-amplify`
+  - `superpowers:using-superpowers`
+- Build and deploy:
+  - The deploy helper's direct build path failed before running Next because Python could not resolve the Windows `npm` shim (`FileNotFoundError: [WinError 2]`).
+  - Ran the required build directly with `C:\Program Files\nodejs\npm.cmd run build`; it passed with Next.js 16.2.6 static export and 994 generated pages.
+  - Ran `python C:\Users\qfash\.codex\skills\deploy-yuzu-amplify\scripts\deploy_amplify_static.py --skip-build --label deploy-all-updates-20260530`.
+  - The helper zipped the fresh contents of `out/` with validated POSIX archive paths, 9208 entries, `index.html` and `_next/static/...` at archive root, and no forbidden parent folders.
+  - Amplify app `d2yxcklt245wh0`, branch `staging`, job `144` reached `SUCCEED`.
+- Smoke checks:
+  - Helper smoke verified `https://staging.d2yxcklt245wh0.amplifyapp.com?deploy=144` returned HTTP `200`, length `337599`, and referenced asset `/_next/static/chunks/0~klsv6jhr4.c.css` returned HTTP `200`.
+  - Custom-domain smokes returned HTTP `200` for:
+    - `https://www.yuzucigarclub.com/?deploy=144`
+    - `https://www.yuzucigarclub.com/shop/?deploy=144`
+    - `https://www.yuzucigarclub.com/guides/wrapper-types/?deploy=144`
+    - `https://www.yuzucigarclub.com/shop/the-tabernacle-broadleaf-robusto-24-bx/?deploy=144`
+    - `https://www.yuzucigarclub.com/sitemap.xml?deploy=144`
+  - The shop/detail smokes included storefront/product content, the wrapper guide smoke included guide research content, the sitemap smoke included image sitemap tags, and `https://www.yuzucigarclub.com/_next/static/chunks/0~klsv6jhr4.c.css` returned HTTP `200` with `text/css`.
+- Cleanup:
+  - Removed the temporary deploy zip `yuzu-cigar-club-amplify-deploy-deploy-all-updates-20260530-2026-05-30-142244.zip`.
+- Dirty worktree note:
+  - This deploy intentionally published the current broad dirty workspace state, including the image SEO, guide enrichment, Tabernacle inventory/image/pricing, and related app/test/docs updates already present in the tree. No unknown local changes were reverted.
+
+## 2026-05-30 Yuzu Outreach Target Research
+
+- Goal: research official/public outreach targets for Yuzu Cigar Club across cigar lounges, tobacconists, retailers, and high-relevance cigar event/community operators.
+- Scope priority: Arizona/Phoenix/Scottsdale/Tempe/Glendale first, then strong Southwest/California/Nevada/Texas fits with visible lounges, memberships, newsletters, events, or community calendars.
+- Research constraints followed:
+  - Used only official business websites, official contact forms, official social links, or business-published public event/community pages where available.
+  - Avoided collecting private personal emails; outreach recommendations prefer generic business emails, contact forms, phone/contact pages, or official social profiles.
+- Output: delivered a concise Markdown outreach table in-chat with 25 rows, event/community evidence, Yuzu fit rationale, source URLs, and notes on partnership/event-focused outreach.
+- Code/test impact: research-only; no application code or tests changed.
+
+## 2026-05-30 Image SEO Best-Practice Pass
+
+- Goal: research and apply best-in-class image SEO improvements across the public storefront image surfaces.
+- Guidance and docs checked:
+  - Google Search Central image SEO guidance: standard HTML images for crawler discovery, descriptive context-aware alt text, image sitemaps, responsive images, and avoiding keyword stuffing.
+  - Local Next.js 16.2.6 docs:
+    - `node_modules/next/dist/docs/01-app/01-getting-started/12-images.md`
+    - `node_modules/next/dist/docs/01-app/03-api-reference/02-components/image.md`
+  - Storefront SEO/mobile/product-card guidance from `storefront-best-practices`.
+  - `build-web-apps:frontend-testing-debugging`, `build-web-apps:react-best-practices`, and `superpowers:verification-before-completion`.
+- TDD:
+  - Added red coverage in `tests/seo-metadata.test.ts` for public route image sitemap discovery and descriptive product image alt text in metadata/product surfaces.
+  - Added red coverage in `tests/site-chrome-console-health.test.ts` for Next 16 `preload` semantics replacing the deprecated `priority` prop inside the shared image wrapper.
+  - Initial focused run failed on the new image sitemap, product alt, and `preload` expectations as intended.
+- Implementation:
+  - Added `src/lib/image-seo.ts` with shared product, event, and editorial image alt builders that prefer visible product details such as package, vitola, wrapper, strength, location, date, and source context while keeping truthful fallback gift-box copy.
+  - Updated product cards, product detail pages, cart and checkout thumbnails, event cards/detail pages, Cigar Flow, newsroom visuals, education thumbnails, shop/member/new-arrival hero images, and related public page images to use descriptive non-generic alt text.
+  - Added product wrapper details to listing/card/cart payloads where available so product-grid and stored-cart image alts can remain specific.
+  - Updated `ReferenceImage` to use Next 16 `preload={priority}`, conditional lazy loading, explicit `decoding`, and caller-specific `sizes`.
+  - Changed the brand mark's direct Next image from deprecated `priority` to `preload`.
+  - Added `images` entries for public static routes in `src/app/sitemap.ts`; product, event, SEO landing, guide, and category image sitemap entries remain in place.
+- Verification:
+  - Focused red run failed before implementation: `node --import tsx --test tests\seo-metadata.test.ts tests\site-chrome-console-health.test.ts`.
+  - Focused green run passed 14/14 after implementation with the same command.
+  - `npx tsc --noEmit --pretty false` passed.
+  - `npm run lint` passed.
+  - `npm run build` passed with Next.js 16.2.6 static export and 994 generated pages.
+  - Full `npm test` rerun reached 540/541 passing; the lone failure is the pre-existing catalog-count drift in `tests/commerce-schema.test.ts` expecting 928 products while the current workspace has 932 after the Tabernacle inventory additions. This pass did not change that unrelated assertion.
+  - Started local static preview on `http://127.0.0.1:4175`.
+  - In-app Browser smoke verified `/shop/`, `/shop/acid-20-twenty-year-24-bx/`, and `/sitemap.xml`:
+    - Shop and product detail pages rendered with no relevant console warnings/errors.
+    - Product detail main image and Open Graph alt were `ACID 20 TWENTY YEAR 24/BX open premium cigar box with Box of 24, Robusto, Mexican San Andres Maduro wrapper, Medium strength`.
+    - Product JSON-LD still included the absolute product image URL.
+    - Sitemap XML included static route images and product image entries, with 1,958 image sitemap tags observed.
+  - Browser screenshot capture timed out in the in-app browser runtime; DOM, head metadata, sitemap text, and console evidence were used instead.
+- Dirty worktree note:
+  - The workspace was already broadly dirty with prior docs/catalog/imported-inventory/price/SEO-content/test changes and untracked Tabernacle image assets. This pass intentionally touched only the image SEO surfaces, related tests, shared image helper, and this ledger entry.
+
+## 2026-05-30 Tabernacle Pricing Scheme Correction
+
+- Goal: apply the existing catalog pricing scheme that was missed on the four new Tabernacle rows.
+- Pricing rule confirmed from `docs/price-scheme-audit-2026-05-26.md`:
+  - `importedInventory.price` is the member/current price.
+  - `importedMarketPricesBySku[sku]` is the researched public/non-member market price.
+- Research:
+  - Used Cigar Country public box-of-24 pricing for Foundation The Tabernacle CT Broadleaf Robusto/Toro and Foundation The Tabernacle Havana Seed CT No. 142 Robusto/Toro.
+- Implementation:
+  - Updated `src/lib/imported-market-prices.ts`:
+    - `777298` public/non-member price: `$300.95`
+    - `777299` public/non-member price: `$324.95`
+    - `777300` public/non-member price: `$300.95`
+    - `777301` public/non-member price: `$324.95`
+  - Kept the supplied inventory prices as member/current prices: `$240`, `$250`, `$240`, and `$250`.
+  - Updated product-detail tests to assert distinct member and non-member prices for the Tabernacle additions.
+- Verification:
+  - Focused pricing/image regression passed: `node --import tsx --test --test-name-pattern "Tabernacle|catalog products expose market|published catalog requires explicit" tests\product-detail.test.ts tests\product-pricing.test.ts`.
+  - Full product/pricing regression passed 49/49: `node --import tsx --test tests\product-detail.test.ts tests\product-pricing.test.ts`.
+  - `npx tsc --noEmit --pretty false` passed.
+  - `git diff --check` passed with only expected CRLF normalization notices.
+  - `npm run build` passed with Next.js 16.2.6 static export and 994 generated pages.
+
+## 2026-05-30 Tabernacle Product Image Research
+
+- Goal: replace the temporary `/assets/gift-box.png` placeholders for the four newly added Tabernacle cigars with clean, non-watermarked product imagery.
+- Research:
+  - Checked the official Foundation Cigar Company Tabernacle CT Broadleaf page and used its vitola-specific Robusto and Toro PNG renders.
+  - Checked the official Foundation Cigar Company Tabernacle Havana Seed CT No. 142 page and used its vitola-specific Robusto and Toro PNG renders.
+  - No watermark removal or generated-image fallback was needed because official clean transparent PNG product renders were available.
+- Implementation:
+  - Added local assets under `public/assets/inventory/cigars/`:
+    - `the-tabernacle-broadleaf-robusto-24-bx.png`
+    - `the-tabernacle-broadleaf-toro-24-bx.png`
+    - `the-tabernacle-ct-142-robusto-24-bx.png`
+    - `the-tabernacle-ct-142-toro-24-bx.png`
+  - Updated `src/lib/catalog.ts` so SKUs `777298`, `777299`, `777300`, and `777301` use those SKU-specific local images instead of the generic fallback.
+  - Updated `tests/product-detail.test.ts` to assert the local PNG paths and basic PNG integrity/alpha-channel checks.
+  - Added the official Foundation image sources to `docs/inventory-image-sources.json`.
+- Verification:
+  - Visually inspected the four local transparent PNG renders.
+  - Verified dimensions/bytes: Broadleaf Robusto `73x470`/`58227`, Broadleaf Toro `74x550`/`70314`, CT-142 Robusto `70x470`/`60013`, CT-142 Toro `73x540`/`70820`.
+  - `docs/inventory-image-sources.json` parsed successfully with `JSON.parse`.
+  - Focused and full product-detail tests passed as part of the pricing verification above.
+
+## 2026-05-30 Deploy Tabernacle Images and Pricing Correction to Amplify
+
+- Goal: deploy the researched Tabernacle images plus corrected public/non-member pricing after the user noted the pricing scheme miss.
+- Build and deploy:
+  - An image-only deploy first ran as Amplify job `142`; it succeeded but was superseded by the pricing-corrected deploy.
+  - Corrected static export build passed before deploy with 994 generated pages.
+  - Ran `python C:\Users\qfash\.codex\skills\deploy-yuzu-amplify\scripts\deploy_amplify_static.py --skip-build --label tabernacle-images-pricing-20260530`.
+  - The helper zipped the contents of `out/` with validated POSIX archive paths, 9208 entries, `index.html` and `_next/static/...` at archive root, and no forbidden parent folders.
+  - Amplify app `d2yxcklt245wh0`, branch `staging`, job `143` reached `SUCCEED`.
+- Smoke checks:
+  - Helper smoke verified the deployed home page returned HTTP `200`, length `337599`, and referenced asset `/_next/static/chunks/0~klsv6jhr4.c.css` returned HTTP `200`.
+  - Live page smokes returned HTTP `200`, included the corrected public prices and included the expected local image filenames for:
+    - `/shop/the-tabernacle-broadleaf-robusto-24-bx/?deploy=143` with `$300.95`
+    - `/shop/the-tabernacle-broadleaf-toro-24-bx/?deploy=143` with `$324.95`
+    - `/shop/the-tabernacle-ct-142-robusto-24-bx/?deploy=143` with `$300.95`
+    - `/shop/the-tabernacle-ct-142-toro-24-bx/?deploy=143` with `$324.95`
+  - Live PNG asset smokes returned HTTP `200` and `image/png` for all four Tabernacle image assets.
+- Cleanup:
+  - Removed temporary deploy zips for jobs `142` and `143`.
+
+## 2026-05-30 Deploy Tabernacle Inventory Updates to Amplify
+
+- Goal: deploy all current static storefront/catalog updates, including the four Tabernacle inventory additions, to the Yuzu Amplify `staging` branch that serves the public storefront.
+- Skills/guidance used:
+  - `deploy-yuzu-amplify`
+  - `aws`
+- AWS account/role:
+  - Source caller `ycc-mcp-source` resolved to account `374587466106` as `arn:aws:iam::374587466106:user/codex-mcp-ycc`.
+  - Deploy helper assumed `arn:aws:sts::374587466106:assumed-role/CodexMcpYccDeploymentRole/CodexYuzuAmplifyDeploy`.
+- Build and deploy:
+  - `npm run build` passed with Next.js 16.2.6 static export and 994 generated pages.
+  - Ran `python C:\Users\qfash\.codex\skills\deploy-yuzu-amplify\scripts\deploy_amplify_static.py --skip-build --label tabernacle-inventory-20260530`.
+  - The helper zipped the contents of `out/` with validated POSIX archive paths, 9204 entries, `index.html` and `_next/static/...` at archive root, and no forbidden parent folders.
+  - Amplify app `d2yxcklt245wh0`, branch `staging`, job `141` reached `SUCCEED`.
+- Smoke checks:
+  - Helper smoke verified the deployed home page returned HTTP `200`, length `336574`, and referenced asset `/_next/static/chunks/04xlredm9wd81.css` returned HTTP `200`.
+  - Additional live smokes returned HTTP `200` with `_next/static` assets for:
+    - `https://www.yuzucigarclub.com/?deploy=141`
+    - `https://www.yuzucigarclub.com/shop/?deploy=141`
+    - `https://www.yuzucigarclub.com/shop/the-tabernacle-broadleaf-robusto-24-bx/?deploy=141`
+    - `https://www.yuzucigarclub.com/shop/the-tabernacle-ct-142-toro-24-bx/?deploy=141`
+    - `https://staging.d2yxcklt245wh0.amplifyapp.com/shop/the-tabernacle-broadleaf-toro-24-bx/?deploy=141`
+  - The shop and Tabernacle detail page smokes included Tabernacle text in the rendered HTML.
+- Cleanup:
+  - Removed the temporary deploy zip `yuzu-cigar-club-amplify-deploy-tabernacle-inventory-20260530-2026-05-30-134123.zip`.
+
+## 2026-05-30 Tabernacle Inventory Additions
+
+- Goal: add four requested Tabernacle 24-count cigar boxes to the storefront inventory:
+  - `777298` THE TABERNACLE BROADLEAF ROBUSTO 24/BX at `$240`
+  - `777299` THE TABERNACLE BROADLEAF TORO 24/BX at `$250`
+  - `777300` THE TABERNACLE CT-142 ROBUSTO 24/BX at `$240`
+  - `777301` THE TABERNACLE CT-142 TORO 24/BX at `$250`
+- Local Next.js 16.2.6 docs checked before edits:
+  - `node_modules/next/dist/docs/01-app/01-getting-started/02-project-structure.md`
+  - `node_modules/next/dist/docs/01-app/02-guides/static-exports.md`
+- Storefront guidance used:
+  - `storefront-best-practices`
+  - `building-storefronts`
+  - `reference/layouts/product-listing.md`
+  - `reference/components/product-card.md`
+- Implementation:
+  - Added the four SKUs to `src/lib/imported-inventory.ts` with premium category, supplied member/source pricing, instock status, and stable slugs.
+  - Initially added explicit public pricing entries in `src/lib/imported-market-prices.ts`; these were later corrected in the `Tabernacle Pricing Scheme Correction` entry so public/non-member pricing comes from researched market references rather than the supplied member/source prices.
+  - Added shopper descriptions and sourced size/blend metadata in `src/lib/imported-product-descriptions.ts` and `src/lib/catalog.ts`.
+  - Used Foundation Cigar Company product pages for Tabernacle CT Broadleaf and Havana Seed CT No. 142 blend, strength, size, and 24-count box details.
+  - Added `The Tabernacle` brand inference.
+  - Checked the default SWWest image URLs for SKUs `777298` through `777301`; all returned HTTP 404, so the products use the existing local `/assets/gift-box.png` fallback instead of broken remote images.
+- Tests:
+  - Added product-detail coverage for the new Tabernacle SKUs, premium category, pricing, package count, fallback image, descriptions, brand, wrapper, vitola, length, and gauge.
+  - `node --import tsx --test tests\product-detail.test.ts tests\product-pricing.test.ts` passed 48/48.
+  - `npx tsc --noEmit --pretty false` passed.
+  - `git diff --check` passed with only expected CRLF normalization notices.
+  - `npm run build` passed with Next.js 16.2.6 static export and 994 generated pages.
 
 ## 2026-05-29 Launch Readiness Audit, Static Redeploy, and Commit Prep
 
@@ -5502,6 +6793,452 @@ Use this order for follow-up cleanup and fixes:
   - The repo already had many unrelated dirty and untracked files before this feature; they were left in place.
   - The meaningful smoke-log changes are concentrated in `src/components/humidor-dashboard.tsx`, `src/lib/live-api.ts`, `infra/lambda/ycc-api/index.js`, `infra/ycc-phase1-edge.yaml`, and the three smoke-log contract/test files above.
 
+## 2026-05-29 Yuzu Cigar Club SMS Promo Image
+
+- Goal: create a 9:16 promotional image for Yuzu Cigar Club suitable for SMS/MMS sharing.
+- Asset generated with the built-in image generation tool using a premium private-club still-life prompt with yuzu citrus, cigar lounge styling, and the copy `YUZU CIGAR CLUB`, `MEMBERS NIGHT`, `RSVP TODAY`, and `21+ ONLY`.
+- Final workspace asset saved at `output/imagegen/yuzu-cigar-club-sms-9x16.png`.
+- Follow-up creative direction:
+  - User requested a hook closer to `your case awaits` and asked to use the logo.
+  - Created deterministic logo-based SMS artwork from the real `public/assets/yuzu-logo.png` mark and existing case photography.
+  - Final revised workspace asset saved at `output/imagegen/yuzu-cigar-club-your-case-awaits-sms-9x16-v2.png`.
+  - CTA text changed from `REPLY TO RESERVE` to `Join the Club`; updated asset saved at `output/imagegen/yuzu-cigar-club-your-case-awaits-sms-9x16-v3.png`.
+  - Created five membership-signup SMS creatives under `output/imagegen/membership-signup-sms/`:
+    - `01-your-case-awaits.png` and `.jpg`
+    - `02-unlock-the-humidor.png` and `.jpg`
+    - `03-drops-land-first.png` and `.jpg`
+    - `04-built-for-the-ritual.png` and `.jpg`
+    - `05-worth-joining.png` and `.jpg`
+  - The JPEG exports are compressed SMS-friendly versions of the PNG masters.
+- Verification:
+  - Normalized final PNG to exact `1080x1920`.
+  - Visually checked the original generated poster and revised logo-based SMS images for readable text and correct portrait framing.
+  - Verified all five membership signup creatives render at `1080x1920` with the real Yuzu logo, `Join the Club` CTA, and `21+ ONLY` footer.
+
+## 2026-05-30 Research-Backed Guide Enrichment
+
+- Goal: enrich the `/guides/[slug]/` editorial guides with more cigar-specific visual lessons and source-backed user guidance.
+- Skills/guidance used:
+  - `superpowers:using-superpowers`
+  - `superpowers:brainstorming`
+  - `superpowers:test-driven-development`
+  - `build-web-apps:frontend-app-builder`
+  - `build-web-apps:frontend-testing-debugging`
+  - `browser:control-in-app-browser`
+- Local Next.js 16.2.6 docs checked before code edits:
+  - `node_modules/next/dist/docs/01-app/02-guides/static-exports.md`
+  - `node_modules/next/dist/docs/01-app/01-getting-started/12-images.md`
+  - `node_modules/next/dist/docs/01-app/03-api-reference/02-components/image.md`
+- External research sources used:
+  - FDA Tobacco 21: `https://www.fda.gov/tobacco-products/retail-sales-tobacco-products/tobacco-21`
+  - Tobacconist University wrapper color FAQ: `https://tobacconistuniversity.org/faq_cigar_wrapper_color.php`
+  - Tobacconist University flavor chart PDF: `https://www.tobacconistuniversity.org/pdf/flavorchart.pdf`
+  - Boveda cigar RH guide: `https://bovedainc.com/question/what-rh-is-right-for-me/`
+  - Cigar Aficionado cutting and lighting guide: `https://www.cigaraficionado.com/article/cutting-and-lighting-8090`
+  - Cigar Aficionado rum pairing tasting: `https://www.cigaraficionado.com/index.php/article/the-pairings-rum-meets-cigars`
+  - Cigar Aficionado bourbon pairing tasting: `https://www.cigaraficionado.com/index.php/article/bonding-with-bourbon`
+- Patched:
+  - `src/lib/seo-content.ts`
+  - `src/app/guides/[slug]/page.tsx`
+  - `tests/seo-content-architecture.test.ts`
+  - `docs/codex-worktree-tracking.md`
+- Behavior:
+  - Added optional `visualLessons` and `researchNotes` fields to SEO content pages.
+  - Populated all five editorial guides with at least three local visual lesson cards and at least two source-backed research notes.
+  - Added a `GuideResearchPanel` band above the interactive guide experience, rendering research notes as external source links and visual lessons through `ReferenceImage`.
+  - Kept all guide imagery local to `public/assets` or `public/refs` so static export and Amplify asset paths remain safe.
+- TDD:
+  - Red run: `node --import tsx --test --test-name-pattern "research-backed visual lesson cards" tests\seo-content-architecture.test.ts` failed because `wrapper-types` did not expose `visualLessons`.
+  - Green run: the same focused test passed after adding/wiring research notes, visual lesson cards, and the guide panel.
+- Verification:
+  - `node --import tsx --test --test-name-pattern "research-backed visual lesson cards" tests\seo-content-architecture.test.ts` passed.
+  - `node --import tsx --test tests\seo-content-architecture.test.ts` passed 8/8.
+  - `npx eslint -- "src/app/guides/[slug]/page.tsx" src/lib/seo-content.ts tests/seo-content-architecture.test.ts` passed.
+  - `npx tsc --noEmit --pretty false` passed.
+  - `npm run build` passed with Next.js 16.2.6 static export and 994 generated pages.
+  - In-app Browser against `http://127.0.0.1:3000/guides/wrapper-types/` verified the age gate, page identity, one `data-guide-research="field-notes"` section, three rendered visual images, two external source links, one interactive guide island, visible Guide Progress, Chapter 03 selection, and checklist progress to `33%`.
+  - Browser screenshot display succeeded for the research note and visual card states. Later attempts to save screenshots to local files via the Browser runtime timed out on `Page.captureScreenshot`; no screenshot files were committed.
+  - Browser console log review showed pre-existing reduced-motion warnings and hydration mismatch errors in existing Framer Motion/ProductCard surfaces, including the related catalog area, not in the new guide research panel.
+- Dirty worktree note:
+  - The workspace remains broadly dirty with unrelated/concurrent app, backend, docs, product, cart, checkout, events, membership, newsroom, SEO, and generated asset work. This pass intentionally changed only the guide content/template/test files and this ledger, and did not revert unknown work.
+
+## 2026-05-30 Cigar Outreach Research Swarm
+
+- Goal: research public cigar groups, clubs, lounges, event operators, media outlets, podcasters, creators, and organizations that Yuzu Cigar Club can contact for adult 21+ partnership, event, media, or opt-in audience opportunities.
+- Process:
+  - Used `superpowers:using-superpowers` and `superpowers:dispatching-parallel-agents`.
+  - Spawned four parallel research agents for clubs/groups, lounges/retail event partners, media/creators, and compliance/templates.
+  - Cross-checked local Yuzu positioning and Phoenix-market lounge data already present in `src/lib/data.ts`.
+  - Browsed current public web sources and used only public/business-facing contact channels, official contact forms, published role emails, or public social/community channels.
+- Output:
+  - Added `docs/yuzu-cigar-outreach-leads-2026-05-30.csv` with 87 scored outreach leads.
+  - Added `docs/yuzu-cigar-outreach-research-2026-05-30.md` with first-wave recommendations, compliance rules, scoring rubric, and email templates.
+- Compliance posture:
+  - Avoided private personal emails, scraped member lists, and third-party people-search contact data.
+  - Prioritized partnership/event/media inquiries over asking groups or venues to share consumer/member email lists.
+  - Included CAN-SPAM, FDA Tobacco 21, modified-risk claim, tobacco giveaway/sample, shipping, and FTC creator-disclosure guardrails.
+- Dirty worktree note:
+  - The workspace was already broadly dirty with unrelated app/catalog/SEO/test/documentation changes. This pass intentionally added only the two outreach research docs and this ledger entry.
+
+## 2026-06-01 Instagram and Threads Setup
+
+- Goal: create and connect Instagram and Threads handles for Yuzu Cigar Club, using `yuzucigarclub` for the public handle and holding WhatsApp setup for later.
+- Progress:
+  - Confirmed `https://www.instagram.com/yuzucigarclub/` was not showing an active public profile before signup.
+  - Started Instagram email signup with `social@yuzucigarclub.com`, display name `Yuzu Cigar Club`, username `yuzucigarclub`, and the provided birthday of November 6, 1980.
+  - Re-routed root-domain inbound mail for `yuzucigarclub.com` to AWS SES, created receipt rule `ycc-root-domain-email-inbound`, and verified a smoke email landed in `s3://classroom2/ycc/root-email/raw/`.
+  - Retrieved the Instagram confirmation email from the AWS SES S3 mail drop and completed signup after the user solved Instagram's human check.
+  - Converted Instagram `@yuzucigarclub` to a public professional business account, selected category `Product/service`, added public contact email `social@yuzucigarclub.com`, and saved the adult 21+ bio.
+  - Created Threads `@yuzucigarclub` through the Instagram account and saved the same adult 21+ bio with the Instagram badge enabled.
+  - Added the Yuzu profile image asset `output/facebook/yuzu-facebook-profile-1024.png` to Threads and Instagram through the native upload picker; reload checks showed live CDN profile images on both `https://www.threads.com/@yuzucigarclub` and `https://www.instagram.com/yuzucigarclub/`.
+  - Followed the top cigar-brand Threads profiles found through direct profile checks:
+    - `@olivacigar`
+    - `@drewestatecigar`
+    - `@perdomocigars`
+    - `@jcnewmancigarco`
+    - `@lfdcigars`
+    - `@romacrafttobac`
+    - `@fratellocigars`
+    - `@caocigars`
+  - Followed or verified the top cigar-brand Instagram profiles found through direct profile checks:
+    - `@padroncigars`
+    - `@olivacigar`
+    - `@drewestatecigar`
+    - `@myfathercigars`
+    - `@rockypatelcigars`
+    - `@plasenciacigars`
+    - `@davidoffcigars`
+    - `@jcnewmancigarco`
+    - `@lfdcigars`
+    - `@caocigars`
+    - `@aganorsaleaf`
+    - `@crownedheads` (follow request sent)
+    - `@tatuajecigars`
+    - `@romacrafttobac`
+    - `@fratellocigars`
+    - `@warpedcigars`
+    - `@espinosacigars`
+    - `@blackbirdcigar`
+    - `@ajfcigars`
+    - `@casacarrillocigars`
+  - Instagram profiles checked but not followed through the web UI: `@arturofuentecigars`, `@perdomocigars`, and `@foundationcigars` loaded as official brand pages but did not expose a Follow/Following/Requested control or a Follow option in the profile menu; `@foundationcigar`, `@epcarrillocigars`, `@epcarrillo_cigars`, and `@epcarrillo` were unavailable, while Casa Carrillo was found and followed at `@casacarrillocigars`.
+  - Stored Instagram credentials/metadata in AWS Secrets Manager secret `ycc/social/instagram/prod`.
+  - Stored Threads metadata in AWS Secrets Manager secret `ycc/social/threads/prod`.
+  - Updated `docs/aws-live-architecture-setup.md` so it no longer claims root MX still points to Microsoft 365.
+- Remaining limitations:
+  - Instagram web disabled website-link editing and required the mobile app for profile links, so the site URL is present in the bio but not as a native Instagram link.
+  - Meta Business Suite's "Add Instagram account" modal opened but its final add button stalled in the in-app browser; `@yuzucigarclub` is professional and ready, but Business Suite portfolio linking still needs completion through a working Meta popup/mobile path.
+- Security note:
+  - Generated account credentials were moved to Secrets Manager and the temporary local credential file was removed. Secret values are not stored in the repo or written to this ledger.
+
+## 2026-06-01 Instagram To Facebook Page Link Attempt
+
+- Goal: link Instagram `@yuzucigarclub` to the Facebook Page `Yuzu Cigar Club` for API publishing and Meta Business Suite management.
+- API checks:
+  - Verified AWS profile `ycc-mcp` can read the stored Meta system-user token in Secrets Manager without exposing token values.
+  - Graph API readback still shows Page ID `1148511071677542` with no `instagram_business_account` and an empty `/instagram_accounts` edge.
+  - Found the actual Instagram Accounts Center profile ID for `@yuzucigarclub` as `17841434862337900`.
+  - Tested Page and Business Graph edges for direct assignment; Meta returned unsupported/read-only responses for attaching the existing Instagram account through public Graph API.
+  - Checked official Meta developer docs: the Instagram Platform Page reference documents `GET /<PAGE_ID>?fields=instagram_business_account` for reading the connected IG User, while create/update/delete operations are not supported.
+  - Checked official Meta publishing docs: direct Instagram API publishing can be done through Instagram Login/Business Login for Instagram without a linked Facebook Page, but that is a posting route, not a route for linking the IG account to a Page.
+- Browser flow:
+  - Business Suite portfolio-level add flow reached Instagram OAuth but returned `Invalid Code` on the Meta callback.
+  - Page-specific Facebook Settings > Linked accounts flow reached the correct Instagram approval screen with Page ID `1148511071677542` in OAuth state, but the callback also returned `Invalid Code`.
+  - Instagram web settings confirmed `@yuzucigarclub` is a Business account; web Edit Profile did not expose the Page selector shown in Meta's mobile/app help flow.
+  - Accounts Center was updated to include both `@yuzucigarclub` Instagram and the Quon Moore Facebook profile after user confirmation.
+  - Re-running the Page-specific linked-account flow after Accounts Center was updated still ended at `Invalid Code`, and Graph API still showed no linked Instagram account on the Page.
+- Current blocker:
+  - Public API cannot attach the existing Instagram account to the Page from the stored system-user token.
+  - Meta's web OAuth callback fails with `Provided code is invalid for Instagram OpenID Connect`.
+  - Next safe step is completion from the Instagram/Facebook mobile app path, or a clean non-embedded browser session: Instagram profile > Edit profile > Public business information > Page, or Facebook Page settings > Permissions > Linked accounts.
+- 2026-06-01 follow-up:
+  - User reported Business Suite now shows the Instagram and Facebook Page as linked.
+  - Derived a Page access token from the stored system-user token and rechecked `instagram_business_account`, `connected_instagram_account`, and `/instagram_accounts`; Graph API still returned only the Page ID/name and an empty Instagram accounts edge.
+  - Checked granted permissions on the stored token: it has Page/business scopes but not `instagram_basic` or `instagram_content_publish`, so the automation token must be regenerated or extended with Instagram scopes before API publishing can continue.
+  - After user completed Instagram reauth, Business Settings showed system user `Yuzu Automation` can access Instagram account `yuzucigarclub`; changed its assignment from `Nothing assigned yet` to `Full control`.
+  - Added the app's `Manage messaging & content on Instagram` use case in Meta for Developers and opened `API setup with Facebook login`.
+  - Added/listed the required Facebook-login Instagram content permissions in the app setup: `instagram_basic`, `instagram_content_publishing`, `pages_read_engagement`, and `pages_show_list`.
+  - Generated fresh system-user tokens after each configuration step, but Meta still granted only Page/business permissions and omitted Instagram scopes; those bad refresh tokens were not stored.
+  - Current blocker is Meta app review/advanced access: the Instagram API setup now shows `Complete app review` before advanced Instagram permissions can be issued to the system-user token.
+  - Temporary token/password handoff files under `%TEMP%` were removed.
+- 2026-06-01 access-granted follow-up:
+  - User reported Meta access has been granted; attempted to continue the token update without exposing secrets.
+  - AWS profile `ycc-mcp` verified as account `374587466106` via assumed role `CodexMcpYccOperatorRole`.
+  - AWS secret `ycc/social/facebook/prod` still has the Meta app/page/business/system-user identifiers but does not contain the Meta app secret needed to compute `appsecret_proof`.
+  - The in-app browser is currently redirected to Meta Business login when opening the app Basic Settings page, so the app secret could not be revealed or stored.
+  - Rechecking the currently stored system-user token against Graph API returned OAuth code `190` (`The access token could not be decrypted`), so it is not safe to treat the stored token as valid.
+  - The temporary access-granted token handoff file was removed; no invalid token was written to AWS Secrets Manager.
+- 2026-06-01 token update completed:
+  - Completed Meta phone verification in Business Settings and generated a new never-expiring system-user token for app `Yuzu Cigar Club Automation`.
+  - User requested selecting everything; selected all available token permissions that Meta allowed, including the Instagram publishing scopes. Meta required `Continue` to add missing permissions to the app before token generation.
+  - Verified the new token before storage: Graph API returned 19 granted permissions including `instagram_basic`, `instagram_content_publish`, `pages_show_list`, `pages_read_engagement`, `pages_manage_posts`, and `business_management`.
+  - Verified Page readback with a derived Page token now returns both `instagram_business_account` and `connected_instagram_account` for Instagram business account ID `17841434862337900`.
+  - Stored the verified token in AWS Secrets Manager secret `ycc/social/facebook/prod` as version `abac54d7-dad2-4a1c-98ab-1f069c63b531`, with updated permission metadata and Instagram account ID.
+  - Final stored-secret readback passed with no missing required scopes; temporary local token/app-secret handoff files were removed.
+
+## 2026-06-01 Cigar Flow Instagram Carousel Publish
+
+- Goal: publish the Cigar Flow story images to Instagram and check Threads posting access.
+- Assets:
+  - Created square, true-JPEG Instagram carousel variants under `output/social/cigar-flow-instagram/` from the four researched Cigar Flow images: Oliva Serie V Maduro, Perdomo 20th Anniversary, Foundation Wise Man Maduro, and 2026 PCA Trade Show.
+  - Uploaded the square variants to private S3 prefix `s3://classroom2/ycc/social/cigar-flow/2026-06-01/` and used short-lived presigned URLs for Meta ingestion.
+- Published:
+  - Published an Instagram carousel to `@yuzucigarclub` with four Cigar Flow images and adult 21+ editorial caption language.
+  - Instagram media ID: `17938275861251772`.
+  - Instagram permalink: `https://www.instagram.com/p/DZD8dXdoNWO/`.
+  - Media type: `CAROUSEL_ALBUM`.
+- Verification:
+  - Live Cigar Flow image URLs on `www.yuzucigarclub.com` returned `200` with `image/jpeg` content type.
+  - Generated square variants verified at `1080x1080`.
+  - Instagram Graph API returned the published permalink and timestamp after `media_publish`.
+- Threads status:
+  - AWS secret `ycc/social/threads/prod` contains username/profile metadata but no Threads API access token or account ID.
+  - Tested the stored Facebook/Instagram system-user token against `graph.threads.net`; Threads rejected it as an invalid OAuth token, so Threads posting still requires a dedicated Threads OAuth/API token or a manual/UI publish path.
+- Cleanup:
+  - Removed the temporary presigned URL handoff file from `%TEMP%`.
+
+## 2026-06-01 Facebook Membership Explainer Video Publish
+
+- Goal: publish a HyperFrames membership/benefits video to the Yuzu Facebook Page and the Yuzu Cigar Club Lounge group.
+- Created:
+  - `yuzu-membership-explainer-facebook-2026-06-01/` as a Facebook-safe variant of the existing membership explainer.
+- Content changes:
+  - Removed pricing, checkout, order, inventory, drop, and direct purchase language from the variant.
+  - Regenerated local TTS narration so the spoken track matches the safer Facebook copy.
+  - Extended the composition from 61 seconds to 63 seconds so the 62.44-second narration is not clipped.
+- Rendered asset:
+  - `yuzu-membership-explainer-facebook-2026-06-01/renders/yuzu-membership-explainer-facebook-2026-06-01.mp4`.
+  - Final MP4 readback: 1080x1920, 63.0s video, 63.02s AAC audio, about 14.4 MB.
+- Visual verification:
+  - HyperFrames browser cache initially failed with Chrome ICU launch errors; cleared and re-downloaded the HyperFrames capture browser with `npx --yes hyperframes@0.6.67 browser clear` and `browser ensure`.
+  - `npx --yes hyperframes@0.6.67 validate` passed with 0 errors and one browser AudioContext warning.
+  - `npx --yes hyperframes@0.6.67 inspect --json` passed with 0 issues across 9 timeline samples.
+  - Rendered a standard-quality MP4, extracted sampled frames, and visually checked `snapshots/facebook-verify/contact-sheet.jpg` plus full-size frames for the membership, tier, trust-layer, and closing scenes.
+  - `npm run facebook:organic-check` passed with 35 rows: Admin 3, Group 10, Outreach 7, Page 15.
+- Published:
+  - Page video/Reel uploaded via Graph API using the stored Meta Page credentials and a derived Page access token.
+  - Page video ID: `1938883936832335`.
+  - Page video URL: `https://www.facebook.com/reel/1938883936832335/`.
+  - Page Graph readback: `video_status=ready`, processing complete, publishing complete.
+  - Group API probe returned `(#3) Missing Permission` for both stored system-user and Page tokens, so the group post was made through the Facebook UI.
+  - Group post published by sharing the live Page Reel preview into `https://www.facebook.com/groups/1702820237822858` with 21+ group-safe caption language.
+- 2026-06-01 audio follow-up:
+  - Rechecked the local rendered MP4 with `ffprobe`; it contains H.264 video plus AAC audio, both about 63 seconds.
+  - Rechecked Facebook Graph readback for Page video `1938883936832335`; video remains ready/published at length `63.018`.
+  - Rechecked the live Group post in the in-app browser; the Reel preview exposes a `Mute` button, which indicates Facebook currently has audio available and the player is unmuted. If a viewer hears nothing, their local browser/player/system audio is likely muted or blocked until playback starts.
+- Updated:
+  - `docs/facebook-organic-growth-implementation-2026-06-01.md`.
+  - `docs/facebook-organic-content-calendar-2026-06.csv`.
+  - `docs/codex-worktree-tracking.md`.
+- Dirty worktree note:
+  - The workspace remains broadly dirty with unrelated/concurrent app, docs, social, catalog, and generated asset work. This pass intentionally added the Facebook-safe HyperFrames variant, touched the Facebook organic docs/calendar, and updated this ledger.
+
+## 2026-06-01 HyperFrames Instagram Stories For Highlights
+
+- Goal: create high-end, lifestyle-led Instagram Story assets for new Highlights covering Membership and the Digital Humidor.
+- Source project:
+  - Created a HyperFrames project at `output/social/yuzu-ig-stories-hyperframes/`.
+  - Added `DESIGN.md` with the Yuzu premium lounge visual system and updated `package.json` scripts to HyperFrames `0.6.67`.
+  - Built a layered 1080x1920 composition in `index.html` with separate photo, veil, grain, logo, typography, chip, dashboard, and transition layers.
+  - Used generated lifestyle images plus existing Yuzu logo and humidor dashboard references under the HyperFrames `assets/` folder.
+- Rendered assets:
+  - Full 20-second render: `output/social/yuzu-ig-stories-highlights.mp4`.
+  - Story clips: `output/social/yuzu-membership-story.mp4` and `output/social/yuzu-digital-humidor-story.mp4`.
+  - Added original subtle lounge audio bed at `output/social/yuzu-ig-stories-hyperframes/assets/yuzu-lounge-bed.wav` and wired it into the HyperFrames source as a separate `<audio>` layer.
+  - Story stills/contact sheet: `output/social/yuzu-membership-cover.jpg`, `output/social/yuzu-digital-humidor-cover.jpg`, and `output/social/yuzu-ig-stories-contact-sheet.jpg`.
+  - Square Highlight covers: `output/social/yuzu-highlight-cover-membership.jpg` and `output/social/yuzu-highlight-cover-digital-humidor.jpg`.
+- Verification:
+  - Ran HyperFrames `lint`, `validate`, and `inspect --strict` with Chrome overridden to system Chrome because the cached headless shell failed locally with an ICU launch error.
+  - Final composition passed with 0 lint warnings, 0 console errors, 25 WCAG AA text elements, and 0 layout issues.
+  - Rendered MP4 verified as H.264, 1080x1920, 30fps, `yuv420p`, with AAC audio.
+  - Instagram `/stories` readback confirmed both published IDs are live as `VIDEO` media with `STORY` product type.
+- Published:
+  - Uploaded the two story MP4s to private S3 prefix `s3://classroom2/ycc/social/instagram-stories/2026-06-01/` and used short-lived presigned URLs for Meta ingestion.
+  - Published Membership Story to Instagram media ID `17968686195070299` at `2026-06-02T00:26:26+0000`.
+  - Published Digital Humidor Story to Instagram media ID `18422411767135889` at `2026-06-02T00:27:08+0000`.
+  - After user requested always adding audio, regenerated the canonical local story MP4s with AAC audio and uploaded the audio-enabled versions over the same private S3 keys for future use. The already-live Story IDs were not replaced to avoid duplicate Story posts.
+  - After user deleted the original silent Stories, uploaded the audio-enabled MP4s to `s3://classroom2/ycc/social/instagram-stories/2026-06-02-audio-rerun/` and republished them through the Instagram API.
+  - Audio-enabled Membership Story media ID: `18143871367511926`, published at `2026-06-02T01:07:28+0000`.
+  - Audio-enabled Digital Humidor Story media ID: `18103719350072460`, published at `2026-06-02T01:08:34+0000`.
+  - Instagram `/stories` readback confirmed both audio-enabled republish IDs are live as `VIDEO` media with `STORY` product type.
+- 2026-06-01 clean-audio correction:
+  - User reported the first audio-enabled upload sounded like buzzing on Instagram.
+  - Replaced the continuous tone-based lounge bed with a hum-free generated ambience file: `output/social/yuzu-ig-stories-hyperframes/assets/yuzu-clean-lounge-ambience-master.wav`.
+  - Updated the HyperFrames source audio layer to use the clean ambience file.
+  - Remuxed the canonical MP4s so `output/social/yuzu-ig-stories-highlights.mp4`, `output/social/yuzu-membership-story.mp4`, and `output/social/yuzu-digital-humidor-story.mp4` retain H.264 video and AAC audio without the buzzing bed.
+  - Audio verification on the corrected story MP4s showed near-zero DC offset, peak levels below -3 dB, and no flat clipping.
+  - Uploaded the clean-audio MP4s to `s3://classroom2/ycc/social/instagram-stories/2026-06-02-clean-audio/` and republished through the Instagram API.
+  - Clean-audio Membership Story media ID: `18399247819152408`, published at `2026-06-02T01:20:19+0000`.
+  - Clean-audio Digital Humidor Story media ID: `18116960557838262`, published at `2026-06-02T01:21:00+0000`.
+  - Instagram `/stories` readback confirmed both clean-audio IDs are live as `VIDEO` media with `STORY` product type.
+- Remaining limitation:
+  - Instagram Story Highlights themselves are not created by the public Instagram publishing API; the live stories must be added into Highlights from the Instagram app/web UI while they are available.
+  - Recommended Highlight names: `Membership` and `Humidor`; use the square cover exports above for the Highlight cover images.
+
+## 2026-06-01 Oliva Serie V Instagram Post
+
+- Goal: publish the provided Oliva Serie V packaging study image as an Instagram feed post with an adult editorial caption.
+- Assets:
+  - Source image came from `C:\Users\qfash\Downloads\ca1833ea-def4-49d3-9964-4bfd9d577b3e.png`.
+  - Created IG-safe 4:5 JPEG export at `output/social/ig-posts/oliva-serie-v-packaging-study-ig.jpg`.
+  - Export verified as 1080x1350 JPEG.
+  - Uploaded to private S3 prefix `s3://classroom2/ycc/social/instagram-posts/2026-06-02/` and used a short-lived presigned URL for Meta ingestion.
+- Caption:
+  - Wrote an adult-focused editorial/design caption for the Oliva Serie V Maduro packaging study.
+  - Caption included independent/editorial positioning and `21+ only` language.
+  - Blend copy referenced Oliva's public Serie V Maduro details: Mexican wrapper with Nicaraguan binder and filler.
+- Published:
+  - Instagram media ID: `18112827130843236`.
+  - Instagram permalink: `https://www.instagram.com/p/DZENqZzlX-e/`.
+  - Media type: `IMAGE`.
+  - Timestamp: `2026-06-02T01:56:01+0000`.
+
+## 2026-06-01 Digital Humidor Carousel Reel
+
+- Goal: create an image-carousel-style Digital Humidor detail walkthrough with audio and publish it to Instagram.
+- Source project:
+  - Created HyperFrames project at `output/social/yuzu-digital-humidor-carousel-hyperframes/`.
+  - Added `DESIGN.md` with a premium app/luxury cigar visual system.
+  - Built a 1080x1920, 20-second, five-scene carousel-style composition in `index.html`.
+  - Scenes cover Digital Humidor overview, inventory, aging windows, tasting notes, and smart next-smoke prompts.
+  - Used existing Yuzu assets: `public/refs/humidor.png`, `public/refs/journal.png`, `public/assets/journal-aging.png`, and `public/assets/yuzu-logo.png`.
+  - Used the clean ambience audio bed from `output/social/yuzu-ig-stories-hyperframes/assets/yuzu-clean-lounge-ambience-master.wav`.
+- Rendered assets:
+  - Final MP4: `output/social/yuzu-digital-humidor-carousel.mp4`.
+  - Contact sheets: `output/social/yuzu-digital-humidor-carousel-contact-sheet.jpg` and `output/social/yuzu-digital-humidor-carousel-contact-sheet-hero.jpg`.
+- Verification:
+  - HyperFrames `lint`, `validate`, and `inspect --strict` passed with 0 lint warnings, 0 console errors, 130 WCAG AA text elements, and 0 layout issues.
+  - Render verified as H.264 video at 1080x1920, 30fps, with AAC stereo audio at 48 kHz.
+  - Audio verification showed near-zero DC offset, peaks below -4 dB, and no flat clipping.
+- Published:
+  - Uploaded to private S3 prefix `s3://classroom2/ycc/social/instagram-reels/2026-06-02/` using a short-lived presigned URL for Meta ingestion.
+  - Instagram Reel media ID: `18108689858483132`.
+  - Instagram permalink: `https://www.instagram.com/reel/DZESZtLiJCv/`.
+  - Media type: `VIDEO`; media product type: `REELS`.
+  - Timestamp: `2026-06-02T02:37:45+0000`.
+- 2026-06-01 voiceover-only correction:
+  - User reported the carousel Reel audio was bad and requested clear voiceover only, with verification before upload.
+  - Generated a short TTS script at `output/social/yuzu-digital-humidor-carousel-hyperframes/voiceover-script.txt`.
+  - Generated voiceover asset `output/social/yuzu-digital-humidor-carousel-hyperframes/assets/digital-humidor-voiceover.wav`, then mastered it to `output/social/yuzu-digital-humidor-carousel-hyperframes/assets/digital-humidor-voiceover-master.wav`.
+  - Replaced the HyperFrames audio source with the voiceover-only mastered file; no music, room tone, or ambience remains in the source audio layer.
+  - Created verified final MP4 `output/social/yuzu-digital-humidor-carousel-voiceover.mp4` and replaced canonical `output/social/yuzu-digital-humidor-carousel.mp4` with the voiceover-only version.
+  - Verification before upload:
+    - Final MP4 verified as H.264 video at 1080x1920, 30fps, with AAC stereo audio at 48 kHz.
+    - Duration verified at 19.731 seconds.
+    - Audio stats showed near-zero DC offset, peak level around `-4.8 dBFS`, RMS around `-20.6 dB`, flat factor `0.0`, and no clipping.
+    - EBU R128 check showed integrated loudness around `-17.3 LUFS`, LRA about `2.0 LU`, and true peak around `-4.8 dBFS`.
+    - Silence detection showed only natural speech pauses, not dead audio.
+    - Waveform/spectrum exports were generated at `output/social/yuzu-digital-humidor-voiceover-waveform.png` and `output/social/yuzu-digital-humidor-voiceover-spectrum.png`.
+    - HyperFrames transcription check was attempted but blocked because `whisper-cpp` is not installed in this environment.
+  - Uploaded the verified voiceover-only MP4 to private S3 prefix `s3://classroom2/ycc/social/instagram-reels/2026-06-02-voiceover/`.
+  - Corrected voiceover-only Instagram Reel media ID: `18093527882596952`.
+  - Corrected voiceover-only Instagram permalink: `https://www.instagram.com/reel/DZEXyKcjBFV/`.
+  - Corrected voiceover-only timestamp: `2026-06-02T03:24:48+0000`.
+
+## 2026-06-02 Instagram Follow-Back Targeting
+
+- Goal: add more relevant Instagram users/accounts likely to follow `@yuzucigarclub` back.
+- Browser/API status:
+  - Opened `https://www.instagram.com/yuzucigarclub/` in the in-app browser.
+  - Browser showed the public profile with `Log In` / `Sign Up`, so the current browser session is not logged into Instagram.
+  - Confirmed this cannot be done through the stored Meta/Instagram Graph token because the public Instagram Graph API supports publishing and business reads, not following arbitrary users.
+- Created target sheet:
+  - `docs/instagram-followback-targets-2026-06-02.md`.
+  - First batch focuses on local/regional cigar lounges, shops, and cigar-club accounts more likely to reciprocate than major brands.
+  - Confirmed source links included for `@cedarroomcigars`, `@oggiescigars`, `@churchillsaz`, `@ambassadorfinecigars`, `@fatbuddhacigarclub`, `@hcmobilecigarlounge`, and `@owlearcigars`.
+- Pending:
+  - User needs to log into Instagram in the browser before follow actions can be completed.
+  - Recommended first session is 7-12 targeted follows plus light genuine engagement, not bulk follow automation.
+
+## 2026-06-01 Instagram Membership Story And Welcome Feed Post
+
+- Goal: post the Facebook-safe membership explainer video to Instagram Stories and add a welcome Instagram feed post for `@yuzucigarclub`.
+- Published Story:
+  - Source video: `yuzu-membership-explainer-facebook-2026-06-01/renders/yuzu-membership-explainer-facebook-2026-06-01.mp4`.
+  - Instagram Story-safe local export: `output/social/yuzu-membership-story-ig-2026-06-01-59s.mp4`.
+  - Final Story export verified with `ffprobe`: H.264 video at 720x1280, AAC stereo audio at 48 kHz, 59.5s duration, 2,173,067 bytes.
+  - Uploaded to private S3 object `s3://classroom2/ycc/social/instagram-stories/2026-06-01/yuzu-membership-story-ig-2026-06-01-59s.mp4` for Meta ingestion by short-lived presigned URL.
+  - Instagram Story container ID: `18083699969162078`, status `FINISHED`.
+  - Instagram Story media ID: `17953313307156438`, published at `2026-06-02T01:07:50+0000`.
+  - Fresh Instagram `/stories` readback confirmed the Story is active as `VIDEO` with `STORY` product type.
+- Published welcome feed post:
+  - Source image: `output/facebook/yuzu-facebook-launch-square-1080.png`.
+  - Instagram JPEG export: `output/social/yuzu-welcome-ig-post-2026-06-01.jpg`.
+  - Uploaded to private S3 object `s3://classroom2/ycc/social/instagram-feed/2026-06-01/yuzu-welcome-ig-post-2026-06-01.jpg` for Meta ingestion by short-lived presigned URL.
+  - Instagram feed container ID: `18083700044162078`, status `FINISHED`.
+  - Instagram feed media ID: `17883649494579134`.
+  - Instagram feed permalink: `https://www.instagram.com/p/DZEIL8kFRCq/`, timestamp `2026-06-02T01:08:15+0000`.
+- Failed/abandoned attempt:
+  - Initial 63s Story transcode was rejected by Instagram container `18083699816162078` with error code `2207082`; replaced by the accepted 59.5s Story-safe export above.
+  - Local failed 63s export was removed. The uploaded failed S3 object `s3://classroom2/ycc/social/instagram-stories/2026-06-01/yuzu-membership-story-ig-2026-06-01.mp4` could not be deleted because the bucket policy explicitly denies `s3:DeleteObject` for the current profile.
+- User audio clarification:
+  - After a possible buzzing-audio concern, no replacement publish was made because the user clarified the audio was good.
+  - Fresh local audio verification still shows the final Story export contains a normal AAC stereo audio track.
+
+## Ongoing Social Video Rule
+
+- Always include an audio track for generated social video/story assets unless the user explicitly asks for silent video.
+- Prefer original, licensed, or platform-safe audio. For Yuzu Cigar Club brand videos, use subtle premium lounge audio that does not overpower typography or motion.
+- Avoid continuous synthetic tone/drone beds for Instagram Stories; Meta/mobile transcoding can make them read as buzzing. Use clean ambience, licensed music, voiceover, or short non-tonal accents instead.
+
+## 2026-06-02 Social Post Automation Schedule
+
+- Goal: set up a recurring Codex automation for social media posts that follows the existing Facebook, Instagram, HyperFrames, and 21+ compliance work already created in this workspace.
+- Existing automation check:
+  - Found `cigar-flow-friday-update`, which is a weekly Cigar Flow site/news refresh and deploy-packaging automation, not a social posting scheduler.
+  - Created a separate active cron automation named `Yuzu Social Post Scheduler` with automation id `yuzu-social-post-scheduler`.
+- Schedule:
+  - Runs daily in the morning in the local America/Phoenix context so it can pick up due or overdue ready rows from the social content calendar.
+- Automation prompt scope:
+  - Reads `AGENTS.md`, `docs/facebook-organic-growth-implementation-2026-06-01.md`, `docs/facebook-organic-content-calendar-2026-06.csv`, and recent social entries in this ledger before posting.
+  - Runs `npm run facebook:organic-check` before public posting.
+  - Publishes only due/overdue `status=ready` rows with approved copy/assets and the existing adult 21+ community/education/event/humidor/pairing/editorial/membership-awareness framing.
+  - Blocks marketplace, pricing, inventory, checkout, discount, giveaway, free-sample, order-request, and reduced-risk/health-claim copy.
+  - Uses existing local credentials only when available, avoids writing tokens into repo files, verifies live IDs/permalinks/readback after publishing, and follows the ongoing social video audio rule for generated assets.
+- Verification:
+  - `npm run facebook:organic-check` passed with 35 rows: Admin 3, Group 10, Outreach 7, Page 15.
+
+## 2026-06-02 Image-Rich Cross-Channel Social Rule
+
+- Goal: tighten the social automation so every public post is image-enriched, draws users in, and posts to Instagram, the Facebook Page, and the Facebook Group.
+- Updated:
+  - `docs/facebook-organic-content-calendar-2026-06.csv`
+  - `docs/facebook-organic-growth-implementation-2026-06-01.md`
+  - `scripts/facebook-organic-growth-check.ts`
+  - Codex automation `yuzu-social-post-scheduler`
+- Implementation details:
+  - Added `target_channels` to the calendar and marked every public Page/Group row as `Instagram + Facebook Page + Facebook Group`.
+  - Replaced text-only public asset directions with concrete visual plans such as humidor/lounge photos, branded prompt cards, education carousels, researched image sets, Reels/videos, albums, and Story-ready assets.
+  - Documented the new image-rich cross-channel standard in the Facebook implementation guide.
+  - Updated the calendar checker so public rows fail if they are missing Instagram, Facebook Page, or Facebook Group targets, contain weak text-only/no-asset language, or do not name a visual/image/video/carousel/card/album plan.
+  - Updated the scheduler prompt to treat every due public row as a three-channel package, create/select visuals before posting, avoid duplicate live posts, write hook-driven captions, and verify live IDs/permalinks/readback by platform.
+- Verification:
+  - `npm run facebook:organic-check` passed with 35 rows: Admin 3, Group 10, Outreach 7, Page 15.
+  - `npx eslint scripts/facebook-organic-growth-check.ts` passed.
+
+## 2026-06-02 Social Generation Dry Run Visual QA
+
+- Goal: run a no-publish visual test of the image-rich cross-channel social generation workflow.
+- Test target:
+  - Selected the next ready public calendar item: `2026-06-04` / `Group` / `Welcome thread`.
+  - Generated a dry-run package for Instagram, the Facebook Page, and the Yuzu Facebook Group using the existing warm lounge/humidor visual language.
+- Generated preview outputs:
+  - `output/social/dry-run/2026-06-04-welcome-thread/welcome-thread-ig-feed-4x5.png` at `1080x1350`.
+  - `output/social/dry-run/2026-06-04-welcome-thread/welcome-thread-fb-page-landscape.png` at `1200x628`.
+  - `output/social/dry-run/2026-06-04-welcome-thread/welcome-thread-fb-group-square.png` at `1080x1080`.
+  - `output/social/dry-run/2026-06-04-welcome-thread/welcome-thread-cross-channel-contact-sheet.jpg` at `1432x744`.
+- Visual QA:
+  - Initial preview using `output/facebook/yuzu-facebook-launch-square-1080.png` was readable but visually weaker for the Facebook Page variant because a large cropped logo competed with the headline.
+  - Regenerated the package with `output/social/facebook-group-posts-2026-06/valley-cigar-club-humidor-check.png` as the base visual and removed debug/aspect labels from the actual post art.
+  - Final visual inspection: Instagram and Group variants have clear hooks, readable subtitles, obvious CTA buttons, warm lounge imagery, and visible 21+/no-marketplace framing. The Facebook Page landscape reads cleanly at native size with no accidental cropped logo.
+  - The in-app Browser blocked direct local-file navigation for the preview HTML, so the verification used local PNG generation plus image-file inspection instead of a browser page screenshot.
+- Additional discovery:
+  - The calendar now includes six `External Group` rows with `prepared:admin-review` status and generated images under `output/social/facebook-group-posts-2026-06/`.
+  - These are separate external-community admin-review posts, not the owned-channel IG + Facebook Page + Yuzu Facebook Group cross-post package.
+- Verification:
+  - File/dimension/nonblank check passed for all four dry-run preview outputs.
+  - `npm run facebook:organic-check` passed with 41 rows: Admin 3, External Group 6, Group 10, Outreach 7, Page 15.
+
 ## Working Rules
 
 - Do not revert unknown local changes.
@@ -5509,3 +7246,460 @@ Use this order for follow-up cleanup and fixes:
 - Add concrete fixes with focused tests where possible.
 - Re-run `npm run lint`, `npm test`, and `npm run build` after any broad cleanup batch.
 - Keep this file updated as areas are audited or fixed.
+
+## 2026-06-08 Tap That Ash Partner Membership Offer Draft
+
+- Goal: prepare a member-facing discount program draft for Tap That Ash covering Yuzu membership dues.
+- Created:
+  - `docs/tap-that-ash-yuzu-membership-offer-email.md` with a ready-to-send partner outreach email.
+  - `output/partnerships/tap-that-ash-yuzu-membership-infographic.svg` with an exact-number 4:5 infographic.
+  - `output/partnerships/tap-that-ash-yuzu-membership-infographic.png` rendered from the SVG for easy email/social sharing.
+- Updated:
+  - Removed the 10 complimentary Yearly Box Access Pass callout from the infographic because that benefit will be reserved for founding members.
+  - Removed the complimentary-pass language from the Tap That Ash email draft as well so the partner materials stay discount-only.
+  - Re-added the complimentary-pass language to the email only as a separate founding-member bonus: 10 complimentary Yearly Box Access Pass memberships reserved for Tap That Ash founding members.
+- Offer math used current Yuzu tier prices from `src/lib/data.ts`:
+  - 10% off monthly dues.
+  - 15% off quarterly dues.
+  - 20% off yearly dues.
+  - The infographic excludes the 10 complimentary Yearly Box Access Passes because that benefit is reserved for founding members.
+- Compliance framing included: adults 21+ only, verified Tap That Ash members only, membership dues only, and taxes/shipping/adult-signature/other charges may apply.
+
+## 2026-06-08 Inventory Photo Audit For Missing Shop Items
+
+- Goal: audit 11 shelf photos from `C:/Users/qfash/Downloads/` against the current imported inventory and published shop catalog because the shop is missing visible items.
+- Created:
+  - `docs/inventory-photo-audit-2026-06-08.md`
+- Findings:
+  - Raw imported inventory has 1,154 rows.
+  - Published catalog/storefront currently has 932 products.
+  - The audit identified 27 visible or photo-adjacent raw rows that are not published in the shop.
+  - All 27 audited candidates are blocked by missing entries in `src/lib/imported-market-prices.ts`; `src/lib/catalog.ts` filters them out before storefront generation.
+  - Three rows still use placeholder SKUs and need POS/Sunset SKU reconciliation before publishing: `MISSING-SKU-NICA-RUSTICA-GORDO`, `MISSING-SKU-UNDERCROWN-SHADE-GORDITO`, and `MISSING-SKU-UNDERCROWN-MADURO-TORO`.
+- High-impact missing groups:
+  - My Father Blue, Nica Rustica, Undercrown Shade/Maduro, Deadwood Dia de los Muertos/Girl With No Name/Dominicana Gordo, Aging Room Nicaragua/Quattro, CAO Flathead Speed Shop, Liga Privada H99 Papas Fritas, Fonseca MX Edition, and plain Flor de Las Antillas rows.
+- Verification:
+  - Ran local `npx tsx` catalog queries confirming raw/catalog counts and candidate publish status.
+  - No application code or generated catalog data was changed in this turn.
+
+## 2026-06-08 Amplify Deploy Updates
+
+- Goal: deploy the current updates to the Yuzu static storefront.
+- Deployment:
+  - Ran `npm run build` successfully with Next.js 16.2.6 and generated 994 static pages.
+  - Packaged the static export from `out/` using the Yuzu Amplify deployment script with POSIX zip paths.
+  - Uploaded to Amplify app `d2yxcklt245wh0`, branch `staging`, with label `updates-2026-06-08`.
+  - Amplify job `146` reached `SUCCEED`.
+- Smoke checks:
+  - Live home page returned HTTP `200`.
+  - Referenced static asset `/_next/static/chunks/08_l7lalt0nn5.css` returned HTTP `200`.
+- Artifact:
+  - `yuzu-cigar-club-amplify-deploy-updates-2026-06-08-2026-06-08-103508.zip`.
+- Note:
+  - This deploy happened before the follow-up inventory product image standardization work in this same session.
+
+## 2026-06-08 Inventory Product Image Standardization
+
+- Goal: generate the missing cigar box images using the accepted storefront inventory image scheme from the user's examples.
+- Created:
+  - `docs/inventory-product-image-standard-2026-06-08.md`.
+  - Nine square product image assets under `public/assets/inventory/cigars/` for Fonseca MX, Nica Rustica, Undercrown Shade Robusto, Deadwood Dominicana Gordo, and Aging Room Quattro Nicaragua Maestro rows.
+  - Preview contact sheet: `output/inventory-audit/generated-image-preview/inventory-cigar-box-assets-2026-06-08.jpg`.
+- Updated:
+  - `src/lib/catalog.ts` image override map now points the newly covered SKUs at their local product images.
+  - After user review, replaced the initial shelf-crop image pass with actual box-style distributor/source images from `https://swwest.com/Images/SunsetItems/{sku}/0.jpg`.
+  - Re-normalized the final files to `1000x1000` white ecommerce tiles and regenerated the contact sheet so each product reads as a box image rather than an inventory shelf crop.
+- Image standard:
+  - Clean white or near-white ecommerce product tile.
+  - Box is the hero subject; open or closed box is acceptable.
+  - No Yuzu UI frame, dark website backdrop, gold in-image border, price tag, badge, shelf label, or added sales copy inside the product photo.
+- Verification:
+  - Confirmed all nine new JPG assets are `1000x1000`.
+  - `npm exec -- tsc --noEmit --pretty false` passed.
+  - `npm run build` passed after the image standardization and catalog override update, generating 994 static pages.
+- Deployment:
+  - Packaged and uploaded the post-image-standardization static export to Amplify app `d2yxcklt245wh0`, branch `staging`, with label `inventory-image-standard-2026-06-08`.
+  - Amplify job `147` reached `SUCCEED`.
+  - Amplify smoke returned `homeStatus=200`, `assetStatus=200`, and asset path `/_next/static/chunks/0ilqeqb2ompf1.css`.
+  - Direct image smoke returned HTTP `200` for `https://staging.d2yxcklt245wh0.amplifyapp.com/assets/inventory/cigars/fonseca-mx-edition-robusto-20-bx.jpg`.
+  - Direct image smoke returned HTTP `200` for `https://www.yuzucigarclub.com/assets/inventory/cigars/fonseca-mx-edition-robusto-20-bx.jpg`.
+  - After the shelf-crop correction, rebuilt and redeployed with label `inventory-box-images-2026-06-08`.
+  - Amplify job `148` reached `SUCCEED`.
+  - Fresh deploy smoke returned `homeStatus=200`, `assetStatus=200`, and asset path `/_next/static/chunks/0ilqeqb2ompf1.css`.
+  - Direct corrected-image smoke returned HTTP `200` and `Content-Length: 134153` for `https://staging.d2yxcklt245wh0.amplifyapp.com/assets/inventory/cigars/fonseca-mx-edition-robusto-20-bx.jpg?v=job148`.
+  - Direct corrected-image smoke returned HTTP `200` and `Content-Length: 83256` for `https://staging.d2yxcklt245wh0.amplifyapp.com/assets/inventory/cigars/liga-undercrown-shade-robusto-25-bx.jpg?v=job148`.
+  - Direct corrected-image smoke returned HTTP `200` and `Content-Length: 134153` for `https://www.yuzucigarclub.com/assets/inventory/cigars/fonseca-mx-edition-robusto-20-bx.jpg?v=job148`.
+
+## 2026-06-09 Inventory Runtime Verification
+
+- Goal: verify the user's report that the inventory updates are not visible in the real online runtime.
+- Created:
+  - `docs/inventory-runtime-verification-2026-06-09.md`.
+  - `output/inventory-audit/live-shop-2026-06-09.html` as a captured live shop response for local text inspection.
+- Findings:
+  - The user report is correct: the audited 27 missing/hidden inventory rows are not live as shop products.
+  - The 27 rows still have 0 market-price entries in `src/lib/imported-market-prices.ts`.
+  - The fresh local static export has 0 generated product pages under `out/shop/` for the 27 target slugs.
+  - The live `https://www.yuzucigarclub.com/shop/{slug}/` URLs returned HTTP `404` for all 27 checked slugs.
+  - The previously generated box image assets are deployed and return HTTP `200`, so the image deploy succeeded but does not publish product rows by itself.
+- Representative live asset checks:
+  - `fonseca-mx-edition-robusto-20-bx.jpg` returned HTTP `200` with `Content-Length: 134153`.
+  - `nica-rustica-adobe-toro-25-bx.jpg` returned HTTP `200` with `Content-Length: 162599`.
+  - `liga-undercrown-shade-robusto-25-bx.jpg` returned HTTP `200` with `Content-Length: 83256`.
+  - `aging-room-quattro-nicaragua-maestro-10-bx.jpg` returned HTTP `200` with `Content-Length: 106851`.
+- Root cause:
+  - `src/lib/catalog.ts` still filters those rows in `isPublishableImportedInventoryItem` because `importedMarketPriceLookup[item.sku]` is missing or non-positive.
+  - Three rows also still require real SKU reconciliation before final publishing: `MISSING-SKU-NICA-RUSTICA-GORDO`, `MISSING-SKU-UNDERCROWN-SHADE-GORDITO`, and `MISSING-SKU-UNDERCROWN-MADURO-TORO`.
+- No application code or deploy was changed in this verification pass.
+
+## 2026-06-08 Social Video Audio Repair And Verification
+
+- Goal: verify the social video audio issue is fixed before any further Facebook/Page/Story posting.
+- Audited:
+  - All current MP4 exports under `output/social`.
+  - Checks covered audio stream presence, decoded PCM samples, RMS/peak loudness, clipping, DC offset, silent sections, static-like spectral flatness/high-frequency energy, and 60/120/180 Hz hum/buzz concentration.
+- Fixed:
+  - Replaced risky audio in `output/social/yuzu-membership-story-ig-2026-06-01-59s.mp4` with the clean lounge bed, limiter, and fades.
+  - Replaced hum/buzz-flagged audio in `output/social/yuzu-ig-stories-highlights-audio.mp4` with the clean lounge bed, limiter, and fades.
+  - Preserved originals as non-publishable `.bad-audio-original` backups so future `*.mp4` publishable-set scans do not pick them up.
+- Verification:
+  - Wrote `output/social/audio-verification-2026-06-08/social-video-audio-verification.json`.
+  - Final audit passed with 9 MP4 files checked, 9 pass, 0 warnings, and 0 failures.
+  - `output/social/cigar-flow-june-1-5-2026/cigar-flow-june-1-5-story-video.mp4` passed with RMS `-29.32 dBFS`, peak `-6.02 dBFS`, static-like frame ratio `0.0`, and hum/buzz ratio `0.0017`.
+
+## 2026-06-08 Facebook Page And Stories Month Planner
+
+- Goal: continue the luxury Facebook-first social package after Instagram was disabled, including Page posts, Facebook Group planning, Facebook Stories, and viral Story video assets.
+- Page schedule:
+  - Created `docs/yuzu-facebook-first-month-post-schedule-2026-06-09.csv` with 30 rows from 2026-06-09 through 2026-07-08.
+  - Generated 15 luxury 4:5 Facebook Page infographic images under `output/social/facebook-planner-month-2026-06-09/page-assets/`.
+  - Verified the 15-image contact sheet at `output/social/facebook-planner-month-2026-06-09/facebook-planner-month-contact-sheet.jpg`.
+  - Used the Facebook Graph API credentials from AWS Secrets Manager secret `ycc/social/facebook/prod` without writing token values to repo files.
+  - Scheduled 14 Page posts through the Graph API and saved sanitized readback to `output/social/facebook-planner-month-2026-06-09/meta-page-scheduled-result.json`.
+  - The 2026-07-07 `Cigar Flow explainer` Page post remains unscheduled because Meta rejected the requested future schedule time as invalid; the CSV marks it `planned:awaiting_meta_schedule_window`.
+- Stories schedule:
+  - Created `docs/yuzu-facebook-stories-posting-schedule-2026-06-09.csv` with 68 Facebook Page Story slots from 2026-06-09 through 2026-07-08.
+  - Rhythm: two Story slots daily at 9:00 AM and 6:30 PM America/Phoenix, plus Friday/Saturday 8:45 PM trend-video slots.
+  - Created `docs/yuzu-facebook-stories-meta-planner-runbook-2026-06-08.md` for the Meta Planner workflow and Story API guardrails.
+  - Probed Page Stories API safely with no media upload/finish call and saved results to `output/social/facebook-planner-month-2026-06-09/meta-page-story-api-probe.json`.
+  - Probe conclusion: use Meta Planner for future Story scheduling until a documented scheduled Story publish flow is confirmed and tested; a Story upload/finish flow may publish immediately.
+- Automation:
+  - Updated Codex automation `yuzu-social-post-scheduler` to Facebook-first mode.
+  - The automation now reads the new Page month schedule, Stories schedule, Meta Planner runbook, and luxury creative standard.
+  - It no longer treats Instagram as active, and it requires verified audio JSON before Story video upload.
+- HyperFrames Story video:
+  - Created `output/social/yuzu-facebook-stories-viral-hyperframes/` and rendered `output/social/yuzu-facebook-story-rough-week-reset-2026-06-12.mp4`.
+  - The first ready Story video maps to the 2026-06-13 8:45 PM `Rough week, adult ritual` slot.
+  - Visual QA frame exports: `output/social/yuzu-facebook-story-rough-week-reset-2026-06-12-frame.jpg` and `output/social/yuzu-facebook-story-rough-week-reset-2026-06-12-frame-12s.jpg`.
+- Verification:
+  - `npm run facebook:month-check` passed with 30 rows: Group 15, Page 15.
+  - `npm run facebook:organic-check` passed with 44 rows: Admin 3, External Group 6, Group 11, Outreach 7, Page 17.
+  - `npx eslint scripts/facebook-organic-growth-check.ts` passed.
+  - Story schedule sanity check passed with 68 rows, 8 video rows, and 1 ready row.
+  - HyperFrames `npm run check` passed with 0 lint errors and 0 layout issues; only the expected headless AudioContext warning remained.
+  - Final all-social MP4 audio audit wrote `output/social/audio-verification-2026-06-08/social-video-audio-verification.json` and passed with 10 MP4 files checked, 10 pass, 0 warnings, and 0 failures.
+
+## 2026-06-08 NBA Game 3 Pairing Post And Story
+
+- Goal: publish a tonight-specific NBA Finals Game 3 cigar pairing Page post and Facebook Story for Spurs at Knicks at 5:30 PM Arizona time.
+- Created assets:
+  - Initial/follow-up drafts under `output/social/facebook-nba-game-3-2026-06-08/`.
+  - Final Page asset: `output/social/facebook-nba-game-3-2026-06-08/yuzu-nba-game-3-pairing-page-4x5-final-logic.jpg`.
+  - Final Story asset: `output/social/facebook-nba-game-3-2026-06-08/yuzu-nba-game-3-pairing-story-9x16-final-logic.jpg`.
+- Final pairing logic:
+  - Mellow Start: light wrapper + beer.
+  - Bold Run: bold cigar + whisky.
+  - Maduro Fourth: maduro + dark chocolate.
+  - Overtime Reset: rested cigar + water.
+- Publishing:
+  - Published final Facebook Page post through the Graph API.
+  - Final Page post ID: `1148511071677542_122104430955350335`.
+  - Final Page permalink: `https://www.facebook.com/122099394543350335/posts/122104430955350335`.
+  - Published final Facebook Page Story through the `photo_stories` flow.
+  - Final Story photo ID: `122104431165350335`.
+  - Final Story post ID: `1762080651440777`.
+- Corrections:
+  - Replaced earlier drafts after user caught text overhang and pairing wording issues.
+  - Final assets were exported with parent-panel bounds checks for text and option cards.
+  - Cleanup attempts for earlier Page/Story objects returned `success:false`/400 from Graph, but final visibility readback shows only one active Story and only the final Game 3 Page post alongside the separate month-loaded post.
+- Verification:
+  - Visual inspection confirmed final Page and Story assets have no text overhang.
+  - Readback saved to `output/social/facebook-nba-game-3-2026-06-08/facebook-game-3-final-logic-result.json`.
+  - Final visibility readback saved to `output/social/facebook-nba-game-3-2026-06-08/facebook-game-3-final-visibility-readback.json`.
+
+## 2026-06-08 May 2026 Release Radar Infographic
+
+- Goal: create and publish a luxury Facebook Page infographic showing notable top cigar brand releases from May 2026.
+- Research and source set:
+  - Included Drew Estate Undercrown El Tigre Dominicano, Cohiba Select Gift Sampler, Tatuaje The Creature, Rocky Patel Year of the Horse, Casa Carrillo Deep Blue LE 2026, CLE Exclusivo Regionales Austria, Don Emmanuel Sun & Moon LE, La Flor de Cano Magicos Regional Spain, and Crux Marblehead Maduro.
+  - Used Cigar Journal, Cigar Coop, Cigar Dojo, and official brand/product pages for release verification and detail links.
+- Created assets:
+  - Final published image: `output/social/facebook-may-2026-release-radar/yuzu-may-2026-top-cigar-releases-page-4x5-logo-grid-final-v2.jpg`.
+  - Caption: `output/social/facebook-may-2026-release-radar/facebook-caption-may-2026-release-radar.txt`.
+  - Manifest: `output/social/facebook-may-2026-release-radar/may-2026-release-radar-logo-grid-final-manifest.json`.
+  - Inventory link check: `output/social/facebook-may-2026-release-radar/inventory-link-check.json`.
+- Logo and image handling:
+  - Used official logo assets where available for Cohiba, Tatuaje, Rocky Patel, Casa Carrillo, and Crux.
+  - Generated premium wordmark logos for Drew Estate, CLE, Don Emmanuel, and La Flor de Cano because clean official logo files were unavailable from reliable sources during the pass.
+  - Used official/public cigar release imagery for Drew Estate/Undercrown El Tigre, Rocky Patel Year of the Horse, Casa Carrillo Deep Blue, and Crux Marblehead.
+- Inventory link decision:
+  - No exact Yuzu inventory matches were found for the May 2026 release names.
+  - Similar lines such as Undercrown Shade/Maduro/UC10, Cohiba Blue/Black/Connecticut/Nicaragua, and Tatuaje Black/Havana VI/Negociant were intentionally not linked.
+  - Caption uses a neutral `For more details:` source-link section only.
+- Publishing:
+  - Published through the Facebook Page Graph API using AWS Secrets Manager secret `ycc/social/facebook/prod` without writing token values to repo files.
+  - Facebook Page post ID: `1148511071677542_122104447803350335`.
+  - Permalink: `https://www.facebook.com/122099394543350335/posts/122104447803350335`.
+  - Result saved to `output/social/facebook-may-2026-release-radar/facebook-may-2026-release-radar-post-result.json`.
+  - Recent-post readback saved to `output/social/facebook-may-2026-release-radar/facebook-may-2026-release-radar-readback.json`.
+- Verification:
+  - Final layout bounds check passed with zero text/layout violations.
+  - Visual inspection confirmed the final 3x3 logo-card grid is readable and no text overhang is visible.
+  - Asset is a static image, so no audio verification was required.
+
+## 2026-06-08 Monthly Selection Copy Deploy
+
+- Goal: deploy all current static storefront updates after the monthly member selection copy sweep.
+- AWS/deploy context:
+  - Used `deploy-yuzu-amplify` and `aws` skills.
+  - Confirmed source caller `ycc-mcp-source` resolves to AWS account `374587466106` as `arn:aws:iam::374587466106:user/codex-mcp-ycc`.
+  - Initial helper invocation without `--skip-build` failed before any build/artifact/deploy work because Python on Windows could not resolve the PowerShell-only `npm.ps1` launcher.
+- Build/package:
+  - Ran `npm run build`; Next.js 16.2.6 compiled successfully and generated 994 static pages.
+  - Ran `python C:\Users\qfash\.codex\skills\deploy-yuzu-amplify\scripts\deploy_amplify_static.py --skip-build --label monthly-selection-all-updates-20260608`.
+  - Created POSIX-rooted deploy zip `yuzu-cigar-club-amplify-deploy-monthly-selection-all-updates-20260608-2026-06-08-144049.zip` with 9,221 entries and size 175,084,544 bytes.
+  - Verified the zip has `index.html` and `_next/static/...` at archive root, with zero backslash paths and zero forbidden parent folders.
+- Deployment:
+  - Assumed deployment role `arn:aws:iam::374587466106:role/CodexMcpYccDeploymentRole`.
+  - Uploaded to Amplify app `d2yxcklt245wh0`, branch `staging`.
+  - Amplify job `149` reached `SUCCEED`.
+  - Helper smoke returned `homeStatus=200`, `assetStatus=200`, and asset path `/_next/static/chunks/0m9y0y22aqcmg.css`.
+- Live smoke checks:
+  - `https://staging.d2yxcklt245wh0.amplifyapp.com/membership/?deploy=149` returned HTTP `200`, included `Pick from the curated list before your box ships.`, and referenced asset `/_next/static/chunks/0m9y0y22aqcmg.css` returned HTTP `200`.
+  - `https://staging.d2yxcklt245wh0.amplifyapp.com/member-drops/?deploy=149` returned HTTP `200`, included `Members choose from a preselected online cigar list on selection day.`, and referenced asset `/_next/static/chunks/0m9y0y22aqcmg.css` returned HTTP `200`.
+  - `https://www.yuzucigarclub.com/membership/?deploy=149` returned HTTP `200`, included `Pick from the curated list before your box ships.`, and referenced asset `/_next/static/chunks/0m9y0y22aqcmg.css` returned HTTP `200`.
+  - `https://www.yuzucigarclub.com/member-drops/?deploy=149` returned HTTP `200`, included `Members choose from a preselected online cigar list on selection day.`, and referenced asset `/_next/static/chunks/0m9y0y22aqcmg.css` returned HTTP `200`.
+  - `https://www.yuzucigarclub.com/shop/?deploy=149` returned HTTP `200`, included `Monthly Selection List`, and referenced asset `/_next/static/chunks/0m9y0y22aqcmg.css` returned HTTP `200`.
+  - `https://www.yuzucigarclub.com/?deploy=149` returned HTTP `200`, included `monthly selection-list benefits`, and referenced asset `/_next/static/chunks/0m9y0y22aqcmg.css` returned HTTP `200`.
+
+## 2026-06-09 Inventory Publish Fix
+
+- Goal: fix the user-reported issue where the 2026-06-08 photo-audited inventory updates were not visible on the real shop runtime.
+- Root cause:
+  - The box images had been deployed, but `src/lib/imported-market-prices.ts` did not include market/non-member prices for the audited rows.
+  - `src/lib/catalog.ts` only publishes imported inventory with positive item price, positive market price, publishable pricing, and valid image coverage.
+  - This made the 24 real audited SKUs generate no local `out/shop/` pages and return live HTTP `404`.
+- Code/data updates:
+  - Added verified market-price entries in `src/lib/imported-market-prices.ts` for 24 real audited SKUs: `113886`, `113887`, `572305`, `572356`, `572409`, `572410`, `572429`, `572493`, `572685`, `572686`, `572744`, `572745`, `572749`, `572753`, `777141`, `777146`, `777147`, `777148`, `777149`, `777199`, `777229`, `777230`, `777242`, and `777243`.
+  - Set each new market/non-member price equal to its verified shelf/imported price to publish the product without inventing a discount or markup.
+  - Kept three placeholder-SKU rows unpublished until POS/Sunset reconciliation supplies real internal SKUs: `MISSING-SKU-NICA-RUSTICA-GORDO`, `MISSING-SKU-UNDERCROWN-SHADE-GORDITO`, and `MISSING-SKU-UNDERCROWN-MADURO-TORO`.
+  - Added review/research coverage in `src/lib/catalog.ts` for newly published Fonseca MX, Aging Room Quattro Nicaragua, and Liga Privada H99 Papas Fritas products.
+  - Updated `tests/product-detail.test.ts` and `tests/commerce-schema.test.ts` for the new published catalog count and expected audit prices.
+- Review source notes:
+  - Fonseca MX uses Cigar Aficionado line-reference coverage from `https://www.cigaraficionado.com/rating/fonseca-mx-edition-robusto`.
+  - Aging Room Quattro Nicaragua uses Cigar Aficionado Cigar of the Year line-reference coverage from `https://www.cigaraficionado.com/top25cigar/aging-room-quattro-nicaragua-maestro-2019`.
+  - Liga Privada H99 Papas Fritas uses exact review coverage from `https://smokintabacco.com/cigar-review-drew-estate-liga-privada-h99-papas-fritas/`.
+- Verification before deploy:
+  - Catalog probe confirmed `catalogProducts.length` is `956`.
+  - Catalog probe confirmed all 24 real audited SKUs now publish and all three placeholder SKUs remain unpublished.
+  - Unsourced cigar probe returned `0` unsourced cigar products.
+  - `node --import tsx --test tests\product-detail.test.ts` passed 40/40.
+  - `node --import tsx --test tests\commerce-schema.test.ts` passed 3/3.
+  - `npm test` passed with 545 tests, 545 pass, 0 fail; final log saved to `output\inventory-audit\npm-test-inventory-fix-2026-06-09-final.log`.
+  - `npm exec -- tsc --noEmit --pretty false` passed.
+  - `npm run build` passed with Next.js 16.2.6 and generated 1,018 static pages; `/shop/[slug]` reported `+953 more paths`.
+  - Local `out/shop/` probe confirmed all 24 real audited slugs have generated `index.html` files.
+- Deploy:
+  - Created POSIX-rooted static export zip `yuzu-cigar-club-amplify-deploy-inventory-publish-fix-2026-06-09-2026-06-09-123445.zip`.
+  - Zip sanity check found 9,437 entries, `index.html` at archive root, `_next/static/...` entries present, zero backslash paths, and representative audited shop pages present in the archive.
+  - Amplify app `d2yxcklt245wh0`, branch `staging`, job `150` reached `SUCCEED` on 2026-06-09.
+- Live smoke after deploy:
+  - All 24 real audited product URLs on `https://www.yuzucigarclub.com/shop/{slug}/` returned HTTP `200`.
+  - Representative live checks returning HTTP `200`: `fonseca-mx-edition-robusto-20-bx`, `nica-rustica-adobe-toro-25-bx`, `liga-undercrown-shade-robusto-25-bx`, and `aging-room-quattro-nicaragua-maestro-10-bx`.
+  - The three placeholder-SKU slugs still returned HTTP `404`, intentionally pending SKU reconciliation.
+  - Final live recheck confirmed 24/24 real audited slugs returned HTTP `200`, with 0 non-200 responses; 3/3 placeholder-SKU slugs returned HTTP `404`.
+
+## 2026-06-09 Inventory Pricing Scheme Update
+
+- Goal: apply the existing cigar catalog pricing scheme to the 24 real-SKU items from the 2026-06-08 inventory photo audit after the first publish fix temporarily used member/source prices as public prices.
+- Pricing rule applied:
+  - `src/lib/imported-inventory.ts` `price` remains the member/current source price.
+  - `src/lib/imported-market-prices.ts` stores the public/non-member market price.
+  - Published cigar rows must keep `nonMemberPrice >= memberPrice` and must not fall back silently to member/source price as public price.
+- Code/data updates:
+  - Replaced the 24 temporary equal-price entries in `src/lib/imported-market-prices.ts` with researched public/non-member prices.
+  - Added `docs/inventory-pricing-scheme-2026-06-09.md` with a per-SKU source table for the new public prices.
+  - Updated `docs/price-scheme-audit-2026-05-26.md` and `docs/inventory-runtime-verification-2026-06-09.md` so they no longer imply the equal-price publish fix is the final pricing state.
+  - Updated `tests/product-detail.test.ts` so the audited real-SKU rows assert `price` and `memberPrice` equal member/source cost while `marketPrice` and `nonMemberPrice` equal the researched public price.
+  - Added a focused audited-restock pricing regression in `tests/product-pricing.test.ts`.
+- Public price source set:
+  - Used Cigar Country for Flor de las Antillas and Undercrown public box pricing.
+  - Used Halfwheel release pricing for My Father Blue box pricing.
+  - Used CigarPlace for Fonseca MX public box pricing.
+  - Used JR Cigars/Famous Smoke for Nica Rustica, Deadwood, Aging Room, and CAO public box pricing where those sources matched the sellable unit.
+  - Used Cigars Direct for Deadwood Dia de los Muertos and Liga Privada H99 Papas Fritas public pricing; the Liga H99 internal `10/BX` pack-count wording still deserves POS reconciliation because public retail sources commonly list Papas Fritas as a 25-count box.
+- Verification before deploy:
+  - Focused suite passed: `node --import tsx --test tests\product-pricing.test.ts tests\product-detail.test.ts tests\commerce-schema.test.ts` with 53 tests, 53 pass, 0 fail.
+  - Full suite passed: `npm test` with 546 tests, 546 pass, 0 fail.
+  - TypeScript passed: `npm exec -- tsc --noEmit --pretty false`.
+  - Static export passed: `npm run build`, generating 1,018 static pages and `/shop/[slug]` with `+953 more paths`.
+- Deploy:
+  - Ran `python C:\Users\qfash\.codex\skills\deploy-yuzu-amplify\scripts\deploy_amplify_static.py --skip-build --label inventory-pricing-scheme-2026-06-09`.
+  - Created POSIX-rooted deploy zip `yuzu-cigar-club-amplify-deploy-inventory-pricing-scheme-2026-06-09-2026-06-09-141657.zip` with 9,437 entries and size 176,839,362 bytes.
+  - Zip sanity check confirmed `index.html` at archive root, `_next/static/...` entries present, zero backslash/forbidden parent paths, and representative audited shop pages present.
+  - Amplify app `d2yxcklt245wh0`, branch `staging`, job `151` reached `SUCCEED` on 2026-06-09.
+  - Deploy helper smoke returned `homeStatus=200`, `assetStatus=200`, and asset path `/_next/static/chunks/0m9y0y22aqcmg.css`.
+- Live smoke after deploy:
+  - Representative product pages for Flor de las Antillas Toro, My Father Blue Toro Gordo, Liga Privada H99 Papas Fritas, and CAO Flathead Speed Shop V660 returned HTTP `200` and contained the corrected `marketPrice`, `nonMemberPrice`, and `memberPrice` payload values.
+  - Full live payload check confirmed 24/24 real audited slugs returned HTTP `200` and 24/24 contained the corrected market/non-member/member price tokens.
+
+## 2026-06-09 Yuzu Membership Rack Card Design Brainstorm
+
+- Goal: create a front-and-back 3.5 x 8.5 vertical rack card promoting Yuzu Cigar Club membership for Standard Rack Cards SKU `14PT-PCUV-3.5X8.5-RC-44-NODRILLHOLE`.
+- User-provided print/reference files:
+  - `C:\Users\qfash\Downloads\3.5X8.5-V-RACKCARD.eps`
+  - `C:\Users\qfash\Downloads\standard-rack-cards.webp`
+- Project context checked:
+  - Membership page/tier copy in `src/app/membership/page.tsx`.
+  - Tier/pricing/benefit data in `src/lib/data.ts`.
+  - Existing Yuzu luxury social visual standard in `docs/yuzu-luxury-social-creative-standard-2026-06-08.md`.
+- Visual companion:
+  - Started local brainstorm server at `http://localhost:56321`.
+  - Session files are under ignored `.superpowers/brainstorm/yuzu-rack-card-20260609-01/`.
+  - First direction board created: `rack-card-directions.html` with Editorial Lounge, Concierge Invite, and Tier Comparison options.
+  - User requested a combined A + C direction and asked to research `https://99designs.com/inspiration/designs/rack-card`.
+  - Created refined combined direction screen: `rack-card-combined-top-level.html`, using a premium editorial front plus a clean tier/QR conversion back.
+- Research takeaways from the 99designs rack-card inspiration page:
+  - Strong rack cards use the front for one emotional/brand story and the back for scan-friendly proof, process, services, and contact information.
+  - The Camm Construction example specifically describes a front that quickly highlights the offer and a back that builds trust, explains process, and makes contact details easy to find.
+- Current design recommendation pending user approval:
+  - Front: dark lounge/humidor editorial image treatment, restrained Yuzu mark, headline `Join the club built around member-cost boxes.`, compact tier strip, and bottom scan CTA.
+  - Back: ivory/deep-green conversion layout with three benefits, four-tier comparison table, QR/URL block, and 21+ compliance line.
+- User approved the combined A + C direction but requested more cigar-related imagery and stronger visual appeal overall.
+- Visual upgrade:
+  - Copied existing Yuzu/cigar imagery into the ignored visual companion content folder for browser previews: `membership-boxes.png`, `hero-boxes.png`, `about-lounge.png`, `yuzu-logo.png`, and `montecristo-sampler.jpg`.
+  - Created `rack-card-visual-upgrade.html`, using full-bleed Yuzu membership-box photography on the front, a cigar-detail image band above the tier ribbon, a photographic back header, and two photo proof tiles before the tier table.
+  - Current pending approval is the visual-upgrade board, not the earlier abstract placeholder-style concept.
+- User feedback on visual-upgrade board: too much wasted space; add more information.
+- Created denser revision `rack-card-info-dense.html`:
+  - Front now adds four fast benefit tiles: direct member-cost boxes, monthly online selection windows, digital humidor/tasting notes, and private drops/events/concierge access.
+  - Front CTA now includes a QR lockup and a note about comparing dues, monthly cigars, welcome kits, and member terms.
+  - Back now includes a three-step "how it works" row, four inclusion cards, a four-column tier table with "best for" notes, photo proof tiles, and the QR/URL/compliance block.
+  - Current pending approval is the denser info version.
+- User then requested the back fill the space, followed by the same treatment on the front.
+- Created `rack-card-back-filled.html` with the back as a full-height stack: photo brand header, dark intro panel, three-step workflow, four inclusion blocks, expanded tier table, and bottom QR CTA.
+- Created `rack-card-both-sides-filled.html` as the current pending direction:
+  - Front now fills the safe area with a real cigar-box photo header, dark headline/offer panel, four benefit cells, cigar image strip, tier ribbon, and QR CTA.
+  - Back keeps the full-height information stack from the prior revision.
+  - This is the current version to use if the user approves production.
+- User feedback on `rack-card-both-sides-filled.html`: content was too bunched together; keep the space used but add breathing room.
+- Created `rack-card-balanced-spacing.html` as the current pending direction:
+  - Keeps both sides filled, but uses fewer/larger content zones.
+  - Increases inner padding and gaps.
+  - Removes the front cigar-image strip to reduce crowding.
+  - Gives the back larger section heights, a roomier tier table, and cleaner QR block.
+- User feedback on `rack-card-balanced-spacing.html`: leave no open spaces and fill it all in.
+- Created `rack-card-full-fill.html` as the current pending direction:
+  - Full-bleed imagery/texture sits behind both sides.
+  - Front uses edge-to-edge panels inside the safe area: brand/photo strip, offer/headline panel, four benefit cells, cigar/lounging photo strip, tier stack, and QR CTA.
+  - Back uses edge-to-edge panels inside the safe area: brand/photo strip, offer panel, workflow steps, expanded tier table, and QR CTA.
+  - The layout intentionally has no blank visible bands, while keeping critical text inside the safe-area guide.
+- User then requested text be much larger so older users can read it easily.
+- Created `rack-card-large-type.html`:
+  - Enlarged front headline/body, benefit labels, tier prices, back headings, workflow steps, table text, and QR CTA text.
+  - Reduced copy length to make room for larger type.
+- User then requested adding more words.
+- Created `rack-card-large-type-more-copy.html` as the current pending direction:
+  - Keeps the larger-type direction but restores fuller selling detail in short readable phrases.
+  - Front includes more detail about member-cost boxes, monthly cigar picks, private allocations, digital humidor tools, tier pricing, and scan details.
+  - Back includes fuller "how membership works" context, workflow steps, a tier comparison table, and QR details about dues, cigars, welcome kits, prepaid savings, shipping rules, and terms.
+  - Verified `http://localhost:56321/` returned HTTP `200` and the active screen title `Large type with more words`; reloaded the in-app browser to this version.
+- User marked lower empty spaces on the front and back in screenshots and asked to fill them.
+  - Root cause: rack-card preview height can exceed the fixed pixel grid rows, leaving the background visible after the last panel.
+  - Updated `rack-card-large-type-more-copy.html` to use proportional grid rows and then pinned `.grid` directly to the safe-area inset (`inset: 24px`) so content panels stretch to the card height.
+- User asked to make sure membership prices show they are monthly rates.
+  - Updated the front tier labels to `$18/mo`, `$49/mo`, `$99/mo`, and `$199/mo`.
+  - Updated the back table header from `Dues` to `Monthly` and each rate to the `/mo` format.
+  - Updated QR supporting copy to say `monthly dues`.
+  - Verified the loaded preview includes `$18/mo`, `$199/mo`, and `monthly dues`.
+- User asked to show all membership benefits on the back.
+  - Updated `rack-card-large-type-more-copy.html` back side to replace the workflow emphasis with an `All Membership Benefits` matrix.
+  - Benefits shown: Member-Cost Boxes, Selection Windows, Shipping Controls, Digital Humidor, Concierge Service, Private Drops, Exclusive Events, and Kits + Savings.
+  - Kept the monthly tier table and QR block below the benefits matrix.
+  - Verified the rendered in-app browser text includes the full benefits panel plus the monthly rates and QR copy.
+- User asked to add details about the digital humidor.
+  - Expanded the Digital Humidor benefit to: `Track cigars, notes, aging/rest windows, storage, reorders, and collection history.`
+  - Slightly reduced benefit-cell text size in the browser mockup to preserve fit with the longer humidor copy.
+  - Verified the loaded preview includes `aging/rest windows` and `collection history`.
+- User asked to use more icons, symbols, and images for more visual appeal.
+  - Copied Lucide SVG icon assets into the visual companion content folder: package, calendar, gauge, truck, shield-check, tag, lock-keyhole, heart, map-pin, and droplets.
+  - Updated `rack-card-large-type-more-copy.html` to use CSS-mask icon badges in front feature cells and back benefit cells.
+  - Added a shield icon to the `All Membership Benefits` header.
+  - Added tier monogram badges (`BA`, `K`, `S`, `D`) to the front tier stack.
+  - Added small symbol dots in the front detail chips and a `21+` badge treatment on QR blocks.
+  - Verified the browser loaded 13 icon/symbol elements with local SVG masks and the tier monogram badges.
+- User flagged that front benefit box text/icons did not fill the feature cells.
+  - Enlarged front feature-cell icons to 23px, headings to 18px, and body copy to 11.4px.
+  - Vertically centered feature-cell content and added small gold rule accents in each cell.
+  - Expanded the front feature copy slightly so Boxes, Pick, Track, and Access fill their boxes more deliberately.
+- User then flagged the same issue on the back-side `All Membership Benefits` matrix.
+  - Enlarged back benefit icons to 19px, benefit headings to 11.2px, and body copy to 8.7px.
+  - Vertically centered each benefit cell and added the same small gold rule accent.
+  - Expanded the benefits copy slightly for member-cost boxes, selection windows, shipping, concierge, private drops, exclusive events, and kits/savings.
+  - Increased tier-table row padding and font size slightly so the table area reads fuller.
+  - Verified the live companion HTML contains the updated benefits copy and `.benefit::after` accent styling.
+- User flagged a blank band inside the front headline/offer panel and asked to add an image.
+  - Added a two-image `headline-photo-strip` under the two front detail chips.
+  - The strip uses `hero-boxes.png` and `membership-boxes.png` with labels `Premium box access` and `Yuzu member collection`.
+  - Adjusted the front grid row proportions so the headline panel has enough height for the image strip while preserving downstream panels.
+  - Verified the served preview HTML contains `headline-photo-strip` and `Premium box access`.
+- Preview server idled out again during the icon pass and the active Superpowers cache moved.
+  - Located current browser companion server at `C:\Users\qfash\.codex\plugins\cache\openai-curated\superpowers\c6ea566d\skills\brainstorming\scripts\server.cjs`.
+  - Restarted `http://localhost:56321` from that server path.
+  - Verified HTTP `200` and that the served HTML contains `icon-package` and `tier-mark`.
+- User asked to fill the lower blank area beneath the back tier table with small SVG logos of available brands.
+  - Added a `brand-strip` under the tier table in `rack-card-large-type-more-copy.html`.
+  - The strip uses inline SVG-style brand badges for Padron, Davidoff, Liga Privada, Plasencia, Montecristo, and Arturo Fuente.
+  - Restarted the companion server at `http://localhost:56321` and verified HTTP `200`, the served brand-strip markup, six SVG badges, and no rendered overflow or console errors in the in-app browser DOM pass.
+- User then asked to search and generate the real logos instead of placeholder badges.
+  - Replaced the inline placeholder nameplate SVGs with locally downloaded/served real logo assets in the brand strip:
+    - Padron script logo from Padron's own downloads/site assets.
+    - Davidoff SVG from Wikimedia Commons.
+    - Liga Privada logo band from Drew Estate's Liga Privada page assets.
+    - Plasencia header SVG from the Plasencia site.
+    - Montecristo logo PNG from the public Wikipedia image reference.
+    - Arturo Fuente logo JPG from the public Wikipedia image reference.
+  - Updated the brand-strip CSS to use fitted light/dark logo tiles and `/files/...` asset paths.
+  - Restarted `http://localhost:56321` after idle timeout, verified the HTML serves the new rotation label, verified all six `/files/brand-*` assets return HTTP `200`, and verified in the in-app browser that all six logo images load, are visible, have no overflow, and produce no console warnings/errors.
+- User then pointed to the remaining blank space on the front headline panel and asked to add different available-brand logos there.
+  - Added a front-side `front-logo-strip` under the two cigar-photo tiles in `rack-card-large-type-more-copy.html`.
+  - The front strip uses a different brand set from the back: My Father Cigars, Oliva, Rocky Patel, Perdomo, Foundation/The Wise Man, and CAO.
+  - Downloaded and served local assets as `/files/front-brand-my-father.png`, `/files/front-brand-oliva.png`, `/files/front-brand-rocky-patel.png`, `/files/front-brand-perdomo.png`, `/files/front-brand-wise-man.png`, and `/files/front-brand-cao.svg`.
+  - Verified `http://localhost:56321` returned HTTP `200`, all six `/files/front-brand-*` assets returned HTTP `200`, and the in-app browser reported all six front logo images loaded and visible with no overflow, no feature-section overlap, and no console warnings/errors.
+- User asked to center the inside info in the front tier mini boxes.
+  - Updated `.tiers-mini div` in `rack-card-large-type-more-copy.html` to use flex column centering so the tier badge, monthly price, and tier name sit centered in each quadrant.
+  - Adjusted `.tier-mark` margin for balanced vertical spacing.
+  - Verified the served preview still returns HTTP `200`, contains the centered tier CSS, and the in-app browser DOM pass reported all four tier cells centered within roughly 0.5px with no console warnings/errors.
+- Local preview recovery:
+  - User reported `localhost` was not working.
+  - Root cause was the visual companion server's idle timeout; `.superpowers/brainstorm/yuzu-rack-card-20260609-01/state/server-stopped` recorded `idle timeout`.
+  - Restarted the companion server on `http://localhost:56321` from the active Superpowers browser companion cache at `C:\Users\qfash\.codex\plugins\cache\openai-curated\superpowers\9da6a7da\skills\brainstorming\scripts\server.cjs`.
+  - Verified HTTP `200` and active screen `rack-card-full-fill.html`.
+  - Reloaded the Codex in-app browser to `http://localhost:56321/`; page title read `Full-fill version: no open spaces`.
+- Print export preparation:
+  - User requested print export for 3.5 x 8.5, 18PT C1S, 4/4, UV coating front only, then approved installing Playwright.
+  - Installed `playwright` dev dependency at `^1.60.0` and updated `package-lock.json`.
+  - Ran `npx playwright install chromium`.
+  - Verified `npx playwright --version` returns `Version 1.60.0` and a headless Chromium smoke launch rendered a simple page title successfully.
+- Print export completed:
+  - Created the print package at `output/print/yuzu-rack-card-3.5x8.5-18pt-c1s-4-4-uv-front-20260610/`.
+  - Generated a real QR code asset pointing to `https://www.yuzucigarclub.com/membership/`.
+  - Built print-only HTML sources that hide preview safe-area guides, embed SVG icon masks as data URIs, and apply print-specific fit overrides so no panel content overflows.
+  - Exported PDFs:
+    - `yuzu-rack-card-front-bleed-3.75x8.75-uv-front.pdf`
+    - `yuzu-rack-card-back-bleed-3.75x8.75-no-uv.pdf`
+    - `yuzu-rack-card-front-back-bleed-3.75x8.75-2page.pdf`
+  - Exported 300 DPI proof PNGs at `1125 x 2625` px for front and back.
+  - Added `PRINT-SPECS.txt` with trim size, bleed size, 18PT C1S, 4/4, and UV-front-only handoff instructions.
+  - Created `output/print/yuzu-rack-card-3.5x8.5-18pt-c1s-4-4-uv-front-20260610.zip` using POSIX-style zip entry paths.
+  - Verification: Playwright render pass reported no console warnings/errors, no broken images, all icon masks present, no card/panel overflow; PDF MediaBox values are `0 0 270 630`, matching 3.75 x 8.75 inches.

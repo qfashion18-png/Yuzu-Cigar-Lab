@@ -21,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { readCheckoutAgeVerificationToken } from "@/lib/age-verification";
 import type { BackupAuthSession } from "@/lib/backup-auth";
+import { buildProductImageAlt } from "@/lib/image-seo";
 import {
   calculateCartTotals,
   formatCurrency,
@@ -357,7 +358,13 @@ function CheckoutExperienceContent({ accountSession }: { accountSession: BackupA
         <div className="mt-5 grid gap-4">
           {cart.items.map((item) => (
             <div key={item.lineId} className="grid grid-cols-[72px_1fr_auto] gap-3">
-              <ReferenceImage src={item.image} alt={`${item.name} checkout item`} className="aspect-square border border-yuzu-line" objectPosition={item.imagePosition} />
+              <ReferenceImage
+                src={item.image}
+                alt={buildProductImageAlt(item)}
+                className="aspect-square border border-yuzu-line"
+                objectPosition={item.imagePosition}
+                sizes="72px"
+              />
               <div>
                 <h3 className="line-clamp-2 text-sm font-semibold text-yuzu-cream">{item.name}</h3>
                 <p className="mt-1 text-xs text-yuzu-muted">{item.packageLabel}</p>

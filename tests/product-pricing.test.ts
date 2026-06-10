@@ -51,6 +51,35 @@ const researchedLighterPriceTargets = new Map(
   })
 );
 
+const auditedCigarRestockPriceTargets = new Map(
+  Object.entries({
+    "113886": { marketPrice: 155.95, memberPrice: 145 },
+    "113887": { marketPrice: 161.95, memberPrice: 122 },
+    "572305": { marketPrice: 134.99, memberPrice: 107 },
+    "572356": { marketPrice: 171.99, memberPrice: 146 },
+    "572409": { marketPrice: 172.99, memberPrice: 145 },
+    "572410": { marketPrice: 178.99, memberPrice: 150 },
+    "572429": { marketPrice: 208.95, memberPrice: 168 },
+    "572493": { marketPrice: 208.95, memberPrice: 156 },
+    "572685": { marketPrice: 164.95, memberPrice: 155 },
+    "572686": { marketPrice: 187.95, memberPrice: 170 },
+    "572744": { marketPrice: 168.6, memberPrice: 128 },
+    "572745": { marketPrice: 168.6, memberPrice: 137 },
+    "572749": { marketPrice: 229.5, memberPrice: 180 },
+    "572753": { marketPrice: 192.99, memberPrice: 160 },
+    "777141": { marketPrice: 111.99, memberPrice: 87 },
+    "777146": { marketPrice: 180, memberPrice: 124 },
+    "777147": { marketPrice: 210, memberPrice: 143 },
+    "777148": { marketPrice: 240, memberPrice: 163 },
+    "777149": { marketPrice: 260, memberPrice: 176 },
+    "777199": { marketPrice: 152.99, memberPrice: 132 },
+    "777229": { marketPrice: 139.99, memberPrice: 107 },
+    "777230": { marketPrice: 134.99, memberPrice: 107 },
+    "777242": { marketPrice: 168.99, memberPrice: 130 },
+    "777243": { marketPrice: 191.99, memberPrice: 144 },
+  })
+);
+
 function thirtyPercentBelowRetail(retailerPrice: number) {
   return Math.floor(retailerPrice * 70) / 100;
 }
@@ -127,6 +156,18 @@ test("published catalog requires explicit public market pricing instead of membe
     .map((product) => product.sku);
 
   assert.deepEqual(fallbackPricedProducts, []);
+});
+
+test("audited cigar restock public pricing uses researched market prices above member cost", () => {
+  for (const [sku, expectedPricing] of auditedCigarRestockPriceTargets) {
+    const product = catalogProducts.find((candidate) => candidate.sku === sku);
+
+    assert.ok(product, `Expected SKU ${sku} to be published`);
+    assert.equal(product.marketPrice, expectedPricing.marketPrice, `${sku} market price`);
+    assert.equal(product.nonMemberPrice, expectedPricing.marketPrice, `${sku} public price`);
+    assert.equal(product.memberPrice, expectedPricing.memberPrice, `${sku} member price`);
+    assert.ok(product.nonMemberPrice > product.memberPrice, `${sku} public price should stay above member cost`);
+  }
 });
 
 test("butane and lighter-fluid member prices are ten percent below researched online retailer prices", () => {

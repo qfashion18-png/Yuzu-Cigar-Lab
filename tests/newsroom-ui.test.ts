@@ -102,7 +102,7 @@ test("cigar flow latest news assigns unique generated images when live stories l
   assert.ok(markup.includes('data-news-story-images="generated-story"'), "missing generated story image marker");
   assert.ok(markup.includes('data-news-brand-logo="Drew Estate"'), "branded latest news should display a brand logo badge on the image");
   assert.equal(markup.includes("/assets/product-liga.png"), false, "image-less live stories should not fall back to repeated static product art");
-  assert.equal(uniqueGeneratedImages.size, stories.length, "each image-less latest news story should receive its own generated image");
+  assert.ok(uniqueGeneratedImages.size >= stories.length * 3, "each image-less latest news story should receive a unique hero image plus inline story images");
 });
 
 test("story image logo overlays match the image brand instead of unrelated source notes", async () => {
@@ -146,6 +146,71 @@ test("story image logo overlays match the image brand instead of unrelated sourc
 
   assert.ok(markup.includes('data-news-story-images="story-provided"'));
   assert.equal(markup.includes('data-news-brand-logo="Drew Estate"'), false, "unrelated source notes should not brand a different story image");
+});
+
+test("cigar flow latest news renders an editorial story spread with inline images", async () => {
+  const newsStoryFeedModule = (await import("../src/components/news-story-feed")) as unknown as {
+    default?: { NewsStoryFeed?: React.ComponentType<{ fallbackStories: NewsStory[]; variant: "cigarFlow" }> };
+    NewsStoryFeed?: React.ComponentType<{ fallbackStories: NewsStory[]; variant: "cigarFlow" }>;
+  };
+  const NewsStoryFeed = newsStoryFeedModule.default?.NewsStoryFeed ?? newsStoryFeedModule.NewsStoryFeed;
+  const story: NewsStory = {
+    slug: "may-31-cigar-industry-highlights",
+    title: "May 31 Cigar Industry Highlights: New Releases and Events",
+    dek: "Explore the latest cigar releases and industry events from Oliva, Perdomo, and Foundation Cigar Company.",
+    category: "Cigar Industry News",
+    bodyMarkdown:
+      "## New Releases\nOliva Cigars has unveiled a new limited edition cigar, the Oliva Serie V Maduro. Perdomo Cigars has also announced the launch of their new Perdomo 20th Anniversary Series. Foundation Cigar Company has introduced the new Foundation 1876 Maduro.\n\n## Upcoming Events\nCigar enthusiasts should mark their calendars for the upcoming Cigar Aficionado Trade Show, scheduled for June 15-17. This event will feature a variety of cigar brands, including Oliva, Perdomo, and Foundation.\n\n## Flow Note\nStay tuned for more updates as the cigar industry continues to evolve and surprise us with new and exciting offerings.",
+    images: [
+      {
+        label: "Oliva",
+        image: "/assets/news/cigar-flow-release-desk.jpg",
+        imagePosition: "50% 50%",
+        alt: "Open premium cigar box for the May 31 cigar industry highlights story",
+        sourceUrl: "https://olivacigar.com/news/",
+      },
+      {
+        label: "New Releases",
+        image: "/assets/news/cigar-flow-limited-drop.jpg",
+        imagePosition: "50% 50%",
+        alt: "Limited cigar release desk for the May 31 story",
+        sourceUrl: "https://www.perdomocigars.com/news",
+      },
+      {
+        label: "Upcoming Events",
+        image: "/assets/news/cigar-flow-trade-show.jpg",
+        imagePosition: "50% 50%",
+        alt: "Trade show cigar display for the May 31 story",
+        sourceUrl: "https://foundationcigarcompany.com/press/",
+      },
+      {
+        label: "PCA Trade Show",
+        image: "/assets/news/researched/pca-2026-trade-show.jpg",
+        imagePosition: "50% 50%",
+        alt: "PCA 2026 collage for the May 31 story",
+        sourceUrl: "https://www.cigaraficionado.com/article/highlights-from-the-pca-trade-show",
+      },
+    ],
+    sourceNotes: [],
+    officialSources: [],
+    status: "published",
+    publishedAt: "2026-05-31T12:00:00.000Z",
+    updatedAt: "2026-05-31T12:00:00.000Z",
+  };
+
+  assert.ok(NewsStoryFeed, "NewsStoryFeed should be available to render the Cigar Flow editorial spread");
+
+  const markup = renderToStaticMarkup(React.createElement(NewsStoryFeed, { fallbackStories: [story], variant: "cigarFlow" }));
+
+  assert.ok(markup.includes('data-cigar-flow-editorial-story="true"'), "missing editorial story marker");
+  assert.ok(markup.includes('data-cigar-flow-story-body="true"'), "missing story body marker");
+  assert.ok(markup.includes('data-cigar-flow-brand-plate="Oliva"'), "missing brand plate on the hero image");
+  assert.ok(markup.includes('data-cigar-flow-inline-image="New Releases"'), "missing inline release image");
+  assert.ok(markup.includes('data-cigar-flow-inline-image="Upcoming Events"'), "missing inline event image");
+  assert.ok(markup.includes('data-cigar-flow-inline-image="PCA Trade Show"'), "missing fourth researched story image");
+  assert.ok(markup.includes("May 31 Cigar Industry Highlights: New Releases and Events"));
+  assert.ok(markup.includes("CIGAR INDUSTRY NEWS"));
+  assert.equal(markup.includes("## New Releases"), false, "markdown headings should render as formatted section titles");
 });
 
 test("cigar flow latest news read-aloud is available only to members", async () => {

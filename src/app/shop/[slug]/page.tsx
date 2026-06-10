@@ -30,6 +30,7 @@ import { ReferenceImage } from "@/components/reference-image";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { getCatalogProductDetails, getStorefrontProductBySlug, storefrontProducts } from "@/lib/catalog";
+import { buildProductImageAlt } from "@/lib/image-seo";
 import { buildBreadcrumbJsonLd, buildPageMetadata, buildProductJsonLd, jsonLdScriptProps } from "@/lib/seo";
 
 type ProductPageProps = {
@@ -59,7 +60,7 @@ export async function generateMetadata({ params }: ProductPageProps): Promise<Me
     description: details.summary,
     path: `/shop/${product.slug}/`,
     image: product.image,
-    imageAlt: `${product.name} premium cigar box`,
+    imageAlt: buildProductImageAlt(product),
     keywords: [product.name, product.brand, product.category, "premium cigar box"],
   });
 }
@@ -118,10 +119,11 @@ export default async function ProductDetailPage({ params }: ProductPageProps) {
         >
           <ReferenceImage
             src={product.image}
-            alt={`${product.name} open cigar box`}
+            alt={buildProductImageAlt(product)}
             objectPosition={product.imagePosition}
             className="absolute inset-0 h-full bg-[#d8ccb1]"
             imageClassName="object-contain opacity-100"
+            sizes="(max-width: 768px) 100vw, 52vw"
             priority
           />
           <div className="absolute left-4 top-4 flex flex-wrap gap-2">

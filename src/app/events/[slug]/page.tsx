@@ -7,6 +7,7 @@ import { ReferenceImage } from "@/components/reference-image";
 import Link from "@/components/static-link";
 import { Button } from "@/components/ui/button";
 import { events, getEventBySlug } from "@/lib/data";
+import { buildEventImageAlt } from "@/lib/image-seo";
 import { buildBreadcrumbJsonLd, buildEventJsonLd, buildPageMetadata, jsonLdScriptProps } from "@/lib/seo";
 
 type EventDetailPageProps = {
@@ -34,7 +35,7 @@ export async function generateMetadata({ params }: EventDetailPageProps): Promis
     description: event.deck,
     path: `/events/${event.slug}/`,
     image: event.image,
-    imageAlt: `${event.title} event setting`,
+    imageAlt: buildEventImageAlt(event),
     keywords: [event.title, "cigar event", event.location, event.access],
   });
 }
@@ -68,7 +69,7 @@ export default async function EventDetailPage({ params }: EventDetailPageProps) 
         <div className="relative min-h-[22rem] border-b border-yuzu-line bg-yuzu-ink lg:min-h-[40rem] lg:border-b-0 lg:border-r">
           <ReferenceImage
             src={event.image}
-            alt={`${event.title} event setting`}
+            alt={buildEventImageAlt(event)}
             className="absolute inset-0 h-full"
             imageClassName="opacity-92"
             objectPosition={event.imagePosition}

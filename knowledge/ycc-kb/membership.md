@@ -10,9 +10,15 @@ Rules:
 Membership tiers:
 
 - Box Access Pass: 18 dollars per month. Provides wholesale/member-cost pricing on cigar boxes, private box catalog access, member-only box drops, digital humidor access, email support, and member-paid shipping. It does not include monthly cigars and does not include a standalone physical welcome kit. Quarterly dues are 49 dollars. Yearly dues are 179 dollars.
-- Kisha: 49 dollars per month. Includes 4 curated premium cigars monthly, wholesale/member-cost box pricing, early access to new releases, digital humidor access, email member support, and a basic welcome kit with cutter, humidity pack, and tasting guide. Quarterly dues are 139 dollars. Yearly dues are 499 dollars.
-- Sensei: 99 dollars per month. Includes 8 curated premium cigars monthly, wholesale/member-cost box pricing, monthly cigar shipping included, priority drop allocations, concierge recommendations, and an upgraded welcome kit. Quarterly dues are 279 dollars. Yearly dues are 999 dollars.
-- Daimyo: 199 dollars per month. Includes 12 curated cigars monthly, wholesale/member-cost box pricing, VIP concierge support, private events and tastings, first access to member-only drops, premium welcome kit, and highest priority allocations. Quarterly dues are 559 dollars. Yearly dues are 1999 dollars.
+- Kisha: 49 dollars per month. Includes 4 monthly cigars selected from a preselected online monthly list, wholesale/member-cost box pricing, early access to new releases, digital humidor access, email member support, and a basic welcome kit with cutter, humidity pack, and tasting guide. Quarterly dues are 139 dollars. Yearly dues are 499 dollars.
+- Sensei: 99 dollars per month. Includes 8 monthly cigars selected from a preselected online monthly list, wholesale/member-cost box pricing, monthly cigar shipping included, priority drop allocations, concierge recommendations, and an upgraded welcome kit. Quarterly dues are 279 dollars. Yearly dues are 999 dollars.
+- Daimyo: 199 dollars per month. Includes 12 monthly cigars selected from a preselected online monthly list, wholesale/member-cost box pricing, VIP concierge support, private events and tastings, first access to member-only drops, premium welcome kit, and highest priority allocations. Quarterly dues are 559 dollars. Yearly dues are 1999 dollars.
+
+Monthly cigar selection rule:
+
+- Kisha, Sensei, and Daimyo members choose their monthly cigars from a preselected premium cigar list that appears online during the monthly selection window.
+- Monthly cigar choices are first come, first served from the available list.
+- Yuzu keeps enough cigars available for active monthly members. Members who wait may miss the most requested cigars, but they will still have monthly cigars available to select.
 
 Wholesale box cost rule:
 

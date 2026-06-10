@@ -86,7 +86,7 @@ export const tiers = [
     price: 49,
     monthlyCigars: 4,
     discount: "5% off eligible non-box store products",
-    cadence: "4 curated premium cigars monthly",
+    cadence: "4 monthly cigars from the curated selection list",
     wholesaleBoxAccess: "Wholesale boxes + member store perks",
     shipping: "Member pays shipping",
     shippingNote: "Monthly cigar and wholesale box orders ship at member cost.",
@@ -102,7 +102,7 @@ export const tiers = [
     icon: Leaf,
     benefits: [
       "Wholesale/member-cost pricing on boxes",
-      "Hand-selected premium cigars",
+      "Preselected monthly cigar list",
       "Early access to new releases",
       "Digital humidor access",
       "Bulk digital humidor import",
@@ -116,7 +116,7 @@ export const tiers = [
     price: 99,
     monthlyCigars: 8,
     discount: "10% off eligible non-box store products",
-    cadence: "8 curated premium cigars monthly",
+    cadence: "8 monthly cigars from the curated selection list",
     wholesaleBoxAccess: "Wholesale boxes + stronger store perks",
     shipping: "Monthly cigar shipping included",
     shippingNote: "Includes 1 wholesale-box shipment per month; additional box orders ship at cost.",
@@ -133,7 +133,7 @@ export const tiers = [
     featured: true,
     benefits: [
       "Wholesale/member-cost pricing on boxes",
-      "Premium monthly selections",
+      "Monthly online selection window",
       "Monthly cigar shipping included",
       "Priority drop allocations",
       "Concierge recommendations",
@@ -147,7 +147,7 @@ export const tiers = [
     price: 199,
     monthlyCigars: 12,
     discount: "15% off eligible non-box store products",
-    cadence: "12 curated cigars monthly",
+    cadence: "12 monthly cigars from the curated selection list",
     wholesaleBoxAccess: "Wholesale boxes + VIP access",
     shipping: "Monthly cigar shipping included",
     shippingNote: "Includes 2 wholesale-box shipments per month; additional orders ship at cost.",
@@ -163,7 +163,7 @@ export const tiers = [
     icon: Star,
     benefits: [
       "Wholesale/member-cost pricing on boxes",
-      "Ultra-premium, rare, aged, or limited-release selections",
+      "Ultra-premium monthly selection access",
       "VIP concierge support",
       "Private events and tastings",
       "First access to member-only drops",
@@ -202,7 +202,7 @@ export const wholesaleCostDefinition = {
 
 export const benefits = [
   { title: "Member Cost Boxes", text: "Boxes priced at direct member cost.", icon: Tag },
-  { title: "Early Access", text: "First look at rare releases.", icon: CalendarDays },
+  { title: "Selection Windows", text: "Pick from monthly lists and rare releases.", icon: CalendarDays },
   { title: "Shipping Controls", text: "Included shipping is capped by tier.", icon: Truck },
   { title: "Digital Humidor", text: "Track, age, and reorder.", icon: Smartphone },
   { title: "Concierge Service", text: "Personal cigar guidance.", icon: Headphones },

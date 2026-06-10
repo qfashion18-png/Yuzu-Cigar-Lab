@@ -45,7 +45,8 @@ Working pieces:
 - Bedrock Guardrail `YCCConciergeGuardrail` is versioned and associated with the Lambda runtime path and Bedrock Agents.
 - Bedrock Agents exist and have prepared `prod` aliases for `YCCConcierge`, `YCCCigarGuide`, `YCCSupportAgent`, `YCCHumidorAgent`, `YCCAdminAgent`, and `YCCNewsAgent`; all six use guardrail version `8`, invoke the Lambda `live` alias executor, and route to version `7`.
 - SES domain identity `yuzucigarclub.com` is verified in `us-east-1` with Easy DKIM DNS records imported into Route 53.
-- SES inbound support-email subdomain `ses-support.yuzucigarclub.com` has MX pointed to `inbound-smtp.us-east-1.amazonaws.com`.
+- Root-domain inbound mail for `yuzucigarclub.com` now routes to AWS SES `inbound-smtp.us-east-1.amazonaws.com` and stores raw messages in `s3://classroom2/ycc/root-email/raw/`.
+- SES inbound support-email subdomain `ses-support.yuzucigarclub.com` also has MX pointed to `inbound-smtp.us-east-1.amazonaws.com`.
 - SES receipt rule set `ycc-support-email` is active and stores raw inbound mail for `support@ses-support.yuzucigarclub.com` in `s3://classroom2/ycc/support-email/raw/`, then invokes Lambda `ycyyy`; the receipt handler routes every inbound email through `YCCSupportAgent` and stores an operator-review draft with the inbound case.
 - SES send feedback is wired through configuration set `ycc-support-email-events` to SNS topic `ycc-ses-email-events` and durable SQS queue `ycc-ses-email-events` for bounce, complaint, reject, and delivery-delay events.
 - Secrets Manager interface VPC endpoint `vpce-052476667bf62d2a3` exists with private DNS enabled so VPC Lambda functions can read secrets without NAT.
@@ -76,7 +77,7 @@ Gaps:
 - Cognito app client IaC includes `ALLOW_USER_PASSWORD_AUTH`, and the live `ycc-storefront` app client was verified on 2026-05-13 with `ALLOW_USER_PASSWORD_AUTH`, `ALLOW_USER_SRP_AUTH`, and `ALLOW_REFRESH_TOKEN_AUTH` while preserving OAuth code flow settings.
 - The database and Lambda remain in the default VPC, but Lambda has moved out of default public subnets into dedicated private egress subnets with NAT and endpoint routes. Lambda security group `sg-00c3d67ac62d92ae7` now allows TCP/443 egress through NAT for Stripe API calls. A named production VPC remains a future improvement rather than a launch blocker.
 - SES production access is denied under AWS case `177809591700724`, so live outbound customer support sends remain guarded by `FEATURE_SES=pending_production_access`. Recheck on 2026-05-20 confirmed the need is production access for low-volume transactional support mail only; `sesv2 put-account-details --production-access-enabled` returns `ConflictException`, so the next path is a Support Center appeal or case reopen.
-- The production `support@yuzucigarclub.com` mailbox currently routes through Microsoft 365. To ingest real support mail through SES without changing root MX, configure Microsoft 365 forwarding or a mail-flow rule from `support@yuzucigarclub.com` to `support@ses-support.yuzucigarclub.com`.
+- The production root-domain mailbox route now terminates at SES. Root-domain mail is captured as raw S3 objects only; production support automation still uses the `support@ses-support.yuzucigarclub.com` receipt path until root-domain routing is intentionally wired into Lambda.
 - Direct operator CLI retrieval against the Knowledge Base is not currently allowed by the scoped operator role. The live agents can retrieve through their Bedrock runtime role.
 - Live Stripe API key, webhook signing secret, Customer Portal configuration, tobacco approval confirmation, membership Price IDs, age-verification settings, Stripe Tax registration/defaults, USPS Adult Signature readiness, and internal signing secrets are stored in Secrets Manager secret `ycc/commerce/prod` and exposed to Lambda through `COMMERCE_PROVIDER_SECRET_ARN`. The full 923-item published catalog is loaded into Stripe and the SKU-to-Price mapping is stored at `s3://classroom2/ycc/commerce/stripe-launch-catalog.json`. Stripe Support confirmed on 2026-05-25 that Company Q meets the Stripe Services Agreement; the secret records that approval. Direct live Stripe checks on 2026-05-26 show charges enabled, no currently due or past-due account requirements, the commerce webhook enabled, active products/prices present, no first-page disputes/subscriptions, no Stripe Customers to backfill, Stripe Tax active with Gilbert, AZ head office and active AZ registration `taxreg_1TbQiD0r0rWXiDV5IKP7bReS`, and Stripe payouts not enabled.
 
@@ -546,14 +547,15 @@ Current Phase 5 status:
 - SES production-access request was submitted on 2026-05-06 and later denied under case `177809591700724`; `ProductionAccessEnabled=false` was rechecked on 2026-05-20.
 - API resubmission on 2026-05-20 returned `ConflictException`, so do not expect another CLI/API submission to flip the account while the denied review state remains. Use AWS Support Center to appeal or reopen the case.
 - Public trust pages `https://www.yuzucigarclub.com/privacy/` and `https://www.yuzucigarclub.com/terms/` return HTTP `200`, and both are included in the production sitemap for the next SES review.
-- Root MX for `yuzucigarclub.com` still points to Microsoft 365 and was intentionally left unchanged.
+- Root MX for `yuzucigarclub.com` points to `10 inbound-smtp.us-east-1.amazonaws.com.` with TTL `300`.
+- SES root-domain receipt rule `ycc-root-domain-email-inbound` stores all `yuzucigarclub.com` inbound mail in `s3://classroom2/ycc/root-email/raw/`.
 - SES inbound subdomain `ses-support.yuzucigarclub.com` is configured with:
   - DKIM CNAME records for the SES identity `ses-support.yuzucigarclub.com`
   - MX record `ses-support.yuzucigarclub.com -> inbound-smtp.us-east-1.amazonaws.com`
 - Active SES receipt rule set: `ycc-support-email`.
-- Receipt rule: `ycc-support-email-inbound`.
-- Receipt recipient: `support@ses-support.yuzucigarclub.com`.
-- Raw inbound object prefix: `s3://classroom2/ycc/support-email/raw/`.
+- Receipt rules:
+  - `ycc-root-domain-email-inbound` for `yuzucigarclub.com`, raw prefix `s3://classroom2/ycc/root-email/raw/`
+  - `ycc-support-email-inbound` for `support@ses-support.yuzucigarclub.com`, raw prefix `s3://classroom2/ycc/support-email/raw/`, then Lambda `ycyyy:live`
 - SES feedback configuration set: `ycc-support-email-events`.
 - SES feedback SNS topic: `arn:aws:sns:us-east-1:374587466106:ycc-ses-email-events`.
 - SES feedback SQS queue: `https://sqs.us-east-1.amazonaws.com/374587466106/ycc-ses-email-events`.
@@ -569,11 +571,12 @@ Current Phase 5 status:
 Remaining Phase 5 gates:
 
 - Wait for SES production access approval, then set `FEATURE_SES=ready`.
-- Configure Microsoft 365 forwarding/mail-flow from `support@yuzucigarclub.com` to `support@ses-support.yuzucigarclub.com` if YCC wants production support mail ingested without moving the root MX away from Microsoft 365.
+- Decide whether root-domain support mail should remain raw-only, forward internally to `support@ses-support.yuzucigarclub.com`, or get its own Lambda receipt action.
 
 Phase 5 verification:
 
 - DNS resolves SES DKIM CNAMEs for `yuzucigarclub.com`.
+- DNS resolves root MX for `yuzucigarclub.com` to `inbound-smtp.us-east-1.amazonaws.com`.
 - DNS resolves `ses-support.yuzucigarclub.com` MX to `inbound-smtp.us-east-1.amazonaws.com`.
 - SES identities `yuzucigarclub.com` and `ses-support.yuzucigarclub.com` are verified with DKIM `SUCCESS`.
 - SES sender identities `yuzucigarclub.com`, `support@yuzucigarclub.com`, `concierge@yuzucigarclub.com`, and `no-reply@yuzucigarclub.com` use default configuration set `ycc-support-email-events`.
@@ -719,6 +722,22 @@ Verification:
 - Additional smokes returned HTTP `200` for `https://www.yuzucigarclub.com/?deploy=139`, `https://staging.d2yxcklt245wh0.amplifyapp.com/humidor/?section=cigars&deploy=139`, and `https://www.yuzucigarclub.com/humidor/?section=cigars&deploy=139`.
 - Temporary Amplify deploy zip and Lambda package artifacts were removed after successful deployment and smoke checks.
 
+### 2026-06-10 Friends and Family Box Pass Full Stack Deploy
+
+- Full verification passed before deployment: `npm run lint`, `npx tsc --noEmit`, `npm test` with 550/550 passing, and `npm run build`.
+- `npm run build` passed with Next.js 16.2.6, generated 1,019 static pages, and included `/friends-family`.
+- Lambda package artifact `output/ycc-api-all-updates-friends-family-20260610.zip` was built with code hash `6Oh89wpHb7Qj2Tgi/aHhxZrj9XMAaV+PBJALTMzPObk=`.
+- Updated Lambda `$LATEST` for `ycyyy`, published version `34` with description `Friends and Family Box Pass all updates 2026-06-10`, and promoted alias `ycyyy:live` to version `34`.
+- The scoped operator role updated code and published the version; the configured `phantom-root` profile was used only for `lambda:UpdateAlias`, matching the existing alias-promotion permission gap.
+- Readback confirms `ycyyy:live` is version `34`, code hash `6Oh89wpHb7Qj2Tgi/aHhxZrj9XMAaV+PBJALTMzPObk=`, state `Active`, and `LastUpdateStatus=Successful`.
+- Live `GET https://api.yuzucigarclub.com/health?deep=1` returned HTTP `200`, `status=ok`, database proxy reachable, `databaseWrites=schema_ready`, `bedrock=runtime_ready`, and SES still `pending_production_access`.
+- Safe live `POST https://api.yuzucigarclub.com/commerce/membership-session` smoke sent the yearly Box Access Pass Friends and Family request shape without a customer email and returned HTTP `400`, `error=missing_customer_email`, so no Stripe Checkout Session was created.
+- Amplify app `d2yxcklt245wh0`, branch `staging`, job `152` reached `SUCCEED`.
+- Amplify smoke returned `homeStatus=200`, `assetStatus=200`, and asset path `/_next/static/chunks/0fmoh0go6ai.6.css`.
+- Additional smokes returned HTTP `200` for `https://staging.d2yxcklt245wh0.amplifyapp.com/friends-family/?deploy=152`, `https://www.yuzucigarclub.com/friends-family/?deploy=152`, and `https://www.yuzucigarclub.com/?deploy=152`.
+- Live `robots.txt` disallows `/friends-family/`.
+- Temporary Amplify deploy zip and Lambda package artifacts were removed after successful deployment and smoke checks.
+
 ### Phase 6: Production Hardening
 
 Make these changes before public launch:
@@ -732,7 +751,7 @@ Make these changes before public launch:
 
 Phase 1 through Phase 5 plus the Amazon Lex concierge router are now live for authenticated API, public newsletter signup intake, persistence, Lex intent routing and slot collection, Bedrock Agent Runtime concierge replies, Knowledge Base retrieval, Lambda action groups, guardrails, prepared Bedrock Agent aliases, SES-verified domain identity, non-disruptive SES inbound support-email plumbing, SES feedback notifications, WAF-protected Amplify hosting, API access logs, private Lambda egress, and verified RDS restore capability.
 
-The remaining launch gates are external/operator gates: AWS must approve SES production sending before `FEATURE_SES=ready`, Microsoft 365 forwarding is still needed for production support ingestion, and Stripe payout/legal Dashboard status needs operator review. Stripe Tax registration and provider-backed backend Checkout smoke are complete.
+The remaining launch gates are external/operator gates: AWS must approve SES production sending before `FEATURE_SES=ready`, root-domain support ingestion still needs an intentional Lambda/forwarding path, and Stripe payout/legal Dashboard status needs operator review. Stripe Tax registration and provider-backed backend Checkout smoke are complete.
 
 Do not connect Bedrock or email directly to the frontend; keep agent actions behind the authenticated API boundary.
 

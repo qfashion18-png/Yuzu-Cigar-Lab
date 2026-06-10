@@ -16,7 +16,7 @@ export function BrandMark({ compact = false, className }: BrandMarkProps) {
         alt=""
         width={48}
         height={48}
-        priority
+        preload
         unoptimized
         className={cn(
           "h-10 w-10 shrink-0 object-contain drop-shadow-[0_0_22px_rgba(221,170,61,0.24)] sm:h-12 sm:w-12",

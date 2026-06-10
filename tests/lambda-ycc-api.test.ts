@@ -1549,6 +1549,7 @@ function installPersistenceMocks(
     STRIPE_LAUNCH_CATALOG_JSON: process.env.STRIPE_LAUNCH_CATALOG_JSON,
     FEATURE_STRIPE_TAX: process.env.FEATURE_STRIPE_TAX,
     STRIPE_PRICE_SENSEI_MONTHLY: process.env.STRIPE_PRICE_SENSEI_MONTHLY,
+    STRIPE_PRICE_BOX_ACCESS_PASS_YEARLY: process.env.STRIPE_PRICE_BOX_ACCESS_PASS_YEARLY,
     PUBLIC_SITE_URL: process.env.PUBLIC_SITE_URL,
     AGE_VERIFICATION_SIGNING_SECRET: process.env.AGE_VERIFICATION_SIGNING_SECRET,
     MEMBERSHIP_ENTITLEMENT_SIGNING_SECRET: process.env.MEMBERSHIP_ENTITLEMENT_SIGNING_SECRET,
@@ -2688,6 +2689,47 @@ test("membership checkout rejects client-supplied Stripe price ids when the serv
     assert.equal(response.statusCode, 409);
     assert.equal(JSON.parse(response.body).priceEnvKey, "STRIPE_PRICE_SENSEI_MONTHLY");
     assert.equal(mock.checkoutSessionsCreated.length, 0);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("friends and family membership checkout grants one-year Box Access Pass trial metadata", async () => {
+  const mock = installStripeMock();
+  try {
+    process.env.STRIPE_SECRET_KEY = "sk_test_123";
+    process.env.STRIPE_PRICE_BOX_ACCESS_PASS_YEARLY = "price_box_access_yearly";
+
+    const response = await handler({
+      routeKey: "POST /commerce/membership-session",
+      rawPath: "/commerce/membership-session",
+      body: JSON.stringify({
+        tierName: "Box Access Pass",
+        billingPeriod: "yearly",
+        customer: { email: "friend@example.com", fullName: "Family Friend" },
+        membershipOffer: {
+          code: "friends-family-box-pass",
+          source: "friends-family-page",
+          campaign: "friends-family-1-year-box-pass",
+          landingPath: "/friends-family",
+          access: "box_access_pass_1_year",
+          trialPeriodDays: 365,
+        },
+      }),
+      requestContext: { requestId: "req-membership-friends-family", http: { method: "POST" } },
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(mock.checkoutSessionsCreated.length, 1);
+    assert.deepEqual(mock.checkoutSessionsCreated[0].line_items, [{ price: "price_box_access_yearly", quantity: 1 }]);
+    assert.equal((mock.checkoutSessionsCreated[0].metadata as Record<string, string>).tier_key, "box-access-pass");
+    assert.equal((mock.checkoutSessionsCreated[0].metadata as Record<string, string>).billing_period, "yearly");
+    assert.equal((mock.checkoutSessionsCreated[0].metadata as Record<string, string>).membership_offer_source, "friends-family-page");
+    assert.equal((mock.checkoutSessionsCreated[0].metadata as Record<string, string>).membership_offer_access, "box_access_pass_1_year");
+    assert.equal(
+      (mock.checkoutSessionsCreated[0].subscription_data as { trial_period_days?: number }).trial_period_days,
+      365
+    );
   } finally {
     mock.restore();
   }

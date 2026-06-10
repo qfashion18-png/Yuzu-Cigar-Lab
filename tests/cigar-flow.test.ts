@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
@@ -99,6 +100,10 @@ test("cigar flow documents the actual daily newsroom automation target", () => {
     "Manufacturer update watchlist should include a daily cigar press-release search for story leads",
   );
   assert.ok(cigarFlowAutomation.updateScope.some((line) => line.includes("POST /news/story-drafts")));
+  assert.ok(
+    cigarFlowAutomation.updateScope.some((line) => /editorial/i.test(line) && /inline/i.test(line)),
+    "future Cigar Flow stories should keep the editorial hero and inline-image format",
+  );
   assert.equal(
     cigarFlowAutomation.updateScope.some((line) => line.includes("Refresh the first ten Cigar Flow cards")),
     false,
@@ -107,11 +112,40 @@ test("cigar flow documents the actual daily newsroom automation target", () => {
   assert.ok(workflowSource.includes('cron: "0 15 * * *"'), "GitHub workflow should match the displayed 8 AM Phoenix daily cadence");
   assert.ok(workflowSource.includes('YCC_DAILY_NEWSROOM_AUTO_PUBLISH: "true"'), "workflow should publish the reviewed newsroom story");
   assert.ok(officialCigarNewsSources.length >= 40);
-  assert.ok(cigarFlowNewsStories.some((story) => story.title.includes("Cigar Flow Update")));
+  assert.ok(cigarFlowNewsStories.some((story) => story.title.includes("May 31 Cigar Industry Highlights")));
+  assert.ok(cigarFlowNewsStories.some((story) => /Oliva Serie V Maduro/.test(story.bodyMarkdown)));
+  assert.ok(cigarFlowNewsStories.some((story) => /Perdomo 20th Anniversary Series/.test(story.bodyMarkdown)));
+  assert.ok(cigarFlowNewsStories.some((story) => /Wise Man Maduro/.test(story.bodyMarkdown)));
   assert.ok(cigarFlowNewsStories.every((story) => (story.images?.length ?? 0) >= 3));
-  assert.ok(cigarFlowNewsStories.every((story) => story.images?.every((image) => /^https?:\/\//.test(image.image) && /^https?:\/\//.test(image.sourceUrl ?? ""))));
+  assert.ok(
+    cigarFlowNewsStories.every((story) =>
+      story.images?.every((image) => /^(https?:\/\/|\/assets\/news\/)/.test(image.image) && /^https?:\/\//.test(image.sourceUrl ?? "")),
+    ),
+  );
   assert.ok(cigarFlowPageSource.includes("cigarFlowAutomation.cadence"));
   assert.ok(!cigarFlowPageSource.includes("A later scheduled job can pull"));
+});
+
+test("may 31 cigar flow story uses real researched web images", () => {
+  const story = cigarFlowNewsStories.find((candidate) => candidate.title.includes("May 31 Cigar Industry Highlights"));
+
+  assert.ok(story, "May 31 story should be available");
+  assert.equal(story.images?.length, 4);
+  assert.ok(story.images?.every((image) => image.image.startsWith("/assets/news/researched/")));
+
+  for (const image of story.images ?? []) {
+    assert.ok(existsSync(new URL(`../public${image.image}`, import.meta.url)), `${image.image} should be stored as a local static asset`);
+  }
+
+  assert.deepEqual(
+    story.images?.map((image) => image.sourceUrl),
+    [
+      "https://olivacigar.com/cigars/serie-v-maduro/",
+      "https://www.perdomocigars.com/20th-anniversary",
+      "https://foundationcigarcompany.com/the-wise-man-maduro/",
+      "https://www.cigaraficionado.com/article/highlights-from-the-pca-trade-show",
+    ],
+  );
 });
 
 test("manufacturer watchlist exposes daily cigar press-release search sources", () => {
@@ -129,6 +163,9 @@ test("daily cigar flow writer submits actual feed story images", () => {
   assert.ok(dailyCigarNewsRunSource.includes("source-aligned"), "daily writer should document source-aligned image filtering");
   assert.ok(dailyCigarNewsRunSource.includes("imagePosition"), "story images should preserve crop positioning from feed cards");
   assert.ok(dailyCigarNewsRunSource.includes("sourceUrl"), "story images should link back to their source story");
+  assert.ok(dailyCigarNewsRunSource.includes("Cigar Flow editorial format"), "daily writer should request the new editorial story format");
+  assert.ok(dailyCigarNewsRunSource.includes("image web/source-page search"), "daily writer should request researched story images");
+  assert.ok(dailyCigarNewsRunSource.includes("3-6 real source-aligned story images"), "daily writer should ask for enough images throughout the story");
   assert.equal(dailyCigarNewsRunSource.includes("images: storyImages"), false, "publish should not blindly reuse static card images");
   assert.ok(dailyCigarNewsRunSource.includes("selectSourceAlignedStoryImages"), "publish payload should use only source-aligned images");
 });

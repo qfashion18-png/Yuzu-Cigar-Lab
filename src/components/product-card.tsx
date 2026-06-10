@@ -9,6 +9,7 @@ import { ReferenceImage } from "@/components/reference-image";
 import { SavedProductButton } from "@/components/saved-product-button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardFooter } from "@/components/ui/card";
+import { buildProductImageAlt } from "@/lib/image-seo";
 import { cn } from "@/lib/utils";
 
 export type ProductCardItem = {
@@ -24,6 +25,7 @@ export type ProductCardItem = {
   tags: string[];
   boxCount?: number;
   packageLabel?: string;
+  brand?: string;
   category?: string;
   sku?: string;
   marketPrice?: number;
@@ -73,10 +75,11 @@ export function ProductCard({ product, compact = false }: ProductCardProps) {
         <Link href={productHref} className="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yuzu-gold">
           <ReferenceImage
             src={product.image}
-            alt={`${product.name} product image`}
+            alt={buildProductImageAlt(product)}
             objectPosition={product.imagePosition}
             className={cn("h-52 border-b border-yuzu-line/75", compact && "h-40")}
             imageClassName="transition duration-700 group-hover/product:scale-[1.04]"
+            sizes="(max-width: 768px) 100vw, (max-width: 1280px) 50vw, 25vw"
           />
           <span className="sr-only">View details for {product.name}</span>
         </Link>

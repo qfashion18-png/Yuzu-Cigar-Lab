@@ -63,7 +63,33 @@ const requestedCigarRestockSkus = [
   "572745",
 ];
 
-const pricedRequestedCigarRestockSkus = ["572590"];
+const pricedRequestedCigarRestockSkus = [
+  "777146",
+  "777147",
+  "777148",
+  "777149",
+  "572590",
+  "113887",
+  "113886",
+  "572685",
+  "572686",
+  "572409",
+  "572410",
+  "572356",
+  "777199",
+  "572493",
+  "572429",
+  "572749",
+  "572753",
+  "777229",
+  "572305",
+  "777230",
+  "777242",
+  "777243",
+  "777141",
+  "572744",
+  "572745",
+];
 
 const pricePendingRequestedCigarRestockSkus = requestedCigarRestockSkus.filter(
   (sku) => !pricedRequestedCigarRestockSkus.includes(sku)
@@ -156,6 +182,57 @@ const requestedNewCigarCatalogItems = [
   },
 ];
 
+const requestedTabernacleCigarItems = [
+  {
+    sku: "777298",
+    slug: "the-tabernacle-broadleaf-robusto-24-bx",
+    memberPrice: 240,
+    nonMemberPrice: 300.95,
+    image: "/assets/inventory/cigars/the-tabernacle-broadleaf-robusto-24-bx.png",
+    vitola: "Robusto",
+    length: '5"',
+    gauge: "50",
+    wrapper: "CT Broadleaf",
+    strength: "Full",
+  },
+  {
+    sku: "777299",
+    slug: "the-tabernacle-broadleaf-toro-24-bx",
+    memberPrice: 250,
+    nonMemberPrice: 324.95,
+    image: "/assets/inventory/cigars/the-tabernacle-broadleaf-toro-24-bx.png",
+    vitola: "Toro",
+    length: '6"',
+    gauge: "52",
+    wrapper: "CT Broadleaf",
+    strength: "Full",
+  },
+  {
+    sku: "777300",
+    slug: "the-tabernacle-ct-142-robusto-24-bx",
+    memberPrice: 240,
+    nonMemberPrice: 300.95,
+    image: "/assets/inventory/cigars/the-tabernacle-ct-142-robusto-24-bx.png",
+    vitola: "Robusto",
+    length: '5"',
+    gauge: "50",
+    wrapper: "Havana Seed CT No. 142",
+    strength: "Medium",
+  },
+  {
+    sku: "777301",
+    slug: "the-tabernacle-ct-142-toro-24-bx",
+    memberPrice: 250,
+    nonMemberPrice: 324.95,
+    image: "/assets/inventory/cigars/the-tabernacle-ct-142-toro-24-bx.png",
+    vitola: "Toro",
+    length: '6"',
+    gauge: "52",
+    wrapper: "Havana Seed CT No. 142",
+    strength: "Medium",
+  },
+];
+
 const removedInventorySlug = "cohiba-riviera-box-press-toro-20-bx";
 const removedInventorySku = "572603";
 
@@ -195,6 +272,23 @@ function readJpegSize(assetPath: string) {
   }
 
   throw new Error(`${assetPath} is missing JPEG dimensions`);
+}
+
+function readPngSize(assetPath: string) {
+  const buffer = readFileSync(new URL(`../public${assetPath}`, import.meta.url));
+
+  assert.deepEqual(
+    [...buffer.subarray(0, 8)],
+    [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+    `${assetPath} should be a PNG`
+  );
+
+  return {
+    bytes: buffer.length,
+    colorType: buffer[25],
+    height: buffer.readUInt32BE(20),
+    width: buffer.readUInt32BE(16),
+  };
 }
 
 test("featured luxury products expose unique static detail slugs", () => {
@@ -267,7 +361,7 @@ test("shop catalog is generated from imported inventory and curated SKU image UR
   const acidTwenty = catalogProducts.find((product) => product.sku === "39919");
   const vectorLighter = catalogProducts.find((product) => product.sku === "31683");
 
-  assert.equal(catalogProducts.length, 928);
+  assert.equal(catalogProducts.length, 956);
   assert.ok(acidTwenty);
   assert.equal(acidTwenty.name, "ACID 20 TWENTY YEAR 24/BX");
   assert.equal(acidTwenty.storeHref, "/shop/acid-20-twenty-year-24-bx/");
@@ -301,10 +395,109 @@ test("catalog SKUs with missing source images use local fallback assets", () => 
   }
 });
 
+test("shop catalog includes requested Tabernacle 24-count box additions", () => {
+  const productsBySku = new Map(catalogProducts.map((product) => [product.sku, product]));
+
+  for (const expected of requestedTabernacleCigarItems) {
+    const product = productsBySku.get(expected.sku);
+
+    assert.ok(product, `expected SKU ${expected.sku} to be published`);
+    assert.equal(product.name.startsWith("THE TABERNACLE"), true);
+    assert.equal(product.slug, expected.slug);
+    assert.equal(product.brand, "The Tabernacle");
+    assert.equal(product.category, "Premium Cigars ($150-$300)");
+    assert.equal(product.price, expected.memberPrice);
+    assert.equal(product.memberPrice, expected.memberPrice);
+    assert.equal(product.marketPrice, expected.nonMemberPrice);
+    assert.equal(product.nonMemberPrice, expected.nonMemberPrice);
+    assert.equal(importedMarketPricesBySku[expected.sku], expected.nonMemberPrice);
+    assert.equal(product.packageLabel, "Box of 24");
+    assert.equal(product.packageCount, 24);
+    assert.equal(product.availability, "In stock");
+    assert.equal(product.image, expected.image);
+    assert.equal(product.wrapper, expected.wrapper);
+    assert.equal(product.vitola, expected.vitola);
+    assert.equal(product.length, expected.length);
+    assert.equal(product.gauge, expected.gauge);
+    assert.equal(product.strength, expected.strength);
+    assert.equal(product.origin, "Nicaragua");
+    assert.equal(product.binder, "San Andres Mexican");
+    assert.equal(product.filler, "Esteli / Jalapa / Jamastran");
+    assert.match(product.reviewProfile?.summary ?? "", /The Tabernacle/i);
+    assert.ok(importedProductDescriptions[expected.slug].length > 120, `${expected.slug} should expose a shopper description`);
+    assert.equal(getStorefrontProductBySlug(expected.slug)?.sku, expected.sku);
+  }
+});
+
+test("requested Tabernacle cigar images are clean local PNG product renders", () => {
+  for (const expected of requestedTabernacleCigarItems) {
+    const image = readPngSize(expected.image);
+
+    assert.equal(getCatalogImageUrl(expected.sku), expected.image);
+    assert.ok(image.width >= 70, `${expected.sku} image width`);
+    assert.ok(image.height >= 470, `${expected.sku} image height`);
+    assert.equal(image.colorType, 6, `${expected.sku} should preserve a transparent alpha channel`);
+    assert.ok(image.bytes >= 50000, `${expected.sku} image should retain enough product detail`);
+  }
+});
+
 test("shop catalog includes requested cigar restock additions only after public market pricing exists", () => {
-  const expectedPrices = new Map(
+  const expectedMemberPrices = new Map(
     Object.entries({
+      "113886": 145,
+      "113887": 122,
       "572590": 127,
+      "572305": 107,
+      "572356": 146,
+      "572409": 145,
+      "572410": 150,
+      "572429": 168,
+      "572493": 156,
+      "572685": 155,
+      "572686": 170,
+      "572744": 128,
+      "572745": 137,
+      "572749": 180,
+      "572753": 160,
+      "777141": 87,
+      "777146": 124,
+      "777147": 143,
+      "777148": 163,
+      "777149": 176,
+      "777199": 132,
+      "777229": 107,
+      "777230": 107,
+      "777242": 130,
+      "777243": 144,
+    })
+  );
+  const expectedMarketPrices = new Map(
+    Object.entries({
+      "113886": 155.95,
+      "113887": 161.95,
+      "572590": 127,
+      "572305": 134.99,
+      "572356": 171.99,
+      "572409": 172.99,
+      "572410": 178.99,
+      "572429": 208.95,
+      "572493": 208.95,
+      "572685": 164.95,
+      "572686": 187.95,
+      "572744": 168.6,
+      "572745": 168.6,
+      "572749": 229.5,
+      "572753": 192.99,
+      "777141": 111.99,
+      "777146": 180,
+      "777147": 210,
+      "777148": 240,
+      "777149": 260,
+      "777199": 152.99,
+      "777229": 139.99,
+      "777230": 134.99,
+      "777242": 168.99,
+      "777243": 191.99,
     })
   );
   const productsBySku = new Map(catalogProducts.map((product) => [product.sku, product]));
@@ -313,9 +506,14 @@ test("shop catalog includes requested cigar restock additions only after public 
     const product = productsBySku.get(sku);
 
     assert.ok(product, `expected SKU ${sku} to be added to the shop catalog`);
-    assert.equal(product.price, expectedPrices.get(sku));
-    assert.equal(product.nonMemberPrice, expectedPrices.get(sku));
-    assert.equal(product.memberPrice, expectedPrices.get(sku));
+    assert.equal(product.price, expectedMemberPrices.get(sku));
+    assert.equal(product.memberPrice, expectedMemberPrices.get(sku));
+    assert.equal(product.marketPrice, expectedMarketPrices.get(sku));
+    assert.equal(product.nonMemberPrice, expectedMarketPrices.get(sku));
+    assert.equal(importedMarketPricesBySku[sku], expectedMarketPrices.get(sku));
+    if (sku !== "572590") {
+      assert.ok(product.nonMemberPrice > product.memberPrice, `${sku} public pricing should preserve the member advantage`);
+    }
     assert.notEqual(product.image, "/assets/gift-box.png", `${sku} should use a researched product image`);
     assert.ok(product.description.length > 120, `${sku} should expose a shopper-facing description`);
     assert.ok(product.vitola, `${sku} should include vitola details`);
@@ -757,7 +955,7 @@ test("catalog products expose sourced review profiles for the 50 percent coverag
   const expectedCoveredCounts = new Map([
     ["Gurkha", 28],
     ["Montecristo", 27],
-    ["My Father", 27],
+    ["My Father", 31],
     ["Factory", 22],
   ]);
 
@@ -800,7 +998,7 @@ test("catalog products keep placeholder review coverage out of Ratings & Reviews
   const cigarProducts = catalogProducts.filter(isCigarCatalogProduct);
   const unsourcedCigarProducts = cigarProducts.filter((product) => !product.expertReview && !product.reviewProfile);
 
-  assert.equal(cigarProducts.length, 879);
+  assert.equal(cigarProducts.length, 907);
   assert.equal(unsourcedCigarProducts.length, 0);
   assert.ok(unsourcedCigarProducts.every((product) => !/review-search profile|community-review profile|review-discovery|brand\/line coverage/i.test(product.reviewProfile?.summary ?? "")));
 });
@@ -809,7 +1007,7 @@ test("all cigar products expose sourced Ratings & Reviews without internal audit
   const cigarProducts = catalogProducts.filter(isCigarCatalogProduct);
   const unsourcedCigarProducts = cigarProducts.filter((product) => !product.expertReview && !product.reviewProfile);
 
-  assert.equal(cigarProducts.length, 879);
+  assert.equal(cigarProducts.length, 907);
   assert.equal(unsourcedCigarProducts.length, 0);
 
   for (const product of cigarProducts) {

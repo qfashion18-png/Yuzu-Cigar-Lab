@@ -41,6 +41,7 @@ yarn-error.log*
 .kiro/
 .playwright-cli/
 .waveform-cache/
+.superpowers/
 
 # env files (can opt-in for committing if needed)
 .env*

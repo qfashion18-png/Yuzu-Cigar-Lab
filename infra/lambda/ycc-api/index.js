@@ -1567,6 +1567,10 @@ async function handleCommerceMembershipSession(event, requestId) {
 
   const stripe = createStripeClient(commerceEnv);
   const statusToken = createCheckoutStatusToken();
+  const membershipOffer = resolveMembershipCheckoutOffer(body.value.membershipOffer, {
+    tierKey,
+    billingPeriod,
+  });
   const session = await createMembershipCheckoutSession(stripe, {
     tierKey,
     billingPeriod,
@@ -1576,12 +1580,37 @@ async function handleCommerceMembershipSession(event, requestId) {
       ...body.value.customer,
       email: customerEmail,
     },
+    membershipOffer,
   }, commerceEnv);
 
   return json(200, requestId, {
     id: session.id,
     url: session.url,
   });
+}
+
+function resolveMembershipCheckoutOffer(value, context = {}) {
+  const offer = value && typeof value === "object" ? value : {};
+  const code = sanitizeText(offer.code || offer.offerCode, 80).toLowerCase();
+  const access = sanitizeText(offer.access, 80).toLowerCase();
+  const isFriendsFamilyBoxPass =
+    code === "friends-family-box-pass" &&
+    access === "box_access_pass_1_year" &&
+    context.tierKey === "box-access-pass" &&
+    context.billingPeriod === "yearly";
+
+  if (!isFriendsFamilyBoxPass) {
+    return null;
+  }
+
+  return {
+    code,
+    source: "friends-family-page",
+    campaign: "friends-family-1-year-box-pass",
+    landingPath: "/friends-family",
+    access,
+    trialPeriodDays: 365,
+  };
 }
 
 async function handleStripeWebhook(event, requestId) {

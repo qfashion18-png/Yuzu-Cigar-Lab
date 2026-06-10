@@ -252,7 +252,7 @@ function JournalArticleCard({
 function PopularRead({ read }: { read: PopularRead }) {
   return (
     <article className="grid grid-cols-[82px_1fr] gap-4 border-b border-yuzu-line/60 py-4 first:pt-0 last:border-b-0 last:pb-0">
-      <ReferenceImage src={read.image} alt="" className="h-16 border border-yuzu-line/70" imageClassName="object-contain p-1" />
+      <ReferenceImage src={read.image} alt={`${read.title} education article thumbnail`} className="h-16 border border-yuzu-line/70" imageClassName="object-contain p-1" sizes="82px" />
       <div className="min-w-0">
         <h3 className="text-sm font-semibold leading-5 text-yuzu-cream">{read.title}</h3>
         <ArticleMeta category={read.category} minutes={read.minutes} compact />

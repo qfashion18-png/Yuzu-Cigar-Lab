@@ -79,15 +79,15 @@ export default function ShopPage() {
         <section className="grid overflow-hidden border border-yuzu-line/80 bg-yuzu-panel lg:grid-cols-[1fr_0.9fr]">
           <div className="flex min-w-0 flex-col justify-center gap-6 p-8 lg:p-10">
             <SectionHeading
-              kicker="Curated. Exclusive. Delivered monthly."
-              title="Exceptional Cigars. Curated for You."
-              copy="Join Yuzu Cigar Club and receive hand-selected premium cigar boxes, member pricing, and early access to limited drops."
+              kicker="Curated. Exclusive. Selected monthly."
+              title="Exceptional cigars, chosen from the monthly list."
+              copy="Join Yuzu Cigar Club to choose monthly cigars from a preselected premium list, unlock member pricing, and get early reminders for limited drops."
             />
             <Button className="h-12 w-fit bg-yuzu-gold px-8 text-yuzu-ink hover:bg-yuzu-gold-light" render={<Link href="/membership" />}>
               Explore Membership
             </Button>
           </div>
-          <ReferenceImage src="/assets/shop-hero.png" alt="Premium cigar box in shop hero" className="min-h-80" objectPosition="center" priority />
+          <ReferenceImage src="/assets/shop-hero.png" alt="Premium cigar boxes arranged for Yuzu shop browsing" className="min-h-80" objectPosition="center" priority />
         </section>
 
         <MemberViewBanner context="shop" />
@@ -141,9 +141,9 @@ export default function ShopPage() {
           </CardHeader>
           <CardContent className="grid gap-5">
             {[
-              ["Curated Monthly Boxes", "Hand-selected by experts, delivered to your door."],
+              ["Monthly Selection List", "Choose from the preselected premium cigar list when the window opens."],
               ["Member-Cost Boxes", "Every member can access direct member-cost box pricing."],
-              ["Early Access", "Be first to shop new releases."],
+              ["First-Come Windows", "Set reminders so top monthly picks and limited drops do not pass you by."],
               ["Store Perks", "5%, 10%, or 15% off eligible non-box products by tier."],
             ].map(([title, text]) => (
               <div key={title} className="flex gap-3">

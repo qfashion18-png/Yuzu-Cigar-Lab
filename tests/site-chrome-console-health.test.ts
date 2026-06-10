@@ -23,8 +23,10 @@ test("site chrome keeps always-visible motion styles hydration-stable", () => {
   assert.equal(motionPrimitivesSource.includes("initial={shouldReduceMotion ? false : { opacity: 0 }}"), false);
 });
 
-test("priority reference images request eager loading for LCP candidates", () => {
-  assert.ok(referenceImageSource.includes('loading={priority ? "eager" : "lazy"}'));
+test("priority reference images use Next 16 preload semantics for LCP candidates", () => {
+  assert.ok(referenceImageSource.includes("preload={priority}"));
+  assert.ok(referenceImageSource.includes('loading={priority ? undefined : "lazy"}'));
+  assert.equal(referenceImageSource.includes("priority={priority}"), false);
 });
 
 test("floating concierge plays synthesized speech through CSP-allowed blob URLs", () => {

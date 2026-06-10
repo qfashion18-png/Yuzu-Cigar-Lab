@@ -33,13 +33,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { featuredLuxuryProducts } from "@/lib/catalog";
 import { cigarFlowItems, cigarFlowStats } from "@/lib/cigar-flow";
 import { events, heroProof, humidorFeatureList, tiers } from "@/lib/data";
+import { buildEditorialImageAlt } from "@/lib/image-seo";
 import { buildOrganizationJsonLd, buildPageMetadata, buildWebsiteJsonLd, jsonLdScriptProps } from "@/lib/seo";
 
 export const metadata: Metadata = {
   ...buildPageMetadata({
     title: "Yuzu Cigar Club | Premium Cigar Boxes, Memberships, Digital Humidor",
     description:
-      "Join Yuzu Cigar Club for premium cigar boxes, curated memberships, member pricing, private allocations, adult-compliant checkout, and a digital humidor.",
+      "Join Yuzu Cigar Club for premium cigar boxes, curated monthly selection windows, member pricing, private allocations, adult-compliant checkout, and a digital humidor.",
     path: "/",
     image: "/assets/hero-boxes.png",
     imageAlt: "Yuzu Cigar Club cigar boxes and membership experience",
@@ -61,12 +62,12 @@ const memberPlatformHighlights = [
   },
   {
     title: "Member pricing",
-    copy: "Your active tier unlocks the right box access, discounts, and monthly cigar benefits automatically.",
+    copy: "Your active tier unlocks the right box access, discounts, and monthly selection-list benefits automatically.",
     icon: Crown,
   },
   {
     title: "Private allocations",
-    copy: "Limited drops, club boxes, and reservation windows are clearly tied to your membership level.",
+    copy: "Monthly cigar windows, limited drops, and reservation rules are clearly tied to your membership level.",
     icon: TicketCheck,
   },
   {
@@ -81,7 +82,7 @@ const memberPlatformHighlights = [
   },
   {
     title: "Helpful updates",
-    copy: "Order, shipment, club, and reminder messages keep you informed without chasing support.",
+    copy: "Selection, order, shipment, club, and reminder messages keep you informed without chasing support.",
     icon: BellRing,
   },
 ];
@@ -211,7 +212,7 @@ export default function Home() {
             <div className="relative min-h-[25rem] border-b border-yuzu-line bg-yuzu-ink lg:min-h-[34rem] lg:border-b-0 lg:border-r">
               <ReferenceImage
                 src={featuredCigarFlowItem.image}
-                alt={`${featuredCigarFlowItem.title} Cigar Flow preview`}
+                alt={buildEditorialImageAlt({ title: featuredCigarFlowItem.title, sourceName: featuredCigarFlowItem.sourceName })}
                 className="absolute inset-0"
                 imageClassName="opacity-92"
                 objectPosition={featuredCigarFlowItem.imagePosition}
@@ -255,7 +256,7 @@ export default function Home() {
                       >
                         <ReferenceImage
                           src={item.image}
-                          alt={`${item.title} feed thumbnail`}
+                          alt={buildEditorialImageAlt({ title: item.title, sourceName: item.sourceName })}
                           className="h-24 sm:h-full"
                           imageClassName="transition duration-700 group-hover:scale-[1.05]"
                           objectPosition={item.imagePosition}
@@ -375,7 +376,7 @@ export default function Home() {
                 Everything your membership unlocks, in one place.
               </h2>
               <p className="mt-4 max-w-2xl text-base leading-7 text-yuzu-muted">
-                Shop member-priced boxes, reserve limited drops, track your orders, and keep every purchase connected to your digital humidor.
+                Shop member-priced boxes, choose monthly cigars from the online list, reserve limited drops, track your orders, and keep every purchase connected to your digital humidor.
               </p>
               <div className="mt-8 grid gap-2 sm:grid-cols-2">
                 {tiers.map((tier) => (

@@ -6,6 +6,7 @@ import type { Metadata } from "next";
 import { generateMetadata as generateEventMetadata } from "../src/app/events/[slug]/page";
 import { metadata as eventsMetadata } from "../src/app/events/page";
 import { metadata as membershipMetadata } from "../src/app/membership/page";
+import { metadata as friendsFamilyMetadata } from "../src/app/friends-family/page";
 import { generateMetadata as generateProductMetadata } from "../src/app/shop/[slug]/page";
 import { metadata as shopMetadata } from "../src/app/shop/page";
 import robots from "../src/app/robots";
@@ -20,6 +21,7 @@ import { metadata as termsMetadata } from "../src/app/terms/page";
 
 const homePageSource = readFileSync(new URL("../src/app/page.tsx", import.meta.url), "utf8");
 const productPageSource = readFileSync(new URL("../src/app/shop/[slug]/page.tsx", import.meta.url), "utf8");
+const productCardSource = readFileSync(new URL("../src/components/product-card.tsx", import.meta.url), "utf8");
 const eventPageSource = readFileSync(new URL("../src/app/events/[slug]/page.tsx", import.meta.url), "utf8");
 const rootLayoutSource = readFileSync(new URL("../src/app/layout.tsx", import.meta.url), "utf8");
 const privateRouteMetadataSources = [
@@ -78,6 +80,17 @@ test("sitemap canonical URLs match trailing-slash static export routes", () => {
   );
 });
 
+test("public sitemap entries expose route images for Google image discovery", () => {
+  const entries = sitemap();
+  const homeEntry = entries.find((entry) => entry.url === `${siteUrl}/`);
+  const shopEntry = entries.find((entry) => entry.url === `${siteUrl}/shop/`);
+  const membershipEntry = entries.find((entry) => entry.url === `${siteUrl}/membership/`);
+
+  assert.deepEqual(homeEntry?.images, [`${siteUrl}/assets/hero-boxes.png`]);
+  assert.deepEqual(shopEntry?.images, [`${siteUrl}/assets/shop-hero.png`]);
+  assert.deepEqual(membershipEntry?.images, [`${siteUrl}/assets/membership-boxes.png`]);
+});
+
 test("generated detail metadata carries complete canonical social cards", async () => {
   const product = storefrontProducts.find((item) => item.slug === "acid-20-twenty-year-24-bx");
   const event = events.find((item) => item.slug === "aire-by-puro-open-event");
@@ -112,6 +125,26 @@ test("product detail pages expose canonical metadata and ecommerce JSON-LD", () 
   assert.equal(typeof productJsonLd.offers?.availability, "string");
 });
 
+test("product image metadata and rendered product surfaces use descriptive product alt text", async () => {
+  const product = storefrontProducts.find((item) => item.slug === "acid-20-twenty-year-24-bx");
+
+  assert.ok(product);
+
+  const metadata = await generateProductMetadata({ params: Promise.resolve({ slug: product.slug }) });
+  const openGraph = metadata.openGraph as {
+    images?: Array<{ alt?: string }>;
+  };
+  const [image] = openGraph.images ?? [];
+
+  assert.ok(image?.alt);
+  assert.match(image.alt, /ACID 20 TWENTY YEAR 24\/BX/);
+  assert.match(image.alt, /Box of 24/);
+  assert.match(image.alt, /Mexican San Andres Maduro wrapper/);
+  assert.doesNotMatch(image.alt, /\bproduct image\b|\bpremium cigar box$/i);
+  assert.ok(productPageSource.includes("buildProductImageAlt(product"), "product detail image alt should use the shared image SEO helper");
+  assert.ok(productCardSource.includes("buildProductImageAlt(product"), "product cards should use the shared image SEO helper");
+});
+
 test("public structured data covers brand, site search context, products, events, and breadcrumbs", () => {
   assert.ok(homePageSource.includes("buildOrganizationJsonLd"), "home page should expose Organization JSON-LD");
   assert.ok(homePageSource.includes("buildWebsiteJsonLd"), "home page should expose WebSite JSON-LD");
@@ -140,6 +173,20 @@ test("private commerce, account, and admin routes opt out of indexing at metadat
   }
 });
 
+test("friends and family invite route is hidden from public discovery", () => {
+  const value = robots();
+  const urls = sitemap().map((entry) => entry.url);
+  const rules = Array.isArray(value.rules) ? value.rules : [value.rules];
+  const publicRule = rules.find((rule) => rule.userAgent === "*");
+  const robotsMetadata = friendsFamilyMetadata.robots as { index?: boolean; follow?: boolean };
+
+  assert.equal(robotsMetadata.index, false);
+  assert.equal(robotsMetadata.follow, false);
+  assert.equal(friendsFamilyMetadata.alternates?.canonical, "/friends-family/");
+  assert.equal(urls.includes(`${siteUrl}/friends-family/`), false, "hidden invite page should not be listed in sitemap");
+  assert.ok(publicRule?.disallow?.includes("/friends-family/"), "robots should disallow the hidden invite route");
+});
+
 test("robots allows public catalog indexing while excluding internal operations pages", () => {
   const value = robots();
   const urls = sitemap().map((entry) => entry.url);
@@ -148,7 +195,7 @@ test("robots allows public catalog indexing while excluding internal operations 
 
   assert.ok(publicRule);
   assert.deepEqual(publicRule.allow, "/");
-  assert.deepEqual(publicRule.disallow, ["/admin/", "/account/", "/auth/", "/cart/", "/checkout/"]);
+  assert.deepEqual(publicRule.disallow, ["/admin/", "/account/", "/auth/", "/cart/", "/checkout/", "/friends-family/"]);
   assert.equal(urls.includes(`${siteUrl}/account/`), false, "sitemap should not list account pages blocked by robots");
   assert.equal(urls.includes(`${siteUrl}/cart/`), false, "sitemap should not list cart pages blocked by robots");
   assert.equal(urls.includes(`${siteUrl}/checkout/`), false, "sitemap should not list checkout pages blocked by robots");

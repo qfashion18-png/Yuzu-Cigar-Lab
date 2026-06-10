@@ -22,6 +22,21 @@ export type SeoContentSection = {
   bullets: string[];
 };
 
+export type SeoVisualLesson = {
+  label: string;
+  image: string;
+  imageAlt: string;
+  imagePosition?: string;
+  copy: string;
+};
+
+export type SeoResearchNote = {
+  label: string;
+  takeaway: string;
+  sourceLabel: string;
+  sourceUrl: string;
+};
+
 export type SeoContentPage = {
   slug: string;
   path: string;
@@ -44,6 +59,8 @@ export type SeoContentPage = {
   sections: SeoContentSection[];
   faqs: SeoFaq[];
   internalLinks: SeoInternalLink[];
+  visualLessons?: SeoVisualLesson[];
+  researchNotes?: SeoResearchNote[];
   productCategories: string[];
   updatedAt: string;
 };
@@ -54,7 +71,57 @@ export type CategorySeoPage = SeoContentPage & {
   shopFilterHref: string;
 };
 
-const contentUpdatedAt = "2026-05-28T00:00:00.000Z";
+const contentUpdatedAt = "2026-06-08T00:00:00.000Z";
+
+const guideResearchSources = {
+  fdaTobacco21: {
+    sourceLabel: "FDA Tobacco 21",
+    sourceUrl: "https://www.fda.gov/tobacco-products/retail-sales-tobacco-products/tobacco-21",
+  },
+  wrapperColors: {
+    sourceLabel: "Tobacconist University wrapper color FAQ",
+    sourceUrl: "https://tobacconistuniversity.org/faq_cigar_wrapper_color.php",
+  },
+  flavorChart: {
+    sourceLabel: "Tobacconist University flavor chart",
+    sourceUrl: "https://www.tobacconistuniversity.org/pdf/flavorchart.pdf",
+  },
+  storageRh: {
+    sourceLabel: "Boveda cigar RH guide",
+    sourceUrl: "https://bovedainc.com/question/what-rh-is-right-for-me/",
+  },
+  cuttingLighting: {
+    sourceLabel: "Cigar Aficionado cutting and lighting guide",
+    sourceUrl: "https://www.cigaraficionado.com/article/cutting-and-lighting-8090",
+  },
+  blendAnatomy: {
+    sourceLabel: "Cigar Aficionado blend anatomy",
+    sourceUrl: "https://www.cigaraficionado.com/article/what-s-the-most-important-part-of-a-cigar",
+  },
+  primingStrength: {
+    sourceLabel: "Cigar Aficionado tobacco priming report",
+    sourceUrl: "https://www.cigaraficionado.com/article/drought-in-dominican-republic-means-smaller-but-better-tobacco-harvest",
+  },
+  strengthBodyMisconceptions: {
+    sourceLabel: "Cigar Advisor strength and body guide",
+    sourceUrl: "https://www.famous-smoke.com/cigaradvisor/cigars-101/difference-between-cigar-strength-and-body",
+  },
+  rumPairings: {
+    sourceLabel: "Cigar Aficionado rum pairing tasting",
+    sourceUrl: "https://www.cigaraficionado.com/index.php/article/the-pairings-rum-meets-cigars",
+  },
+  bourbonPairings: {
+    sourceLabel: "Cigar Aficionado bourbon pairing tasting",
+    sourceUrl: "https://www.cigaraficionado.com/index.php/article/bonding-with-bourbon",
+  },
+} as const;
+
+const adultOnlyResearchNote: SeoResearchNote = {
+  label: "Adult-only cigar education",
+  takeaway:
+    "The guide keeps cigar education and shopping paths clearly for adults 21+, matching federal Tobacco 21 rules that cover cigars and other tobacco products.",
+  ...guideResearchSources.fdaTobacco21,
+};
 
 export const seoLandingPages: SeoContentPage[] = [
   {
@@ -63,11 +130,11 @@ export const seoLandingPages: SeoContentPage[] = [
     metadataTitle: "Premium Cigar Subscription and Box Membership | Yuzu Cigar Club",
     title: "Premium Cigar Subscription",
     description:
-      "Compare Yuzu Cigar Club membership options for adults 21+ who want curated monthly cigars, member-cost box access, digital humidor tools, and private drop alerts.",
+      "Compare Yuzu Cigar Club membership options for adults 21+ who want curated monthly cigar selection windows, member-cost box access, digital humidor tools, and private drop alerts.",
     kicker: "Membership guide",
     heroTitle: "A cigar subscription built around real box buying.",
     heroCopy:
-      "Yuzu is designed for adults who want more than a random sampler. Membership connects curated monthly cigars, direct member-cost box access, private allocations, and a digital humidor that keeps every purchase organized.",
+      "Yuzu is designed for adults who want more than a random sampler. Membership connects preselected monthly cigar lists, direct member-cost box access, private allocations, and a digital humidor that keeps every purchase organized.",
     image: "/assets/membership-boxes.png",
     imageAlt: "Yuzu Cigar Club membership boxes prepared for adult members",
     imagePosition: "54% 48%",
@@ -76,7 +143,7 @@ export const seoLandingPages: SeoContentPage[] = [
     primaryCta: {
       label: "Compare Memberships",
       href: "/membership/",
-      description: "Review member tiers, monthly cigar benefits, and box access.",
+      description: "Review member tiers, monthly selection windows, and box access.",
     },
     secondaryCta: {
       label: "Shop Member Boxes",
@@ -88,8 +155,8 @@ export const seoLandingPages: SeoContentPage[] = [
       {
         heading: "What makes the Yuzu model different",
         body:
-          "Most cigar clubs focus on one monthly delivery. Yuzu treats membership as an operating system for a cigar collection: monthly selections, box buying, private drops, adult-signature shipping, and notes that stay tied to your humidor.",
-        bullets: ["Curated cigars by tier", "Member-cost box access", "Digital humidor history", "Adult-compliant checkout"],
+          "Most cigar clubs focus on one fixed monthly delivery. Yuzu treats membership as an operating system for a cigar collection: preselected monthly lists, first-come selection windows, box buying, private drops, adult-signature shipping, and notes that stay tied to your humidor.",
+        bullets: ["Preselected monthly lists", "First-come selection windows", "Digital humidor history", "Adult-compliant checkout"],
       },
       {
         heading: "Who should choose a cigar subscription",
@@ -108,7 +175,7 @@ export const seoLandingPages: SeoContentPage[] = [
       {
         question: "Is Yuzu Cigar Club a cigar subscription?",
         answer:
-          "Yes. Yuzu offers paid membership tiers with curated monthly cigar benefits, member-cost box access, private drops, and digital humidor tools for adults 21+.",
+          "Yes. Yuzu offers paid membership tiers with curated monthly cigar selection windows, member-cost box access, private drops, and digital humidor tools for adults 21+.",
       },
       {
         question: "Can members buy full boxes?",
@@ -122,7 +189,7 @@ export const seoLandingPages: SeoContentPage[] = [
       },
     ],
     internalLinks: [
-      { label: "Membership tiers", href: "/membership/", description: "Compare monthly cigars, discounts, and box access." },
+      { label: "Membership tiers", href: "/membership/", description: "Compare monthly selection windows, discounts, and box access." },
       { label: "Premium cigar boxes", href: "/shop/categories/premium-cigars-150-300/", description: "Browse premium boxes that fit many club members." },
       { label: "Limited edition cigars", href: "/limited-edition-cigars/", description: "Learn how private drops and allocations work." },
       { label: "Cigars for beginners", href: "/cigars-for-beginners/", description: "Start with strength, wrapper, and storage basics." },
@@ -360,11 +427,11 @@ export const seoLandingPages: SeoContentPage[] = [
     imageAlt: "Limited premium cigar boxes prepared for Yuzu members",
     imagePosition: "56% 52%",
     keywords: ["limited edition cigars", "rare cigars", "cigar drops", "premium cigar boxes"],
-    intent: "Collectors researching limited cigar releases, rare boxes, and private allocations.",
+    intent: "Collectors researching limited cigar releases, rare boxes, monthly selection windows, and private allocations.",
     primaryCta: {
       label: "View Member Drops",
       href: "/member-drops/",
-      description: "See member-focused allocation and drop experiences.",
+      description: "See member-focused monthly selection and drop experiences.",
     },
     secondaryCta: {
       label: "Shop Luxury Boxes",
@@ -382,8 +449,8 @@ export const seoLandingPages: SeoContentPage[] = [
       {
         heading: "Fair access matters",
         body:
-          "Private drops work best when eligibility, timing, limits, and pickup or shipping rules are clear. Yuzu connects these rules to membership tiers so collectors understand the path before the release.",
-        bullets: ["Tier-aware allocations", "Clear claim windows", "Member reminders"],
+          "Monthly selection windows and private drops work best when eligibility, timing, limits, and pickup or shipping rules are clear. Yuzu connects these rules to membership tiers so collectors understand the path before the release.",
+        bullets: ["Preselected lists", "First-come claim windows", "Member reminders"],
       },
       {
         heading: "Plan the aging window",
@@ -396,7 +463,7 @@ export const seoLandingPages: SeoContentPage[] = [
       {
         question: "How does Yuzu handle limited cigar drops?",
         answer:
-          "Yuzu uses member-focused drop pages, reminders, event context, and tier-aware allocation messaging so adult collectors can understand access before a release.",
+          "Yuzu uses member-focused drop pages, monthly selection windows, reminders, event context, and tier-aware allocation messaging so adult collectors can understand access before a release.",
       },
       {
         question: "Are limited edition cigars always worth aging?",
@@ -410,7 +477,7 @@ export const seoLandingPages: SeoContentPage[] = [
       },
     ],
     internalLinks: [
-      { label: "Member drops", href: "/member-drops/", description: "See Yuzu's private drop surface." },
+      { label: "Member drops", href: "/member-drops/", description: "See Yuzu's monthly selection and private drop surface." },
       { label: "Luxury cigars", href: "/shop/categories/luxury-cigars-300/", description: "Browse luxury box inventory." },
       { label: "Humidor guide", href: "/humidor-guide/", description: "Plan aging windows before opening rare boxes." },
       { label: "Events", href: "/events/", description: "Watch allocation nights and tasting events." },
@@ -450,6 +517,32 @@ export const seoGuides: SeoContentPage[] = [
       description: "Learn how body and strength differ from wrapper color.",
     },
     productCategories: ["Premium Cigars ($150-$300)", "Mid-Range Cigars ($50-$150)", "Oliva Cigars"],
+    visualLessons: [
+      {
+        label: "Read color as a clue",
+        image: "/assets/guides/luxury-wrapper-types.png",
+        imageAlt: "Cigar wrapper leaves and tasting notes for wrapper color education",
+        imagePosition: "60% 50%",
+        copy:
+          "Use the wrapper image to compare Claro, Natural, Colorado, and Maduro signals, then confirm the blend before assuming sweetness, body, or strength.",
+      },
+      {
+        label: "Compare lighter wrapper texture",
+        image: "/assets/product-davidoff.png",
+        imageAlt: "Cigar box with lighter wrapper cigars for Connecticut-style comparison",
+        imagePosition: "50% 52%",
+        copy:
+          "Lighter wrapper cigars often make cream, cedar, hay, and almond easier to notice, especially when the draw is slow and the palate is fresh.",
+      },
+      {
+        label: "Look past dark color",
+        image: "/assets/product-liga.png",
+        imageAlt: "Dark premium cigar box for Maduro wrapper comparison",
+        imagePosition: "50% 50%",
+        copy:
+          "A darker wrapper can bring cocoa, molasses, earth, or espresso notes, but nicotine strength still depends on binder, filler, priming, and size.",
+      },
+    ],
     sections: [
       {
         heading: "Connecticut and shade-grown wrappers",
@@ -469,6 +562,15 @@ export const seoGuides: SeoContentPage[] = [
           "Maduro and San Andres wrappers often carry cocoa, earth, molasses, espresso, and a rounder texture. Dark color does not automatically mean stronger nicotine.",
         bullets: ["Cocoa and earth", "Sweetness from fermentation", "Strength depends on the full blend"],
       },
+    ],
+    researchNotes: [
+      {
+        label: "Maduro is a color and process cue",
+        takeaway:
+          "Tobacconist University distinguishes general Maduro color from a true Maduro wrapper, where longer or hotter fermentation can create richer, earthier, sweeter flavor.",
+        ...guideResearchSources.wrapperColors,
+      },
+      adultOnlyResearchNote,
     ],
     faqs: [
       {
@@ -501,11 +603,11 @@ export const seoGuides: SeoContentPage[] = [
     metadataTitle: "Cigar Strength Guide: Body, Flavor, Nicotine | Yuzu Cigar Club",
     title: "Cigar Strength Guide",
     description:
-      "Understand cigar strength, body, and flavor intensity so you can choose mild, medium, and full cigars with better pacing and more accurate tasting notes.",
+      "Understand cigar strength, body, flavor intensity, wrapper color, priming, filler, binder, vitola, and pace so mild, medium, and full cigars are easier to compare.",
     kicker: "Strength guide",
-    heroTitle: "Strength, body, and flavor are not the same thing.",
+    heroTitle: "Cigar strength is not a wrapper-color ladder.",
     heroCopy:
-      "A cigar can be full flavored without being physically strong. This guide helps adults choose cigars by separating nicotine strength, smoke texture, and flavor intensity.",
+      "A dark wrapper can look powerful and a pale wrapper can still sit on a serious blend. Learn how nicotine impact comes from the full recipe: filler, binder, wrapper, priming, origin, fermentation, vitola, and pace.",
     image: "/assets/guides/luxury-cigar-strength.png",
     imageAlt: "Premium cigar box selected for strength education",
     imagePosition: "58% 50%",
@@ -525,41 +627,94 @@ export const seoGuides: SeoContentPage[] = [
       description: "Match drink choices to body and flavor.",
     },
     productCategories: ["Mid-Range Cigars ($50-$150)", "Premium Cigars ($150-$300)", "Sample Packs"],
+    visualLessons: [
+      {
+        label: "Blend, not ladder",
+        image: "/assets/guides/luxury-cigar-strength.png",
+        imageAlt: "Cigar strength guide table with premium cigars and tasting markers",
+        imagePosition: "58% 50%",
+        copy:
+          "Wrapper shade can point toward flavor, but the whole blend decides the final impact. Start with filler, binder, wrapper, and size before trusting color alone.",
+      },
+      {
+        label: "Read priming and filler",
+        image: "/assets/guides/luxury-guide-atelier.png",
+        imageAlt: "Premium cigar blending table with wrapper leaves for strength education",
+        imagePosition: "50% 50%",
+        copy:
+          "Higher-priming leaves such as ligero and medio tiempo usually bring more nicotine and weight, while seco and volado can shift aroma, burn, and balance.",
+      },
+      {
+        label: "Let color stay a clue",
+        image: "/assets/guides/luxury-wrapper-types.png",
+        imageAlt: "Cigar wrapper leaves and cigars arranged for wrapper strength comparison",
+        imagePosition: "50% 52%",
+        copy:
+          "Connecticut, Habano, Sumatra, Broadleaf, Maduro, and San Andres are useful style cues, not fixed rungs from mild to strong.",
+      },
+    ],
     sections: [
       {
-        heading: "Nicotine strength",
+        heading: "Strength starts in the blend",
         body:
-          "Nicotine strength is what you feel physically. A cigar may feel warming, heady, or heavy even when the flavor profile is not especially loud.",
-        bullets: ["Eat before strong cigars", "Slow the pace", "Stop if the cigar feels too heavy"],
+          "Nicotine strength is the physical effect: warming, heady, or heavy. The biggest read comes from the recipe, especially filler and binder choices, leaf priming, seed variety, growing region, fermentation, and aging. Wrapper matters, but it is one part of the formula rather than the formula itself.",
+        bullets: ["Check filler and binder", "Notice ligero or high primings", "Compare origin, age, and blend family"],
       },
       {
-        heading: "Body and texture",
+        heading: "Body and flavor are separate",
         body:
-          "Body describes how much the smoke fills the palate. Creamy, chewy, airy, dense, oily, or dry textures can appear at many strength levels.",
-        bullets: ["Creamy body can be mild", "Dense smoke can hide subtle flavors", "Vitola changes perception"],
+          "Body describes smoke weight and texture. Flavor describes what you taste: cedar, cocoa, pepper, citrus, leather, coffee, cream, earth, or sweetness. A cigar can be full-bodied and smooth, full-flavored and medium in nicotine, or visually dark without being the strongest cigar in the tray.",
+        bullets: ["Rate strength, body, and flavor separately", "Do not confuse dark with strong", "Log first third and final third"],
       },
       {
-        heading: "Flavor intensity",
+        heading: "Format and pace change the read",
         body:
-          "Flavor intensity describes how clearly notes arrive: cedar, cocoa, pepper, citrus, leather, or coffee. Full flavor does not always equal full strength.",
-        bullets: ["Track notes separately", "Compare first and final third", "Use water as a control"],
+          "Vitola, ring gauge, draw, smoke temperature, and time can change how strong a cigar feels. The final third often concentrates heat and nicotine perception. Eat first, keep water nearby, and step down in blend strength or size if the cigar starts to feel heavy.",
+        bullets: ["Compare similar sizes", "Watch the final third", "Eat first and slow the pace"],
       },
+    ],
+    researchNotes: [
+      {
+        label: "Record body, flavor, and strength separately",
+        takeaway:
+          "Tobacconist University's tasting chart separates body, flavor, and strength, which supports taking notes on palate texture, flavor clarity, and nicotine effect as different observations.",
+        ...guideResearchSources.flavorChart,
+      },
+      {
+        label: "The bunch carries much of the strength",
+        takeaway:
+          "Cigar Aficionado describes wrapper, binder, and filler as the three handmade cigar components and notes that binder and filler strongly shape overall strength, body, and flavor.",
+        ...guideResearchSources.blendAnatomy,
+      },
+      {
+        label: "High primings change nicotine impact",
+        takeaway:
+          "Cigar Aficionado reports that ligero and medio tiempo come from higher parts of the plant and tend to be stronger, thicker, and richer in nicotine because they receive more sun exposure.",
+        ...guideResearchSources.primingStrength,
+      },
+      {
+        label: "Wrapper color is not a strength verdict",
+        takeaway:
+          "Cigar Advisor calls wrapper-color-as-strength a common misconception: darker wrappers can suggest richer flavor, but the blend of tobaccos is the better strength signal.",
+        ...guideResearchSources.strengthBodyMisconceptions,
+      },
+      adultOnlyResearchNote,
     ],
     faqs: [
       {
         question: "What is the difference between full-bodied and strong?",
         answer:
-          "Full-bodied refers to smoke weight and texture. Strong usually refers to nicotine impact. A cigar can be full-bodied without feeling overpowering.",
+          "Full-bodied refers to smoke weight and texture. Strong usually refers to nicotine impact. A cigar can be full-bodied, flavorful, and smooth without being the highest-nicotine cigar in the humidor.",
       },
       {
-        question: "Should beginners avoid full cigars?",
+        question: "Are dark cigars always stronger?",
         answer:
-          "Beginners should be careful with nicotine strength, eat first, and smoke slowly. Full flavor can be fine if the cigar is balanced and paced well.",
+          "No. A dark wrapper can bring cocoa, earth, sweetness, or richer texture, but strength depends on the full blend: filler, binder, wrapper, priming, origin, age, size, and how the cigar is paced.",
       },
       {
-        question: "How do I track cigar strength?",
+        question: "How do I choose strength more accurately?",
         answer:
-          "Rate body, flavor intensity, and nicotine strength separately in your tasting notes so future purchases become easier to compare.",
+          "Use the maker's blend notes, your own anchors, and separate ratings for body, flavor intensity, and nicotine impact. Compare similar sizes and note how the cigar changes in the final third.",
       },
     ],
     internalLinks: [
@@ -600,6 +755,32 @@ export const seoGuides: SeoContentPage[] = [
       description: "Choose boxes that reward pairing practice.",
     },
     productCategories: ["Premium Cigars ($150-$300)", "Luxury Cigars ($300+)", "Montecristo Cigars"],
+    visualLessons: [
+      {
+        label: "Build a control pour",
+        image: "/assets/guides/luxury-cigar-pairings.png",
+        imageAlt: "Cigar pairing table with glasses and premium cigars",
+        imagePosition: "52% 48%",
+        copy:
+          "Start with water beside the pairing so you can tell whether coffee, bourbon, rum, or tea is revealing the cigar or covering the finish.",
+      },
+      {
+        label: "Match the room to the cigar",
+        image: "/assets/about-lounge.png",
+        imageAlt: "Cigar lounge seating arranged for guided cigar pairing",
+        imagePosition: "50% 54%",
+        copy:
+          "A quieter lounge setting makes it easier to compare first-third sweetness, mid-smoke spice, and final-third strength without rushing.",
+      },
+      {
+        label: "Use events for contrast",
+        image: "/assets/aire-by-puro-open-event.jpeg",
+        imageAlt: "Cigar event table prepared for adult tasting and pairing education",
+        imagePosition: "50% 50%",
+        copy:
+          "Guided tastings help users compare two cigars against the same drink, which is the fastest way to learn intensity and flavor bridges.",
+      },
+    ],
     sections: [
       {
         heading: "Coffee and tea",
@@ -618,6 +799,20 @@ export const seoGuides: SeoContentPage[] = [
         body:
           "Sparkling water, ginger ale, cold brew, and mineral water can make a cigar easier to read. They are useful for events, afternoon smokes, and strength comparisons.",
         bullets: ["Sparkling water resets the palate", "Ginger can lift heavy smoke", "Cold brew supports cocoa notes"],
+      },
+    ],
+    researchNotes: [
+      {
+        label: "Rum pairings change by cigar body",
+        takeaway:
+          "Cigar Aficionado paired rums against different cigar body levels and found different give-and-take effects, reinforcing intensity matching over one universal pairing rule.",
+        ...guideResearchSources.rumPairings,
+      },
+      {
+        label: "Bourbon is reliable but not automatic",
+        takeaway:
+          "Cigar Aficionado's bourbon tasting shows many friendly pairings, but the best results came from how spice, coffee, leather, cocoa, and sweetness interacted with specific cigars.",
+        ...guideResearchSources.bourbonPairings,
       },
     ],
     faqs: [
@@ -675,6 +870,32 @@ export const seoGuides: SeoContentPage[] = [
       description: "Browse storage products and accessories.",
     },
     productCategories: ["Humidors", "Premium Cigars ($150-$300)", "Butane / Fluid"],
+    visualLessons: [
+      {
+        label: "Watch trends, not panic readings",
+        image: "/assets/guides/luxury-cigar-storage.png",
+        imageAlt: "Cigar storage guide setup with humidor and premium cigar boxes",
+        imagePosition: "50% 50%",
+        copy:
+          "Use the storage image as a reminder that steady humidity and patient observation matter more than chasing every one-point hygrometer swing.",
+      },
+      {
+        label: "Pair physical and digital storage",
+        image: "/refs/humidor.png",
+        imageAlt: "Digital cigar humidor dashboard for tracking cigar storage",
+        imagePosition: "50% 50%",
+        copy:
+          "Record arrival date, first-rest date, and ratings in the digital humidor so physical storage decisions connect to actual smoking results.",
+      },
+      {
+        label: "Plan aging windows",
+        image: "/assets/journal-aging.png",
+        imageAlt: "Cigar aging journal with tasting notes and premium cigar box",
+        imagePosition: "50% 50%",
+        copy:
+          "Aging is useful only when you compare the same box at planned intervals, with notes on draw, burn, aroma, and whether the cigar improved.",
+      },
+    ],
     sections: [
       {
         heading: "Humidity targets",
@@ -694,6 +915,15 @@ export const seoGuides: SeoContentPage[] = [
           "Rest solves travel shock, while aging can soften rough edges. Taste at planned intervals and save notes so you know when the box is actually improving.",
         bullets: ["Log arrival date", "Taste after rest", "Compare at set intervals"],
       },
+    ],
+    researchNotes: [
+      {
+        label: "Use RH as a range, not a superstition",
+        takeaway:
+          "Boveda identifies 69% RH as a common cigar-storage choice and also names 65% and 72% as specialty options, so the guide frames humidity as a controlled range.",
+        ...guideResearchSources.storageRh,
+      },
+      adultOnlyResearchNote,
     ],
     faqs: [
       {
@@ -750,6 +980,32 @@ export const seoGuides: SeoContentPage[] = [
       description: "Learn the basics before your first lounge visit.",
     },
     productCategories: ["Sample Packs", "Lighters / Torch", "Premium Cigars ($150-$300)"],
+    visualLessons: [
+      {
+        label: "Cut for draw, not drama",
+        image: "/assets/guides/luxury-cigar-etiquette.png",
+        imageAlt: "Cigar etiquette guide with cutter and premium cigar on a lounge table",
+        imagePosition: "50% 50%",
+        copy:
+          "A clean shallow cut protects the cap and wrapper, giving the cigar enough airflow without turning the head into loose tobacco.",
+      },
+      {
+        label: "Respect the lounge setting",
+        image: "/assets/about-lounge.png",
+        imageAlt: "Cigar lounge seating for respectful cigar etiquette",
+        imagePosition: "50% 54%",
+        copy:
+          "Lounge etiquette starts with house rules, buying where you smoke when appropriate, and keeping ash, smoke direction, and conversation considerate.",
+      },
+      {
+        label: "Gift with context",
+        image: "/assets/gift-box.png",
+        imageAlt: "Premium cigar gift box used for cigar etiquette and sharing guidance",
+        imagePosition: "50% 52%",
+        copy:
+          "A cigar gift lands better when it includes strength, wrapper, and storage context instead of pressuring someone into a format they may not enjoy.",
+      },
+    ],
     sections: [
       {
         heading: "Cut and light with patience",
@@ -769,6 +1025,15 @@ export const seoGuides: SeoContentPage[] = [
           "A cigar gift or recommendation should fit the person's experience level. Offer context, but do not pressure someone into a strength or format they do not want.",
         bullets: ["Ask taste preferences", "Respect pace", "Keep strong cigars optional"],
       },
+    ],
+    researchNotes: [
+      {
+        label: "Cut at the shoulder and toast slowly",
+        takeaway:
+          "Cigar Aficionado's technique guide emphasizes creating enough opening without damaging construction and lighting patiently above the flame rather than scorching the foot.",
+        ...guideResearchSources.cuttingLighting,
+      },
+      adultOnlyResearchNote,
     ],
     faqs: [
       {
@@ -817,8 +1082,8 @@ const categoryProfiles: Record<string, Pick<SeoContentPage, "kicker" | "heroTitl
       },
       {
         heading: "Connect to membership",
-        body: "Yuzu membership helps collectors watch private drops, member pricing, and allocation windows tied to serious box buying.",
-        bullets: ["Member-cost access", "Private drop alerts", "Digital humidor tracking"],
+        body: "Yuzu membership helps collectors watch monthly selection windows, private drops, member pricing, and allocation rules tied to serious box buying.",
+        bullets: ["Member-cost access", "Selection and drop alerts", "Digital humidor tracking"],
       },
     ],
     faqs: [

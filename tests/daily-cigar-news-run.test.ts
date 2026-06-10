@@ -260,6 +260,9 @@ test("daily cigar flow writer includes press-release search sources in draft req
     assert.ok(draftCalls[0].sourceUrls.some((sourceUrl) => sourceUrl.includes("globenewswire.com/en/search/tag/cigar")));
     assert.ok(draftCalls[0].sourceNotes?.some((note) => /daily cigar press-release search/i.test(note)));
     assert.ok(draftCalls[0].sourceNotes?.some((note) => /write stories/i.test(note)));
+    assert.ok(draftCalls[0].sourceNotes?.some((note) => /Cigar Flow editorial format/i.test(note)));
+    assert.ok(draftCalls[0].sourceNotes?.some((note) => /image web\/source-page search/i.test(note)));
+    assert.ok(draftCalls[0].sourceNotes?.some((note) => /3-6 real source-aligned story images/i.test(note)));
     assert.match(draftCalls[0].angle ?? "", /press releases/i);
   } finally {
     server.close();

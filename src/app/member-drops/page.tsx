@@ -15,11 +15,11 @@ import { buildPageMetadata } from "@/lib/seo";
 export const metadata: Metadata = buildPageMetadata({
   title: "Member Drops | Yuzu Cigar Club",
   description:
-    "Preview rare Yuzu Cigar Club member-only cigar drops, allocation windows, and waitlist releases.",
+    "Preview Yuzu Cigar Club member-only cigar drops, monthly selection windows, allocation rules, and waitlist releases.",
   path: "/member-drops",
   image: "/assets/shop-hero.png",
   imageAlt: "Rare member-only cigar box drop",
-  keywords: ["member cigar drops", "rare cigar boxes", "cigar allocation windows"],
+  keywords: ["member cigar drops", "rare cigar boxes", "cigar allocation windows", "monthly cigar selection"],
 });
 
 export default function MemberDropsPage() {
@@ -31,15 +31,15 @@ export default function MemberDropsPage() {
         <div className="flex flex-col justify-center gap-6 p-8 lg:p-10">
           <SectionHeading
             kicker="Member-only Drops"
-            title="Rare boxes released with allocation rules."
-            copy="Drops are tier-aware, quantity-limited, and held behind verified member accounts so allocations stay fair."
+            title="Member selections released with clear allocation rules."
+            copy="Monthly cigar lists and rare drops open during defined online windows, with first-come selections from the available member list."
           />
           <Button className="h-12 w-fit bg-yuzu-gold px-8 text-yuzu-ink hover:bg-yuzu-gold-light" render={<Link href="/membership" />}>
             <LockKeyhole data-icon="inline-start" />
             Unlock Drops
           </Button>
         </div>
-        <ReferenceImage src="/assets/shop-hero.png" alt="Member-only cigar drop" className="min-h-80" objectPosition="center" priority />
+        <ReferenceImage src="/assets/shop-hero.png" alt="Rare premium cigar boxes reserved for member-only drops" className="min-h-80" objectPosition="center" priority />
       </section>
 
       <MemberViewBanner context="drops" className="mt-6" />
@@ -53,9 +53,9 @@ export default function MemberDropsPage() {
         <Card className="luxury-card">
           <CardContent className="flex flex-col gap-5 p-6">
             <Bell className="text-yuzu-gold" />
-            <h2 className="font-heading text-3xl text-yuzu-cream">Next allocation opens June 8.</h2>
+            <h2 className="font-heading text-3xl text-yuzu-cream">Monthly selection opens June 8.</h2>
             <p className="text-sm leading-6 text-yuzu-muted">
-              Sensei and Daimyo members receive early email and SMS reminders before public waitlist release.
+              Members choose from a preselected online cigar list on selection day. Every active monthly member will still have cigars available, but the most requested options may go first.
             </p>
             <LocalActionButton
               storageKey="yuzu-reminder-member-drops-june-8"

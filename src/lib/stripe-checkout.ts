@@ -54,6 +54,14 @@ export type MembershipCheckoutInput = {
   tierName: string;
   billingPeriod: string;
   customer: CheckoutCustomerInput;
+  membershipOffer?: {
+    code: string;
+    source: string;
+    campaign: string;
+    landingPath: string;
+    access: string;
+    trialPeriodDays: number;
+  };
 };
 
 export type CommerceMembershipResponse = {

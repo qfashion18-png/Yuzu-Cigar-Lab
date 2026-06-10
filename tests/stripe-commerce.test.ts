@@ -133,6 +133,38 @@ test("Stripe membership checkout sessions use subscription mode and recurring pr
   assert.equal((params.subscription_data as { metadata: Record<string, string> }).metadata.customer_email, "member@example.com");
 });
 
+test("Stripe membership checkout sessions preserve friends and family yearly pass metadata", () => {
+  const { buildMembershipSessionParams } = loadStripeCommerce();
+  const params = buildMembershipSessionParams(
+    {
+      tierKey: "box-access-pass",
+      billingPeriod: "yearly",
+      stripePriceId: "price_box_access_yearly",
+      statusToken: "chkst_member_test_123456789012345678901234567890",
+      customer: { email: "friend@example.com" },
+      membershipOffer: {
+        code: "friends-family-box-pass",
+        source: "friends-family-page",
+        campaign: "friends-family-1-year-box-pass",
+        landingPath: "/friends-family",
+        access: "box_access_pass_1_year",
+        trialPeriodDays: 365,
+      },
+    },
+    env
+  ) as {
+    metadata: Record<string, string>;
+    subscription_data: { metadata: Record<string, string>; trial_period_days?: number };
+  };
+
+  assert.equal(params.subscription_data.trial_period_days, 365);
+  assert.equal(params.metadata.membership_offer_code, "friends-family-box-pass");
+  assert.equal(params.metadata.membership_offer_source, "friends-family-page");
+  assert.equal(params.metadata.membership_offer_access, "box_access_pass_1_year");
+  assert.equal(params.metadata.membership_offer_trial_days, "365");
+  assert.equal(params.subscription_data.metadata.membership_offer_campaign, "friends-family-1-year-box-pass");
+});
+
 test("Stripe customer portal sessions keep subscription management inside Stripe", () => {
   const { buildCustomerPortalSessionParams } = loadStripeCommerce();
   const params = buildCustomerPortalSessionParams({ stripeCustomerId: "cus_123" }, env);

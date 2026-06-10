@@ -11481,6 +11481,46 @@ export const importedInventory = [
     "slug": "olmec-maduro-toro-12-bx"
   },
   {
+    "sku": "777298",
+    "product": "THE TABERNACLE BROADLEAF ROBUSTO 24/BX",
+    "category": "Premium Cigars ($150-$300)",
+    "price": 240,
+    "sourceStatus": "instock",
+    "managedStock": false,
+    "sourceQuantity": null,
+    "slug": "the-tabernacle-broadleaf-robusto-24-bx"
+  },
+  {
+    "sku": "777299",
+    "product": "THE TABERNACLE BROADLEAF TORO 24/BX",
+    "category": "Premium Cigars ($150-$300)",
+    "price": 250,
+    "sourceStatus": "instock",
+    "managedStock": false,
+    "sourceQuantity": null,
+    "slug": "the-tabernacle-broadleaf-toro-24-bx"
+  },
+  {
+    "sku": "777300",
+    "product": "THE TABERNACLE CT-142 ROBUSTO 24/BX",
+    "category": "Premium Cigars ($150-$300)",
+    "price": 240,
+    "sourceStatus": "instock",
+    "managedStock": false,
+    "sourceQuantity": null,
+    "slug": "the-tabernacle-ct-142-robusto-24-bx"
+  },
+  {
+    "sku": "777301",
+    "product": "THE TABERNACLE CT-142 TORO 24/BX",
+    "category": "Premium Cigars ($150-$300)",
+    "price": 250,
+    "sourceStatus": "instock",
+    "managedStock": false,
+    "sourceQuantity": null,
+    "slug": "the-tabernacle-ct-142-toro-24-bx"
+  },
+  {
     "sku": "777296",
     "product": "MONTECRISTO 1935 WINNERS CLUB SAMPLER 6/PK",
     "category": "Sample Packs",

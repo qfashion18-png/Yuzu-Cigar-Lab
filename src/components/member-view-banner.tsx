@@ -25,9 +25,9 @@ const copyByContext: Record<MemberViewBannerProps["context"], { member: string; 
     account: "Signed in as a non-member account. Choose a tier before using member-cost box access.",
   },
   drops: {
-    member: "Member drop view active. Allocation priority follows tier, tenure, and purchase history.",
-    nonMember: "Public drop preview active. Sign in and join before requesting member-only allocations.",
-    account: "Account view active, but member-only drops require an active membership tier.",
+    member: "Member drop view active. Monthly selections and allocation priority follow the active member rules.",
+    nonMember: "Public drop preview active. Sign in and join before monthly selections or member-only allocations.",
+    account: "Account view active, but monthly selections and member-only drops require an active membership tier.",
   },
   humidor: {
     member: "Member humidor view active. Tracking, QR labels, and recommendations are unlocked.",

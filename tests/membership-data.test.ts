@@ -40,6 +40,21 @@ test("only the three full membership tiers advertise digital humidor bulk import
   );
 });
 
+test("full monthly membership tiers describe online selection-list access", () => {
+  const monthlyPlans = tiers.filter((tier) => tier.monthlyCigars > 0);
+  const membershipKnowledge = readFileSync(new URL("../knowledge/ycc-kb/membership.md", import.meta.url), "utf8");
+
+  assert.deepEqual(monthlyPlans.map((tier) => tier.name), ["Kisha", "Sensei", "Daimyo"]);
+
+  for (const tier of monthlyPlans) {
+    assert.match(tier.cadence, /curated selection list/i);
+  }
+
+  assert.match(membershipKnowledge, /preselected premium cigar list/i);
+  assert.match(membershipKnowledge, /first come, first served/i);
+  assert.match(membershipKnowledge, /still have monthly cigars available to select/i);
+});
+
 test("membership prepaid pricing and cost definition protect wholesale margins", () => {
   assert.deepEqual(
     membershipPrepaidPricing.map((plan) => [
