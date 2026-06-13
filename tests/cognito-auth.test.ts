@@ -4,9 +4,12 @@ import test from "node:test";
 
 import {
   buildCognitoAuthorizeUrl,
+  buildCognitoConfirmSignUpRequest,
   buildCognitoLogoutUrl,
   buildCognitoPasswordAuthRequest,
+  buildCognitoSignUpRequest,
   buildCognitoTokenRequestBody,
+  confirmCognitoSignUp,
   createCognitoApiHeaders,
   createCognitoSessionFromTokens,
   getCognitoTokenResponse,
@@ -14,6 +17,7 @@ import {
   resolveCognitoConfig,
   shouldShowInlineCognitoSignIn,
   signInWithCognitoPassword,
+  signUpWithCognitoPassword,
   updateCognitoSessionProfile,
 } from "../src/lib/cognito-auth";
 
@@ -104,6 +108,105 @@ test("Cognito password auth uses InitiateAuth without leaving the app", () => {
       PASSWORD: "Secret123!",
     },
   });
+});
+
+test("Cognito signup uses SignUp with Yuzu invite metadata", () => {
+  const request = buildCognitoSignUpRequest(config, {
+    email: " Friend@Example.com ",
+    fullName: " Family Friend ",
+    password: "Secret123!Pass",
+    clientMetadata: {
+      ycc_invite_code: "friends-family-box-pass",
+      ignored: "",
+    },
+  });
+  const body = JSON.parse(String(request.init.body));
+
+  assert.equal(request.url, "https://cognito-idp.us-east-1.amazonaws.com/");
+  assert.equal(request.init.method, "POST");
+  assert.deepEqual(request.init.headers, {
+    "content-type": "application/x-amz-json-1.1",
+    "x-amz-target": "AWSCognitoIdentityProviderService.SignUp",
+  });
+  assert.equal(body.ClientId, config.clientId);
+  assert.equal(body.Username, "friend@example.com");
+  assert.equal(body.Password, "Secret123!Pass");
+  assert.deepEqual(body.UserAttributes, [
+    { Name: "email", Value: "friend@example.com" },
+    { Name: "name", Value: "Family Friend" },
+  ]);
+  assert.deepEqual(body.ClientMetadata, {
+    ycc_invite_code: "friends-family-box-pass",
+  });
+});
+
+test("Cognito signup returns an in-page confirmation step", async () => {
+  const result = await signUpWithCognitoPassword(
+    config,
+    {
+      email: "friend@example.com",
+      fullName: "Family Friend",
+      password: "Secret123!Pass",
+    },
+    async () => ({
+      ok: true,
+      async json() {
+        return {
+          UserConfirmed: false,
+          CodeDeliveryDetails: {
+            Destination: "f***@example.com",
+          },
+        };
+      },
+    })
+  );
+
+  assert.equal(result.status, "confirmation_required");
+
+  if (result.status !== "confirmation_required") {
+    throw new Error("Expected confirmation_required result");
+  }
+
+  assert.equal(result.destination, "f***@example.com");
+  assert.equal(result.message, "Check your email for the Yuzu confirmation code.");
+});
+
+test("Cognito confirmation uses ConfirmSignUp without hosted Cognito", async () => {
+  const request = buildCognitoConfirmSignUpRequest(config, {
+    email: " Friend@Example.com ",
+    confirmationCode: " 123456 ",
+    clientMetadata: {
+      ycc_invite_code: "friends-family-box-pass",
+    },
+  });
+  const body = JSON.parse(String(request.init.body));
+
+  assert.deepEqual(request.init.headers, {
+    "content-type": "application/x-amz-json-1.1",
+    "x-amz-target": "AWSCognitoIdentityProviderService.ConfirmSignUp",
+  });
+  assert.deepEqual(body, {
+    ClientId: config.clientId,
+    Username: "friend@example.com",
+    ConfirmationCode: "123456",
+    ClientMetadata: {
+      ycc_invite_code: "friends-family-box-pass",
+    },
+  });
+
+  const result = await confirmCognitoSignUp(
+    config,
+    { email: "friend@example.com", confirmationCode: "123456" },
+    async () => ({
+      ok: true,
+      async json() {
+        return {};
+      },
+    })
+  );
+
+  assert.equal(result.status, "confirmed");
+  assert.equal(result.message, "Your Yuzu account is confirmed. Signing you in now.");
 });
 
 test("Cognito password auth stores a storefront session from AuthenticationResult", async () => {
@@ -524,6 +627,14 @@ test("default Cognito scopes match the app client OAuth scopes", () => {
 
 test("documented Cognito scopes match the app client OAuth scopes", () => {
   assert.deepEqual(getEnvExampleCognitoScopes().toSorted(), getTemplateAllowedOAuthScopes().toSorted());
+});
+
+test("Cognito signup verification email is Yuzu branded", () => {
+  assert.match(cognitoTemplateSource, /VerificationMessageTemplate:/);
+  assert.match(cognitoTemplateSource, /EmailSubject: Yuzu Cigar Club verification code/);
+  assert.match(cognitoTemplateSource, /Welcome to Yuzu Cigar Club\./);
+  assert.match(cognitoTemplateSource, /Your Yuzu verification code is \{####\}\./);
+  assert.match(cognitoTemplateSource, /Adults 21\+ only/);
 });
 
 function createJwt(payload: Record<string, unknown>) {

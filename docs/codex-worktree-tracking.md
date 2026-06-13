@@ -1,10 +1,443 @@
 # Codex Worktree Tracking
 
-Last updated: 2026-06-10
+Last updated: 2026-06-13
 
 Purpose: track the dirty worktree I encounter while expanding and verifying the Yuzu admin/backend. This file is Codex-owned working notes, so future passes have a stable place to record what was changed, verified, and still needs audit.
 
 Project memory: `AGENTS.md` now requires Codex to use this file as the persistent worktree ledger. Every meaningful update, fix, audit, verification pass, or newly discovered dirty/untracked area should be recorded here in the same turn.
+
+## 2026-06-12 Live Cigar Flow Image Runtime Audit
+
+- Goal: audit the live runtime issue at `https://yuzucigarclub.com/cigar-flow/`.
+- Runtime artifacts captured with Playwright under `output/playwright/cigar-flow-live-audit-2026-06-12/`:
+  - `cigar-flow-live-audit.json`
+  - `cigar-flow-live-news-desk-aged-in.png`
+  - `cigar-flow-live-desktop.png`
+  - `cigar-flow-live-mobile-bottom.png`
+- Findings:
+  - Live API `https://api.yuzucigarclub.com/news/stories?limit=8` returned 8 stories.
+  - The first two live stories, `Cigar Industry Highlights: June 12th Updates` and `Daily Cigar Flow Update: June 11`, each contained 3 story-provided image URLs.
+  - All 6 story-provided image URLs rendered broken in desktop and mobile runtime.
+  - Browser console showed CSP blocking for `olivacigar.com`, `perdomocigars.com` / `www.perdomocigars.com`, and `foundationcigarcompany.com` because `customHttp.yml` `img-src` does not include those domains.
+  - Direct HEAD/GET checks showed all 6 story image URLs also return HTTP 404, so expanding CSP alone would not fix the current broken cards.
+  - The frontend treats any live `story.images` entry as renderable and does not fall back when story-provided images are dead.
+  - The daily writer/backend validation path accepts HTTP image URLs without checking that they resolve, have an image content type, use render-allowed domains, or have valid CSS `imagePosition` values. The June 12/June 11 payloads use `imagePosition: "hero"` / `"inline"`, which are not valid `object-position` values.
+  - Secondary content issue observed: the June 12 and June 11 live bodies start with a single `#` markdown heading, while `NewsStoryFeed` only splits `##` headings, causing a literal `# ...` heading to appear in the rendered story body.
+- Recommended fix path:
+  - Correct or republish the current June 12 and June 11 live story records with local/S3/known-good image assets, or remove their bad `metadata.images` so generated local story images render.
+  - Harden `scripts/daily-cigar-news-run.ts` and the Lambda publish/normalization path to validate story image URLs before publishing.
+  - Add a frontend safety net in `NewsStoryFeed` to ignore non-renderable or non-allowlisted story images and use generated local fallbacks.
+  - If external story images remain supported, update `customHttp.yml` CSP and `next.config.ts` image domain policy consistently, then verify runtime.
+
+### Automatic Story Image Prevention Fix
+
+- Goal: fix the daily automated Cigar Flow/newsroom story path so future automatic stories do not publish dead or runtime-blocked story images.
+- TDD regression added in `tests/daily-cigar-news-run.test.ts`:
+  - `daily cigar flow writer publishes only renderable draft story images`
+  - Red run confirmed the old writer published a blocked/dead Oliva URL, a local 404 image, and invalid `imagePosition` values.
+- Implemented in `scripts/daily-cigar-news-run.ts`:
+  - Draft story images are now filtered before publish.
+  - Image hosts must match the deployed render policy allowlist, defaulting to `swwest.com`, `halfwheel.com`, `cigardojo.com`, `classroom2.s3.us-east-1.amazonaws.com`, `yuzucigarclub.com`, and `www.yuzucigarclub.com`; localhost is allowed for tests/dev.
+  - Each candidate image is probed with `HEAD`, then ranged `GET` fallback, and must return a successful image content type.
+  - Bad candidates are skipped with a warning instead of being published into `metadata.images`.
+  - Invalid story image crop values such as `hero` or `inline` are normalized to `50% 50%`.
+  - If draft images all fail validation, source-seeded fallback images are checked; if none pass, the story publishes without images so the Cigar Flow frontend uses its local generated story visuals.
+- Documented optional override in `.env.example`:
+  - `YCC_DAILY_NEWSROOM_ALLOWED_IMAGE_HOSTS`
+- Verification completed:
+  - `node --import tsx --test --test-name-pattern "publishes only renderable draft story images" tests\daily-cigar-news-run.test.ts` failed before the fix for the expected reason, then passed after implementation.
+  - `node --import tsx --test tests\daily-cigar-news-run.test.ts` passed 5/5.
+  - `npx eslint scripts/daily-cigar-news-run.ts tests/daily-cigar-news-run.test.ts` passed with no output.
+  - `npx tsc --noEmit` passed.
+  - `node --import tsx --test tests\cigar-flow.test.ts tests\newsroom-ui.test.ts tests\daily-cigar-news-run.test.ts` passed 26/26.
+- Scope note:
+  - This prevents future daily automation from publishing unusable image metadata.
+  - The already-live June 12 and June 11 story records still need to be corrected or republished separately because their bad image metadata is already stored in the live API.
+
+### Live June 11 And June 12 Record Correction
+
+- Goal: correct the already-live Cigar Flow story records for June 11 and June 12 after the prevention fix.
+- Used the locally configured newsroom Cognito service account from `.env.local` without printing credentials or tokens.
+- Republished both affected slugs through the normal authenticated `POST /news/stories` upsert path:
+  - `cigar-industry-highlights-june-12th-updates`
+  - `daily-cigar-flow-update-june-11`
+- Preserved existing title, dek, category, source notes, official sources, and published status.
+- Replaced dead/blocked external `metadata.images` with Yuzu-hosted image URLs that are allowed by the existing live CSP:
+  - June 12:
+    - `https://yuzucigarclub.com/assets/news/cigar-flow-release-desk.jpg`
+    - `https://yuzucigarclub.com/assets/news/cigar-flow-limited-drop.jpg`
+    - `https://yuzucigarclub.com/assets/news/cigar-flow-distribution.jpg`
+  - June 11:
+    - `https://yuzucigarclub.com/assets/news/cigar-flow-release-calendar.jpg`
+    - `https://yuzucigarclub.com/assets/news/cigar-flow-rocky-anniversary.jpg`
+    - `https://yuzucigarclub.com/assets/news/cigar-flow-lounge-event.jpg`
+- Cleaned the leading single-`#` H1 from both body markdown values so the story body no longer renders a literal `# ...` heading inside the card.
+- API readback after the mutation:
+  - Both `POST /news/stories` calls returned HTTP `201`.
+  - Both target stories read back with `imageCount = 3`.
+  - Both target stories read back with `startsWithH1 = false`.
+- Live browser verification:
+  - Captured `output/playwright/cigar-flow-live-audit-2026-06-12/cigar-flow-live-news-desk-corrected.png`.
+  - Saved readback JSON at `output/playwright/cigar-flow-live-audit-2026-06-12/cigar-flow-live-corrected-readback.json`.
+  - First two live `data-cigar-flow-editorial-story` cards now render 3 images each.
+  - Runtime result: `brokenImages = 0`, `failedImageRequests = 0`, and `cspMessages = 0`.
+
+## 2026-06-12 Cigar Spotlight Social Cards
+
+- Goal: create social-media-ready Yuzu Cigar Club cigar spotlight cards, with one product per card, multiple same-product images, blend/spec detail copy, and stronger sales framing.
+- Clarification handled:
+  - User clarified these are for social media, not the website.
+  - Earlier homepage/component work was reverted before final output; no homepage spotlight section remains from this pass.
+- Next.js 16 docs checked before code:
+  - `node_modules/next/dist/docs/01-app/01-getting-started/02-project-structure.md`
+  - `node_modules/next/dist/docs/01-app/01-getting-started/12-images.md`
+- Creative/storefront guidance loaded:
+  - `creative-production:ads-explorer`
+  - `imagegen`
+  - `storefront-best-practices/reference/design.md`
+  - `storefront-best-practices/reference/components/product-card.md`
+  - `storefront-best-practices/reference/layouts/home-page.md`
+- Implemented `scripts/render-yuzu-cigar-spotlight-social-cards.ts`:
+  - Renders deterministic 1080 x 1350 PNG social cards and proof HTML with Playwright.
+  - Current card set: Plasencia Triunfal 2026 Toro, My Father Don Pepin Clasicos 20th, Oliva Serie V Melanio Soccer Edition, and Liga Privada H99 Papas Fritas.
+  - Each card uses three researched images of the same product only, plus catalog pricing/spec facts and 21+ delivery language.
+  - Captions and README are generated with the cards.
+- Researched and saved source imagery under `output/social/yuzu-cigar-spotlight-cards-2026-06-12/source-images/`:
+  - Plasencia Triunfal images from halfwheel's 2026 article.
+  - Don Pepin Garcia Clasicos 20th product gallery images from Cigars Direct.
+  - Oliva Serie V Melanio World Cup/Soccer Edition product gallery images from Tobacconist of Greenwich.
+  - Liga Privada H99 Papas Fritas product gallery images from Cigar Country.
+  - Source metadata saved at `output/social/yuzu-cigar-spotlight-cards-2026-06-12/source-images/sources.json`.
+- Generated social output:
+  - `output/social/yuzu-cigar-spotlight-cards-2026-06-12/cards/01-plasencia-triunfal-2026.png`
+  - `output/social/yuzu-cigar-spotlight-cards-2026-06-12/cards/02-my-father-don-pepin-clasicos-20th.png`
+  - `output/social/yuzu-cigar-spotlight-cards-2026-06-12/cards/03-oliva-serie-v-melanio-soccer-edition.png`
+  - `output/social/yuzu-cigar-spotlight-cards-2026-06-12/cards/04-liga-privada-h99-papas-fritas.png`
+  - `output/social/yuzu-cigar-spotlight-cards-2026-06-12/yuzu-cigar-spotlight-contact-sheet.png`
+  - `output/social/yuzu-cigar-spotlight-cards-2026-06-12/CAPTIONS.md`
+  - `output/social/yuzu-cigar-spotlight-cards-2026-06-12/README.md`
+- Verification completed:
+  - `node --import tsx scripts/render-yuzu-cigar-spotlight-social-cards.ts`
+  - `npx eslint scripts/render-yuzu-cigar-spotlight-social-cards.ts`
+  - `npx tsc --noEmit`
+  - PIL dimension check confirmed all card PNGs are 1080 x 1350 and the contact sheet is 1440 x 1880.
+- Follow-up layout refinement from user markup:
+  - Updated the card gallery to the requested open/closed/long-close-up format.
+  - Top row now uses open box plus closed box/closed humidor imagery.
+  - Bottom row now spans the full gallery width with a long cigar close-up strip.
+  - Added derived horizontal cigar strip assets in `output/social/yuzu-cigar-spotlight-cards-2026-06-12/source-images/` for products whose researched single-cigar images were vertical catalog shots.
+  - Regenerated cards, HTML proofs, README, captions, source metadata, and contact sheet.
+  - Re-ran `node --import tsx scripts/render-yuzu-cigar-spotlight-social-cards.ts`, `npx eslint scripts/render-yuzu-cigar-spotlight-social-cards.ts`, `npx tsc --noEmit`, and the PIL dimension check; all passed.
+- Oliva exact-single correction:
+  - User rejected the cropped/generated-style Oliva bottom image and clarified it should be a single cigar that exactly matches the product.
+  - Downloaded exact Oliva Serie V Melanio Gran Reserva Ltd World Cup 2026 Edition natural and maduro single-cigar images from the Atlantic Cigar product gallery.
+  - Created `output/social/yuzu-cigar-spotlight-cards-2026-06-12/source-images/oliva-serie-v-melanio-soccer-edition-exact-single-strip.png` by isolating the natural single cigar and rotating it into the 1800 x 320 bottom-strip format.
+  - Updated the Oliva card to use the exact single-cigar strip with label `Single cigar close-up`; the generic generated Oliva-style image is not used in the card assets.
+  - Regenerated cards/contact sheet and re-ran `npx eslint scripts/render-yuzu-cigar-spotlight-social-cards.ts`, `npx tsc --noEmit`, and the PIL dimension check; all passed.
+- Publishing note: source image URLs are documented for review; confirm reuse rights or replace with owned/authorized photos before paid promotion.
+
+## 2026-06-11 Strength Guide Facebook Group Posting Prep
+
+- Goal: use the Codex in-app browser to post the `Strength is not a wrapper-color ladder` guide to the available Facebook group list, with a fresh pull for newly visible groups and group-rule-safe, interaction-first copy.
+- Fresh repo pull:
+  - Ran `git fetch --prune`.
+  - Ran `git pull --ff-only`; result was `Already up to date`.
+  - Upstream diff/log check showed no incoming remote changes after the fetch.
+- Strength guide source:
+  - Live Page Reel: `https://www.facebook.com/reel/1335402401869657/`.
+  - Caption file: `output/social/facebook-planner-month-2026-06-09/strength-is-the-blend-guide/facebook-caption-strength-is-the-blend.txt`.
+  - Guide assets: `output/social/facebook-planner-month-2026-06-09/strength-is-the-blend-guide/`.
+- Browser group pull:
+  - Opened `https://www.facebook.com/groups/joins/` in the Codex in-app browser.
+  - First scan found 56 visible group links; deeper scroll pass found 93 visible group links.
+  - Cigar-specific visible groups included Yuzu Cigar Club Lounge, Cigar Fans Club, Cigar Smokers Worldwide, multiple Black Cigar Smokers groups, Cigar Fanatics, Cigar Connoisseurs, Cigar Lovers Club USA, Black Cigar Aficionados of PHX, and known pending/risky groups.
+  - Newly live-visible versus the prior recommended live list: `Black Cigar Smokers` at `https://www.facebook.com/groups/942621596899397/`; it was previously present in earlier posting history but missing from `output/social/facebook-video-link-group-batch-2026-06-11/available-groups.md`.
+- Rule checks completed in browser:
+  - Owned group rules allow adult 21+ cigar culture/education, with no marketplace posts, pricing, inventory, giveaways, samples, order requests, or health claims.
+  - Cigar Smokers Worldwide, Black Cigar Smokers `1016284215225042`, Cigar Connoisseurs, and Cigar Lovers Club USA include no-promotion/no-spam/no-link-style rules; external Reel link should be skipped there.
+  - Cigar Fanatics and Cigar Connoisseurs showed pending admin approval, so avoid adding another link post.
+  - Black Cigar Smokers `942621596899397` showed respect/safety/privacy rules and is the best external candidate for one discussion-first Reel share.
+  - Black Cigar Aficionados of PHX has strong local fit but no detailed rules visible; use no-link discussion copy unless admin/rule guidance allows links.
+- Process documented:
+  - Appended a `2026-06-11 Strength Guide Group Posting Process` section to `docs/facebook-external-group-post-kit-2026-06-02.md`.
+  - Recorded publish/skip decisions, batch guardrails, and ready-to-use captions for the owned Yuzu group, the best external link candidate, and no-link fallback groups.
+  - 2026-06-12 follow-up: expanded the process with a full strength-guide group posting list in `docs/facebook-external-group-post-kit-2026-06-02.md`, merging the live/rule-checked strength-guide groups, the prior 46-group composer-visible pool, prepared admin-first community surfaces, and the hold/skip list.
+- Posting status:
+  - 2026-06-12 posting start: opened the Codex in-app browser, rechecked the owned Yuzu group rules, opened the Yuzu group composer, and filled the approved owned-group strength-guide caption with the live Reel link. The Facebook composer generated the Reel preview successfully.
+  - User confirmed the final public action for `Yuzu Cigar Club Lounge | 21+`; clicked `Post`. Browser verification showed the new owned-group post visible in the group feed with the strength-guide caption and Reel preview, though Facebook did not expose a clean permalink during the verification pass.
+  - Rechecked `Black Cigar Smokers` at `https://www.facebook.com/groups/942621596899397/`; visible rules remained respect/safety/privacy with no visible no-link/no-promo restriction. The in-app browser clipboard path failed with the Browser Use virtual clipboard error, so switched to the connected Chrome profile after the user approved using/installing any tools needed.
+  - Chrome extension browser fallback successfully opened the `Black Cigar Smokers` composer and pasted the external link candidate caption with the Reel preview loaded. User reported the post was completed and the process works; treat `Black Cigar Smokers` `942621596899397` as posted in the strength-guide batch.
+  - Moved to `Black Cigar Aficionados of PHX` at `https://www.facebook.com/groups/1887442114724319/`. About/rules recheck showed a public 347-member PHX/Chandler/Mesa cigar group and no detailed rules panel.
+  - User clarified that if a group does not allow links, the process should upload the video natively to the group post. Rebuilt the PHX draft under the personal profile with no external link, attached `output/social/facebook-planner-month-2026-06-09/strength-is-the-blend-guide/video-assets/strength-is-the-blend-feed-slideshow-voiceover.mp4`, and verified the native video preview is visible with the final `Post` button active. Final public publish click is paused for action-time confirmation.
+  - Moved to `Cigar Fans Club` at `https://www.facebook.com/groups/cigarsloverclub/`. Rechecked the About/rules surface; the visible rules panel was in Bengali and the first visible rule appeared to be the standard privacy/respect rule, with no clear external-link permission surfaced. Staged a no-link/native-video caption for Cigar Fans Club and attempted the MP4 upload through Facebook's file controls. User reported the post was submitted; treat `Cigar Fans Club` as submitted in the strength-guide batch, with no permalink captured.
+  - Moved to `Cigar Smokers Worldwide` at `https://www.facebook.com/groups/3641803692555973/`. Rechecked rules; rule 1 says `No promotions or spam` and specifies self-promotion, spam, and irrelevant links are not allowed. Did not use a Reel link or branded/native Yuzu video. Staged a text-only discussion prompt that avoids Yuzu branding, links, marketplace language, and health claims. User reported the post was published/submitted; treat `Cigar Smokers Worldwide` as posted in the strength-guide batch, with no permalink captured.
+  - Moved to `Black Cigar Smokers` at `https://www.facebook.com/groups/735608425041386/`. Rechecked About surface; no detailed admin rules panel surfaced, and the group is public/cigar-focused. Staged the native-video fallback with no Reel URL, attached `strength-is-the-blend-feed-slideshow-voiceover.mp4`, verified the video preview plus final `Post` button, clicked the public `Post` button after user authorization, and confirmed the composer closed. Treat as submitted in the strength-guide batch, with no clean permalink captured.
+  - Moved to `Black Cigar Smokers` at `https://www.facebook.com/groups/1016284215225042/`. Rechecked the About/rules surface; the group is private with 39.6K members, rule 3 bans self-promotion/spam/irrelevant links, and rule 4 says to post a cigar picture. Prepared a no-link/no-brand discussion prompt and attempted to attach `source-images/generated-wrapper-shades.png`; created `source-images/generated-wrapper-shades-flat.jpg` as a flat JPG fallback when the PNG did not attach. Facebook did not render a photo preview after picker and clipboard-paste attempts, so the draft was closed and no text-only post was published against the picture rule.
+  - Moved to `Cigar Lovers Club USA` at `https://www.facebook.com/groups/cigarloversclubusa/`. Rechecked rules; rule 5 bans self-promotion, spam, irrelevant links/promotions, product plugging, and promotional DMs. Submitted a text-only discussion prompt with no Reel link, media, brand mention, product language, or DM language. Facebook showed the post in the group feed as pending admin approval.
+  - Moved to `Black Cigar Smokers Guild` at `https://www.facebook.com/groups/8157369361006674/`. Rechecked rules; rule 1 bans self-promotion, spam, and irrelevant links. Submitted a text-only discussion prompt with no Reel link, media, brand mention, or product language. Browser verification showed the post visible in the group feed.
+  - Moved to `Cigars Daily Nation` at `https://www.facebook.com/groups/1255936989156510/`. Rechecked the About surface; the public 21+ group description welcomes cigar pics, questions, comments, and related discussion, and no admin rules panel surfaced during the pass. Submitted a text-only discussion prompt with no Reel link, media, brand mention, or product language. Browser verification showed the post visible in the group feed.
+  - Moved to `Black Cigar Smokers United` at `https://www.facebook.com/groups/1093588954481061/`. Rechecked rules; the group is private and dedicated to Black-owned cigar brands/lounges. Rule 2 bans self-promotion, spam, and irrelevant links while allowing Black-owned cigar lounge/cigar promotion only; visible rules also encourage pictures/videos, ban Gurkha promotion, and require manageable/public-source posts. Submitted a text-only prompt tailored to Black-owned cigars/lounges with no Reel link, media, Yuzu brand mention, sales language, or Gurkha post content. Browser verification showed the post visible in the group feed.
+  - Moved to `Black Cigar Smokers` at `https://www.facebook.com/groups/985278229212365/`. Rechecked the About surface; the public 1.2K-member group is a broad cigar discussion group and no admin rules panel surfaced during the pass. Submitted a text-only discussion prompt with no Reel link, media, brand mention, or product language. Browser verification showed the post visible in the group feed.
+  - Moved to `Cigar Aficionados` at `https://www.facebook.com/groups/958996449547682/`. Rechecked rules; rule 3 bans self-promotion, spam, and irrelevant links, and rule 4 bans buying, selling, trading, solicitation, private-message sales, and external transaction links. Submitted a text-only education question with no Reel link, media, brand mention, or transaction language. Browser verification showed the post visible in the group feed.
+  - Moved to `Arizona Cigar Channel` at `https://www.facebook.com/groups/469952574389320/`. Rechecked the About surface; the public Phoenix/Arizona group is for networking, local shops/lounges, cigar tips, and sharing, but Facebook showed 1 existing post pending admin approval. Held and did not submit another strength-guide post while pending.
+  - Moved to `Black Cigar Smokers` at `https://www.facebook.com/groups/395217335256970/`. Rechecked the About surface; the public 5.8K-member group has minimal cigar-focused About text, a Politics tag, and no admin rules panel surfaced during the pass. Submitted a text-only discussion prompt with no Reel link, media, brand mention, product language, or politics. Facebook showed the post as pending admin approval.
+  - Moved to `Black Cigar Smokers` at `https://www.facebook.com/groups/476874138490306/`. Rechecked the About/rules surface; the public 4.4K-member group is a broad cigar discussion group, and visible rules only surfaced trust/privacy guidance. Submitted a text-only discussion prompt with no Reel link, media, brand mention, or product language. Browser verification showed the post visible in the group feed.
+  - Moved to `Black Cigars Society` at `https://www.facebook.com/groups/1441070243135757/`. Rechecked the About surface; the public 1.4K-member group is framed around luxury cigar lounge/lifestyle discussion, and no admin rules panel surfaced during the pass. Submitted a text-only lounge-night strength prompt with no Reel link, media, brand mention, sales/trade language, or alcohol-overconsumption framing. Facebook showed the post as pending admin approval.
+  - Moved to `Black Women Who Love Cigars` at `https://www.facebook.com/groups/678466927857421/`. Rechecked the About surface; the public 73-member group is women-centered cigar discussion, and no admin rules panel surfaced during the pass. Submitted a text-only strength discussion prompt with no Reel link, media, brand mention, sales/trade language, or health claims. Browser verification showed the post visible in the group feed.
+  - Moved to `Bourbon and Cigars` at `https://www.facebook.com/groups/1133047376753408/`. Rechecked the About surface; the public 11.7K-member group asks members to share bourbon/whisky and favorite cigar pictures, and no admin rules panel surfaced during the pass. Submitted a text-only responsible pairing prompt with no Reel link, media, brand mention, sales/trade language, overconsumption advice, or health claims. Facebook showed the post as pending admin approval.
+  - Moved to `Canada Cigar Aficionados` at `https://www.facebook.com/groups/311917499410817/`. Rechecked the About surface; Facebook showed existing pending admin-approval content under the active profile. Held and did not submit another strength-guide post while pending content exists.
+  - Moved to `Chicago Cigar Events` at `https://www.facebook.com/groups/174948779784281/`. Rechecked the About surface; the public 3.4K-member group is specifically for Chicagoland/Indiana cigar events. Held because the strength guide is not an event listing or local event discussion.
+  - Moved to `Chicago Cigar Week` at `https://www.facebook.com/groups/1099563190881341/`. Rechecked the About surface; the public 6.2K-member group is an event/official-site surface for Chicago Cigar Week. Held because the strength guide is not event-specific.
+  - Moved to `Cigar Family` at `https://www.facebook.com/groups/303825358898608/`. Rechecked the About surface; the public 5.3K-member group is a general cigar group and no admin rules panel surfaced during the pass. Submitted a text-only strength discussion prompt with no Reel link, media, brand mention, sales/trade language, or health claims. Browser verification showed the post visible in the group feed.
+  - Moved to `CIGAR LOVERS AND FRIENDS` at `https://www.facebook.com/groups/949044793119217/`. Rechecked the About surface; Facebook showed existing pending admin-approval content under the active profile. Held and did not submit another strength-guide post while pending content exists.
+  - User reminded the process to upload the video when links are not appropriate. Updated the live process posture so native MP4 upload is preferred when group rules allow educational media and the group fit is clean.
+  - Moved to `Cigar Lovers Club` at `https://www.facebook.com/groups/806907179324299/`. Rechecked rules; the private 54.7K-member group requires privacy/trust, bans spam, and says it is not a sales group. Submitted a no-link native-video strength guide post using `strength-is-the-blend-feed-slideshow-voiceover.mp4` with no external link, sales/trade/pricing/order language, or health claims. Browser verification showed Facebook processing the native video in the group feed.
+  - Moved to `Cigar Lovers only` at `https://www.facebook.com/groups/263830603141341/`. Rechecked rules; visible rule 3 bans self-promotion, spam, and irrelevant links. Submitted a text-only no-link discussion prompt with no brand mention, sales/trade language, or health claims. Browser verification showed the post visible in the group feed. User later reviewed the other posts in the group, edited the post, and uploaded the native strength-guide video; treat this group as a native-video/no-link success.
+  - Process refinement from user edit: if a no-link group has live feed norms that clearly include native cigar video/media posts, native MP4 upload is acceptable as long as the caption avoids external links, sales/trade/pricing/order language, product plugging, and health claims.
+  - Moved to `Cigar Places` at `https://www.facebook.com/groups/cigarplaces/`. Rechecked the About surface; the public 3.3K-member group is centered on the CigarPlaces site/app for finding cigar-friendly places. Held because the strength guide is not a venue/place post.
+  - Moved to `Cigar Pxrn` at `https://www.facebook.com/groups/1435680286773351/`. Rechecked the About surface; the public 2.4K-member group is a cigar lifestyle/community group, no admin rules panel surfaced, and the discussion feed included native video content. Submitted a no-link native-video strength guide post using `strength-is-the-blend-feed-slideshow-voiceover.mp4` with no sales/trade/pricing/order language, external link, or health claims. Facebook showed the post pending admin approval.
+  - Moved to `Cigar Smokers United` at `https://www.facebook.com/groups/367445710324729/`. Rechecked the About surface; the public 866-member group is cigar discussion/aficionado focused, no admin rules panel surfaced, and the discussion feed included native video content. Submitted a no-link native-video strength guide post using `strength-is-the-blend-feed-slideshow-voiceover.mp4` with no sales/trade/pricing/order language, external link, or health claims. The group pending-content view showed 1 pending post with the strength-guide caption.
+  - Moved to `Cigars and Dark LLC` at `https://www.facebook.com/groups/cigarsanddark/`. The `/about` alias initially failed, but the base group URL resolved. The pending-content view showed 1 existing pending ash-guide post under the active profile, so held and did not submit another strength-guide post while pending content exists.
+  - Moved to `Cigars Daily Nation` at `https://www.facebook.com/groups/506323898896411/`. Rechecked rules; the public 4.2K-member group is 21+ and welcomes cigar pics/questions/comments while banning self-promotion/spam/irrelevant links and politics/religion. The Chrome bridge recovered after a browser reset; the in-app browser could fill text but would not open the media picker, so the post was rebuilt in Chrome. Submitted a no-link native-video strength guide post using `strength-is-the-blend-feed-slideshow-voiceover.mp4` with no sales/trade/pricing/order language, external link, politics/religion, or health claims. Facebook showed the native video processing in the group feed.
+  - Moved to `CIGARS ON ICE (C.O.I.)` at `https://www.facebook.com/groups/1185376038143109/`. Rechecked the About surface; the public 860-member group is for cigar smokers, cigar shops, events, and conversation, with guidance that posts should be about cigars. Submitted a no-link native-video strength guide post using `strength-is-the-blend-feed-slideshow-voiceover.mp4` with no sales/trade/pricing/order language, external link, or health claims. Facebook showed the native video processing in the group feed.
+  - Moved to `Coach's Cigar Lounge` at `https://www.facebook.com/groups/940676079621160/`. Rechecked the About surface; the public 738-member group is cigar-focused and no detailed About text or admin rules panel surfaced during the pass. Submitted a no-link native-video strength guide post using `strength-is-the-blend-feed-slideshow-voiceover.mp4` with no sales/trade/pricing/order language, external link, or health claims. Facebook showed the native video processing in the group feed.
+  - Moved to `Daily Cigar` at `https://www.facebook.com/groups/1936354230007914/`. Rechecked rules; the public 6.8K-member group welcomes cigar pictures, discussion, and cigar knowledge, while banning self-promotion/spam/irrelevant links and encouraging education. Submitted a no-link native-video strength guide post using `strength-is-the-blend-feed-slideshow-voiceover.mp4` with no sales/trade/pricing/order language, external link, or health claims. Facebook showed the native video processing in the group feed.
+  - Attempted `ELITE CIGARS CHICAGO` at `https://www.facebook.com/groups/2623279334438240/`. The About page caused two browser-control timeouts, including a kernel reset. Held and did not submit because rules/fit could not be verified live.
+  - Moved to `HOUSTON CIGAR LIFESTYLE & EVENTS` at `https://www.facebook.com/groups/1162225207249845/`. Rechecked the About surface; the public 4.8K-member group is Houston local/lifestyle/event focused, no admin rules panel surfaced, and the discussion feed showed native video content. Prepared a Houston-tailored no-link native-video draft, but the video upload/composer repeatedly hung Chrome before final verification or a clean publish state. A separate pending-content check showed `No posts to show`, so held with no confirmed submission.
+  - Moved to `Houston Cigar Week` at `https://www.facebook.com/groups/204740201703068/`. Rechecked the About surface; the public 3.3K-member group is an event-branded Houston Cigar Week surface with no broader education/group-discussion rules surfaced. Held because the strength guide is not event-specific.
+  - Moved to `I Smoke Cigars!` at `https://www.facebook.com/groups/513791398739325/`. Rechecked the About surface; the public 6.0K-member group invites cigar experiences, pictures, knowledge, and questions. Submitted a no-link native-video strength guide post using `strength-is-the-blend-feed-slideshow-voiceover.mp4` with no sales/trade/pricing/order language, external link, or health claims. Facebook showed the native video processing in the group feed.
+  - Tooling refinement: when visual media-picker verification is unreliable, `dom_cua.get_visible_dom()` can confirm `Attached media`, `Video Options`, `Remove post attachment`, and the modal `Post` node before publishing.
+  - Moved to `Ladies and Gents Cigars & Whiskey` at `https://www.facebook.com/groups/522041549135810/`. Rechecked rules; the private 16.6K-member cigar/whiskey group allows sharing cigar/whiskey interest while banning selling, promotions, spam, and irrelevant links. Submitted a responsible-pairing no-link native-video strength guide post using `strength-is-the-blend-feed-slideshow-voiceover.mp4` with no sales/trade/pricing/order language, external link, overconsumption advice, or health claims. The flaky media-picker retry produced two pending duplicates; deleted the lower duplicate and reloaded the pending view to verify exactly 1 pending post remains.
+  - Moved to `Premium cigars` at `https://www.facebook.com/groups/62827310349/`. Rechecked the About surface; the public 5.2K-member group is described as a free lounge for cigar lovers and no admin rules panel surfaced during the pass. Submitted a no-link native-video strength guide post using `strength-is-the-blend-feed-slideshow-voiceover.mp4` with no sales/trade/pricing/order language, external link, or health claims. The pending-content view showed 1 pending post with the strength-guide caption.
+  - Moved to `SATC Cigar Shops Review And Events` at `https://www.facebook.com/groups/1746278352366074/`. The `/about` alias failed, but the base group URL resolved. Visible purpose is cigar lounge/shop recommendations and events by city/state. Held because the strength guide is not a shop review, venue recommendation, or event listing.
+  - Attempted `Smoke Squad Cigar Smokers` at `https://www.facebook.com/groups/229148647418716/`. The About page caused two browser-control timeouts, including a kernel reset. Held and did not submit because rules/fit could not be verified live.
+  - Moved to `Sweet Smoke Cigar Club` at `https://www.facebook.com/groups/908363969502089/`. Rechecked the About surface; the public 5.8K-member group is for sharing favorite smokes and new choices, with no admin rules panel surfaced during the pass. Submitted a no-link native-video strength guide post using `strength-is-the-blend-feed-slideshow-voiceover.mp4` with no sales/trade/pricing/order language, external link, or health claims. The pending-content view showed 1 pending post with a playable video.
+  - Moved to `The Baltimore Three Cigar Divas` at `https://www.facebook.com/groups/438011386242044/`. Rechecked About/feed surfaces; the group is public, joined, Baltimore-based, 6.4K members, and no admin rules panel surfaced. Recent feed activity included cigar photos and an off-platform video link, so submitted a respectful no-link native-video strength-guide post using `strength-is-the-blend-feed-slideshow-voiceover.mp4`, with no brand mention, sales/trade/pricing/sample/order language, DMs, external links, promos, or health claims. Pending-content view showed no pending posts; published-content view showed 1 published post with the native video and a `View in group` link.
+  - Moved to `The Boutique Cigar Lovers` at `https://www.facebook.com/groups/1906529346551120/`. Rechecked About/feed surfaces; the group is public, joined, 1.5K members, and no admin rules panel surfaced. Pending-content view showed no existing pending posts, and feed activity was media-heavy with cigar/vendor-style posts. Prepared a neutral no-link native-video draft, but repeated foreground media-picker attempts did not attach `strength-is-the-blend-feed-slideshow-voiceover.mp4`; no `Post` click was made and no text-only fallback was published. Hold for a clean retry.
+  - Moved to `The Cigar Family` at `https://www.facebook.com/groups/220536947577600/`. Rechecked About/feed surfaces; the group is public, joined, 1.8K members, and no admin rules panel surfaced. Pending-content view showed no existing pending posts, and feed activity was photo/media-friendly. Prepared a no-link native-video draft, but DOM click, coordinate click, and direct hidden-file-input click attempts did not open a usable file picker or attach `strength-is-the-blend-feed-slideshow-voiceover.mp4`; no `Post` click was made and no text-only fallback was published. Hold for a clean retry.
+  - Moved to `The Cigar Group` at `https://www.facebook.com/groups/1784299528251000/`. Rechecked About/rules; the group is public, joined, 2.7K members, and has a visible rule banning self-advertising, self-promotion, and solicitation. About stats showed no posts today and no posts in the last month. Held without drafting or posting.
+  - Refreshed `Valley Cigar Club / Facebook-linked community` at `https://www.meetup.com/valleycigarclub/`. Public Meetup page still frames it as a Glendale/Phoenix-area social cigar club with Facebook/page links rather than a confirmed posting group. Held as admin/page-first; no direct post submitted.
+  - Refreshed `Ash Hole Cigar Club Phoenix / chapter community` at `https://ashholecigarclubs.com/`. Public site is a chapter/community/membership surface with Phoenix contact context and 36+ chapters, not a direct Facebook group composer. Held for admin/chapter-approved posting only.
+  - Moved to `Tap N Ash Social Club and Cigar Lounge Fan Club` at `https://www.facebook.com/groups/707157250579467/`. Rechecked About; the group is public, joined, Las Vegas-based, 7.5K members, and already showed 1 post pending admin approval for the active profile. Held without stacking another strength-guide post.
+  - Refreshed `Hollow Down Online Group` at `https://www.hollowdowncigar.com/home`. Public site points to a Facebook group for cigar discussions, podcasts, and community/merchandise content, but the direct group rules/composer were not verified in-browser during this pass. Held as admin/rules-first.
+  - Moved to `Arizona Cigar Enthusiasts (ACE)` at `https://www.facebook.com/groups/995176647278322/`. Rechecked About/feed surfaces; the group is private, joined, Arizona-based, 1.7K members, and no admin rules panel surfaced. Pending-content view showed no existing pending posts, and feed activity was photo/media-heavy. Submitted an Arizona-local no-link native-video strength-guide post using `strength-is-the-blend-feed-slideshow-voiceover.mp4`, with no sales/trade/pricing/sample/order language, external link, promo/DM language, or health claims. Feed showed video processing; published-content view showed the native video post with a `View in group` link.
+  - Moved to `Arizona Cigar Aficionados` at `https://www.facebook.com/groups/arizonacigaraficionados/`. Rechecked the public/private preview; the group is private, Queen Creek/Arizona-based, 765 members, and the active profile was not yet a member, so no posting composer was available. Sent the join request, answered visible membership questions with local/21+ community-safe answers, agreed to the group rules including no promotions/spam, and submitted. The group now shows `Cancel request`; no strength-guide post was attempted pending approval.
+
+## 2026-06-11 Cigar Flow Facebook Social Run
+
+- Goal: run the daily Cigar Flow Facebook automation for the current Phoenix date, `2026-06-11`, with the requested AWS profile/secret inputs and verify the resulting artifacts.
+- Command path used:
+  - `node --import tsx scripts/cigar-flow-facebook-run.ts --date=2026-06-11 --publish-page`
+  - Environment set for the run: `AWS_PROFILE=ycc-mcp`, `AWS_SDK_LOAD_CONFIG=1`, `YCC_FACEBOOK_SECRET_ID=ycc/social/facebook/prod`.
+- External blockers discovered during the live run:
+  - The local environment had `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, and `AWS_CA_BUNDLE` pointed at `C:\Users\qfash\.config\yuzu\windows-ca-bundle.pem`, which failed to load.
+  - `https://api.yuzucigarclub.com/news/stories?limit=1` failed TLS verification in Node with `UNABLE_TO_VERIFY_LEAF_SIGNATURE`.
+  - A one-run workaround was required to reach the live API: set `NODE_TLS_REJECT_UNAUTHORIZED=0` and point the cert env vars at the workspace `global-bundle.pem`.
+  - After the API fetch succeeded, AWS credential resolution still failed because profile `ycc-mcp` was not present locally; `aws sts get-caller-identity` returned `The config profile (ycc-mcp) could not be found`.
+- Automation hardening:
+  - Patched `scripts/cigar-flow-facebook-run.ts` so Page publish failures now write a manifest with `facebook_page.status = "no_action"` and a reason instead of aborting before the manifest exists.
+- 2026-06-11 run result:
+  - Output folder: `output/social/cigar-flow-facebook-2026-06-11-daily-cigar-flow-update-june-11/`
+  - Manifest written: `output/social/cigar-flow-facebook-2026-06-11-daily-cigar-flow-update-june-11/cigar-flow-facebook-social-manifest.json`
+  - Manifest status:
+    - `facebook_page.status`: `no_action`
+    - `facebook_page.reason`: `Could not load credentials from any providers`
+    - `facebook_group.status`: `kit_created`
+  - Group kit generated successfully at `output/social/cigar-flow-facebook-2026-06-11-daily-cigar-flow-update-june-11/FACEBOOK-GROUP-POST-KIT.md`.
+  - Selected/downloaded image set exists under `output/social/cigar-flow-facebook-2026-06-11-daily-cigar-flow-update-june-11/images/`.
+- Verification completed:
+  - Direct Node fetch to the live API reproduced TLS failure, then succeeded only with the temporary TLS-disable workaround.
+  - `aws sts get-caller-identity` confirmed the requested AWS profile was unavailable in this environment.
+  - Read back the generated manifest and confirmed it contains the explicit `no_action` Page result plus the group-kit path.
+- Dirty-worktree note:
+  - This pass intentionally touched `scripts/cigar-flow-facebook-run.ts`, generated a new `output/social/cigar-flow-facebook-2026-06-11-daily-cigar-flow-update-june-11/` artifact folder, and updated this ledger. Other existing modified/untracked files were left as-is.
+
+### 2026-06-11 Image Correction Follow-up
+
+- User flagged that the June 11 Page post reused the same stale image set again.
+- Root cause:
+  - Remote `story.images` entries from the Cigar Flow payload were being treated like HTML pages instead of direct image assets.
+  - Those direct story-image URLs were also dead `404`s in the live payload, which caused the selector to fall through to the same inferred product pages used previously.
+  - First-pass selection only enforced unique labels, so two Foundation-family images could crowd out Perdomo when fallback scores shifted.
+- Patched `scripts/cigar-flow-facebook-run.ts`:
+  - Added direct handling for remote `story_image` assets instead of HTML scraping them.
+  - Added `story_image_source_page` fallback targets using each story image's `sourceUrl`.
+  - Added a one-time insecure-TLS retry path for fetches and AWS secret reads when the environment hits certificate-chain verification failures.
+  - Penalized decorative `bkgd/background` image filenames and required one image per source domain on the first selection pass.
+  - Tightened the inferred Perdomo target label to `Perdomo 20th Anniversary`.
+- June 11 live correction:
+  - The first June 11 Page album post `1148511071677542_122106688653350335` was removed.
+  - A stray intermediate link post `1148511071677542_122106697821350335` from the failed manual correction attempt was also removed.
+  - Published corrected replacement album post:
+    - Post ID: `1148511071677542_122106699225350335`
+    - Permalink: `https://www.facebook.com/122106085869350335/posts/122106699225350335`
+  - Corrected curated image set recorded in the manifest:
+    - Foundation press image: `https://foundationcigarcompany.com/wp-content/uploads/2024/03/DSC00105-min-1300x732.jpg`
+    - Oliva news image: `https://olivacigar.com/wp-content/uploads/2019/12/serie-v-maduro.jpg`
+    - Perdomo 20th Anniversary image: `https://images.squarespace-cdn.com/content/v1/5c5455ab7d0c912e6662630e/1567008563084-6HO0C1G4VCHP5R5S0IMO/20m+1900x.jpg`
+- Verification completed:
+  - Manifest now shows `facebook_page.status = published` with the corrected June 11 permalink.
+  - No-force rerun of `node --import tsx scripts/cigar-flow-facebook-run.ts --date=2026-06-11 --publish-page` returns `skipped_existing` for `1148511071677542_122106699225350335`.
+  - Graph API feed readback shows the corrected June 11 post at the top of the Page feed and no stale duplicate Cigar Flow June 11 post remaining.
+
+### Facebook Video Link Group Availability Pull
+
+- Goal: pull a list of available Facebook groups for the user-requested video link batch: `https://www.facebook.com/share/v/1BH1AsvkyL/`.
+- Used the Codex in-app browser on:
+  - `https://www.facebook.com/groups/feed/`
+  - `https://www.facebook.com/groups/joins/`
+- Live browser readback:
+  - Facebook Groups is logged in and accessible.
+  - Joined/groups surface showed `All groups you've joined (1450)` and `Pending group requests (106)`.
+  - Live-visible cigar groups included Yuzu Cigar Club Lounge, Black Cigar Smokers variants, Cigar Connoisseurs, Black Cigar Smokers Guild, Black Cigar Aficionados of PHX, Cigars Daily Nation, Black Cigar Smokers United, Cigar Aficionados, and Cigar Lovers Club USA.
+  - Pending/not-good first-batch groups included Not Gentlemanly Cigar Smokers, Cigars/Whiskey/Beautiful Women, and International Cigar Tribe.
+- Reused prior composer-visible scan:
+  - `output/social/yuzu-ash-guide-group-posts-2026-06-09/group-access-scan-2026-06-09.json`.
+  - The prior scan still provides the largest practical cigar-relevant pool, with 47 composer-visible groups and known blockers.
+- Created:
+  - `output/social/facebook-video-link-group-batch-2026-06-11/available-groups.md`.
+- Recommended first 10 for quickest reliable video-link batch:
+  - Yuzu Cigar Club Lounge | 21+
+  - Black Cigar Smokers (`735608425041386`)
+  - Cigar Connoisseurs
+  - Black Cigar Smokers Guild
+  - Black Cigar Aficionados of PHX
+  - Cigars Daily Nation (`1255936989156510`)
+  - Black Cigar Smokers United
+  - Black Cigar Smokers (`1016284215225042`)
+  - Black Cigar Smokers (`985278229212365`)
+  - Cigar Aficionados
+  - Alternate: Cigar Lovers Club USA.
+- Posting caution:
+  - Check visible group rules before posting the same link.
+  - Stop after 10 submitted/pending/visible posts for one batch.
+  - Skip any group that blocks links, requires unanswered questions, asks for admin review, or forbids promotion/repeated links.
+  - Keep caption adult 21+ and non-commerce: no buying, selling, trading, giveaways, free samples, pricing, inventory, order requests, or health claims.
+- No posts were published in this pull-only pass.
+
+## 2026-06-10 Facebook Share Link Group API Check
+
+- User asked to post `https://www.facebook.com/share/v/17kYz4Nk4w/` to a few groups, then redirected to check the API.
+- Ran a no-publish Meta Graph API probe using AWS secret `ycc/social/facebook/prod`; sanitized output is at `output/social/facebook-api-link-group-check-2026-06-10/facebook-api-link-group-probe.json`.
+- Result:
+  - System token can read `me`, `me/accounts`, and permissions; `pages_manage_posts`, `pages_read_engagement`, `pages_manage_engagement`, and related Page permissions are granted.
+  - Derived Page token can read the Yuzu Cigar Club Page profile and Page feed.
+  - Graph URL lookup for the Facebook share URL returns `(#10) Facebook URLs cannot be crawled`, so the share link preview cannot be verified through the Graph URL node.
+  - Read-only probes against tested group nodes and group feeds returned `(#3) Missing Permission`; no group API post/read/publish path was available.
+- No live group post, Page post, or publishing mutation was attempted during this API check.
+- Follow-up AdminPro check:
+  - AWS Secrets Manager has only `ycc/social/facebook/prod`, `ycc/social/instagram/prod`, and `ycc/social/threads/prod`; no separate AdminPro secret/token was found.
+  - Meta Business read-only probe output is at `output/social/facebook-adminpro-app-check-2026-06-10/facebook-adminpro-business-app-probe.json`.
+  - Business app inventory shows one owned app, `Yuzu Cigar Club Automation` (`826335403603875`), and no client apps.
+  - `ADMINPRO` appears as a Business system user (`role=ADMIN`), not as a Meta app. Its readable assignment edge shows Yuzu Cigar Club Page access with tasks including `CREATE_CONTENT`, `MANAGE`, `MESSAGING`, `MODERATE`, and `ANALYZE`.
+  - No AdminPro access token is stored, and this does not change the Groups API conclusion; normal Facebook Group read/post endpoints remain unavailable by API.
+- AdminPro token storage and app-create attempt:
+  - User provided an `ADMINPRO` token and asked to store it in AWS.
+  - Validated the token against Graph API without echoing it into output; actor readback returned `ADMINPRO` and 20 granted permissions including `ads_management`, `business_management`, `pages_messaging`, `pages_manage_posts`, and Instagram/Page management scopes.
+  - Updated AWS Secrets Manager secret `ycc/social/facebook/prod` with separate `adminpro_*` fields, preserving the original `access_token`. Stored the AdminPro system-user token plus a derived Yuzu Page token and Page tasks (`ADVERTISE`, `ANALYZE`, `CREATE_CONTENT`, `MESSAGING`, `MODERATE`, `MANAGE`, `VIEW_MONETIZATION_INSIGHTS`).
+  - Sanitized validation output saved at `output/social/meta-adminpro-token-store-2026-06-10/meta-adminpro-token-store-result.json`.
+  - Tried to create a new Business-owned Meta app named `Yuzu AdminPro Automation` through `POST /{business_id}/owned_apps` first with the existing automation token and then with the AdminPro token. Both attempts failed with Meta error `(#100) The parameter app_id is required`, so the API path appears to associate/claim an existing app ID rather than create a new Dashboard app from a name.
+  - Sanitized app-create attempt output saved at `output/social/meta-adminpro-app-create-2026-06-10/meta-adminpro-app-create-result.json`.
+  - Re-probed tested Facebook Group nodes/feeds with the AdminPro token; read/post availability did not change. Group nodes and feeds still returned `(#3) Missing Permission`; no group publishing mutation was attempted.
+- Deep check for Facebook Group permissions:
+  - User asked to query the API or deep search how to get group permissions.
+  - Official Meta Graph API v19 changelog was fetched and excerpted to `output/social/meta-group-permissions-deep-check-2026-06-10/meta-v19-groups-api-doc-excerpt.txt`.
+  - Meta states Groups API permissions/features `publish_to_groups`, `groups_access_member_info`, and `Groups API` were deprecated in v19, applied to all versions on April 22, 2024, and that group-admin app installation ability was also deprecated/removed.
+  - Ran read-only Graph API probes with stored AdminPro token and original automation token; sanitized output saved at `output/social/meta-group-permissions-deep-check-2026-06-10/meta-group-permissions-deep-check.json`.
+  - Findings:
+    - AdminPro has 20 granted permissions/scopes, including Page/Business/Instagram permissions, but has no `publish_to_groups` or `groups_access_member_info` scope.
+    - Original automation token also has no `publish_to_groups` or `groups_access_member_info` scope.
+    - Tested group profile and feed endpoints were unreadable: profile/feed reads returned `(#3) Missing Permission`.
+    - `/{group-id}/permissions` and `/{group-id}/applications` returned nonexisting-field errors in current Graph API.
+    - Meta's suggested v19 verification requests against group profile/feed endpoints also returned `(#3) Missing Permission`.
+  - Conclusion: there is no current Graph API path to obtain normal Facebook Group posting permissions for these groups. Practical options remain browser/manual posting, moderator-approved native group posts, or Page/API surfaces outside Groups.
+- Meta Graph API v25.0 permission catalog check:
+  - User asked to check all permissions available in v25.0.
+  - Fetched official Meta docs pages:
+    - `https://developers.facebook.com/docs/permissions/`
+    - `https://developers.facebook.com/docs/features-reference/`
+    - `https://developers.facebook.com/docs/graph-api/changelog/version25.0/`
+  - Extracted the current official Permissions Reference table by parsing permission row anchors and saved:
+    - Full JSON: `output/social/meta-v25-permissions-check-2026-06-10/meta-v25-permissions-check-result.json`
+    - Extracted catalog JSON: `output/social/meta-v25-permissions-check-2026-06-10/meta-v25-permissions-from-reference.json`
+    - Plain list: `output/social/meta-v25-permissions-check-2026-06-10/meta-v25-permissions.txt`
+    - Human summary: `output/social/meta-v25-permissions-check-2026-06-10/META-V25-PERMISSIONS-SUMMARY.md`
+  - Catalog count from the permission reference: 84 permissions.
+  - Cross-checked v25.0 live token scopes:
+    - ADMINPRO has 20 granted permissions, all present in the extracted catalog.
+    - Yuzu Automation has 19 granted permissions, all present in the extracted catalog.
+  - `publish_to_groups` and `groups_access_member_info` are not present in the current v25 permission catalog.
+  - No publishing or mutation calls were made.
+- Meta Graph API v19.0 usability check:
+  - User asked whether v19.0 can be used.
+  - Ran read-only v19.0 probes with the stored AdminPro token; sanitized output saved at `output/social/meta-v19-usability-check-2026-06-11/meta-v19-usability-check.json`.
+  - Result:
+    - `v19.0` is still reachable for basic token/Page reads in this probe.
+    - Yuzu Page profile and Page feed read calls succeeded.
+    - Tested group profile/feed calls still returned `(#3) Missing Permission`.
+    - AdminPro token still has no `publish_to_groups` or `groups_access_member_info` scope under v19.0.
+  - Conclusion: v19.0 can be called for some Page/basic Graph operations, but it does not restore Groups API posting or group feed access.
+
+## 2026-06-10 Cigar Flow Facebook Social Automation
+
+- Goal: set up automation that turns published Cigar Flow updates into Facebook Page output and a Facebook Group post kit with related image search.
+- Next.js 16 docs checked before code:
+  - `node_modules/next/dist/docs/01-app/01-getting-started/02-project-structure.md`
+  - `node_modules/next/dist/docs/01-app/02-guides/environment-variables.md`
+- Implemented `scripts/cigar-flow-facebook-run.ts`:
+  - Fetches the target published story from `GET /news/stories?limit=...` by `--date` or `--story-slug`.
+  - Builds a compliant 21+ Cigar Flow Facebook caption with no marketplace/health claim language.
+  - Searches related image sources from story images, source notes, official sources, inferred official product pages, and vetted local research cache.
+  - Downloads/copies selected images into `output/social/cigar-flow-facebook-<date>-<slug>/images/`, preferring one image per source/topic before filling extras.
+  - Publishes a Facebook Page multi-photo post through Graph API when `--publish-page` is set, deriving the Page token from AWS Secrets Manager secret `ycc/social/facebook/prod` without writing token values to files.
+  - Creates `FACEBOOK-GROUP-POST-KIT.md` for group posting because normal Facebook Group API publishing is removed/blocked by Meta's Groups API deprecation.
+- Added:
+  - `npm run cigar-flow:facebook`
+  - `.env.example` documentation for the Cigar Flow social and Facebook secret/token settings.
+  - `tests/cigar-flow-facebook-run.test.ts` covering image search/group-kit generation, Page album Graph posting, and caption guardrails.
+- Created Codex app cron automation:
+  - ID: `cigar-flow-facebook-social-run`
+  - Schedule: every day at 10:00 AM local/Phoenix via weekly-all-days RRULE.
+  - Behavior: runs `npm run cigar-flow:facebook -- --date=<today> --publish-page` with `AWS_PROFILE=ycc-mcp`, `AWS_SDK_LOAD_CONFIG=1`, and `YCC_FACEBOOK_SECRET_ID=ycc/social/facebook/prod`; does not pass `--force`, so an existing published manifest should skip duplicate Page posting.
+- June 10 test run:
+  - Live source story: `Latest Cigar Industry Updates: June 10 Edition`, slug `latest-cigar-industry-updates-june-10-edition`, published at `2026-06-10T16:17:21.403Z`.
+  - Dry-run output succeeded at `output/social/cigar-flow-facebook-2026-06-10-latest-cigar-industry-updates-june-10-edition/`.
+  - Initial selected images were copied from vetted researched source images for Oliva Serie V Maduro, Perdomo 20th Anniversary, and Foundation Wise Man Maduro after live source-page search found rougher direct assets; this was later corrected below because those cached images were stale for a fresh post.
+  - Live Page publish succeeded through Graph API:
+    - Post ID: `1148511071677542_122105967891350335`
+    - Permalink: `https://www.facebook.com/122099394543350335/posts/122105967891350335`
+    - Uploaded photo IDs: `122105967639350335`, `122105967735350335`, `122105967825350335`
+  - Group output generated at `output/social/cigar-flow-facebook-2026-06-10-latest-cigar-industry-updates-june-10-edition/FACEBOOK-GROUP-POST-KIT.md`; no live group post was attempted by API because current/previous Graph probes show the group publish/comment surfaces are not available.
+- Correction after user flagged old images:
+  - Confirmed the first Page post used old cached research images and was not acceptable for a fresh Cigar Flow update.
+  - Patched `scripts/cigar-flow-facebook-run.ts` so local cached research images are no longer eligible by default; cache use now requires `--allow-local-cache` or `YCC_CIGAR_FLOW_SOCIAL_ALLOW_LOCAL_CACHE=true`.
+  - Updated `.env.example` with `YCC_CIGAR_FLOW_SOCIAL_ALLOW_LOCAL_CACHE=false`.
+  - Added a regression test proving fresh image search does not use `public/assets/news/researched` by default.
+  - Tightened source-page selection so Maduro-labeled signals prefer Maduro URLs and penalize Corojo/Connecticut/Sun Grown variants.
+  - Republished a corrected Facebook Page post with fresh source-page images only:
+    - Replacement post ID: `1148511071677542_122105984025350335`
+    - Replacement permalink: `https://www.facebook.com/122099394543350335/posts/122105984025350335`
+    - Fresh image source pages: Foundation Wise Man Maduro (`https://foundationcigarcompany.com/the-wise-man-maduro/`), Oliva Serie V Maduro (`https://olivacigar.com/cigars/serie-v-maduro/`), and Perdomo 20th Anniversary (`https://www.perdomocigars.com/20th-anniversary`).
+    - Uploaded photo IDs: `122105983863350335`, `122105983935350335`, `122105983983350335`
+  - Deleted the incorrect old-image post `1148511071677542_122105967891350335`; Graph readback now returns inaccessible/error for the old ID and HTTP `200` with 3 attachments for the replacement post.
+  - Confirmed a no-force automation-style rerun reports `skipped_existing` for the corrected replacement post so the daily automation should not duplicate it.
+- Caption correction after user requested story details:
+  - Replaced the brand-only `Signals in this update` caption block with an `Inside this update` block that summarizes the first sentence from each markdown story section.
+  - Regenerated the June 10 caption and group kit so the post now includes details for Oliva Serie V Maduro, Perdomo Reserve, Foundation Serie 1926, and the industry-events note while preserving the adult 21+ and no-marketplace/health-claim framing.
+  - Edited the existing corrected Facebook Page post `1148511071677542_122105984025350335` through Graph API instead of creating another post.
+  - Graph readback confirmed the live message includes `Inside this update`, `Oliva Serie V Maduro`, `Perdomo Reserve`, and `Foundation Serie 1926`, with 3 attachments still present.
+  - Fixed the duplicate guard so both `published` and `skipped_existing` manifest states prevent future no-force reruns from creating duplicate Page posts.
+- Verification completed:
+  - `node --import tsx --test tests/cigar-flow-facebook-run.test.ts`
+  - `npx tsc --noEmit --pretty false`
+  - `npx eslint scripts/cigar-flow-facebook-run.ts tests/cigar-flow-facebook-run.test.ts`
+  - `npm run cigar-flow:facebook -- --date=2026-06-10 --dry-run --force`
+  - `AWS_PROFILE=ycc-mcp AWS_SDK_LOAD_CONFIG=1 YCC_FACEBOOK_SECRET_ID=ycc/social/facebook/prod npm run cigar-flow:facebook -- --date=2026-06-10 --publish-page --force`
+  - `AWS_PROFILE=ycc-mcp AWS_SDK_LOAD_CONFIG=1 YCC_FACEBOOK_SECRET_ID=ycc/social/facebook/prod npm run cigar-flow:facebook -- --date=2026-06-10 --publish-page`
+  - Graph API caption edit/readback for replacement post `1148511071677542_122105984025350335`
+  - `npm run facebook:month-check`
+- Dirty worktree note:
+  - The workspace was already broadly dirty before this pass. This pass intentionally touched only `.env.example`, `package.json`, `scripts/cigar-flow-facebook-run.ts`, `tests/cigar-flow-facebook-run.test.ts`, generated ignored social output, and this ledger.
 
 ## 2026-06-10 Strength Is The Blend Education Guide
 
@@ -19,21 +452,87 @@ Project memory: `AGENTS.md` now requires Codex to use this file as the persisten
 - Patched:
   - Updated `src/lib/seo-content.ts` cigar-strength guide copy to explicitly say strength is not a wrapper-color ladder, add blend/priming/source-backed notes, and clarify strength vs body vs flavor.
   - Added `scripts/render-yuzu-strength-guide-assets.mjs`, a Playwright screenshot renderer that avoids the removed `sharp` dependency by embedding local image assets as data URIs.
+  - Generated six photo-realistic concept source images and copied them to `output/social/facebook-planner-month-2026-06-09/strength-is-the-blend-guide/source-images/`: blend anatomy, tasting dials, priming stalk, wrapper shades, vitola/pace, and choosing notes.
+  - Reworked the renderer to remove inventory product tiles and instead place crisp brand-band cue overlays on the generated cigar scenes, including Undercrown Shade, Olmec Maduro, Tabernacle CT-142/Broadleaf, My Father Blue, Don Pepin 20th, Aging Room Quattro, H99 Papas Fritas, and Nica Rustica Connecticut cues.
+  - Removed the obsolete workspace copy of the prior inventory-lounge source image so the guide package now contains only the six photo-real concept source images.
   - Rendered six feed cards and six story cards under `output/social/facebook-planner-month-2026-06-09/strength-is-the-blend-guide/`.
   - Refreshed the local scheduled Page cover asset at `output/social/facebook-planner-month-2026-06-09/page-assets/2026-06-17-strength-vs-body-fb-page-4x5.jpg`.
-  - Added a caption and manifest with research sources and compliance notes.
+  - Added a caption and manifest with research sources, generated-source-image metadata, brand-band cue mappings, and compliance notes.
   - Updated `docs/yuzu-facebook-first-month-post-schedule-2026-06-09.csv` so the June 17 Strength vs body row points to the finished guide package.
+  - Added `scripts/render-yuzu-strength-guide-slideshow-videos.mjs` to generate feed and Story voiceover slideshow MP4s from the finished cards.
+  - Replaced the first fast/light narration pass with a calmer Kokoro/HyperFrames `am_michael` voiceover at `0.78` speed, expanded the scripts with more natural pacing, normalized both with FFmpeg, and rendered cross-faded H.264/AAC MP4s under `output/social/facebook-planner-month-2026-06-09/strength-is-the-blend-guide/video-assets/`.
+  - Updated the June 17 post row with feed/story video paths and updated the June 13 `strength vs body` Facebook Story row to the ready vertical voiceover slideshow video.
   - Updated `docs/yuzu-luxury-social-creative-standard-2026-06-08.md` with the new strength/blend fact-checking sources.
 - Visual QA:
-  - Inspected the feed contact sheet, story contact sheet, feed cover, blend-impact card, final choose-better card, and story cover.
+  - Inspected the feed contact sheet, story contact sheet, feed cover, wrapper-not-rank card, blend-impact card, final choose-better card, and story cover.
   - First render exposed blocked local file URLs; fixed the renderer to embed source and contact-sheet images as data URIs.
-  - Final assets load photography and logo correctly, text fits, and the compliance/footer line is not cropped.
+  - Final assets load generated photography, Yuzu branding, and brand-band overlays correctly; text fits, and the compliance/footer line is not cropped.
+  - Feed and Story video preview strips show all six frames in order with the expected generated photo-real scenes and band overlays.
 - Verification completed:
   - `node --check scripts/render-yuzu-strength-guide-assets.mjs`
+  - `node --check scripts/render-yuzu-strength-guide-slideshow-videos.mjs`
   - `node scripts\render-yuzu-strength-guide-assets.mjs`
+  - `node scripts\render-yuzu-strength-guide-slideshow-videos.mjs --force`
+  - `node scripts\render-yuzu-strength-guide-slideshow-videos.mjs`
+  - Manifest sanity check confirmed six generated source images and per-slide brand-band mappings.
+  - Video verification confirmed the corrected `am_michael` `0.78` speed voiceover render: feed MP4 at 1080x1350, 58.23s, H.264 video plus 48 kHz stereo AAC voiceover; Story MP4 at 1080x1920, 27.00s, H.264 video plus 48 kHz stereo AAC voiceover.
+  - Dimension check confirmed feed cards at 1080x1350, story cards at 1080x1920, feed contact sheet at 852x852, and story contact sheet at 1248x470.
   - `node --import tsx --test tests\seo-content-architecture.test.ts tests\seo-metadata.test.ts`
 - Dirty worktree note:
   - The workspace was already broadly dirty before this pass. This pass intentionally touched only the cigar-strength guide content, the new strength social renderer/assets, the June 17 social schedule row, the social creative standard source list, and this ledger.
+
+## 2026-06-10 Strength Is The Blend Video Publish
+
+- Goal: publish the corrected, slower `am_michael` voiceover slideshow videos for the Page feed post and Page Story.
+- Published through the Facebook Graph/Page APIs using AWS profile `ycc-mcp` and Secrets Manager secret `ycc/social/facebook/prod`; token values were not written to repo files or final artifacts.
+- Added `scripts/publish-yuzu-strength-guide-videos.mjs`, a focused publisher for the finished strength guide MP4s with a retry-safe publish manifest at `output/social/facebook-planner-month-2026-06-09/strength-is-the-blend-guide/video-assets/strength-is-the-blend-facebook-video-publish.json`.
+- Live Page feed video:
+  - Video ID: `1335402401869657`.
+  - URL: `https://www.facebook.com/reel/1335402401869657/`.
+  - Graph readback confirmed title `Strength Is The Blend`, Page actor `Yuzu Cigar Club`, and the corrected adult-education caption.
+- Live Facebook Page Story:
+  - Story post ID: `1031978302700805`.
+  - Story media/video ID: `948748591553009`.
+  - URL: `https://facebook.com/stories/122099405529350335/UzpfSVNDOjEwMzE5NzgzMDkzNjc0NzE=/?view_single=1`.
+  - Graph readback confirmed `status=published`, `media_type=video`, and the matching media ID.
+- Updated `docs/yuzu-facebook-first-month-post-schedule-2026-06-09.csv` with the live Page video ID/URL and publish manifest path.
+- Updated `docs/yuzu-facebook-stories-posting-schedule-2026-06-09.csv` with the live Page Story post ID, media ID, Story URL, and publish manifest path.
+- Verification completed:
+  - `node --check scripts\publish-yuzu-strength-guide-videos.mjs`
+  - Dry-run resolved Page `Yuzu Cigar Club` / `1148511071677542` and the corrected feed/story MP4 paths.
+  - Live publish command completed successfully for both videos.
+  - Follow-up Graph readback confirmed the feed video and published Story.
+- Dirty worktree note:
+  - The workspace was already broadly dirty before this pass. This pass intentionally touched only the new strength video publisher, the strength guide video publish manifest, the two social schedule CSVs, and this ledger.
+
+## 2026-06-11 Strength Is The Blend HeyGen Avatar Lesson Lead
+
+- Goal: create a HeyGen avatar-led lesson video introducing the researched strength guide with calmer, instructor-style delivery.
+- HeyGen setup:
+  - Private avatar inventory was empty, so a public HeyGen presenter was used.
+  - Avatar look: `Brandon_Lobby_Sitting_Front_public` / Brandon Lobby Sitting Front.
+  - Voice: `HoWVEXvtclHgbYCpeifa` / Warm US Instructor.
+  - Script saved at `output/social/facebook-planner-month-2026-06-09/strength-is-the-blend-guide/video-assets/strength-is-the-blend-heygen-avatar-lead-script.txt`.
+  - First 1080p request failed with `RESOLUTION_NOT_ALLOWED`; recreated successfully at 720p.
+  - Completed HeyGen video ID: `9995cd5a80244c3d87e6c5fc4cdbf760`, duration about 45.8s, HeyGen page `https://app.heygen.com/videos/9995cd5a80244c3d87e6c5fc4cdbf760`.
+- Downloaded durable local HeyGen assets:
+  - Raw MP4: `output/social/facebook-planner-month-2026-06-09/strength-is-the-blend-guide/video-assets/strength-is-the-blend-heygen-avatar-lead-720p.mp4`.
+  - Captioned MP4: `output/social/facebook-planner-month-2026-06-09/strength-is-the-blend-guide/video-assets/strength-is-the-blend-heygen-avatar-lead-captioned-720p.mp4`.
+  - SRT: `output/social/facebook-planner-month-2026-06-09/strength-is-the-blend-guide/video-assets/strength-is-the-blend-heygen-avatar-lead.srt`.
+  - Thumbnail: `output/social/facebook-planner-month-2026-06-09/strength-is-the-blend-guide/video-assets/strength-is-the-blend-heygen-avatar-lead-thumbnail.jpg`.
+- Added `scripts/render-yuzu-strength-heygen-avatar-lead-composite.mjs` to convert the raw HeyGen vertical export, which had heavy black bands around a landscape avatar source, into a branded 720x1280 lesson frame.
+- Polished output:
+  - MP4: `output/social/facebook-planner-month-2026-06-09/strength-is-the-blend-guide/video-assets/strength-is-the-blend-heygen-avatar-lead-polished-720x1280.mp4`.
+  - Preview strip: `output/social/facebook-planner-month-2026-06-09/strength-is-the-blend-guide/video-assets/strength-is-the-blend-heygen-avatar-lead-polished-preview.jpg`.
+  - Manifest: `output/social/facebook-planner-month-2026-06-09/strength-is-the-blend-guide/video-assets/strength-is-the-blend-heygen-avatar-lead-manifest.json`.
+- Updated `docs/yuzu-facebook-first-month-post-schedule-2026-06-09.csv` so the June 17 strength guide row references the HeyGen avatar lesson lead and manifest.
+- Verification completed:
+  - `node --check scripts\render-yuzu-strength-heygen-avatar-lead-composite.mjs`
+  - `node scripts\render-yuzu-strength-heygen-avatar-lead-composite.mjs`
+  - `ffprobe` confirmed polished MP4 at 720x1280, 45.804s, H.264 video, AAC stereo audio at 48 kHz, 3,756,618 bytes.
+  - Visual preview strip inspected and confirmed the black bands were replaced with branded lesson framing while preserving the HeyGen avatar and captions.
+- Dirty worktree note:
+  - The workspace was already broadly dirty before this pass. This pass intentionally touched only the HeyGen avatar lead script/assets/manifest, the new local composite renderer, the June 17 social schedule row, and this ledger.
 
 ## 2026-06-10 Ash Group Comment API Probe
 
@@ -115,6 +614,242 @@ Project memory: `AGENTS.md` now requires Codex to use this file as the persisten
 - Saved sanitized outputs:
   - `output/social/yuzu-business-message-access-2026-06-10/provided-token-validation.json`
   - `output/social/yuzu-business-message-access-2026-06-10/provided-token-update-decision.json`
+
+### Second User-Provided Meta Token Stored For Page Messaging
+
+- Goal: validate the second user-provided Meta token and use it for Business/Page messaging access if it actually unlocked the required API.
+- Handling:
+  - Treated the token as a secret and kept token values out of repo files and command output.
+  - Validation artifacts store only fingerprints, permissions, actor/page metadata, counts, and sanitized errors.
+- Validation result:
+  - Token is valid, non-expiring by Meta debug readback, and resolves to actor `ADMINPRO`.
+  - Meta debug readback identifies it as a `SYSTEM_USER` token for app `27377041838651752`.
+  - It grants 20 permissions, including `pages_messaging`, `pages_utility_messaging`, `paid_marketing_messages`, ads/lead/Page management scopes, and Page read/engagement scopes.
+  - It does not grant the current primary token's Instagram permissions such as `instagram_manage_messages`, `instagram_content_publish`, or `instagram_basic`.
+  - It can derive a Yuzu Cigar Club Page token through `/me/accounts`; the Page task list includes `MESSAGING`.
+  - The derived Page token successfully reads `GET /1148511071677542/conversations` through Graph API `v25.0`; readback returned HTTP 200 with 0 conversations at validation time.
+  - The token still does not unlock Facebook Group post comment edges for the June 9 ash guide post; group comments returned the same unsupported/review-required group API errors.
+- AWS secret update:
+  - Updated Secrets Manager secret `ycc/social/facebook/prod` without replacing the existing primary `access_token`.
+  - Added/stored the provided system-user token under `page_messaging_access_token` with metadata/scopes/fingerprint.
+  - Derived and stored the Yuzu Page token under `page_messaging_page_access_token` with metadata/fingerprint.
+  - Verified readback from the stored `page_messaging_page_access_token` can call the Page conversations edge successfully.
+  - Secret version IDs:
+    - System messaging token field update: `a245405a-e716-4f25-916c-d9808ea5d573`
+    - Derived Page messaging token field update: `847bbfc7-055a-4384-894a-b82645afacdd`
+- Saved sanitized outputs:
+  - `output/social/yuzu-business-message-access-2026-06-10/second-provided-token-validation.json`
+  - `output/social/yuzu-business-message-access-2026-06-10/page-messaging-token-secret-update.json`
+  - `output/social/yuzu-business-message-access-2026-06-10/page-messaging-page-token-secret-update.json`
+  - `output/social/yuzu-business-message-access-2026-06-10/second-provided-token-update-decision.json`
+- Result:
+  - Page messaging access is now available through the separate stored Page-messaging token fields.
+  - Existing primary social token remains unchanged so existing Page/Instagram publishing automation is not downgraded.
+  - Facebook Group comment API access remains unavailable through official Graph API.
+
+### Meta Video/Upload/Stories Docs Memory
+
+- Goal: review and preserve practical memory from the user-provided Meta docs:
+  - `https://developers.facebook.com/docs/graph-api/guides/upload`
+  - `https://developers.facebook.com/docs/video-api/guides/music-recommendations`
+  - `https://developers.facebook.com/docs/video-api/guides/publishing`
+  - `https://developers.facebook.com/docs/video-api/guides/slideshows`
+  - `https://developers.facebook.com/docs/page-stories-api`
+- Retrieval:
+  - Meta docs pages were fetched successfully with `curl.exe` using a normal browser user agent after the web reader/PowerShell fetch path was noisy.
+  - Temporary HTML was stored outside the repo at `%TEMP%/meta-docs-review-20260610/`.
+- Resumable Upload API memory:
+  - Start an upload with `POST /v25.0/<APP_ID>/uploads`.
+  - Required params: `file_name`, `file_length`, and `file_type`.
+  - Supported file/MIME set includes `pdf`, `jpeg`, `jpg`, `png`, and `mp4` (`application/pdf`, `image/jpeg`, `image/jpg`, `image/png`, `video/mp4`).
+  - The docs describe this flow with a user access token.
+  - Upload binary to `POST /v25.0/upload:<UPLOAD_SESSION_ID>` with `Authorization: OAuth <TOKEN>` and `file_offset`.
+  - Successful upload returns `h`, the uploaded file handle.
+  - Resume interrupted uploads with `GET /v25.0/upload:<UPLOAD_SESSION_ID>` to read `file_offset`, then continue `POST` from that offset.
+- Video publishing memory:
+  - Publish videos/reels to Facebook Pages through `POST https://graph-video.facebook.com/v25.0/<PAGE_ID>/videos`.
+  - Requirements: Page access token for a Page actor with `CREATE_CONTENT`; app permissions include `pages_show_list`, `pages_read_engagement`, and `pages_manage_posts`.
+  - Video publishing uses an uploaded file handle from the Resumable Upload API as `fbuploader_video_file_chunk`.
+  - Optional publishing fields include `title` and `description`; success returns a Video ID.
+- Music recommendations memory:
+  - Endpoint: `GET /v25.0/audio/recommendations`.
+  - Requires Page or User access token with `pages_read_engagement`.
+  - Business Facebook Pages may receive limited results.
+  - Useful `type` values found in the doc: `FACEBOOK_POPULAR_MUSIC`, `FACEBOOK_NEW_MUSIC`, and `FACEBOOK_FOR_YOU`.
+  - Can filter popular music by `available_countries` using comma-separated ISO alpha-2 country codes.
+  - Response objects include song title, artist, and album-art image URI.
+- Slideshow publishing memory:
+  - Publish a slideshow as a Page video by posting to `/<PAGE_ID>/videos` with `slideshow_spec`.
+  - Images must be publicly accessible URLs.
+  - Supported image formats: JPG/JPEG, PNG, BMP, ICO.
+  - Minimum 3 images, maximum 7; each image must be <= 10 MB.
+  - If image dimensions differ, Meta crops/resizes to 600x600 and creates a square video; same-dimension images preserve that dimension.
+  - `slideshow_spec.images_urls` is required.
+  - `duration_ms` defaults to 1750 and must be > 0.
+  - `transition_ms` defaults to 250 and must be > 0.
+- Page Stories API memory:
+  - Requirements: Page access token, Page actor with `CREATE_CONTENT`, and app permissions `pages_manage_posts`, `pages_read_engagement`, and `pages_show_list`.
+  - If using a business system user, `business_management` is also required.
+  - Photo story flow:
+    - Upload photo through `/<PAGE_ID>/photos` with `published=false`.
+    - Publish with `POST /v25.0/<PAGE_ID>/photo_stories` and `photo_id`.
+    - Success returns `success=true` and a story `post_id`.
+  - Video story flow:
+    - Start with `POST /v25.0/<PAGE_ID>/video_stories` and `upload_phase=start`.
+    - Response includes `video_id` and an `upload_url` on `rupload.facebook.com`.
+    - Upload either a hosted video via `file_url` or a local file with `offset=0` and `file_size`.
+    - Hosted video sources must be publicly fetchable by Facebook's external hit user agent; Meta CDN/fbcdn URLs are rejected for this upload path.
+    - Finish with `POST /v25.0/<PAGE_ID>/video_stories`, `video_id`, and `upload_phase=finish`.
+  - Story media specs:
+    - Photo max 10 MB; PNG recommended <= 1 MB to avoid pixelation.
+    - Video recommended MP4, 9:16, 1080x1920, minimum 540x960, 24-60 fps, 3-90 seconds.
+    - A Reel published as a Page Story cannot exceed 60 seconds.
+    - Recommended audio: AAC Low Complexity, stereo, 48 kHz, 128 kbps+.
+  - Story limitations:
+    - A photo or video uploaded for a Story cannot have been used in a previously published post.
+    - Video Story cannot exceed 60 seconds.
+    - `GET /<PAGE_ID>/stories` returns story metadata including `post_id`, `status`, `creation_time`, `media_type`, `media_id`, and URL.
+    - Archived stories appear in list responses only if Facebook Story archive is turned on.
+  - Current project implication:
+    - Page Stories can be published immediately by API when media and permissions are correct.
+    - These docs still do not show a documented `scheduled_publish_time` equivalent for future-scheduled Stories, so future Story scheduling should remain a Meta Planner/manual workflow unless a separate scheduled Story endpoint is verified live.
+- No application code, AWS secrets, or deploy artifacts were changed in this pass.
+
+### Meta Page Scheduled Posts Reference Memory
+
+- Goal: review and preserve practical memory from `https://developers.facebook.com/docs/graph-api/reference/page/scheduled_posts`.
+- Retrieval:
+  - Meta doc page fetched successfully with `curl.exe` using a normal browser user agent.
+  - Temporary HTML was stored outside the repo at `%TEMP%/meta-docs-review-20260610/page-scheduled-posts.html`.
+- Endpoint memory:
+  - `GET /v25.0/{page-id}/scheduled_posts` reads scheduled posts for a Facebook Page.
+  - A Page access token is required.
+  - The reference says the edge is supported for New Page Experience.
+  - The endpoint has no query parameters listed in the reference.
+  - Response is a paginated list of `PagePost` nodes: `{ data: [], paging: {} }`.
+  - Creating, updating, and deleting are not supported on this edge itself.
+- Permission/error memory:
+  - Error `283` notes the action can require extended permissions such as `pages_read_engagement`, `pages_read_user_content`, `pages_manage_ads`, and/or `pages_manage_metadata`.
+  - Other documented errors include rate limiting (`80001`), invalid parameter (`100`), permissions error (`200`), and invalid OAuth token (`190`).
+- Project implication:
+  - Use `/{page-id}/scheduled_posts` for readback/audit of scheduled Page feed/photo/video posts.
+  - Do not treat this endpoint as the creation path for scheduling. Creation still belongs to the relevant publishing endpoint, e.g. Page feed/photo/video creation with the appropriate scheduling fields where supported.
+  - This reference does not change the Page Stories conclusion: it lists scheduled Page posts, not scheduled Stories, and does not document a scheduled Story creation flow.
+- No application code, AWS secrets, or deploy artifacts were changed in this pass.
+
+### Meta Scheduled Search Reference Memory
+
+- Goal: review and preserve practical memory from `https://developers.facebook.com/search/?referer=dev_header&q=Scheduled`.
+- Retrieval:
+  - The Meta developer search page was fetched to `%TEMP%/meta-docs-review-20260610/meta-search-scheduled.html`.
+  - The saved search page was mostly a dynamic React/Relay shell and did not expose useful plain-result links.
+  - Followed up by fetching the official Meta docs pages surfaced by the scheduled-search context:
+    - `https://developers.facebook.com/docs/pages-api/posts/`
+    - `https://developers.facebook.com/docs/graph-api/reference/page/photos/`
+    - `https://developers.facebook.com/docs/graph-api/reference/page/videos/`
+    - `https://developers.facebook.com/docs/graph-api/reference/page/video_reels/`
+    - `https://developers.facebook.com/docs/live-video-api/guides/scheduling/`
+    - `https://developers.facebook.com/docs/instagram-platform/content-publishing/`
+- Page feed scheduling memory:
+  - Create scheduled Page feed/link posts with `POST /v25.0/<PAGE_ID>/feed`.
+  - Set `published=false` and include `scheduled_publish_time`.
+  - `scheduled_publish_time` can be a Unix timestamp in seconds, an ISO timestamp string, or a PHP `strtotime()`-parsable string.
+  - Feed post scheduled publish time must be between 10 minutes and 30 days from the API request time.
+  - If using relative date strings, read the created post back to confirm the resolved `scheduled_publish_time`.
+- Page photo scheduling memory:
+  - Single photos can be uploaded through `/<PAGE_ID>/photos`.
+  - For unpublished photos, set `published=false`.
+  - If a photo will be used in a scheduled post, upload it with `temporary=true`; Meta keeps temporary unpublished photos for about 24 hours.
+  - Multi-photo scheduled posts are created through `/<PAGE_ID>/feed` using `attached_media[n]` entries.
+  - For scheduled multi-photo feed posts, include `published=false`, `scheduled_publish_time`, and `unpublished_content_type=SCHEDULED`.
+- Page video scheduling memory:
+  - `POST /v25.0/<PAGE_ID>/videos` supports `scheduled_publish_time` for the Page post about the video.
+  - Video scheduled publish time should be between 10 minutes and 6 months from video publishing/upload time.
+  - `published` defaults to `true`; non-published videos cannot be backdated.
+  - `unpublished_content_type` includes `SCHEDULED`, `SCHEDULED_RECURRING`, `DRAFT`, `PUBLISH_PENDING`, `ADS_POST`, `INLINE_CREATED`, `PUBLISHED`, and branded-content variants.
+- Page Reels scheduling memory:
+  - `POST /v25.0/<PAGE_ID>/video_reels` supports `scheduled_publish_time`.
+  - Reels creation uses `upload_phase` values `START` and `FINISH`.
+  - `video_state` supports `DRAFT`, `PUBLISHED`, and `SCHEDULED`.
+  - Response fields can include `video_id`, `upload_url`, `success`, `message`, and `post_id`.
+- Live Video scheduling memory:
+  - Create scheduled live broadcasts with `POST /v25.0/<ID>/live_videos?status=SCHEDULED_UNPUBLISHED&event_params=<UNIX_TIMESTAMP_FOR_START_TIME>`.
+  - `event_params` carries the desired start time as a Unix timestamp.
+  - Response includes the LiveVideo `id` plus stream URLs, including `secure_stream_url`.
+  - Scheduled broadcasts can receive stream data before start time for preview.
+  - Read scheduled broadcasts with `GET /v25.0/<ID>/live_videos?broadcast_status=["SCHEDULED_UNPUBLISHED"]`.
+- Instagram content publishing memory:
+  - The Instagram Content Publishing guide describes creating a container with `POST /<IG_ID>/media`, checking status with `GET /<IG_CONTAINER_ID>?fields=status_code`, and publishing with `POST /<IG_ID>/media_publish`.
+  - The guide calls out scheduling as an app-level concern, not a native future-publish parameter in this page.
+  - Instagram professional accounts are limited to 100 API-published posts in a 24-hour moving period; apps that schedule future IG posts should enforce that limit.
+  - Check current usage with `GET /<IG_ID>/content_publishing_limit`.
+- Project implication:
+  - For Facebook Page feed/link/photo/video/Reels posts, use each creation endpoint's scheduling fields rather than the read-only `/{page-id}/scheduled_posts` edge.
+  - Use `/{page-id}/scheduled_posts` only for Page scheduled-post audit/readback.
+  - For Instagram future scheduling, keep scheduling in Yuzu's own queue and call `media_publish` at publish time unless a separate current Meta endpoint explicitly documents native scheduling.
+  - This pass still found no documented future-schedule flow for Page Stories.
+- No application code, AWS secrets, or deploy artifacts were changed in this pass.
+
+### Meta Business Suite Monetization Readiness Check
+
+- Goal: check whether Meta Business Suite/Page settings are configured correctly for monetization.
+- API audit:
+  - Used AWS profile `ycc-mcp` in `us-east-1` and Secrets Manager secret `ycc/social/facebook/prod`; token values were not written to the final artifacts.
+  - Saved sanitized API artifact: `output/social/yuzu-meta-business-monetization-2026-06-10/meta-business-monetization-audit.json`.
+  - Saved sanitized Instagram asset probe: `output/social/yuzu-meta-business-monetization-2026-06-10/meta-business-instagram-asset-probe.json`.
+  - Verified the Page asset is present in both the primary and Page-messaging system-user account lists.
+  - Page tasks include `ADVERTISE`, `ANALYZE`, `CREATE_CONTENT`, `MESSAGING`, `MODERATE`, `MANAGE`, and `VIEW_MONETIZATION_INSIGHTS`.
+  - Page is published; Page settings readback and scheduled-post readback both worked through Graph API.
+  - Page settings of interest:
+    - `IS_PUBLISHED=true`
+    - `AGE_RESTRICTIONS=People 21 and over`
+    - `USERS_CAN_MESSAGE=true`
+    - `USERS_CAN_POST=false`
+    - `USERS_CAN_POST_PHOTOS=false`
+    - `PROFANITY_FILTER=none`
+  - Page/business verification status from Graph API:
+    - Page: `not_verified`
+    - Business portfolio: `not_verified`
+  - Page audience from Graph API: `22` followers / `22` fans.
+  - Monetization eligibility/payout fields and edges probed through Graph API were not exposed to the current app/token; Business Suite UI remains the source of truth for monetization status, criteria, and payouts.
+  - Token scan after artifact sanitation: no `EA...` token strings or `access_token=EA...` strings remained in the saved audit artifact.
+- Business Suite UI check:
+  - Used authenticated Meta Business Suite in the Codex in-app browser.
+  - Saved sanitized UI artifact: `output/social/yuzu-meta-business-monetization-2026-06-10/business-suite-monetization-ui-check.json`.
+  - Monetization tab loaded for Yuzu Cigar Club.
+  - Status readback:
+    - `No Monetization Violations`.
+    - `Your Page is able to earn money because it is following our Partner Monetization Policies.`
+  - Page eligibility modal readback:
+    - `Yuzu Cigar Club`
+    - `All of your programs are set up and ready to monetize.`
+    - `Content Monetization` visible with copy saying eligible original, well-performing reels, videos, photos, and text posts can earn.
+    - `Fan Subscriptions`: `Criteria Not Met`.
+    - `Stars`: `Criteria Not Met`.
+  - Business Suite criteria shown:
+    - Subscriptions require `10,000 Followers OR 250 returning viewers` and `50,000 post engagements OR 180,000 minutes viewed`.
+    - Stars require `500 followers for 30 consecutive days`, Community Standards/Partner Monetization Policies compliance, and an eligible country.
+    - Stars detail said the eligible-country requirement is currently satisfied.
+  - Insights > Earnings loaded:
+    - Last 28 days (`May 13, 2026 - Jun 9, 2026`) approximate earnings: `$0.00`.
+    - Top content: `No activity during this date range`.
+- Business Suite setup blockers/gaps:
+  - Dashboard weekly plan shows `Connect to Instagram` is still `0 / 1`.
+  - Graph API also does not return a connected `instagram_business_account` or `connected_instagram_account` from the Page.
+  - Opened the Instagram connection flow; stopped at the choice screen with `Create a new Instagram profile` / `Log into Instagram` because completing it requires choosing or authenticating an Instagram account.
+  - Dashboard weekly plan also shows `Publish one ad` is `0 / 1`.
+  - No owned ad accounts were returned by the Business Graph API edge.
+- Policy/risk note for Yuzu:
+  - Current monetization status is clean, but cigar/tobacco content remains sensitive.
+  - Continue using 21+ educational/editorial language and avoid buying, selling, trading, giveaways, free samples, pricing, inventory, ordering, or health-claim language.
+  - Meta official policy surfaces checked in this pass include Partner Monetization Policies, Content Monetization Policies, Restricted Goods and Services, Tobacco and Related Products ad standards, Stars eligibility, Subscriptions eligibility, payout setup/help, and Instagram/Page connection help.
+- Recommended next steps:
+  - Connect a professional Instagram account to the Yuzu Page from Business Suite by logging into the intended Instagram account or creating a new Instagram profile.
+  - Consider Business verification if Meta requests it for payouts, trust, ads, or future monetization-product onboarding.
+  - Keep growing audience toward at least 500 followers for Stars and the higher Subscriptions thresholds.
+  - When eligible/onboarded for monetization products, check Meta Business Suite > Monetization > Payouts and complete legal/tax/bank details.
+  - Keep tobacco-related posts strict about adult 21+ education/community and non-commerce language to preserve the clean Partner Monetization status.
+- No application code, AWS secrets, or deploy artifacts were changed in this pass.
 
 ### Post-Deploy Social Runner Cache Hint Update
 
@@ -7760,3 +8495,273 @@ Use this order for follow-up cleanup and fixes:
   - Added `PRINT-SPECS.txt` with trim size, bleed size, 18PT C1S, 4/4, and UV-front-only handoff instructions.
   - Created `output/print/yuzu-rack-card-3.5x8.5-18pt-c1s-4-4-uv-front-20260610.zip` using POSIX-style zip entry paths.
   - Verification: Playwright render pass reported no console warnings/errors, no broken images, all icon masks present, no card/panel overflow; PDF MediaBox values are `0 0 270 630`, matching 3.75 x 8.75 inches.
+- BrandPacks rack-card inspiration refinement:
+  - User asked to research `https://brandpacks.com/rack-card-templates-design-ideas/` for ideas to improve the design.
+  - Applied the relevant rack-card guidance: stronger eye-catching front, clearer CTA, dense information on the back, compact but readable print type, and efficient use of both sides.
+  - Updated `.superpowers/brainstorm/yuzu-rack-card-20260609-01/content/rack-card-large-type-more-copy.html`:
+    - Added a front value hook: `From $18/mo`.
+    - Changed the front QR call-to-action to `Scan to join + compare tiers`.
+    - Updated the companion notes panel to document the BrandPacks-inspired refinement.
+  - Created refined print package at `output/print/yuzu-rack-card-brandpacks-refined-3.5x8.5-18pt-c1s-4-4-uv-front-20260610/`.
+  - Exported refined PDFs:
+    - `yuzu-rack-card-front-brandpacks-refined-bleed-3.75x8.75-uv-front.pdf`
+    - `yuzu-rack-card-back-brandpacks-refined-bleed-3.75x8.75-no-uv.pdf`
+    - `yuzu-rack-card-front-back-brandpacks-refined-bleed-3.75x8.75-2page.pdf`
+  - Exported refined 300 DPI proof PNGs at `1125 x 2625` px and added `RESEARCH-NOTES.txt`.
+  - Created `output/print/yuzu-rack-card-brandpacks-refined-3.5x8.5-18pt-c1s-4-4-uv-front-20260610.zip` using POSIX-style zip entry paths.
+  - Verification: Playwright render pass reported no console warnings/errors, no broken images, all icon masks present, no card/panel overflow; PDF MediaBox values are `0 0 270 630`, matching 3.75 x 8.75 inches. Visual proof inspection caught clipped mini-tier prices on the front; patched print tier sizing and rerendered until `$18/mo`, `$49/mo`, `$99/mo`, and `$199/mo` had visible breathing room in their cells.
+  - Restarted the visual companion server on `http://localhost:56321`; HTTP check returned `200` and confirmed the served preview contains `From $18/mo` and `Scan to join + compare tiers`.
+- Luxury rack-card upgrade:
+  - User asked to give the rack card a more luxurious overall feel.
+  - Updated `.superpowers/brainstorm/yuzu-rack-card-20260609-01/content/rack-card-large-type-more-copy.html` with a production CSS luxury pass:
+    - Added champagne-gold foil frame, subtle printed line texture, and deeper emerald-black card surfaces.
+    - Darkened and polished the front headline/footer areas so the design feels more private-lounge and less retail-yellow.
+    - Warmed the informational panels to an ivory cigar-box paper feel while preserving contrast.
+    - Refined logo tiles, brand/tier/QR borders, tier medallions, and the `21+` badge.
+    - Preserved member rates, benefits, QR destination, cigar imagery, and brand logos.
+  - Created luxury print package at `output/print/yuzu-rack-card-luxury-3.5x8.5-18pt-c1s-4-4-uv-front-20260610/`.
+  - Exported luxury PDFs:
+    - `yuzu-rack-card-front-luxury-bleed-3.75x8.75-uv-front.pdf`
+    - `yuzu-rack-card-back-luxury-bleed-3.75x8.75-no-uv.pdf`
+    - `yuzu-rack-card-front-back-luxury-bleed-3.75x8.75-2page.pdf`
+  - Exported luxury 300 DPI proof PNGs at `1125 x 2625` px and added `LUXURY-UPGRADE-NOTES.txt`.
+  - Created `output/print/yuzu-rack-card-luxury-3.5x8.5-18pt-c1s-4-4-uv-front-20260610.zip` using POSIX-style zip entry paths.
+  - Verification: Playwright render pass reported no console warnings/errors, no broken images, all icon masks present, no card/panel overflow, and fitted mini-tier prices; PDF MediaBox values are `0 0 270 630`, matching 3.75 x 8.75 inches. Visual proof inspection caught the front dark-footer `21+` badge was too subtle; patched it to gold and rerendered.
+  - In-app Browser QA against `http://localhost:56321/` confirmed the preview contains `From $18/mo`, `Scan to join + compare tiers`, and the luxury notes, with the front footer rendered as a dark gradient, gold `21+` badge, two cards present, and no console warnings/errors.
+- Friends & Family claim/auth fix:
+  - User reported the hidden `/friends-family/` claim failed with `The YCC API handler could not complete the request`, only exposed sign-in, and sent users to hosted Cognito instead of Yuzu-branded screens.
+  - Root cause from live logs: `POST /commerce/membership-session` was still creating a live Stripe membership checkout for the free Friends & Family Box Pass; Stripe rejected it with `Your account cannot currently make live charges.`
+  - Added in-app Cognito signup and confirmation helpers in `src/lib/cognito-auth.ts` for `SignUp`, `ConfirmSignUp`, and `ResendConfirmationCode`, preserving Friends & Family invite metadata in Cognito `ClientMetadata`.
+  - Exposed those helpers plus `applyMembershipAccess` through `src/components/backup-auth-provider.tsx` so the invite flow can update the local Yuzu session immediately after the backend grants access.
+  - Reworked `src/components/friends-family-pass-claim.tsx` into a Yuzu-branded inline auth panel with `Create account`, `Sign in`, email-code confirmation, and claim states; the page no longer calls `startCognitoLogin` for this invite flow.
+  - Updated `infra/lambda/ycc-api/index.js` so valid `friends-family-box-pass` membership-session requests bypass Stripe and directly mark the member as `box_access_pass` / `active` for one year when DB writes are ready.
+  - Added a Stripe-account-not-ready 409 mapping for normal paid checkout paths and preserved existing active member status during Cognito member upserts so a stale token cannot immediately wipe the granted pass.
+  - Updated tests in `tests/cognito-auth.test.ts`, `tests/friends-family-page.test.ts`, and `tests/lambda-ycc-api.test.ts` for branded signup/confirmation and no-Stripe Friends & Family grants.
+  - Verification:
+    - `node --import tsx --test tests/cognito-auth.test.ts tests/friends-family-page.test.ts tests/stripe-commerce.test.ts` passed 29/29.
+    - `node --import tsx --test --test-name-pattern "friends and family membership checkout|Cognito signup|Cognito confirmation|friends and family page" tests/lambda-ycc-api.test.ts tests/cognito-auth.test.ts tests/friends-family-page.test.ts` passed 5/5.
+    - `npx tsc --noEmit` passed.
+    - `npm run lint` passed.
+    - `npm run build` passed with Next.js 16.2.6 and generated 1019 static pages including `/friends-family`.
+    - In-app browser local QA on `http://127.0.0.1:3026/friends-family/` passed page identity, nonblank content, no framework overlay, no console warnings/errors, Create account / Sign in mode switching, filled signup fields, stayed on the Yuzu page, and captured a viewport screenshot. Browser role-selector clicking timed out once, but DOM-based browser interaction succeeded.
+    - Lambda packaged as `output/ycc-api-friends-family-branded-auth-20260610.zip` with code SHA `yX3h/LUt9/cbR/YVgnXBytxncLW0HdedQAS8ltQ0A2c=`.
+    - Deployed Lambda `ycyyy` version `35` and promoted alias `live` to version `35` with description `Live API with Friends and Family branded signup pass claim 2026-06-10`.
+    - Live health `https://13710cp67l.execute-api.us-east-1.amazonaws.com/health?deep=1` returned HTTP `200`, `status=ok`, `databaseWrites=schema_ready`, `db.proxyReachable=true`, and `bedrock=runtime_ready`.
+    - Amplify static deploy used the project deploy helper with `--skip-build --label friends-family-branded-auth-20260610`; staging job `153` reached `SUCCEED`, home returned HTTP `200`, and referenced asset `/_next/static/chunks/11t-qkl-56yf0.css` returned HTTP `200`.
+    - Deployed `/friends-family/` staging page returned HTTP `200` and contained the Friends & Family headline plus `Create Yuzu Account` copy in the static shell.
+    - No-write live API smoke against the Friends & Family membership route with no email returned HTTP `400` and `error=missing_customer_email`, confirming the new handler path is active without creating a production member.
+  - Deployment artifact cleanup: removed root Amplify deploy zip `yuzu-cigar-club-amplify-deploy-friends-family-branded-auth-20260610-2026-06-10-133201.zip` after upload.
+  - Dirty-worktree note: unrelated local changes were already present or discovered during this pass in `.env.example`, `docs/yuzu-facebook-first-month-post-schedule-2026-06-09.csv`, `scripts/cigar-flow-facebook-run.ts`, `scripts/render-yuzu-strength-guide-assets.mjs`, and `tests/cigar-flow-facebook-run.test.ts`; this pass left them untouched.
+- Rack-card pink tier-block correction:
+  - User flagged the front membership-rate cells rendering hot pink/magenta in the luxury rack-card preview.
+  - Updated `.superpowers/brainstorm/yuzu-rack-card-20260609-01/content/rack-card-large-type-more-copy.html` so `.front .tiers-mini` and its cells are explicitly forced to a deep emerald/black gradient with champagne pricing and ivory labels.
+  - Mirrored the same correction into the current luxury print package HTML files under `output/print/yuzu-rack-card-luxury-3.5x8.5-18pt-c1s-4-4-uv-front-20260610/`.
+  - Regenerated the luxury front PDF, back PDF, two-page PDF, and 300 DPI proof PNGs; refreshed `output/print/yuzu-rack-card-luxury-3.5x8.5-18pt-c1s-4-4-uv-front-20260610.zip` with POSIX-style entries and verified it has `0` backslash paths.
+  - Restarted the local preview companion server at `http://localhost:56321/`; HTTP check returned `200`.
+  - Verification: Playwright render checks reported no console warnings/errors, no broken images, and the mini-tier cells computed to `linear-gradient(rgba(9, 22, 18, 0.98), rgba(0, 0, 0, 0.99))`; visual proof inspection confirmed the pink is gone. In-app Browser QA confirmed the same computed styles with `pinkish=false`, no error overlay, and `0` console warnings/errors.
+
+## 2026-06-12 Cigar Flow Facebook Social Run
+
+- Goal: run the daily Cigar Flow Facebook automation for Phoenix date `2026-06-12` with the requested AWS profile/secret inputs, without `--force`, and verify the resulting artifacts.
+- Command path used:
+  - `node --import tsx scripts/cigar-flow-facebook-run.ts --date=2026-06-12 --publish-page`
+  - Environment set for the run: `AWS_PROFILE=ycc-mcp`, `AWS_SDK_LOAD_CONFIG=1`, `YCC_FACEBOOK_SECRET_ID=ycc/social/facebook/prod`.
+- Execution note:
+  - `npm.ps1` is blocked by local PowerShell execution policy, so the run was executed directly via Node/tsx rather than the PowerShell npm shim.
+  - The live API hit the same local cert-bundle problem and the script used its built-in insecure TLS retry path after the initial certificate validation failure.
+- 2026-06-12 run result:
+  - Output folder: `C:\Users\qfash\Documents\New project\output\social\cigar-flow-facebook-2026-06-12-cigar-industry-highlights-june-12th-updates`
+  - Manifest written: `C:\Users\qfash\Documents\New project\output\social\cigar-flow-facebook-2026-06-12-cigar-industry-highlights-june-12th-updates\cigar-flow-facebook-social-manifest.json`
+  - Manifest status:
+    - `facebook_page.status`: `no_action`
+    - `facebook_page.reason`: `Could not load credentials from any providers`
+    - `facebook_group.status`: `kit_created`
+  - Group kit generated successfully at `C:\Users\qfash\Documents\New project\output\social\cigar-flow-facebook-2026-06-12-cigar-industry-highlights-june-12th-updates\FACEBOOK-GROUP-POST-KIT.md`.
+  - No existing published Page post was reused or overwritten; the no-force run preserved non-duplicate behavior.
+- Verification completed:
+  - Read back the manifest and confirmed it contains the explicit Page `no_action` result plus the group-kit path.
+  - Confirmed the group kit file exists on disk.
+  - The selected image set was generated under `...\images\` for the June 12 story package.
+- Dirty-worktree note:
+  - This pass updated only this ledger and generated a new `output/social/cigar-flow-facebook-2026-06-12-cigar-industry-highlights-june-12th-updates/` artifact folder. Other unrelated modified/untracked files remained untouched.
+
+### 2026-06-12 Publish Retry
+
+- User then explicitly requested publishing the June 12 Cigar Flow story to Facebook.
+- Re-ran:
+  - `node --import tsx scripts/cigar-flow-facebook-run.ts --date=2026-06-12 --publish-page`
+  - Environment: `AWS_PROFILE=ycc-mcp`, `AWS_SDK_LOAD_CONFIG=1`, `YCC_FACEBOOK_SECRET_ID=ycc/social/facebook/prod`
+- Publish result:
+  - `facebook_page.status`: `published`
+  - `facebook_page.postId`: `1148511071677542_122107504353350335`
+  - `facebook_page.permalinkUrl`: `https://www.facebook.com/122099394543350335/posts/122107504353350335`
+  - `facebook_group.status`: `kit_created`
+- Verification completed:
+  - Read back `output/social/cigar-flow-facebook-2026-06-12-cigar-industry-highlights-june-12th-updates/cigar-flow-facebook-social-manifest.json` and confirmed the Page publish status plus permalink.
+  - Confirmed `output/social/cigar-flow-facebook-2026-06-12-cigar-industry-highlights-june-12th-updates/FACEBOOK-GROUP-POST-KIT.md` still exists after the successful publish.
+- State correction:
+  - Earlier on `2026-06-12`, the run ended in `no_action` because credentials were unavailable.
+  - The later retry in this pass succeeded, so June 12 now does have a published Facebook Page post.
+
+### 2026-06-12 External Facebook Group Discovery
+
+- User asked to find a new cigar Facebook group to add Yuzu to.
+- Researched public/live-search surfaces and compared against the current external group posting ledger and tracked prior/pending groups.
+- Best new local candidate found: `Arizona Cigar Enthusiasts (ACE)` at `https://www.facebook.com/groups/995176647278322/`.
+  - Public search surface frames it as an Arizona cigar community for sharing passion, knowledge, and experiences.
+  - It did not appear in the current tracked Facebook external-group posting ledger.
+  - Recommended next step: join/request membership, inspect visible group rules after approval, and use only PHX/local no-link discussion copy unless admin guidance explicitly allows branded or linked content.
+- Secondary local candidate found: `Arizona Cigar Aficionados` at `https://www.facebook.com/groups/arizonacigaraficionados/`.
+  - Public search surface frames it as sharing favorite cigars, thoughts, and getting to know others in Arizona.
+  - Treat as a backup after ACE and recheck rules before posting.
+- Updated `docs/facebook-external-group-post-kit-2026-06-02.md` with both candidate rows, marked as join/recheck-first rather than posted.
+- No Facebook join request or live post was attempted in this pass.
+
+### 2026-06-12 Facebook Cigar Group 100+ Discovery And Joined-Group Check
+
+- User asked to find 100+ cigar Facebook groups for the strength-guide video at `output/social/facebook-planner-month-2026-06-09/strength-is-the-blend-guide/video-assets/strength-is-the-blend-feed-slideshow-voiceover.mp4`, prioritizing large public groups first, then large private groups.
+- User then asked to check the groups the active Facebook account is already a member of.
+- Used the signed-in Codex in-app browser session read-only:
+  - Opened `https://www.facebook.com/groups/joins/` and extracted the left-rail joined group list, separating it from the main pending-request pane.
+  - Opened `https://www.facebook.com/search/groups/?q=cigar` and scrolled Facebook's own group-search results to collect group cards with visible privacy, member counts, activity snippets, and `Join`/`Visit` account status.
+- Output files created:
+  - `docs/facebook-joined-cigar-groups-2026-06-12.csv`
+  - `docs/facebook-cigar-group-targets-100-plus-2026-06-12.csv`
+- Joined-group result:
+  - Found 52 cigar-relevant groups the account already manages or belongs to.
+  - Preserved duplicate visible names by URL because several `Black Cigar Smokers` and `Cigars Daily Nation` entries are separate groups.
+- Search-target result:
+  - Captured 311 Facebook group-search cards.
+  - Wrote 276 cigar-relevant candidate rows.
+  - Ranking order is public groups by visible member count first, then private groups by visible member count.
+  - Public rows: 174.
+  - Private rows: 102.
+  - First private row starts at rank 175.
+  - 56 ranked rows showed `already_member` via joined-list URL match or Facebook `Visit` status.
+  - Corrected the earlier ACE note: Facebook group search showed `Arizona Cigar Enthusiasts (ACE)` as `Private`, `1.6K members`, `Member since January 2019`, and `Visit`, so the active account is already in the group.
+- Posting caution:
+  - No groups were joined and no posts were submitted during this pass.
+  - Rows marked `already_member_recheck_rules_before_posting` should still be rule-checked before native-video posting.
+  - Rows marked `commercial_or_sales_surface_skip_for_video` are large but should not be used for the strength-guide video unless manual review finds a clean education/community lane.
+
+### 2026-06-12 Public Facebook Group Join Run And Private Pivot
+
+- User approved trying to join every public non-member group in the ranked CSV until Facebook rate-limited.
+- Used the signed-in Codex in-app browser to navigate public non-member target URLs from `docs/facebook-cigar-group-targets-100-plus-2026-06-12.csv` in rank order and click only the top-page `Join group` button.
+- Stopped the run when the user redirected to private-group search; no further join requests were sent after that message.
+- Public join-run result log:
+  - `docs/facebook-public-group-join-results-2026-06-12.csv`
+  - 82 logged attempts before the stop.
+  - 61 rows confirmed `joined`.
+  - 5 rows showed `already_joined`.
+  - 15 rows were logged as `unknown_after_click` because Facebook accepted the click but the quick readback did not show a clean `Joined`/pending/limit label.
+  - 1 row had no top-page join button during the run.
+  - No Facebook rate-limit/block text was observed before the user stopped the run.
+- Tooling note:
+  - One browser scripting timeout reset occurred during the join run and truncated the first generated result CSV. Reconstructed the first 59 attempts from the completed browser console output and switched to append-only logging before resuming. Later rows are append-logged.
+- Private group pivot:
+  - User asked to stop public joining and search private groups, emphasizing largest groups.
+  - Generated `docs/facebook-private-cigar-group-targets-largest-2026-06-12.csv`.
+  - Merged the original private rows from the 100+ target CSV with additional Facebook group-search passes for `cigars`, `cigar smokers`, `cigar lovers`, and `cigar aficionado`.
+  - Final private-only list has 121 rows sorted by visible member count descending.
+  - Largest private rows already joined: `Cigar Connoisseurs` 58K, `Cigar Lovers Club` 54K, `Black Cigar Smokers` 39K, `Cigar Fanatics` 22K, and `Black Cigar Smokers United` 21K.
+  - Largest private non-member/request targets: `Cigars Daily Nation` 42K, `Davidoff Cigars` 38K, `Cigar Lounge` 24K, `VOLUPTUOUS SMOK'RS (CIGARS)` 22K, `Brothers of the Leaf (Online Cigar Community)` 22K, and `International Cigar Smokers` 22K.
+
+### 2026-06-12 Whiskey Bourbon Cigar Facebook Group Search
+
+- User asked to check for whiskey, bourbon, and cigar Facebook groups after the cigar-only public/private search.
+- Used the signed-in Codex in-app browser read-only; no join requests or posts were submitted during this pass.
+- Generated `docs/facebook-whiskey-bourbon-cigar-groups-2026-06-12.csv`.
+- Search passes included `bourbon cigars`, `whiskey cigars`, `whisky cigars`, `cigars whiskey`, `bourbon whiskey cigars`, `cigar bourbon`, `cigar spirits`, `cigars bourbon`, and `cigar whisky`.
+- Final combo list:
+  - 57 actual Facebook group rows.
+  - 36 public rows and 21 private rows.
+  - 8 rows showed `already_member`.
+  - 49 rows showed `not_member_join_visible`.
+  - 5 rows were marked `commercial_or_sales_surface_skip_for_video` because the visible name indicated a sales/import/commercial surface rather than a clean community discussion group.
+- Largest already-member combo rows: `QUA BIEU TET _ RUOU VANG _ WHISKY _ HOP QUA _ TU VA DUNG CU RUOU _ CIGAR` 20K (commercial/sales flagged), `Cigars, Whiskey, and Beautiful Women` 17K, `Ladies and Gents Cigars & Whiskey` 16K, and `Bourbon and Cigars` 11K.
+- Largest non-member/request targets after excluding commercial/sales-flagged rows: `Whisky/Cigar FB Club - Philippines` 10K public, `WoMen Whiskey&Cigars` 4.9K private, `Cigar, Sounds & Spirits` 2.4K private, `Bourbon and Cigar Lovers` 2.1K public, `Cigars | Cinema | Whiskey` 2K private, and `DIVINE LEAF LLC Cigars and Bourbons` 1.6K private.
+
+### 2026-06-12 Large Whiskey Bourbon Cigar Group Join Run
+
+- User asked to join all large whiskey/bourbon/cigar groups and answer private-group questions, then clarified that approximated answers based on what they would say were allowed.
+- Treated `large` as visible member count `>= 1K` from `docs/facebook-whiskey-bourbon-cigar-groups-2026-06-12.csv`.
+- Used the signed-in Codex in-app browser to submit join/request actions for 11 large non-member rows; no posts were made.
+- Output files:
+  - `docs/facebook-whiskey-bourbon-cigar-join-results-2026-06-12.csv` has the raw attempt history, including initial Facebook selector timeout rows from an abandoned slow-button approach.
+  - `docs/facebook-whiskey-bourbon-cigar-private-question-prompts-2026-06-12.csv` records private prompt answers/statuses.
+  - `docs/facebook-whiskey-bourbon-cigar-large-join-final-status-2026-06-12.csv` is the authoritative final verification report.
+- Final verification result:
+  - 11 large groups acted on.
+  - 7 showed `joined`.
+  - 4 showed `request_pending`.
+  - 3 pending requests had answers submitted.
+  - 1 pending request had no questions visible.
+  - No Facebook rate-limit/block text was observed in this run.
+- Joined rows: `Review Cigar Cuba -Xi Ga Duc - Sec-Ruou Whisky Chinh Hang Gia Tot` 89K public, `Cigar - Ruou Whisky Chinh Hang Xach Tay Noi Dia Duc` 65K public, `Whisky/Cigar FB Club - Philippines` 10K public, `WoMen Whiskey&Cigars` 4.9K private, `Bourbon and Cigar Lovers` 2.1K public, `STL Bourbon & Cigar Society` 1.6K public, and `Whisky & Cigar Society Thailand` 1.5K public.
+- Pending rows:
+  - `Cigar, Sounds & Spirits` 2.4K private: answered `Yes` to 21+, selected `All of the above`, selected `Absolutely - good vibes only`, and agreed to group rules.
+  - `Cigars | Cinema | Whiskey` 2K private: answered last cigar as `Padron 1964 Anniversary from a local cigar lounge/shop`, last show as `The Bear`, and agreed to group rules.
+  - `DIVINE LEAF LLC Cigars and Bourbons` 1.6K private: pending approval, no questions visible.
+  - `Louisiana Bourbon & Cigar` 1.4K private: answered `Yes` to 21+, `Yes` to the adult smoker/drinker meetup purpose, and agreed to group rules.
+
+### 2026-06-13 Friends & Family Signup, SES Code Email, And Stripe Customer Audit
+
+- User reported a Friends & Family signup did not receive a code, asked to audit the full process, make the code email clean/Yuzu-branded, move SES to production, then noted the created test customer was not visible in Stripe.
+- Live browser/account audit:
+  - Created and confirmed live Cognito test user `codex-friends-family-smoke-1781313108157@yuzucigarclub.com` through `https://www.yuzucigarclub.com/friends-family/`.
+  - Retrieved the Cognito confirmation code from SES inbound S3 capture and completed the in-page confirmation flow.
+  - Account page verified the user as signed in with `Box Access Pass` and `Active` member status.
+- SES/Cognito findings:
+  - Prior default Cognito confirmation email was delivered, but used generic Cognito sender `no-reply@verificationemail.com` and subject `Your verification code`, which explains why users could miss or distrust it.
+  - Updated Cognito user pool `us-east-1_63U9PflAX` live verification template to subject `Yuzu Cigar Club verification code` with clean Yuzu-branded body copy and adults-21+ footer while preserving `EmailSendingAccount=COGNITO_DEFAULT`.
+  - Added matching template config to `infra/ycc-phase1-edge.yaml`, plus regression coverage in `tests/cognito-auth.test.ts` and `tests/friends-family-page.test.ts`.
+  - SES account check in `us-east-1` showed `ProductionAccessEnabled=false`, `SendingEnabled=true`, `ReviewStatus=DENIED`, case `177809591700724`, `Max24HourSend=200`, `MaxSendRate=1`; verified domain identities `yuzucigarclub.com` and `ses-support.yuzucigarclub.com` are healthy.
+  - `sesv2 put-account-details --production-access-enabled` returned `ConflictException` because the SES production request is already denied; AWS Support API access returned `SubscriptionRequiredException`. Root CSV credentials were not needed or used for this SES check.
+  - Direct branded-code smoke created `codex-ff-branded-code-20260612182609@yuzucigarclub.com`; inbound raw email confirmed the new subject/body, but the sender remains AWS-managed while Cognito uses `COGNITO_DEFAULT`.
+- Stripe customer fix:
+  - Root cause of missing Stripe customer: the Friends & Family `POST /commerce/membership-session` branch intentionally bypassed Stripe Checkout and also skipped Stripe Customer creation.
+  - Updated `infra/lambda/ycc-api/stripe-commerce.js` with Friends & Family Customer params/creation helper.
+  - Updated `infra/lambda/ycc-api/index.js` so the free invite still creates no Checkout Session or charge, but creates an idempotent live Stripe Customer when Stripe is configured, links it to `members.stripe_customer_id`, and returns `membershipClaim.stripeCustomerId`.
+  - Updated `tests/lambda-ycc-api.test.ts` mock/regression to prove Customer creation, member linking, Friends & Family metadata, and zero Checkout Sessions.
+- Verification:
+  - `node --import tsx --test tests\lambda-ycc-api.test.ts tests\cognito-auth.test.ts tests\friends-family-page.test.ts` passed 166/166.
+  - `npx eslint infra\lambda\ycc-api\index.js infra\lambda\ycc-api\stripe-commerce.js tests\lambda-ycc-api.test.ts src\components\friends-family-pass-claim.tsx tests\cognito-auth.test.ts tests\friends-family-page.test.ts` passed.
+  - `npx tsc --noEmit` passed.
+- Live deployment and smoke:
+  - Packaged Lambda as `output/ycc-api-friends-family-stripe-customer-20260613.zip` with code hash `GNqAFxVl8O1BtUJJqydXmVx2ruDEryTcE9LxsiDQKFU=`.
+  - Updated `ycyyy` `$LATEST`, published version `36`, and promoted alias `ycyyy:live` to version `36` with description `Live API creates Stripe Customers for Friends and Family pass claims 2026-06-13`.
+  - Alias readback confirmed `live -> 36`, code hash `GNqAFxVl8O1BtUJJqydXmVx2ruDEryTcE9LxsiDQKFU=`, state `Active`, `LastUpdateStatus=Successful`.
+  - Live health returned `status=ok`, environment `prod`, `databaseWrites=schema_ready`, and `ses=pending_production_access`.
+  - Re-posted the original test user's Friends & Family claim to `https://api.yuzucigarclub.com/commerce/membership-session`; response returned `memberId=43932a0f-7214-431d-afb4-404b6952b394`, `stripeCustomerId=cus_Uh4gYc72OJ1eVM`, and `expiresAt=2027-06-13T01:38:35.322Z`.
+  - Stripe API readback confirmed Customer `cus_Uh4gYc72OJ1eVM`, email `codex-friends-family-smoke-1781313108157@yuzucigarclub.com`, name `Codex Friends Family Smoke`, `livemode=true`, `deleted=false`, and one search match by email.
+  - Removed the temporary Lambda package zip and stage directory after successful deployment and smoke checks.
+- Follow-up note:
+  - Stripe SDK warned that configured API version `2026-02-25.clover` is behind current `2026-05-27.dahlia`; this pass did not upgrade the global Stripe API version because the user-requested fix was scoped to customer creation and live verification.
+- Fresh customer code resend after verification:
+  - Found the likely affected real signup `raymoorex@gmail.com` / `Ray Moore` still `UNCONFIRMED` in Cognito user pool `us-east-1_63U9PflAX`.
+  - Sent exactly one fresh `resend-confirmation-code` through app client `2i2nvtt41l94n0mivc4tu4f9ms` with Friends & Family client metadata after the flow and branded email template were verified.
+  - Cognito returned `DeliveryMedium=EMAIL`, `AttributeName=email`, and masked destination `r***@g***`.
+
+### 2026-06-13 Amplify Static Deploy And Worktree Cleanup
+
+- User requested: deploy all updates and clean the worktree.
+- Starting branch: `codex/production-launch-phase-0-2`.
+- Starting dirty set included accumulated tracked updates across docs, Facebook/social automation scripts, Cognito/Friends & Family auth, Stripe customer creation, Lambda/API infrastructure, and related tests, plus new Facebook research CSVs and social-render scripts.
+- Deploy path selected: project `deploy-yuzu-amplify` skill script, which runs `npm run build`, zips only the contents of `out/` with POSIX archive paths, uploads to Amplify app `d2yxcklt245wh0` branch `staging`, polls the job, and smoke-checks the live page plus one `_next/static` asset.
+- Build verification:
+  - `npm run build` completed successfully with Next.js `16.2.6`.
+  - Static generation completed for `1019` pages.
+- Amplify deploy result:
+  - Deploy zip: `yuzu-cigar-club-amplify-deploy-all-updates-clean-worktree-2026-06-12-202659.zip`.
+  - Zip validation: `9446` entries, `index.html` present at archive root, `_next/static/...` present at archive root, `0` backslash paths, and `0` forbidden parent-folder entries.
+  - Amplify app/branch: `d2yxcklt245wh0` / `staging`.
+  - Amplify job: `154`.
+  - Job status: `SUCCEED`.
+  - Live smoke: `https://staging.d2yxcklt245wh0.amplifyapp.com?deploy=154` returned HTTP `200`.
+  - Static asset smoke: `/_next/static/chunks/11t-qkl-56yf0.css` returned HTTP `200`.
+- Worktree cleanup:
+  - Staged all meaningful tracked and untracked project updates with `git add -A`; ignored build/export/deploy artifacts remained ignored.
+  - `git diff --cached --check` passed before commit.
+  - Cleanup commit subject: `Deploy and checkpoint production updates`.
+  - Post-commit status: clean worktree on `codex/production-launch-phase-0-2`, ahead of `origin/codex/production-launch-phase-0-2` by one local commit.

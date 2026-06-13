@@ -64,6 +64,19 @@ export type CognitoPasswordSignInInput = {
   password: string;
 };
 
+export type CognitoPasswordSignUpInput = {
+  email: string;
+  password: string;
+  fullName?: string;
+  clientMetadata?: Record<string, string>;
+};
+
+export type CognitoConfirmSignUpInput = {
+  email: string;
+  confirmationCode: string;
+  clientMetadata?: Record<string, string>;
+};
+
 export type CognitoPasswordSignInResult =
   | {
       status: "signed_in";
@@ -81,6 +94,31 @@ export type CognitoPasswordSignInResult =
       message: string;
     };
 
+export type CognitoPasswordSignUpResult =
+  | {
+      status: "signed_up";
+      message: string;
+    }
+  | {
+      status: "confirmation_required";
+      message: string;
+      destination: string;
+    }
+  | {
+      status: "error";
+      message: string;
+    };
+
+export type CognitoConfirmSignUpResult =
+  | {
+      status: "confirmed";
+      message: string;
+    }
+  | {
+      status: "error";
+      message: string;
+    };
+
 export const cognitoPendingLoginStorageKey = "yuzu-cognito-pkce-login-v1";
 export const cognitoSessionStorageKey = "yuzu-cognito-auth-session-v1";
 export const cognitoProfileCacheStorageKey = "yuzu-cognito-auth-profile-cache-v1";
@@ -90,6 +128,9 @@ const defaultLogoutPath = "/auth/logout";
 const defaultScopes = ["openid", "email", "profile"];
 const expirationSkewMs = 60_000;
 const cognitoInitiateAuthTarget = "AWSCognitoIdentityProviderService.InitiateAuth";
+const cognitoSignUpTarget = "AWSCognitoIdentityProviderService.SignUp";
+const cognitoConfirmSignUpTarget = "AWSCognitoIdentityProviderService.ConfirmSignUp";
+const cognitoResendConfirmationCodeTarget = "AWSCognitoIdentityProviderService.ResendConfirmationCode";
 type CognitoProfileSnapshot = {
   name: string;
   phone: string;
@@ -204,6 +245,71 @@ export function buildCognitoPasswordAuthRequest(config: CognitoAuthConfig, input
   };
 }
 
+export function buildCognitoSignUpRequest(config: CognitoAuthConfig, input: CognitoPasswordSignUpInput) {
+  const email = input.email.trim().toLowerCase();
+  const userAttributes = [{ Name: "email", Value: email }];
+  const fullName = normalizeProfileText(input.fullName || "");
+
+  if (fullName) {
+    userAttributes.push({ Name: "name", Value: fullName });
+  }
+
+  return {
+    url: getCognitoIdentityProviderEndpoint(config),
+    init: {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-amz-json-1.1",
+        "x-amz-target": cognitoSignUpTarget,
+      },
+      body: JSON.stringify({
+        ClientId: config.clientId,
+        Username: email,
+        Password: input.password,
+        UserAttributes: userAttributes,
+        ClientMetadata: sanitizeClientMetadata(input.clientMetadata),
+      }),
+    } satisfies RequestInit,
+  };
+}
+
+export function buildCognitoConfirmSignUpRequest(config: CognitoAuthConfig, input: CognitoConfirmSignUpInput) {
+  return {
+    url: getCognitoIdentityProviderEndpoint(config),
+    init: {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-amz-json-1.1",
+        "x-amz-target": cognitoConfirmSignUpTarget,
+      },
+      body: JSON.stringify({
+        ClientId: config.clientId,
+        Username: input.email.trim().toLowerCase(),
+        ConfirmationCode: input.confirmationCode.trim(),
+        ClientMetadata: sanitizeClientMetadata(input.clientMetadata),
+      }),
+    } satisfies RequestInit,
+  };
+}
+
+export function buildCognitoResendConfirmationCodeRequest(config: CognitoAuthConfig, input: { email: string; clientMetadata?: Record<string, string> }) {
+  return {
+    url: getCognitoIdentityProviderEndpoint(config),
+    init: {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-amz-json-1.1",
+        "x-amz-target": cognitoResendConfirmationCodeTarget,
+      },
+      body: JSON.stringify({
+        ClientId: config.clientId,
+        Username: input.email.trim().toLowerCase(),
+        ClientMetadata: sanitizeClientMetadata(input.clientMetadata),
+      }),
+    } satisfies RequestInit,
+  };
+}
+
 export async function signInWithCognitoPassword(
   config: CognitoAuthConfig,
   input: CognitoPasswordSignInInput,
@@ -258,6 +364,123 @@ export async function signInWithCognitoPassword(
     return {
       status: "error",
       message: "Cognito sign-in is unavailable. Please try again.",
+    };
+  }
+}
+
+export async function signUpWithCognitoPassword(
+  config: CognitoAuthConfig,
+  input: CognitoPasswordSignUpInput,
+  fetchImpl: CognitoFetch = globalThis.fetch.bind(globalThis) as CognitoFetch
+): Promise<CognitoPasswordSignUpResult> {
+  if (!input.email.trim() || !input.password) {
+    return {
+      status: "error",
+      message: "Enter your email and a password.",
+    };
+  }
+
+  try {
+    const request = buildCognitoSignUpRequest(config, input);
+    const response = await fetchImpl(request.url, request.init);
+    const payload = await readCognitoJson(response);
+
+    if (!response.ok) {
+      return {
+        status: "error",
+        message: getCognitoErrorMessage(payload),
+      };
+    }
+
+    if (payload.UserConfirmed === true) {
+      return {
+        status: "signed_up",
+        message: "Your Yuzu account is ready. Sign in to claim the pass.",
+      };
+    }
+
+    return {
+      status: "confirmation_required",
+      message: "Check your email for the Yuzu confirmation code.",
+      destination: getCognitoDeliveryDestination(payload),
+    };
+  } catch {
+    return {
+      status: "error",
+      message: "Yuzu account signup is unavailable. Please try again.",
+    };
+  }
+}
+
+export async function confirmCognitoSignUp(
+  config: CognitoAuthConfig,
+  input: CognitoConfirmSignUpInput,
+  fetchImpl: CognitoFetch = globalThis.fetch.bind(globalThis) as CognitoFetch
+): Promise<CognitoConfirmSignUpResult> {
+  if (!input.email.trim() || !input.confirmationCode.trim()) {
+    return {
+      status: "error",
+      message: "Enter the confirmation code from your email.",
+    };
+  }
+
+  try {
+    const request = buildCognitoConfirmSignUpRequest(config, input);
+    const response = await fetchImpl(request.url, request.init);
+    const payload = await readCognitoJson(response);
+
+    if (!response.ok) {
+      return {
+        status: "error",
+        message: getCognitoErrorMessage(payload),
+      };
+    }
+
+    return {
+      status: "confirmed",
+      message: "Your Yuzu account is confirmed. Signing you in now.",
+    };
+  } catch {
+    return {
+      status: "error",
+      message: "Yuzu could not confirm that code. Please try again.",
+    };
+  }
+}
+
+export async function resendCognitoSignUpCode(
+  config: CognitoAuthConfig,
+  input: { email: string; clientMetadata?: Record<string, string> },
+  fetchImpl: CognitoFetch = globalThis.fetch.bind(globalThis) as CognitoFetch
+): Promise<CognitoPasswordSignUpResult> {
+  if (!input.email.trim()) {
+    return {
+      status: "error",
+      message: "Enter your email before requesting a new code.",
+    };
+  }
+
+  try {
+    const request = buildCognitoResendConfirmationCodeRequest(config, input);
+    const response = await fetchImpl(request.url, request.init);
+    const payload = await readCognitoJson(response);
+
+    if (!response.ok) {
+      return {
+        status: "error",
+        message: getCognitoErrorMessage(payload),
+      };
+    }
+
+    return {
+      status: "confirmation_required",
+      message: "A new Yuzu confirmation code was sent.",
+      destination: getCognitoDeliveryDestination(payload),
+    };
+  } catch {
+    return {
+      status: "error",
+      message: "Yuzu could not send a new code. Please try again.",
     };
   }
 }
@@ -550,10 +773,31 @@ export function getCognitoTokenResponse(value: unknown): CognitoTokenResponse | 
 }
 
 function getCognitoErrorMessage(payload: Record<string, unknown>) {
+  const type = stringClaim(payload.__type) || stringClaim(payload.code);
   const message = stringClaim(payload.message) || stringClaim(payload.Message);
 
   if (message?.includes("USER_PASSWORD_AUTH flow not enabled")) {
     return "Cognito is not configured for in-app sign-in yet. Enable USER_PASSWORD_AUTH on the app client and try again.";
+  }
+
+  if (type?.includes("UsernameExistsException")) {
+    return "That email already has a Yuzu account. Sign in instead.";
+  }
+
+  if (type?.includes("InvalidPasswordException")) {
+    return message || "Use a stronger password with upper and lower case letters, a number, and a symbol.";
+  }
+
+  if (type?.includes("CodeMismatchException")) {
+    return "That confirmation code did not match. Check the email and try again.";
+  }
+
+  if (type?.includes("ExpiredCodeException")) {
+    return "That confirmation code expired. Request a new Yuzu code.";
+  }
+
+  if (type?.includes("NotAuthorizedException")) {
+    return message || "Yuzu could not authorize that account action. Check your email and password.";
   }
 
   return message || "Cognito could not sign you in. Check your email and password.";
@@ -711,6 +955,29 @@ function numericClaim(value: unknown) {
 
 function normalizeProfileText(value: string) {
   return value.trim().replace(/\s+/g, " ");
+}
+
+function sanitizeClientMetadata(metadata: Record<string, string> | undefined) {
+  if (!metadata) {
+    return undefined;
+  }
+
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(metadata)) {
+    const cleanKey = key.trim().replace(/[^A-Za-z0-9_.:-]/g, "").slice(0, 80);
+    const cleanValue = String(value || "").trim().slice(0, 500);
+
+    if (cleanKey && cleanValue) {
+      result[cleanKey] = cleanValue;
+    }
+  }
+
+  return Object.keys(result).length ? result : undefined;
+}
+
+function getCognitoDeliveryDestination(payload: Record<string, unknown>) {
+  const details = payload.CodeDeliveryDetails && typeof payload.CodeDeliveryDetails === "object" ? (payload.CodeDeliveryDetails as Record<string, unknown>) : {};
+  return stringClaim(details.Destination) || "";
 }
 
 function buildDisplayNameFromPersonClaims(givenName: unknown, familyName: unknown) {

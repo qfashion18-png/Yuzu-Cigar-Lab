@@ -170,6 +170,27 @@ function buildMembershipOfferMetadata(offer) {
   };
 }
 
+function buildFriendsFamilyCustomerParams(input = {}) {
+  const customerEmail = toMetadataString(input.customer?.email, 160).toLowerCase();
+  const customerName = toMetadataString(input.customer?.fullName || input.customer?.name, 160);
+  const membershipOffer = normalizeMembershipOffer(input.membershipOffer);
+  const expiresAt = toMetadataString(input.expiresAt, 120);
+
+  return {
+    email: customerEmail,
+    ...(customerName ? { name: customerName } : {}),
+    metadata: {
+      order_kind: "membership",
+      membership_path: "friends_family_box_pass",
+      tier_key: "box_access_pass",
+      member_status: "active",
+      customer_email: customerEmail,
+      friends_family_expires_at: expiresAt,
+      ...buildMembershipOfferMetadata(membershipOffer),
+    },
+  };
+}
+
 function buildCustomerPortalSessionParams(input = {}, env = process.env) {
   const siteUrl = getSiteUrl(env);
   const params = {
@@ -216,6 +237,10 @@ async function createCommerceCheckoutSession(stripe, input, env = process.env) {
 
 async function createMembershipCheckoutSession(stripe, input, env = process.env) {
   return stripe.checkout.sessions.create(buildMembershipSessionParams(input, env));
+}
+
+async function createFriendsFamilyCustomer(stripe, input, requestOptions = {}) {
+  return stripe.customers.create(buildFriendsFamilyCustomerParams(input), requestOptions);
 }
 
 async function createCustomerPortalSession(stripe, input, env = process.env) {
@@ -276,9 +301,11 @@ module.exports = {
   DEFAULT_STRIPE_API_VERSION,
   buildCheckoutSessionParams,
   buildCustomerPortalSessionParams,
+  buildFriendsFamilyCustomerParams,
   buildMembershipSessionParams,
   createCommerceCheckoutSession,
   createCustomerPortalSession,
+  createFriendsFamilyCustomer,
   createMembershipCheckoutSession,
   createStripeClient,
   getHandledStripeEventAction,

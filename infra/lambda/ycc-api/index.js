@@ -11,6 +11,7 @@ const { invalidAgeVerificationTokens, validateCheckoutReadiness } = require("./c
 const {
   buildCustomerPortalSessionParams,
   createCommerceCheckoutSession,
+  createFriendsFamilyCustomer,
   createMembershipCheckoutSession,
   createStripeClient,
   getHandledStripeEventAction,
@@ -1545,6 +1546,32 @@ async function handleCommerceMembershipSession(event, requestId) {
 
   const tierKey = slugify(body.value.tierName || body.value.tierKey);
   const billingPeriod = sanitizeText(body.value.billingPeriod, 40) || "monthly";
+  const customerEmail = normalizeEmailAddresses(body.value.customer?.email, 1)[0] || "";
+  if (!customerEmail) {
+    return json(400, requestId, {
+      error: "missing_customer_email",
+      message: "A valid customer email is required before membership checkout.",
+    });
+  }
+
+  const membershipOffer = resolveMembershipCheckoutOffer(body.value.membershipOffer, {
+    tierKey,
+    billingPeriod,
+  });
+
+  if (membershipOffer?.code === "friends-family-box-pass") {
+    return handleFriendsFamilyBoxPassClaim(
+      {
+        customer: {
+          ...body.value.customer,
+          email: customerEmail,
+        },
+        membershipOffer,
+      },
+      requestId
+    );
+  }
+
   const priceEnvKey = `STRIPE_PRICE_${tierKey.replace(/-/g, "_").toUpperCase()}_${billingPeriod.toUpperCase()}`;
   const commerceEnv = await getCommerceRuntimeEnv();
   const stripePriceId = commerceEnv[priceEnvKey];
@@ -1557,36 +1584,195 @@ async function handleCommerceMembershipSession(event, requestId) {
     });
   }
 
-  const customerEmail = normalizeEmailAddresses(body.value.customer?.email, 1)[0] || "";
-  if (!customerEmail) {
-    return json(400, requestId, {
-      error: "missing_customer_email",
-      message: "A valid customer email is required before membership checkout.",
-    });
-  }
-
   const stripe = createStripeClient(commerceEnv);
   const statusToken = createCheckoutStatusToken();
-  const membershipOffer = resolveMembershipCheckoutOffer(body.value.membershipOffer, {
-    tierKey,
-    billingPeriod,
-  });
-  const session = await createMembershipCheckoutSession(stripe, {
-    tierKey,
-    billingPeriod,
-    stripePriceId,
-    statusToken,
-    customer: {
-      ...body.value.customer,
-      email: customerEmail,
-    },
-    membershipOffer,
-  }, commerceEnv);
+  let session;
+  try {
+    session = await createMembershipCheckoutSession(stripe, {
+      tierKey,
+      billingPeriod,
+      stripePriceId,
+      statusToken,
+      customer: {
+        ...body.value.customer,
+        email: customerEmail,
+      },
+      membershipOffer,
+    }, commerceEnv);
+  } catch (error) {
+    if (isStripeAccountNotReadyError(error)) {
+      return json(409, requestId, {
+        error: "stripe_account_not_ready",
+        message: "Yuzu checkout is temporarily unavailable while payment activation finishes.",
+      });
+    }
+
+    throw error;
+  }
 
   return json(200, requestId, {
     id: session.id,
     url: session.url,
   });
+}
+
+async function handleFriendsFamilyBoxPassClaim(input, requestId) {
+  if (!shouldPersistDatabaseWrites()) {
+    return json(409, requestId, {
+      error: "membership_claim_not_ready",
+      message: "Friends & Family pass activation is not available until member persistence is ready.",
+      persistence: getDatabasePersistenceStatus(),
+    });
+  }
+
+  const expiresAt = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
+  return withDatabaseClient("ycc-api-friends-family-pass-claim", async (client) => {
+    const member = await grantFriendsFamilyBoxPass(client, input, requestId, expiresAt);
+    const stripeCustomerId =
+      member.stripeCustomerId || (await createAndLinkFriendsFamilyStripeCustomer(client, member, input, expiresAt));
+
+    return json(200, requestId, {
+      id: `ff_box_pass_${hashActor(input.customer.email)}`,
+      url: "/account?friends_family=claimed",
+      membershipClaim: {
+        tier: "Box Access Pass",
+        tierKey: "box_access_pass",
+        status: "member",
+        memberStatus: "active",
+        source: input.membershipOffer.source,
+        campaign: input.membershipOffer.campaign,
+        expiresAt,
+        memberId: member.id,
+        stripeCustomerId,
+      },
+    });
+  });
+}
+
+async function createAndLinkFriendsFamilyStripeCustomer(client, member, input, expiresAt) {
+  const commerceEnv = await getCommerceRuntimeEnv();
+  if (!commerceEnv.STRIPE_SECRET_KEY) {
+    return null;
+  }
+
+  const stripe = createStripeClient(commerceEnv);
+  const customer = await createFriendsFamilyCustomer(
+    stripe,
+    {
+      customer: {
+        email: member.email,
+        fullName: member.displayName || input.customer?.fullName || input.customer?.name,
+      },
+      membershipOffer: input.membershipOffer,
+      expiresAt,
+    },
+    {
+      idempotencyKey: `ycc-ff-box-pass-${hashActor(member.email)}`,
+    }
+  );
+
+  const stripeCustomerId = sanitizeText(customer?.id, 160);
+  if (!stripeCustomerId) {
+    throw new Error("Stripe did not return a Customer ID for the Friends & Family claim.");
+  }
+
+  const linkedMember = await linkMemberStripeCustomer(client, member.id, stripeCustomerId);
+  return sanitizeText(linkedMember?.stripe_customer_id, 160) || stripeCustomerId;
+}
+
+async function grantFriendsFamilyBoxPass(client, input, requestId, expiresAt) {
+  const email = normalizeEmailAddresses(input.customer?.email, 1)[0] || "";
+  const displayName = sanitizeText(input.customer?.fullName || input.customer?.name, 160);
+  const actorId = "friends-family-page";
+  const metadata = JSON.stringify({
+    friendsFamilyBoxPass: {
+      code: input.membershipOffer.code,
+      source: input.membershipOffer.source,
+      campaign: input.membershipOffer.campaign,
+      landingPath: input.membershipOffer.landingPath,
+      access: input.membershipOffer.access,
+      grantedAt: new Date().toISOString(),
+      expiresAt,
+    },
+  });
+
+  const updated = await client.query(
+    `
+      update public.members
+      set email_verified = true,
+          display_name = coalesce(nullif(display_name, ''), $2),
+          role = coalesce(role, 'customer'),
+          membership_tier = 'box_access_pass',
+          member_status = 'active',
+          joined_at = coalesce(joined_at, now()),
+          last_seen_at = now(),
+          metadata = coalesce(metadata, '{}'::jsonb) || $3::jsonb,
+          actor_id = $4,
+          request_id = $5,
+          updated_at = now()
+      where lower(email) = lower($1)
+      returning id, cognito_sub, email, display_name, role, membership_tier, member_status, stripe_customer_id
+    `,
+    [email, nullable(displayName), metadata, actorId, requestId]
+  );
+
+  if (updated.rows[0]) {
+    return mapMemberRow(updated.rows[0]);
+  }
+
+  const syntheticSub = `friends-family:${hashActor(email)}`;
+  const inserted = await client.query(
+    `
+      insert into public.members (
+        cognito_sub,
+        email,
+        email_verified,
+        display_name,
+        role,
+        membership_tier,
+        member_status,
+        joined_at,
+        last_seen_at,
+        metadata,
+        actor_id,
+        request_id
+      )
+      values ($1, $2, true, $3, 'customer', 'box_access_pass', 'active', now(), now(), $4::jsonb, $5, $6)
+      on conflict (cognito_sub) do update
+      set email = excluded.email,
+          email_verified = true,
+          display_name = coalesce(public.members.display_name, excluded.display_name),
+          membership_tier = 'box_access_pass',
+          member_status = 'active',
+          joined_at = coalesce(public.members.joined_at, now()),
+          last_seen_at = now(),
+          metadata = coalesce(public.members.metadata, '{}'::jsonb) || excluded.metadata,
+          actor_id = excluded.actor_id,
+          request_id = excluded.request_id,
+          updated_at = now()
+      returning id, cognito_sub, email, display_name, role, membership_tier, member_status, stripe_customer_id
+    `,
+    [syntheticSub, email, nullable(displayName), metadata, actorId, requestId]
+  );
+
+  if (!inserted.rows[0]) {
+    throw new Error("Friends & Family pass claim did not return a member row.");
+  }
+
+  return mapMemberRow(inserted.rows[0]);
+}
+
+function mapMemberRow(row) {
+  return {
+    id: row.id,
+    cognitoSub: row.cognito_sub,
+    displayName: row.display_name,
+    email: row.email,
+    role: row.role,
+    membershipTier: row.membership_tier,
+    memberStatus: row.member_status,
+    stripeCustomerId: row.stripe_customer_id || null,
+  };
 }
 
 function resolveMembershipCheckoutOffer(value, context = {}) {
@@ -1611,6 +1797,13 @@ function resolveMembershipCheckoutOffer(value, context = {}) {
     access,
     trialPeriodDays: 365,
   };
+}
+
+function isStripeAccountNotReadyError(error) {
+  const message = error instanceof Error ? error.message : String(error || "");
+  const code = error && typeof error === "object" ? String(error.code || error.type || "") : "";
+
+  return code.includes("account") || /cannot currently make live charges|charges.*disabled|account.*not.*ready/i.test(message);
 }
 
 async function handleStripeWebhook(event, requestId) {
@@ -8564,8 +8757,13 @@ async function upsertMember(client, actor, requestId) {
             email_verified = excluded.email_verified,
             display_name = coalesce(public.members.display_name, excluded.display_name),
             role = excluded.role,
-            membership_tier = excluded.membership_tier,
-            member_status = excluded.member_status,
+            membership_tier = coalesce(excluded.membership_tier, public.members.membership_tier),
+            member_status = case
+              when excluded.member_status = 'non_member'
+                and public.members.member_status in ('active', 'paused')
+                then public.members.member_status
+              else excluded.member_status
+            end,
             stripe_customer_id = coalesce(excluded.stripe_customer_id, public.members.stripe_customer_id),
             last_seen_at = now(),
             metadata = public.members.metadata || excluded.metadata,
@@ -8597,8 +8795,13 @@ async function upsertMember(client, actor, requestId) {
             email_verified = $3,
             display_name = coalesce(public.members.display_name, $4),
             role = $5,
-            membership_tier = $6,
-            member_status = $7,
+            membership_tier = coalesce($6, public.members.membership_tier),
+            member_status = case
+              when $7 = 'non_member'
+                and public.members.member_status in ('active', 'paused')
+                then public.members.member_status
+              else $7
+            end,
             stripe_customer_id = coalesce($8, public.members.stripe_customer_id),
             last_seen_at = now(),
             metadata = coalesce(public.members.metadata, '{}'::jsonb) || $9::jsonb,

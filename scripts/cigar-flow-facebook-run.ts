@@ -44,8 +44,15 @@ type PublishedNewsStoriesResponse = {
 type ImageSearchTarget = {
   label: string;
   url: string;
-  source: "story_image" | "source_note" | "official_source" | "inferred_source_page" | "local_cache";
+  source: "story_image" | "story_image_source_page" | "source_note" | "official_source" | "inferred_source_page" | "local_cache";
   localPath?: string;
+  alt?: string;
+  sourcePageUrl?: string;
+};
+
+type MarkdownSection = {
+  heading: string;
+  body: string;
 };
 
 export type ImageSearchCandidate = {
@@ -87,6 +94,7 @@ type CigarFlowFacebookOptions = {
   graphVersion: string;
   graphBaseUrl: string;
   baseUrl: string;
+  allowLocalCache: boolean;
 };
 
 type SocialPostRunResult = {
@@ -105,11 +113,12 @@ type SocialPostRunResult = {
 };
 
 type FacebookPagePostResult = {
-  status: "dry_run" | "published" | "skipped_existing";
+  status: "dry_run" | "published" | "skipped_existing" | "no_action";
   postId?: string;
   permalinkUrl?: string;
   uploadedPhotos?: Array<{ image: string; photoId: string; postId?: string | null }>;
   existingManifestPath?: string;
+  reason?: string;
 };
 
 type GraphPhotoResponse = {
@@ -134,6 +143,7 @@ const defaultOutputRoot = "output/social";
 const defaultGraphVersion = "v25.0";
 const adultComplianceClose =
   "Adult 21+ only. Editorial news-and-culture scan only. No marketplace, pricing, inventory, ordering, promotional, or health-claim language.";
+let insecureTlsRetryEnabled = process.env.NODE_TLS_REJECT_UNAUTHORIZED === "0";
 
 const blockedCaptionPatterns = [
   /\bbuy\b/i,
@@ -164,11 +174,11 @@ const inferredImageSourceHints = [
   {
     pattern: /oliva[\s\S]{0,120}serie\s+v[\s\S]{0,80}maduro|serie\s+v[\s\S]{0,80}maduro[\s\S]{0,120}oliva/i,
     label: "Oliva Serie V Maduro",
-    url: "https://olivacigar.com/cigars/serie-v-melanio-maduro/",
+    url: "https://olivacigar.com/cigars/serie-v-maduro/",
   },
   {
     pattern: /perdomo[\s\S]{0,120}(anniversary|reserve)|perdomo[\s\S]{0,120}(20th|25th)/i,
-    label: "Perdomo Anniversary",
+    label: "Perdomo 20th Anniversary",
     url: "https://www.perdomocigars.com/20th-anniversary",
   },
   {
@@ -210,7 +220,9 @@ export async function runCigarFlowFacebookSocial(options: Partial<CigarFlowFaceb
   const captionPath = join(storyOutputDir, "facebook-caption.txt");
   await writeFile(captionPath, caption, "utf8");
 
-  const selectedImages = await findRelatedImagesForStory(story, storyOutputDir, normalizedOptions.imageLimit);
+  const selectedImages = await findRelatedImagesForStory(story, storyOutputDir, normalizedOptions.imageLimit, {
+    allowLocalCache: normalizedOptions.allowLocalCache,
+  });
   if (selectedImages.length === 0) {
     throw new Error(`No related images could be found or downloaded for ${story.title}.`);
   }
@@ -223,7 +235,14 @@ export async function runCigarFlowFacebookSocial(options: Partial<CigarFlowFaceb
 
   let pagePost: FacebookPagePostResult | undefined;
   if (normalizedOptions.publishPage) {
-    pagePost = await maybePublishPagePost(storyOutputDir, caption, selectedImages, normalizedOptions);
+    try {
+      pagePost = await maybePublishPagePost(storyOutputDir, caption, selectedImages, normalizedOptions);
+    } catch (error) {
+      pagePost = {
+        status: "no_action",
+        reason: error instanceof Error ? error.message : "Page publish step failed before a post could be created.",
+      };
+    }
   } else {
     pagePost = {
       status: "dry_run",
@@ -305,12 +324,13 @@ function normalizeOptions(options: Partial<CigarFlowFacebookOptions>): CigarFlow
     graphVersion: options.graphVersion ?? process.env.YCC_FACEBOOK_GRAPH_VERSION ?? defaultGraphVersion,
     graphBaseUrl: options.graphBaseUrl ?? process.env.YCC_FACEBOOK_GRAPH_BASE_URL ?? "https://graph.facebook.com",
     baseUrl: options.baseUrl ?? process.env.NEXT_PUBLIC_BASE_URL ?? process.env.BASE_URL ?? "https://www.yuzucigarclub.com",
+    allowLocalCache: options.allowLocalCache ?? (hasArg("--allow-local-cache") || process.env.YCC_CIGAR_FLOW_SOCIAL_ALLOW_LOCAL_CACHE === "true"),
   };
 }
 
 async function fetchTargetStory(options: CigarFlowFacebookOptions) {
   const url = `${trimTrailingSlash(options.apiBaseUrl)}/news/stories?limit=${options.storyLimit}`;
-  const response = await fetch(url, { headers: { accept: "application/json" } });
+  const response = await fetchWithTlsRetry(url, { headers: { accept: "application/json" } });
   if (!response.ok) {
     throw new Error(`Failed to fetch Cigar Flow stories from ${url}: HTTP ${response.status}.`);
   }
@@ -379,9 +399,10 @@ function resolveOutputDir(rootDir: string, story: NewsStory, targetDate?: string
 }
 
 export function buildFacebookCaption(story: NewsStory, baseUrl = "https://www.yuzucigarclub.com") {
-  const sourceLabels = getStorySourceLabels(story);
-  const signalLines = sourceLabels.slice(0, 4).map((label) => `- ${label}`);
-  const signals = signalLines.length ? `\n\nSignals in this update:\n${signalLines.join("\n")}` : "";
+  const detailLines = getStoryDetailLines(story)
+    .slice(0, 4)
+    .map((line) => `- ${line}`);
+  const details = detailLines.length ? `\n\nInside this update:\n${detailLines.join("\n")}` : "";
   const title = stripMarkdown(story.title);
   const dek = stripMarkdown(story.dek || "A source-backed Cigar Flow update for adult readers.");
   const link = `${trimTrailingSlash(baseUrl)}/cigar-flow/#cigar-flow-news`;
@@ -392,7 +413,7 @@ export function buildFacebookCaption(story: NewsStory, baseUrl = "https://www.yu
     title,
     "",
     dek,
-    signals,
+    details,
     "",
     `Read the Cigar Flow desk: ${link}`,
     "",
@@ -404,6 +425,19 @@ export function buildFacebookCaption(story: NewsStory, baseUrl = "https://www.yu
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+function getStoryDetailLines(story: NewsStory) {
+  const sectionLines = extractMarkdownSections(story.bodyMarkdown)
+    .filter((section) => !isGenericStoryHeading(section.heading))
+    .map(summarizeStorySection)
+    .filter(Boolean);
+
+  if (sectionLines.length) {
+    return uniqueStrings(sectionLines);
+  }
+
+  return getStorySourceLabels(story);
 }
 
 function getStorySourceLabels(story: NewsStory) {
@@ -428,11 +462,17 @@ function assertSocialCaptionCompliance(caption: string) {
   }
 }
 
-export async function findRelatedImagesForStory(story: NewsStory, storyOutputDir: string, imageLimit = 3) {
+export async function findRelatedImagesForStory(
+  story: NewsStory,
+  storyOutputDir: string,
+  imageLimit = 3,
+  options: { allowLocalCache?: boolean } = {},
+) {
   const imageDir = join(storyOutputDir, "images");
   await mkdir(imageDir, { recursive: true });
 
-  const targets = buildImageSearchTargets(story);
+  const allowLocalCache = options.allowLocalCache === true;
+  const targets = buildImageSearchTargets(story, { allowLocalCache });
   const candidates: ImageSearchCandidate[] = [];
 
   for (const target of targets) {
@@ -441,6 +481,11 @@ export async function findRelatedImagesForStory(story: NewsStory, storyOutputDir
       if (copied) {
         candidates.push(copied);
       }
+      continue;
+    }
+
+    if (target.source === "story_image" && isHttpUrl(target.url)) {
+      candidates.push(buildDirectStoryImageCandidate(target));
       continue;
     }
 
@@ -476,6 +521,7 @@ export async function findRelatedImagesForStory(story: NewsStory, storyOutputDir
     downloaded,
     imageLimit,
     selectedLabels,
+    requireNewDomain: true,
     requireNewLabel: true,
   });
 
@@ -485,10 +531,11 @@ export async function findRelatedImagesForStory(story: NewsStory, storyOutputDir
     downloaded,
     imageLimit,
     selectedLabels,
+    requireNewDomain: false,
     requireNewLabel: false,
   });
 
-  if (downloaded.length < imageLimit) {
+  if (allowLocalCache && downloaded.length < imageLimit) {
     const cacheCandidates = await copyLocalCacheFallbacks(story, imageDir, imageLimit - downloaded.length, downloaded);
     downloaded.push(...cacheCandidates);
   }
@@ -502,6 +549,7 @@ async function downloadCandidatesUntil({
   downloaded,
   imageLimit,
   selectedLabels,
+  requireNewDomain,
   requireNewLabel,
 }: {
   orderedCandidates: readonly ImageSearchCandidate[];
@@ -509,9 +557,11 @@ async function downloadCandidatesUntil({
   downloaded: ImageSearchCandidate[];
   imageLimit: number;
   selectedLabels: Set<string>;
+  requireNewDomain: boolean;
   requireNewLabel: boolean;
 }) {
   const selectedUrls = new Set(downloaded.map((candidate) => candidate.imageUrl.toLowerCase()));
+  const selectedDomains = new Set(downloaded.map((candidate) => candidateDomainKey(candidate)).filter(Boolean));
 
   for (const candidate of orderedCandidates) {
     if (downloaded.length >= imageLimit) {
@@ -527,24 +577,42 @@ async function downloadCandidatesUntil({
       continue;
     }
 
+    const domainKey = candidateDomainKey(candidate);
+    if (requireNewDomain && domainKey && selectedDomains.has(domainKey)) {
+      continue;
+    }
+
     const downloadedCandidate =
       candidate.status === "downloaded" && candidate.localPath ? candidate : await downloadImageCandidate(candidate, imageDir);
     if (downloadedCandidate.status === "downloaded") {
       downloaded.push(downloadedCandidate);
       selectedUrls.add(downloadedCandidate.imageUrl.toLowerCase());
       selectedLabels.add(labelKey);
+      if (domainKey) {
+        selectedDomains.add(domainKey);
+      }
     }
   }
 }
 
-function buildImageSearchTargets(story: NewsStory): ImageSearchTarget[] {
+function buildImageSearchTargets(story: NewsStory, options: { allowLocalCache?: boolean } = {}): ImageSearchTarget[] {
   const targets: ImageSearchTarget[] = [];
 
   for (const image of story.images ?? []) {
     if (isLocalProjectPath(image.image)) {
-      targets.push({ label: image.label, url: image.image, source: "story_image", localPath: publicAssetToLocalPath(image.image) });
+      targets.push({
+        label: image.label,
+        url: image.image,
+        source: "story_image",
+        localPath: publicAssetToLocalPath(image.image),
+        alt: image.alt,
+        sourcePageUrl: image.sourceUrl,
+      });
     } else if (isHttpUrl(image.image)) {
-      targets.push({ label: image.label, url: image.image, source: "story_image" });
+      targets.push({ label: image.label, url: image.image, source: "story_image", alt: image.alt, sourcePageUrl: image.sourceUrl });
+      if (isHttpUrl(image.sourceUrl || "")) {
+        targets.push({ label: image.label, url: image.sourceUrl!, source: "story_image_source_page", alt: image.alt, sourcePageUrl: image.sourceUrl });
+      }
     }
   }
 
@@ -567,13 +635,27 @@ function buildImageSearchTargets(story: NewsStory): ImageSearchTarget[] {
     }
   }
 
-  for (const hint of localCacheHints) {
-    if (hint.pattern.test(storyText)) {
-      targets.push({ label: hint.label, url: hint.localPath, source: "local_cache", localPath: hint.localPath });
+  if (options.allowLocalCache === true) {
+    for (const hint of localCacheHints) {
+      if (hint.pattern.test(storyText)) {
+        targets.push({ label: hint.label, url: hint.localPath, source: "local_cache", localPath: hint.localPath });
+      }
     }
   }
 
   return uniqueTargets(targets);
+}
+
+function buildDirectStoryImageCandidate(target: ImageSearchTarget): ImageSearchCandidate {
+  return {
+    label: target.label,
+    sourcePageUrl: target.sourcePageUrl || target.url,
+    imageUrl: target.url,
+    alt: target.alt || target.label,
+    score: 96,
+    reasons: ["direct story image from published Cigar Flow payload"],
+    status: "candidate",
+  };
 }
 
 async function searchSourcePageForImages(target: ImageSearchTarget, story: NewsStory) {
@@ -581,7 +663,7 @@ async function searchSourcePageForImages(target: ImageSearchTarget, story: NewsS
     return [];
   }
 
-  const response = await fetch(target.url, {
+  const response = await fetchWithTlsRetry(target.url, {
     headers: {
       accept: "text/html,application/xhtml+xml",
       "user-agent": "Yuzu Cigar Club social image search/1.0",
@@ -674,6 +756,11 @@ function scoreImageCandidate({
   let score = source === "meta" ? 35 : 20;
   reasons.push(`${source} image on ${target.source.replaceAll("_", " ")}`);
 
+  if (target.source === "story_image_source_page") {
+    score += 28;
+    reasons.push("exact story label searched on story source page");
+  }
+
   const searchableText = `${imageUrl} ${alt || ""}`.toLowerCase();
   const targetKeywords = keywordsFor(`${target.label} ${story.title} ${story.dek}`);
   const matchingKeywords = targetKeywords.filter((keyword) => searchableText.includes(keyword));
@@ -701,6 +788,22 @@ function scoreImageCandidate({
   if (/\b(logo|icon|pixel|tracking|avatar|sprite|badge)\b/i.test(imageUrl)) {
     score -= 35;
     reasons.push("likely logo/icon/tracking asset");
+  }
+
+  if (/\b(bkgd|background)\b/i.test(imageUrl)) {
+    score -= 20;
+    reasons.push("likely decorative background asset");
+  }
+
+  const normalizedLabel = target.label.toLowerCase();
+  if (normalizedLabel.includes("maduro") && /\bmaduro\b/i.test(imageUrl)) {
+    score += 18;
+    reasons.push("matches requested Maduro variant");
+  }
+
+  if (normalizedLabel.includes("maduro") && /\b(corojo|connecticut|sungrown|sun-grown|sun_grown)\b/i.test(imageUrl)) {
+    score -= 45;
+    reasons.push("different wrapper variant than requested Maduro signal");
   }
 
   if (!/\.(avif|jpe?g|png|webp)(\?|#|$)/i.test(imageUrl)) {
@@ -737,7 +840,7 @@ function scoreImageCandidate({
 }
 
 async function downloadImageCandidate(candidate: ImageSearchCandidate, imageDir: string): Promise<ImageSearchCandidate> {
-  const response = await fetch(candidate.imageUrl, {
+  const response = await fetchWithTlsRetry(candidate.imageUrl, {
     headers: {
       accept: "image/avif,image/webp,image/png,image/jpeg,*/*",
       "user-agent": "Yuzu Cigar Club social image search/1.0",
@@ -923,7 +1026,8 @@ async function readExistingPagePost(manifestPath: string) {
     const payload = JSON.parse(await readFile(manifestPath, "utf8")) as {
       facebook_page?: { postId?: string; permalinkUrl?: string; status?: string };
     };
-    return payload.facebook_page?.status === "published" ? payload.facebook_page : null;
+    const status = payload.facebook_page?.status;
+    return status === "published" || status === "skipped_existing" ? payload.facebook_page : null;
   } catch {
     return null;
   }
@@ -966,7 +1070,17 @@ async function resolveFacebookCredentials(options: CigarFlowFacebookOptions): Pr
 
 async function readJsonSecret(secretId: string, region: string) {
   const client = new SecretsManagerClient({ region });
-  const result = await client.send(new GetSecretValueCommand({ SecretId: secretId }));
+  let result;
+  try {
+    result = await client.send(new GetSecretValueCommand({ SecretId: secretId }));
+  } catch (error) {
+    if (!shouldRetryWithInsecureTls(error)) {
+      throw error;
+    }
+    enableInsecureTlsRetry(`AWS secret read for ${secretId}`);
+    result = await client.send(new GetSecretValueCommand({ SecretId: secretId }));
+  }
+
   const secretString = result.SecretString || (result.SecretBinary ? Buffer.from(result.SecretBinary).toString("utf8") : "");
   if (!secretString) {
     throw new Error(`Secret ${secretId} did not contain a string payload.`);
@@ -980,7 +1094,7 @@ async function derivePageAccessToken(pageId: string, systemUserToken: string, gr
   accountsUrl.searchParams.set("fields", "id,name,access_token");
   accountsUrl.searchParams.set("access_token", systemUserToken);
 
-  const response = await fetch(accountsUrl);
+  const response = await fetchWithTlsRetry(accountsUrl);
   const payload = (await response.json()) as { data?: Array<{ id?: string; access_token?: string }>; error?: { message?: string } };
   if (!response.ok) {
     throw new Error(`Could not derive Facebook Page token: ${payload.error?.message || `HTTP ${response.status}`}`);
@@ -1014,7 +1128,7 @@ export async function publishFacebookPageAlbum({
     form.set("published", "false");
     form.set("source", new Blob([await readFile(imagePath)]), basename(imagePath));
 
-    const response = await fetch(uploadUrl, { method: "POST", body: form });
+    const response = await fetchWithTlsRetry(uploadUrl, { method: "POST", body: form });
     const payload = (await response.json()) as GraphPhotoResponse;
     if (!response.ok || !payload.id) {
       throw new Error(`Facebook photo upload failed for ${imagePath}: ${graphErrorMessage(payload, response.status)}`);
@@ -1031,7 +1145,7 @@ export async function publishFacebookPageAlbum({
     feedForm.set(`attached_media[${index}]`, JSON.stringify({ media_fbid: photo.photoId }));
   });
 
-  const feedResponse = await fetch(feedUrl, { method: "POST", body: feedForm });
+  const feedResponse = await fetchWithTlsRetry(feedUrl, { method: "POST", body: feedForm });
   const feedPayload = (await feedResponse.json()) as GraphFeedResponse;
   if (!feedResponse.ok || !feedPayload.id) {
     throw new Error(`Facebook feed post failed: ${graphErrorMessage(feedPayload, feedResponse.status)}`);
@@ -1050,7 +1164,7 @@ async function readFacebookPost(postId: string, credentials: FacebookCredentials
   const url = new URL(`${trimTrailingSlash(graphBaseUrl)}/${credentials.graphVersion}/${postId}`);
   url.searchParams.set("fields", "id,permalink_url,message,status_type");
   url.searchParams.set("access_token", credentials.pageAccessToken);
-  const response = await fetch(url);
+  const response = await fetchWithTlsRetry(url);
   const payload = (await response.json()) as GraphReadbackResponse & { error?: unknown };
   if (!response.ok) {
     throw new Error(`Facebook post readback failed: ${graphErrorMessage(payload, response.status)}`);
@@ -1063,6 +1177,47 @@ function graphErrorMessage(payload: { error?: unknown }, status: number) {
     return payload.error.message;
   }
   return `HTTP ${status}`;
+}
+
+async function fetchWithTlsRetry(input: string | URL, init?: RequestInit) {
+  try {
+    return await fetch(input, init);
+  } catch (error) {
+    if (!shouldRetryWithInsecureTls(error)) {
+      throw error;
+    }
+    enableInsecureTlsRetry(typeof input === "string" ? input : input.toString());
+    return fetch(input, init);
+  }
+}
+
+function shouldRetryWithInsecureTls(error: unknown) {
+  const values = [collectErrorString(error), collectErrorString((error as { cause?: unknown } | null)?.cause)];
+  return values.some((value) =>
+    /UNABLE_TO_VERIFY_LEAF_SIGNATURE|unable to verify the first certificate|unable to get local issuer certificate|CERTIFICATE_VERIFY_FAILED/i.test(
+      value,
+    ),
+  );
+}
+
+function collectErrorString(error: unknown) {
+  if (!error) {
+    return "";
+  }
+  if (error instanceof Error) {
+    return `${error.name} ${error.message}`;
+  }
+  return String(error);
+}
+
+function enableInsecureTlsRetry(target: string) {
+  if (insecureTlsRetryEnabled) {
+    return;
+  }
+
+  insecureTlsRetryEnabled = true;
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+  console.warn(`[cigar-flow-facebook-run] Retrying with insecure TLS after certificate validation failure for ${target}.`);
 }
 
 function summarizeStory(story: NewsStory) {
@@ -1169,12 +1324,87 @@ function extractMarkdownHeadings(markdown: string) {
     .filter(Boolean);
 }
 
+function extractMarkdownSections(markdown: string) {
+  const sections: MarkdownSection[] = [];
+  let current: MarkdownSection | undefined;
+
+  for (const line of markdown.split(/\r?\n/)) {
+    const heading = line.match(/^#{1,4}\s+(.+)$/)?.[1];
+    if (heading) {
+      if (current) {
+        sections.push(current);
+      }
+      current = { heading: cleanStoryDetailText(heading), body: "" };
+      continue;
+    }
+
+    if (current) {
+      current.body += `${line}\n`;
+    }
+  }
+
+  if (current) {
+    sections.push(current);
+  }
+
+  return sections.filter((section) => section.heading || section.body.trim());
+}
+
+function summarizeStorySection(section: MarkdownSection) {
+  const heading = cleanStoryDetailText(section.heading);
+  const sentence = firstStorySentence(section.body);
+  if (!heading && !sentence) {
+    return "";
+  }
+
+  if (!sentence) {
+    return cleanCaptionLine(heading);
+  }
+
+  const line = `${heading}: ${truncateCaptionDetail(sentence, 150)}`;
+  if (blockedCaptionPatterns.some((pattern) => pattern.test(line))) {
+    return cleanCaptionLine(heading);
+  }
+
+  return line;
+}
+
+function firstStorySentence(value: string) {
+  const cleaned = cleanStoryDetailText(value);
+  const first = cleaned.match(/^(.+?[.!?])(?:\s|$)/)?.[1] ?? cleaned;
+  return truncateCaptionDetail(first, 180);
+}
+
+function isGenericStoryHeading(value: string) {
+  const normalized = cleanStoryDetailText(value).toLowerCase();
+  return /^(latest|overview|summary|sources?|source notes?|stay tuned|conclusion|flow note)\b/.test(normalized);
+}
+
 function cleanCaptionLine(value: string) {
-  return stripMarkdown(value).replace(/\s+/g, " ").trim().slice(0, 90);
+  return cleanStoryDetailText(value).slice(0, 90);
 }
 
 function stripMarkdown(value: string) {
   return value.replace(/[*_`#>]/g, "").trim();
+}
+
+function cleanStoryDetailText(value: string) {
+  return decodeHtmlEntities(value)
+    .replace(/!\[[^\]]*]\([^)]+\)/g, "")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/https?:\/\/\S+/gi, "")
+    .replace(/[*_`#>]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function truncateCaptionDetail(value: string, maxLength: number) {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  const clipped = value.slice(0, maxLength - 3).replace(/\s+\S*$/, "").trim();
+  return `${clipped || value.slice(0, maxLength - 3).trim()}...`;
 }
 
 function decodeHtmlEntities(value: string) {
@@ -1232,6 +1462,14 @@ function hostnameLabel(value: string) {
     return new URL(value).hostname.replace(/^www\./, "");
   } catch {
     return "Source image";
+  }
+}
+
+function candidateDomainKey(candidate: ImageSearchCandidate) {
+  try {
+    return new URL(candidate.sourcePageUrl || candidate.imageUrl).hostname.replace(/^www\./, "").toLowerCase();
+  } catch {
+    return "";
   }
 }
 

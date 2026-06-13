@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 
 import {
   type BackupAuthDatabase,
+  type BackupMembershipTier,
   type BackupAuthResult,
   type BackupAuthSession,
   type BackupAuthUser,
@@ -45,6 +46,9 @@ import {
   resolveCognitoConfig,
   resolveRedirectUri,
   signInWithCognitoPassword as signInWithCognitoPasswordRequest,
+  signUpWithCognitoPassword as signUpWithCognitoPasswordRequest,
+  confirmCognitoSignUp as confirmCognitoSignUpRequest,
+  resendCognitoSignUpCode as resendCognitoSignUpCodeRequest,
   getCognitoTokenResponse,
   writeStoredCognitoProfile,
   updateCognitoSessionProfile,
@@ -52,8 +56,12 @@ import {
   writeStoredCognitoSession,
   type CognitoAuthConfig,
   type CognitoAuthSession,
+  type CognitoConfirmSignUpInput,
+  type CognitoConfirmSignUpResult,
   type CognitoPasswordSignInInput,
   type CognitoPasswordSignInResult,
+  type CognitoPasswordSignUpInput,
+  type CognitoPasswordSignUpResult,
 } from "@/lib/cognito-auth";
 
 type CognitoCallbackResult = {
@@ -87,9 +95,13 @@ type BackupAuthContextValue = {
   completeFirstLoginPassword: (input: FirstLoginPasswordInput) => BackupAuthResult;
   signUpWithSocial: (input: SocialSignupInput) => BackupAuthResult;
   signInWithCognitoPassword: (input: CognitoPasswordSignInInput) => Promise<CognitoPasswordSignInResult>;
+  signUpWithCognitoPassword: (input: CognitoPasswordSignUpInput) => Promise<CognitoPasswordSignUpResult>;
+  confirmCognitoSignUp: (input: CognitoConfirmSignUpInput) => Promise<CognitoConfirmSignUpResult>;
+  resendCognitoSignUpCode: (input: { email: string; clientMetadata?: Record<string, string> }) => Promise<CognitoPasswordSignUpResult>;
   startCognitoLogin: (input?: { redirectPath?: string }) => Promise<CognitoLoginStartResult>;
   completeCognitoCallback: (url?: string) => Promise<CognitoCallbackResult>;
   updateAccountProfile: (input: AccountProfileInput) => AccountProfileUpdateResult;
+  applyMembershipAccess: (input: { tier: BackupMembershipTier; status?: "member" | "non_member" }) => void;
   clearCognitoSession: () => void;
   createApiHeaders: () => Promise<Record<string, string>>;
   signOut: () => void;
@@ -273,6 +285,81 @@ export function BackupAuthProvider({ children }: { children: React.ReactNode }) 
     [cognitoConfig]
   );
 
+  const signUpWithCognitoPassword = useCallback(
+    async (input: CognitoPasswordSignUpInput): Promise<CognitoPasswordSignUpResult> => {
+      if (!cognitoConfig) {
+        const result = {
+          status: "error",
+          message: "Yuzu account signup is not configured for this deployment.",
+        } satisfies CognitoPasswordSignUpResult;
+
+        setAuthError(result.message);
+        return result;
+      }
+
+      const result = await signUpWithCognitoPasswordRequest(cognitoConfig, input);
+
+      if (result.status === "error") {
+        setAuthError(result.message);
+      } else {
+        setAuthError("");
+      }
+
+      return result;
+    },
+    [cognitoConfig]
+  );
+
+  const confirmCognitoSignUp = useCallback(
+    async (input: CognitoConfirmSignUpInput): Promise<CognitoConfirmSignUpResult> => {
+      if (!cognitoConfig) {
+        const result = {
+          status: "error",
+          message: "Yuzu account confirmation is not configured for this deployment.",
+        } satisfies CognitoConfirmSignUpResult;
+
+        setAuthError(result.message);
+        return result;
+      }
+
+      const result = await confirmCognitoSignUpRequest(cognitoConfig, input);
+
+      if (result.status === "error") {
+        setAuthError(result.message);
+      } else {
+        setAuthError("");
+      }
+
+      return result;
+    },
+    [cognitoConfig]
+  );
+
+  const resendCognitoSignUpCode = useCallback(
+    async (input: { email: string; clientMetadata?: Record<string, string> }): Promise<CognitoPasswordSignUpResult> => {
+      if (!cognitoConfig) {
+        const result = {
+          status: "error",
+          message: "Yuzu account confirmation is not configured for this deployment.",
+        } satisfies CognitoPasswordSignUpResult;
+
+        setAuthError(result.message);
+        return result;
+      }
+
+      const result = await resendCognitoSignUpCodeRequest(cognitoConfig, input);
+
+      if (result.status === "error") {
+        setAuthError(result.message);
+      } else {
+        setAuthError("");
+      }
+
+      return result;
+    },
+    [cognitoConfig]
+  );
+
   const startCognitoLogin = useCallback(
     async (input: { redirectPath?: string } = {}): Promise<CognitoLoginStartResult> => {
       if (!cognitoConfig) {
@@ -439,6 +526,39 @@ export function BackupAuthProvider({ children }: { children: React.ReactNode }) 
     [cognitoSession, database, session]
   );
 
+  const applyMembershipAccess = useCallback((input: { tier: BackupMembershipTier; status?: "member" | "non_member" }) => {
+    const membership = {
+      status: input.status ?? "member",
+      tier: input.tier,
+    };
+
+    setSession((current) => (current ? { ...current, membership } : current));
+    setCognitoSession((current) => {
+      if (!current) {
+        return current;
+      }
+
+      const nextSession: CognitoAuthSession = {
+        ...current,
+        user: {
+          ...current.user,
+          membership,
+        },
+        claims: {
+          ...current.claims,
+          membershipTier: input.tier,
+          memberStatus: membership.status,
+          groups: [...new Set([...current.claims.groups, "member", normalizeMembershipGroup(input.tier)])],
+        },
+      };
+
+      writeStoredCognitoSession(window.localStorage, nextSession);
+      writeStoredCognitoProfile(window.localStorage, nextSession);
+      return nextSession;
+    });
+    setAuthError("");
+  }, []);
+
   const createApiHeaders = useCallback(async () => {
     if (!cognitoConfig || !cognitoSession) {
       return {};
@@ -505,9 +625,13 @@ export function BackupAuthProvider({ children }: { children: React.ReactNode }) 
       completeFirstLoginPassword,
       signUpWithSocial,
       signInWithCognitoPassword,
+      signUpWithCognitoPassword,
+      confirmCognitoSignUp,
+      resendCognitoSignUpCode,
       startCognitoLogin,
       completeCognitoCallback,
       updateAccountProfile,
+      applyMembershipAccess,
       clearCognitoSession,
       createApiHeaders,
       signOut,
@@ -527,8 +651,12 @@ export function BackupAuthProvider({ children }: { children: React.ReactNode }) 
       isReady,
       signIn,
       signInWithCognitoPassword,
+      signUpWithCognitoPassword,
       signOut,
       startCognitoLogin,
+      confirmCognitoSignUp,
+      resendCognitoSignUpCode,
+      applyMembershipAccess,
       signUpWithSocial,
       updateAccountProfile,
       userView,
@@ -577,4 +705,8 @@ function createBackupSessionFromCognito(session: CognitoAuthSession): BackupAuth
     membership: session.user.membership,
     signedInAt: session.issuedAt,
   };
+}
+
+function normalizeMembershipGroup(tier: BackupMembershipTier) {
+  return tier.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 }

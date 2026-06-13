@@ -38,6 +38,18 @@ type DailyCigarFlowSourceBatch = {
   sourceUrls: string[];
 };
 
+const defaultRenderableStoryImageHosts = [
+  "swwest.com",
+  "halfwheel.com",
+  "cigardojo.com",
+  "classroom2.s3.us-east-1.amazonaws.com",
+  "yuzucigarclub.com",
+  "www.yuzucigarclub.com",
+];
+
+const storyImageProbeTimeoutMs = 4_000;
+const defaultStoryImagePosition = "50% 50%";
+
 async function runDailyCigarFlow() {
   const baseUrl = resolveRequiredEnv("NEXT_PUBLIC_YCC_API_BASE_URL");
   const auth = await resolveNewsroomAutomationAuth(process.env);
@@ -74,7 +86,7 @@ async function runDailyCigarFlow() {
       if (isPlaceholderNewsBodyMarkdown(draftResult.draft.bodyMarkdown)) {
         throw new Error("Draft generation returned placeholder scaffold copy instead of a real story.");
       }
-      publishImages = selectSourceAlignedStoryImages(draftResult.draft.images, draftInput.sourceUrls, storyImages);
+      publishImages = await selectSourceAlignedStoryImages(draftResult.draft.images, draftInput.sourceUrls, storyImages);
       publishSourceNotes = buildDailyCigarFlowPublishSourceNotes(draftResult.draft.sourceNotes, sourceBatch);
       break;
     } catch (error) {
@@ -189,14 +201,140 @@ function buildDailyCigarFlowStoryImages(sourceUrls: readonly string[], limit = 3
     }));
 }
 
-function selectSourceAlignedStoryImages(
+async function selectSourceAlignedStoryImages(
   draftImages: NewsStoryImage[] | undefined,
   sourceUrls: readonly string[],
   fallbackImages: NewsStoryImage[],
 ) {
   const alignedDraftImages = (draftImages ?? []).filter((image) => isHttpUrl(image.image) && isSourceAlignedUrl(image.sourceUrl ?? "", sourceUrls));
 
-  return alignedDraftImages.length ? alignedDraftImages : fallbackImages;
+  const renderableDraftImages = await filterRenderableStoryImages(alignedDraftImages);
+  if (renderableDraftImages.length) {
+    return renderableDraftImages;
+  }
+
+  if (alignedDraftImages.length && fallbackImages.length) {
+    console.warn("No renderable draft story images remained after validation. Checking source-seeded fallback images.");
+  }
+
+  return filterRenderableStoryImages(fallbackImages);
+}
+
+async function filterRenderableStoryImages(images: NewsStoryImage[]) {
+  const renderableImages: NewsStoryImage[] = [];
+
+  for (const image of images) {
+    const normalizedImage = {
+      ...image,
+      imagePosition: normalizeStoryImagePosition(image.imagePosition),
+    };
+    const validation = await validateRenderableStoryImage(normalizedImage);
+
+    if (validation.ok) {
+      renderableImages.push(normalizedImage);
+    } else {
+      console.warn(`Skipping Cigar Flow story image "${normalizedImage.label}": ${validation.reason}.`);
+    }
+  }
+
+  return renderableImages;
+}
+
+async function validateRenderableStoryImage(image: NewsStoryImage) {
+  if (!isAllowedRenderableStoryImageUrl(image.image)) {
+    return {
+      ok: false,
+      reason: "image host is not allowed by the deployed site image policy",
+    };
+  }
+
+  const headResult = await probeImageUrl(image.image, "HEAD");
+  if (headResult.ok) {
+    return headResult;
+  }
+
+  return probeImageUrl(image.image, "GET");
+}
+
+async function probeImageUrl(url: string, method: "HEAD" | "GET") {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), storyImageProbeTimeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      method,
+      redirect: "follow",
+      signal: controller.signal,
+      ...(method === "GET" ? { headers: { range: "bytes=0-2047" } } : {}),
+    });
+    const contentType = response.headers.get("content-type") || "";
+
+    if (!response.ok && response.status !== 206) {
+      return {
+        ok: false,
+        reason: `image probe returned HTTP ${response.status}`,
+      };
+    }
+
+    if (!contentType.toLowerCase().startsWith("image/")) {
+      return {
+        ok: false,
+        reason: `image probe returned non-image content type ${contentType || "unknown"}`,
+      };
+    }
+
+    return { ok: true, reason: "" };
+  } catch (error) {
+    return {
+      ok: false,
+      reason: error instanceof Error ? error.message : "image probe failed",
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function isAllowedRenderableStoryImageUrl(value: string) {
+  try {
+    const parsedUrl = new URL(value);
+    const hostname = parsedUrl.hostname.toLowerCase();
+    const localHost = isLocalhost(hostname);
+
+    if (parsedUrl.protocol !== "https:" && !(parsedUrl.protocol === "http:" && localHost)) {
+      return false;
+    }
+
+    return localHost || getRenderableStoryImageHosts().has(hostname);
+  } catch {
+    return false;
+  }
+}
+
+function getRenderableStoryImageHosts() {
+  return new Set(
+    (process.env.YCC_DAILY_NEWSROOM_ALLOWED_IMAGE_HOSTS || defaultRenderableStoryImageHosts.join(","))
+      .split(",")
+      .map((host) => host.trim().toLowerCase())
+      .filter(Boolean),
+  );
+}
+
+function isLocalhost(hostname: string) {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]" || hostname.endsWith(".localhost");
+}
+
+function normalizeStoryImagePosition(value: string | undefined) {
+  const position = (value || "").trim().toLowerCase();
+
+  if (/^(100|[1-9]?\d)%\s+(100|[1-9]?\d)%$/.test(position)) {
+    return position;
+  }
+
+  if (/^(center|top|bottom|left|right)(\s+(center|top|bottom|left|right))?$/.test(position)) {
+    return position;
+  }
+
+  return defaultStoryImagePosition;
 }
 
 function buildDailyCigarFlowPublishSourceNotes(

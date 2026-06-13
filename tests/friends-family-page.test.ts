@@ -16,5 +16,9 @@ test("friends and family page is unlinked and claims the yearly Box Access Pass 
   assert.ok(claimSource.includes('billingPeriod: "yearly"'), "claim flow should request yearly billing");
   assert.ok(claimSource.includes('trialPeriodDays: 365'), "claim flow should attach the one-year offer");
   assert.ok(claimSource.includes('Claim 1-Year Pass'), "primary CTA should match the offer");
-  assert.ok(claimSource.includes('Sign in first'), "unsigned visitors should be sent through sign-in first");
+  assert.ok(claimSource.includes('Create Yuzu Account'), "unsigned visitors should have a Yuzu-branded signup path");
+  assert.ok(claimSource.includes('Sign In and Claim Pass'), "existing users should have a Yuzu-branded signin path");
+  assert.ok(claimSource.includes('Confirm and Claim Pass'), "new users should confirm Cognito signup without leaving the page");
+  assert.ok(claimSource.includes('Yuzu Cigar Club verification code'), "confirmation help should point users to the branded code email");
+  assert.equal(claimSource.includes("startCognitoLogin"), false, "invite claim should not send users to hosted Cognito");
 });

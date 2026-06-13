@@ -39,6 +39,11 @@ export type CheckoutSessionRequest = {
 export type CheckoutSessionResponse = {
   id: string;
   url: string;
+  membershipClaim?: {
+    tier: "Box Access Pass" | "Kisha" | "Sensei" | "Daimyo" | string;
+    status: "member" | "non_member" | "active" | string;
+    expiresAt?: string | null;
+  };
 };
 
 export type CheckoutSessionStatus = {
@@ -227,6 +232,8 @@ export function getCheckoutErrorMessage(error: unknown) {
     missing_shipping_address: "Complete the required shipping address fields before checkout.",
     payment_failed: "The payment could not be completed. Please try another payment method in Stripe Checkout.",
     stripe_not_ready: "Secure checkout is not configured for this environment yet.",
+    stripe_account_not_ready: "Yuzu checkout is temporarily unavailable while payment activation finishes. Your account is still ready for the Friends & Family pass.",
+    membership_claim_not_ready: "Yuzu could not activate the pass yet. Please contact concierge support and mention Friends & Family Box Pass.",
     commerce_not_configured: "Secure checkout is not configured for this environment yet.",
   };
 

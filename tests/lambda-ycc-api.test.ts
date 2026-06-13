@@ -574,6 +574,28 @@ function installPersistenceMocks(
         };
       }
 
+      if (
+        normalized.includes("update public.members") &&
+        normalized.includes("membership_tier = 'box_access_pass'") &&
+        normalized.includes("where lower(email) = lower($1)")
+      ) {
+        return {
+          rows: [
+            {
+              id: "11111111-1111-4111-8111-111111111111",
+              cognito_sub: "existing-friends-family-member",
+              email: params[0],
+              display_name: params[1],
+              role: "customer",
+              membership_tier: "box_access_pass",
+              member_status: "active",
+              stripe_customer_id: null,
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+
       if (normalized.includes("update public.members") && normalized.includes("where lower(email) = lower($1)")) {
         return {
           rows: [
@@ -1640,6 +1662,7 @@ function installPersistenceMocks(
 
 function installStripeMock(
   options: {
+    createCustomer?: Record<string, unknown>;
     createSession?: Record<string, unknown>;
     portalSession?: Record<string, unknown>;
     retrieveSession?: Record<string, unknown>;
@@ -1647,6 +1670,7 @@ function installStripeMock(
     webhookEvent?: Record<string, unknown>;
   } = {}
 ) {
+  const customersCreated: Array<{ params: Record<string, unknown>; requestOptions?: Record<string, unknown> }> = [];
   const checkoutSessionsCreated: Record<string, unknown>[] = [];
   const checkoutSessionsRetrieved: string[] = [];
   const billingPortalSessionsCreated: Record<string, unknown>[] = [];
@@ -1669,6 +1693,13 @@ function installStripeMock(
   };
 
   class Stripe {
+    customers = {
+      create: async (params: Record<string, unknown>, requestOptions?: Record<string, unknown>) => {
+        customersCreated.push({ params, requestOptions });
+        return options.createCustomer || { id: "cus_friends_family_123" };
+      },
+    };
+
     checkout = {
       sessions: {
         create: async (params: Record<string, unknown>) => {
@@ -1746,6 +1777,7 @@ function installStripeMock(
     billingPortalSessionsCreated,
     checkoutSessionsCreated,
     checkoutSessionsRetrieved,
+    customersCreated,
     restore() {
       Module._load = previousModuleLoad;
       for (const [key, value] of Object.entries(previousEnv)) {
@@ -2694,11 +2726,14 @@ test("membership checkout rejects client-supplied Stripe price ids when the serv
   }
 });
 
-test("friends and family membership checkout grants one-year Box Access Pass trial metadata", async () => {
-  const mock = installStripeMock();
+test("friends and family membership checkout creates a Stripe Customer without Checkout", async () => {
+  const persistenceMock = installPersistenceMocks();
+  const stripeMock = installStripeMock();
+  const previousFeatureDbWrites = process.env.FEATURE_DB_WRITES;
+  const previousStripeSecretKey = process.env.STRIPE_SECRET_KEY;
   try {
+    process.env.FEATURE_DB_WRITES = "schema_ready";
     process.env.STRIPE_SECRET_KEY = "sk_test_123";
-    process.env.STRIPE_PRICE_BOX_ACCESS_PASS_YEARLY = "price_box_access_yearly";
 
     const response = await handler({
       routeKey: "POST /commerce/membership-session",
@@ -2720,18 +2755,53 @@ test("friends and family membership checkout grants one-year Box Access Pass tri
     });
 
     assert.equal(response.statusCode, 200);
-    assert.equal(mock.checkoutSessionsCreated.length, 1);
-    assert.deepEqual(mock.checkoutSessionsCreated[0].line_items, [{ price: "price_box_access_yearly", quantity: 1 }]);
-    assert.equal((mock.checkoutSessionsCreated[0].metadata as Record<string, string>).tier_key, "box-access-pass");
-    assert.equal((mock.checkoutSessionsCreated[0].metadata as Record<string, string>).billing_period, "yearly");
-    assert.equal((mock.checkoutSessionsCreated[0].metadata as Record<string, string>).membership_offer_source, "friends-family-page");
-    assert.equal((mock.checkoutSessionsCreated[0].metadata as Record<string, string>).membership_offer_access, "box_access_pass_1_year");
-    assert.equal(
-      (mock.checkoutSessionsCreated[0].subscription_data as { trial_period_days?: number }).trial_period_days,
-      365
+    const body = JSON.parse(response.body);
+
+    assert.equal(stripeMock.checkoutSessionsCreated.length, 0);
+    assert.equal(stripeMock.customersCreated.length, 1);
+    const customerCreate = stripeMock.customersCreated[0];
+    const customerParams = customerCreate.params as {
+      email?: string;
+      name?: string;
+      metadata?: Record<string, string>;
+    };
+    assert.equal(customerParams.email, "friend@example.com");
+    assert.equal(customerParams.name, "Family Friend");
+    assert.equal(customerParams.metadata?.membership_path, "friends_family_box_pass");
+    assert.equal(customerParams.metadata?.membership_offer_code, "friends-family-box-pass");
+    assert.equal(customerParams.metadata?.membership_offer_campaign, "friends-family-1-year-box-pass");
+    assert.match(String(customerCreate.requestOptions?.idempotencyKey || ""), /^ycc-ff-box-pass-[A-Za-z0-9_-]+$/);
+    assert.equal(body.url, "/account?friends_family=claimed");
+    assert.equal(body.membershipClaim.tier, "Box Access Pass");
+    assert.equal(body.membershipClaim.tierKey, "box_access_pass");
+    assert.equal(body.membershipClaim.status, "member");
+    assert.equal(body.membershipClaim.memberStatus, "active");
+    assert.equal(body.membershipClaim.source, "friends-family-page");
+    assert.equal(body.membershipClaim.stripeCustomerId, "cus_friends_family_123");
+    assert.match(body.membershipClaim.expiresAt, /^\d{4}-\d{2}-\d{2}T/);
+
+    const queries = persistenceMock.clients.flatMap((client) => client.queries.map((query) => query.sql));
+    assert.ok(
+      queries.some((sql) => sql.includes("update public.members") && sql.includes("membership_tier = 'box_access_pass'")),
+      "Friends & Family claim should activate Box Access Pass in the member row"
+    );
+    assert.ok(
+      queries.some((sql) => sql.includes("update public.members") && sql.includes("stripe_customer_id = coalesce")),
+      "Friends & Family claim should link the Stripe Customer to the member row"
     );
   } finally {
-    mock.restore();
+    if (previousFeatureDbWrites === undefined) {
+      delete process.env.FEATURE_DB_WRITES;
+    } else {
+      process.env.FEATURE_DB_WRITES = previousFeatureDbWrites;
+    }
+    if (previousStripeSecretKey === undefined) {
+      delete process.env.STRIPE_SECRET_KEY;
+    } else {
+      process.env.STRIPE_SECRET_KEY = previousStripeSecretKey;
+    }
+    stripeMock.restore();
+    persistenceMock.restore();
   }
 });
 
