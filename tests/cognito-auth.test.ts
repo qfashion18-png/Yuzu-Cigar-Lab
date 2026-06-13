@@ -630,10 +630,16 @@ test("documented Cognito scopes match the app client OAuth scopes", () => {
 });
 
 test("Cognito signup verification email is Yuzu branded", () => {
+  assert.match(cognitoTemplateSource, /EmailConfiguration:/);
+  assert.match(cognitoTemplateSource, /EmailSendingAccount: COGNITO_DEFAULT/);
+  assert.match(cognitoTemplateSource, /identity\/support@yuzucigarclub\.com/);
+  assert.match(cognitoTemplateSource, /ReplyToEmailAddress: support@yuzucigarclub\.com/);
   assert.match(cognitoTemplateSource, /VerificationMessageTemplate:/);
   assert.match(cognitoTemplateSource, /EmailSubject: Yuzu Cigar Club verification code/);
-  assert.match(cognitoTemplateSource, /Welcome to Yuzu Cigar Club\./);
-  assert.match(cognitoTemplateSource, /Your Yuzu verification code is \{####\}\./);
+  assert.match(cognitoTemplateSource, /YUZU CIGAR CLUB/);
+  assert.match(cognitoTemplateSource, /Friends & Family Box Pass/);
+  assert.match(cognitoTemplateSource, /Your verification code/);
+  assert.match(cognitoTemplateSource, /-{10,}[\s\S]*\{####\}[\s\S]*-{10,}/);
   assert.match(cognitoTemplateSource, /Adults 21\+ only/);
 });
 

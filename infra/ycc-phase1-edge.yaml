@@ -125,17 +125,26 @@ Resources:
         - email
       AutoVerifiedAttributes:
         - email
+      EmailConfiguration:
+        EmailSendingAccount: COGNITO_DEFAULT
+        SourceArn: !Sub arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/support@yuzucigarclub.com
+        ReplyToEmailAddress: support@yuzucigarclub.com
       VerificationMessageTemplate:
         DefaultEmailOption: CONFIRM_WITH_CODE
         EmailSubject: Yuzu Cigar Club verification code
         EmailMessage: |
-          Welcome to Yuzu Cigar Club.
+          YUZU CIGAR CLUB
+          Friends & Family Box Pass
 
-          Your Yuzu verification code is {####}.
+          Your verification code
 
-          Enter this code on the Friends & Family Box Pass page to confirm your account and finish activating your invite.
+          ------------------------------
+                      {####}
+          ------------------------------
 
-          If you did not create a Yuzu account, you can ignore this email.
+          Enter this code on the Yuzu Friends & Family page to confirm your account and finish activating your invite.
+
+          If you did not create a Yuzu account, you can safely ignore this email.
 
           Yuzu Cigar Club
           Adults 21+ only

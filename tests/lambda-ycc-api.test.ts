@@ -196,6 +196,7 @@ function installPersistenceMocks(
     transcribeTranscript?: string;
     dispatchRows?: Array<Record<string, unknown>>;
     climateRows?: Array<Record<string, unknown>>;
+    adminAlertRecipientRows?: Array<Record<string, unknown>>;
     memberProfileRows?: Array<Record<string, unknown>>;
     humidorItemRows?: Array<Record<string, unknown>>;
     smokeLogRows?: Array<Record<string, unknown>>;
@@ -927,6 +928,15 @@ function installPersistenceMocks(
       }
 
       if (
+        normalized.includes("admin_operational_alert_recipients")
+      ) {
+        return {
+          rows: options.adminAlertRecipientRows || [],
+          rowCount: options.adminAlertRecipientRows?.length || 0,
+        };
+      }
+
+      if (
         normalized.includes("from public.members m") &&
         normalized.includes("join public.member_profiles mp") &&
         normalized.includes("join public.humidor_items hi")
@@ -996,6 +1006,7 @@ function installPersistenceMocks(
   const signedUrlInvocations: Array<{ input: Record<string, unknown>; options: Record<string, unknown> }> = [];
   const secretsManagerInvocations: Array<Record<string, unknown>> = [];
   const sesInvocations: Array<Record<string, unknown>> = [];
+  const snsInvocations: Array<Record<string, unknown>> = [];
   const transcribeInvocations: Array<Record<string, unknown>> = [];
   type WebPushSetVapidDetails = (vapidSubject: string, vapidPublicKey: string, vapidPrivateKey: string) => void;
   type WebPushSendNotification = (subscription: Record<string, unknown>, payload: string) => Promise<unknown>;
@@ -1408,6 +1419,27 @@ function installPersistenceMocks(
     }
   }
 
+  class PublishCommand {
+    input: Record<string, unknown>;
+
+    constructor(input: Record<string, unknown>) {
+      this.input = input;
+    }
+  }
+
+  class SNSClient {
+    config: Record<string, unknown>;
+
+    constructor(config: Record<string, unknown> = {}) {
+      this.config = config;
+    }
+
+    async send(command: PublishCommand) {
+      snsInvocations.push({ ...command.input, clientConfig: this.config });
+      return { MessageId: "sns-sms-message-123" };
+    }
+  }
+
   class WebPushClient {
     setVapidDetails(vapidSubject: string, vapidPublicKey: string, vapidPrivateKey: string) {
       webPushInvocations.push({
@@ -1483,6 +1515,10 @@ function installPersistenceMocks(
       return { SendEmailCommand, SESv2Client };
     }
 
+    if (request === "@aws-sdk/client-sns") {
+      return { PublishCommand, SNSClient };
+    }
+
     if (request === "@aws-sdk/client-transcribe") {
       return { DeleteTranscriptionJobCommand, GetTranscriptionJobCommand, StartTranscriptionJobCommand, TranscribeClient };
     }
@@ -1518,6 +1554,10 @@ function installPersistenceMocks(
     VAPID_PUBLIC_KEY: process.env.VAPID_PUBLIC_KEY,
     VAPID_PRIVATE_KEY: process.env.VAPID_PRIVATE_KEY,
     VAPID_SUBJECT: process.env.VAPID_SUBJECT,
+    YCC_ADMIN_ALERT_RECIPIENT_EMAILS: process.env.YCC_ADMIN_ALERT_RECIPIENT_EMAILS,
+    YCC_ADMIN_ALERT_PHONE_E164: process.env.YCC_ADMIN_ALERT_PHONE_E164,
+    YCC_ADMIN_ALERT_SMS_REGION: process.env.YCC_ADMIN_ALERT_SMS_REGION,
+    YCC_ADMIN_ALERT_SMS_MAX_PRICE_USD: process.env.YCC_ADMIN_ALERT_SMS_MAX_PRICE_USD,
     FEATURE_DB_WRITES: process.env.FEATURE_DB_WRITES,
     FEATURE_BEDROCK: process.env.FEATURE_BEDROCK,
     FEATURE_LEX_ROUTER: process.env.FEATURE_LEX_ROUTER,
@@ -1639,6 +1679,7 @@ function installPersistenceMocks(
     signedUrlInvocations,
     transcribeInvocations,
     webPushInvocations,
+    snsInvocations,
     restore() {
       if (webPushModule) {
         if (originalWebPushSetVapidDetails) {
@@ -1663,6 +1704,7 @@ function installPersistenceMocks(
 function installStripeMock(
   options: {
     createCustomer?: Record<string, unknown>;
+    createSessionError?: unknown;
     createSession?: Record<string, unknown>;
     portalSession?: Record<string, unknown>;
     retrieveSession?: Record<string, unknown>;
@@ -1704,6 +1746,9 @@ function installStripeMock(
       sessions: {
         create: async (params: Record<string, unknown>) => {
           checkoutSessionsCreated.push(params);
+          if (options.createSessionError) {
+            throw options.createSessionError;
+          }
           return options.createSession || { id: "cs_test_123", url: "https://checkout.stripe.com/c/pay/cs_test_123" };
         },
         retrieve: async (sessionId: string) => {
@@ -2300,6 +2345,63 @@ test("commerce checkout allows AgeChecker-verified non-required states to use US
       },
     ]);
     assert.equal((mock.checkoutSessionsCreated[0].metadata as Record<string, string>).adult_signature_required, "false");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("commerce checkout maps disabled Stripe live charges to account-not-ready response", async () => {
+  const mock = installStripeMock({
+    createSessionError: Object.assign(new Error("Your account cannot currently make live charges."), {
+      code: "account_invalid",
+    }),
+  });
+  try {
+    process.env.STRIPE_SECRET_KEY = "sk_live_123";
+    process.env.STRIPE_LAUNCH_CATALOG_READY = "true";
+    process.env.FEATURE_STRIPE_TAX = "ready";
+    process.env.PUBLIC_SITE_URL = "https://www.yuzucigarclub.com";
+    process.env.AGE_VERIFICATION_SIGNING_SECRET = "age-secret";
+    delete process.env.ALLOW_LEGACY_AGE_VERIFICATION_TOKEN;
+    process.env.STRIPE_LAUNCH_CATALOG_JSON = JSON.stringify([
+      {
+        sku: "APPROVED-BOX",
+        slug: "approved-box",
+        name: "Approved Box",
+        price: 120,
+        publishStatus: "published",
+        inventoryPolicy: "track",
+        sourceQuantity: 5,
+        shippable: true,
+        adultSignatureRequired: true,
+        stripePriceId: "price_approved",
+      },
+    ]);
+
+    const response = await handler({
+      routeKey: "POST /commerce/checkout-session",
+      rawPath: "/commerce/checkout-session",
+      body: JSON.stringify({
+        items: [{ sku: "APPROVED-BOX", quantity: 1, unitPrice: 120 }],
+        customer: { email: "member@example.com" },
+        shippingAddress: {
+          address1: "123 Yuzu Way",
+          city: "Chandler",
+          country: "US",
+          state: "AZ",
+          postalCode: "85225",
+        },
+        shippingMethodId: "usps-ground-advantage",
+        compliance: { ageVerificationToken: createSignedAgeVerificationToken("age-secret") },
+      }),
+      requestContext: { requestId: "req-commerce-checkout-account-not-ready", http: { method: "POST" } },
+    });
+
+    const body = JSON.parse(response.body);
+    assert.equal(response.statusCode, 409);
+    assert.equal(body.error, "stripe_account_not_ready");
+    assert.match(body.message, /payment activation/i);
+    assert.equal(mock.checkoutSessionsCreated.length, 1);
   } finally {
     mock.restore();
   }
@@ -3095,6 +3197,109 @@ test("Stripe webhook persists signed checkout events into commerce order records
   }
 });
 
+test("Stripe checkout completion sends owner SMS and admin mobile push for new paid orders", async () => {
+  const persistenceMock = installPersistenceMocks({
+    adminAlertRecipientRows: [
+      {
+        member_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        email: "owner@example.com",
+        role: "admin",
+        push_subscription: {
+          endpoint: "https://example.com/admin-phone",
+          keys: {
+            p256dh: "admin-p256dh-key",
+            auth: "admin-auth-key",
+          },
+        },
+      },
+    ],
+  });
+  const stripeMock = installStripeMock({
+    webhookEvent: {
+      id: "evt_checkout_completed_alert",
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          id: "cs_webhook_alert",
+          customer: "cus_member_alert",
+          customer_details: {
+            email: "member@example.com",
+            name: "Yuzu Member",
+          },
+          payment_intent: "pi_webhook_alert",
+          payment_status: "paid",
+          status: "complete",
+          currency: "usd",
+          amount_subtotal: 12000,
+          amount_total: 12792,
+          total_details: {
+            amount_tax: 792,
+            amount_shipping: 0,
+          },
+          metadata: {
+            age_verification_id: "age_txn_12345678",
+          },
+        },
+      },
+    },
+  });
+
+  try {
+    process.env.STRIPE_SECRET_KEY = "sk_test_123";
+    process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_123";
+    process.env.FEATURE_DB_WRITES = "schema_ready";
+    process.env.YCC_ADMIN_ALERT_RECIPIENT_EMAILS = "owner@example.com";
+    process.env.YCC_ADMIN_ALERT_PHONE_E164 = "4805550101";
+    process.env.YCC_ADMIN_ALERT_SMS_REGION = "us-east-1";
+
+    const response = await handler({
+      routeKey: "POST /commerce/webhook/stripe",
+      rawPath: "/commerce/webhook/stripe",
+      body: JSON.stringify({ id: "evt_checkout_completed_alert" }),
+      headers: {
+        "stripe-signature": "t=123,v1=sig",
+      },
+      requestContext: { requestId: "req-commerce-webhook-admin-alert", http: { method: "POST" } },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const sendInvocations = persistenceMock.webPushInvocations.filter((invocation) => invocation.payload !== "");
+    assert.equal(sendInvocations.length, 1);
+    assert.deepEqual(sendInvocations[0].subscription, {
+      endpoint: "https://example.com/admin-phone",
+      keys: {
+        p256dh: "admin-p256dh-key",
+        auth: "admin-auth-key",
+      },
+    });
+
+    const payload = JSON.parse(sendInvocations[0].payload);
+    assert.equal(payload.title, "New Yuzu order");
+    assert.match(payload.body, /\$127\.92/);
+    assert.match(payload.body, /member@example\.com/);
+    assert.equal(payload.data.url, "/admin/console");
+    assert.equal(payload.data.tag, "admin-operational-alert");
+
+    assert.equal(persistenceMock.snsInvocations.length, 1);
+    assert.equal(persistenceMock.snsInvocations[0].PhoneNumber, "+14805550101");
+    assert.match(String(persistenceMock.snsInvocations[0].Message || ""), /\$127\.92/);
+    assert.match(String(persistenceMock.snsInvocations[0].Message || ""), /member@example\.com/);
+    assert.match(String(persistenceMock.snsInvocations[0].Message || ""), /Reply STOP to opt out\./);
+    assert.deepEqual(persistenceMock.snsInvocations[0].MessageAttributes, {
+      "AWS.SNS.SMS.SMSType": {
+        DataType: "String",
+        StringValue: "Transactional",
+      },
+    });
+
+    const queries = persistenceMock.clients.flatMap((client) => client.queries.map((query) => query.sql));
+    assert.ok(queries.some((sql) => sql.includes("admin_operational_alert_recipients")), "admin alert recipients should be loaded from subscribed admin profiles");
+  } finally {
+    stripeMock.restore();
+    persistenceMock.restore();
+  }
+});
+
 test("Stripe subscription webhooks create member subscription records", async () => {
   const persistenceMock = installPersistenceMocks();
   const stripeMock = installStripeMock({
@@ -3416,6 +3621,88 @@ test("Cognito post-confirmation sends a welcome email with account details and m
     assert.match(simpleEmail.Simple.Body.Html.Data, /\/account\//);
     assert.match(simpleEmail.Simple.Body.Html.Data, /\/membership\//);
     assert.match(simpleEmail.Simple.Body.Html.Data, /\/shop\//);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("Cognito post-confirmation sends owner SMS and admin mobile push for new users", async () => {
+  const mock = installPersistenceMocks({
+    adminAlertRecipientRows: [
+      {
+        member_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        email: "owner@example.com",
+        role: "admin",
+        push_subscription: {
+          endpoint: "https://example.com/admin-phone",
+          keys: {
+            p256dh: "admin-p256dh-key",
+            auth: "admin-auth-key",
+          },
+        },
+      },
+    ],
+  });
+
+  try {
+    process.env.YCC_ADMIN_ALERT_RECIPIENT_EMAILS = "owner@example.com";
+    process.env.YCC_ADMIN_ALERT_PHONE_E164 = "4805550101";
+    process.env.YCC_ADMIN_ALERT_SMS_REGION = "us-east-1";
+
+    const response = await (handler as unknown as (event: Record<string, unknown>) => Promise<Record<string, unknown>>)( {
+      version: "1",
+      region: "us-east-1",
+      userPoolId: "us-east-1_TESTPOOL",
+      userName: "reader@example.com",
+      triggerSource: "PostConfirmation_ConfirmSignUp",
+      callerContext: {
+        clientId: "client-test",
+      },
+      request: {
+        userAttributes: {
+          sub: "cognito-user-123",
+          email: "Reader@Example.com",
+          email_verified: "true",
+          name: "Yuzu Reader",
+          "custom:member_status": "non_member",
+          "custom:membership_tier": "",
+        },
+      },
+      response: {},
+    });
+
+    assert.equal(response.triggerSource, "PostConfirmation_ConfirmSignUp");
+    const sendInvocations = mock.webPushInvocations.filter((invocation) => invocation.payload !== "");
+    assert.equal(sendInvocations.length, 1);
+    assert.deepEqual(sendInvocations[0].subscription, {
+      endpoint: "https://example.com/admin-phone",
+      keys: {
+        p256dh: "admin-p256dh-key",
+        auth: "admin-auth-key",
+      },
+    });
+
+    const payload = JSON.parse(sendInvocations[0].payload);
+    assert.equal(payload.title, "New Yuzu user");
+    assert.match(payload.body, /reader@example\.com/);
+    assert.match(payload.body, /Yuzu Reader/);
+    assert.equal(payload.data.url, "/admin/console");
+    assert.equal(payload.data.tag, "admin-operational-alert");
+
+    assert.equal(mock.snsInvocations.length, 1);
+    assert.equal(mock.snsInvocations[0].PhoneNumber, "+14805550101");
+    assert.match(String(mock.snsInvocations[0].Message || ""), /reader@example\.com/);
+    assert.match(String(mock.snsInvocations[0].Message || ""), /Yuzu Reader/);
+    assert.match(String(mock.snsInvocations[0].Message || ""), /Reply STOP to opt out\./);
+    assert.deepEqual(mock.snsInvocations[0].MessageAttributes, {
+      "AWS.SNS.SMS.SMSType": {
+        DataType: "String",
+        StringValue: "Transactional",
+      },
+    });
+
+    const queries = mock.clients.flatMap((client) => client.queries.map((query) => query.sql));
+    assert.ok(queries.some((sql) => sql.includes("admin_operational_alert_recipients")), "admin alert recipients should be loaded from subscribed admin profiles");
   } finally {
     mock.restore();
   }

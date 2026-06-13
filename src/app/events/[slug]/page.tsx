@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { ArrowLeft, CalendarDays, CheckCircle2, Clock3, MapPin, Ticket, Users } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, CalendarDays, CheckCircle2, Clock3, MapPin, Ticket, Users } from "lucide-react";
 
 import { LocalActionButton } from "@/components/local-action-button";
 import { ReferenceImage } from "@/components/reference-image";
@@ -104,14 +104,24 @@ export default async function EventDetailPage({ params }: EventDetailPageProps) 
           </div>
 
           <div className="border-t border-yuzu-line pt-6">
-            <LocalActionButton
-              storageKey={reservationKey}
-              idleLabel="Reserve Seat"
-              completedLabel="Seat Reserved"
-              statusText="Event RSVP saved on this device."
-              className="h-12 w-full bg-yuzu-gold px-8 text-yuzu-ink hover:bg-yuzu-gold-light sm:w-fit"
-              variant="default"
-            />
+            {event.sourceUrl ? (
+              <Button
+                className="h-12 w-full bg-yuzu-gold px-8 text-yuzu-ink hover:bg-yuzu-gold-light sm:w-fit"
+                render={<a href={event.sourceUrl} target="_blank" rel="noreferrer" />}
+              >
+                View Source Event
+                <ArrowUpRight data-icon="inline-end" />
+              </Button>
+            ) : (
+              <LocalActionButton
+                storageKey={reservationKey}
+                idleLabel="Reserve Seat"
+                completedLabel="Seat Reserved"
+                statusText="Event RSVP saved on this device."
+                className="h-12 w-full bg-yuzu-gold px-8 text-yuzu-ink hover:bg-yuzu-gold-light sm:w-fit"
+                variant="default"
+              />
+            )}
           </div>
         </div>
       </section>

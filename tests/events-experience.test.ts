@@ -42,7 +42,7 @@ test("event schedule automatically drops past events and promotes events going o
 
   assert.deepEqual(
     laterEvents.map((event) => event.slug),
-    ["opus-x-allocation-night"]
+    ["opus-x-allocation-night", "fox-cigar-bar-second-saturday", "smoke-n-the-desert-phx-cigar-week-2026"]
   );
 });
 
@@ -57,6 +57,21 @@ test("events page separates Yuzu events from location-based curated picks", () =
   assert.ok(html.includes("Search Your Area"), "missing area search label");
   assert.ok(html.includes("City, ZIP, lounge, or neighborhood"), "missing detailed area search placeholder");
   assert.ok(html.includes("Best Cigar Lounges Near You"), "missing curated lounge heading");
+});
+
+test("Facebook-sourced primary events use local copies of their event artwork", () => {
+  const facebookEvents = [
+    ["fox-cigar-bar-second-saturday", "/assets/events/fox-cigar-bar-second-saturday.jpg"],
+    ["smoke-n-the-desert-phx-cigar-week-2026", "/assets/events/smoke-n-the-desert-phx-cigar-week-2026.jpg"],
+  ] as const;
+
+  for (const [slug, image] of facebookEvents) {
+    const event = events.find((item) => item.slug === slug);
+
+    assert.ok(event, `missing primary Facebook event ${slug}`);
+    assert.equal(event.image, image);
+    assert.ok(existsSync(new URL(`../public${image}`, import.meta.url)), `missing local event artwork for ${slug}`);
+  }
 });
 
 test("curated events search narrows event and lounge picks by local area detail", () => {
@@ -81,11 +96,25 @@ test("curated events search narrows event and lounge picks by local area detail"
 
   assert.deepEqual(
     zipResults.events.map((event) => event.title),
-    ["Downtown Chandler Patio Signal"]
+    ["Downtown Chandler Patio Signal", "Smoke 'N The Desert: PHX Cigar Week 2026"]
   );
   assert.deepEqual(
     zipResults.lounges.map((lounge) => lounge.name),
     ["Puro Cigar Bar"]
+  );
+
+  const cigarWeekResults = searchCuratedArea(phoenixMarket, "phoenix cigar week");
+
+  assert.deepEqual(
+    cigarWeekResults.events.map((event) => event.title),
+    ["Smoke 'N The Desert: PHX Cigar Week 2026"]
+  );
+
+  const secondSaturdayResults = searchCuratedArea(phoenixMarket, "Gilbert second saturday");
+
+  assert.deepEqual(
+    secondSaturdayResults.events.map((event) => event.title),
+    ["Fox Cigar Bar Second Saturday"]
   );
 });
 
@@ -105,6 +134,16 @@ test("event detail route renders the selected event as a full detail screen", as
   assert.ok(html.includes("Reserve Seat"));
   assert.ok(html.includes("What to expect"));
   assert.ok(html.includes("Back to events"));
+
+  const externalEventHtml = renderToStaticMarkup(
+    await eventDetailModule.default({
+      params: Promise.resolve({ slug: "fox-cigar-bar-second-saturday" }),
+    })
+  );
+
+  assert.ok(externalEventHtml.includes("Fox Cigar Bar Second Saturday"));
+  assert.ok(externalEventHtml.includes("View Source Event"));
+  assert.ok(externalEventHtml.includes("https://www.facebook.com/events/2502127350222287/"));
 });
 
 test("home page includes an image-led upcoming events promo", () => {

@@ -8,6 +8,7 @@ import test from "node:test";
 
 import {
   buildFacebookCaption,
+  extractImageCandidatesFromHtml,
   findRelatedImagesForStory,
   publishFacebookPageAlbum,
   runCigarFlowFacebookSocial,
@@ -80,7 +81,7 @@ test("cigar flow Facebook runner finds a related source-page image and creates a
     assert.equal(result.story.slug, "latest-cigar-industry-updates-june-10-edition");
     assert.equal(result.selectedImages.length, 1);
     assert.equal(result.selectedImages[0].status, "downloaded");
-    assert.match(await readFile(result.captionPath, "utf8"), /Adult 21\+ only/);
+    assert.match(await readFile(result.captionPath, "utf8"), /Adults 21\+ only/);
     assert.match(await readFile(result.groupKitPath, "utf8"), /Group API publishing is intentionally not attempted/);
     assert.equal(result.pagePost?.status, "dry_run");
   } finally {
@@ -146,6 +147,54 @@ test("fresh Cigar Flow image search does not use cached research images by defau
     await once(server, "close").catch(() => undefined);
     await rm(outputRoot, { recursive: true, force: true });
   }
+});
+
+test("Cigar Flow image search prefers product visuals over publication cover art", () => {
+  const story = {
+    slug: "cigar-industry-update-june-13-2023",
+    title: "Cigar Industry Update: June 13, 2023",
+    dek: "Oliva, Perdomo, and Foundation signals for adult cigar readers.",
+    category: "Cigar Industry News",
+    bodyMarkdown: [
+      "## Perdomo Cigars",
+      "Perdomo Cigars is tied to a Reserve anniversary Maduro blend.",
+      "",
+      "## Foundation Cigar Company",
+      "Foundation Cigar Company distribution news is part of this update.",
+    ].join("\n"),
+    images: [],
+    sourceNotes: [],
+    officialSources: [],
+    status: "published",
+    publishedAt: "2023-06-13T16:17:21.403Z",
+    updatedAt: "2023-06-13T16:17:21.403Z",
+  };
+  const target = {
+    label: "Perdomo Reserve 25th Anniversary Maduro",
+    url: "https://www.perdomocigars.example/news/perdomo-reserve-25th-anniversary",
+    source: "story_image_source_page",
+  } as Parameters<typeof extractImageCandidatesFromHtml>[1];
+  const html = `
+    <html>
+      <head>
+        <meta property="og:image" content="https://images.squarespace-cdn.com/content/v1/site/TB+Cover+layers.jpg">
+      </head>
+      <body>
+        <img
+          src="https://www.perdomocigars.example/images/nick-perdomo-20th-anniversary-maduro-cigar.jpg"
+          width="1500"
+          height="316"
+          alt="Perdomo 20th Anniversary Maduro cigar"
+        >
+      </body>
+    </html>
+  `;
+
+  const candidates = extractImageCandidatesFromHtml(html, target, story).sort((left, right) => right.score - left.score);
+
+  assert.ok(candidates.length >= 2);
+  assert.match(candidates[0].imageUrl, /perdomo-20th-anniversary-maduro-cigar\.jpg$/);
+  assert.doesNotMatch(candidates[0].imageUrl, /TB\+Cover\+layers/i);
 });
 
 test("Cigar Flow Facebook runner keeps skipping after a skipped-existing manifest", async () => {
@@ -323,13 +372,13 @@ test("Cigar Flow Facebook caption keeps adult and no-marketplace framing", () =>
   });
 
   assert.match(caption, /21\+ only/);
-  assert.match(caption, /No marketplace/);
+  assert.match(caption, /Editorial education and culture coverage/);
   assert.match(caption, /Inside this update:/);
   assert.match(caption, /Oliva Cigar Company: Oliva Cigar Company has announced a Serie V Maduro limited-edition note\./);
   assert.match(caption, /Perdomo Cigars: Perdomo Cigars is tied to a Reserve anniversary blend/);
   assert.match(caption, /Foundation Cigar Company: Foundation Cigar Company is connected to a Foundation Series/);
   assert.doesNotMatch(caption, /Signals in this update/);
-  assert.doesNotMatch(caption, /\bbuy\b|\border\b|\bgiveaway\b|\bsample\b/i);
+  assert.doesNotMatch(caption, /\bbuy\b|\border\b|\bgiveaway\b|\bsample\b|\bpricing\b|\binventory\b|\bmarketplace\b/i);
 });
 
 function sendJson(response: ServerResponse, payload: unknown) {

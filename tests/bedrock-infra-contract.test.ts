@@ -86,6 +86,17 @@ test("Lambda runtime policy allows Rekognition text and label analysis for AI Ci
   );
 });
 
+test("Lambda runtime policy allows transactional SNS SMS owner alerts", () => {
+  const policy = readJson("infra/ycc-phase2-lambda-runtime-policy.json");
+  const publishStatements = statementsForAction(policy, "sns:Publish");
+
+  assert.ok(publishStatements.length > 0, "sns:Publish should be granted for owner SMS alerts");
+  assert.ok(
+    publishStatements.some((statement) => resources(statement).includes("*")),
+    "direct SMS publishes to phone numbers require Resource=*",
+  );
+});
+
 test("Bedrock Agent Runtime endpoint policy allows Lambda to invoke aliases and retrieve KB context", () => {
   const policy = readJson("infra/ycc-phase45-bedrock-agent-runtime-vpce-policy.json");
   const invokeAgentStatements = statementsForAction(policy, "bedrock:InvokeAgent");

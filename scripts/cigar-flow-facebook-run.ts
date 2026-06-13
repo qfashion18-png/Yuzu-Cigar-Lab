@@ -142,7 +142,7 @@ type GraphReadbackResponse = {
 const defaultOutputRoot = "output/social";
 const defaultGraphVersion = "v25.0";
 const adultComplianceClose =
-  "Adult 21+ only. Editorial news-and-culture scan only. No marketplace, pricing, inventory, ordering, promotional, or health-claim language.";
+  "Adults 21+ only. Editorial education and culture coverage.";
 let insecureTlsRetryEnabled = process.env.NODE_TLS_REJECT_UNAUTHORIZED === "0";
 
 const blockedCaptionPatterns = [
@@ -163,6 +163,9 @@ const blockedCaptionPatterns = [
   /\bdm to order\b/i,
   /\blowest price\b/i,
   /\bships nationwide\b/i,
+  /\bpricing\b/i,
+  /\binventory\b/i,
+  /\bmarketplace\b/i,
   /\bsafer\b/i,
   /\bhealthy\b/i,
   /\blow-risk\b/i,
@@ -762,11 +765,22 @@ function scoreImageCandidate({
   }
 
   const searchableText = `${imageUrl} ${alt || ""}`.toLowerCase();
+  const normalizedSearchableText = searchableText.replace(/[%+_-]+/g, " ");
   const targetKeywords = keywordsFor(`${target.label} ${story.title} ${story.dek}`);
   const matchingKeywords = targetKeywords.filter((keyword) => searchableText.includes(keyword));
   if (matchingKeywords.length) {
     score += Math.min(35, matchingKeywords.length * 7);
     reasons.push(`matches keywords: ${matchingKeywords.slice(0, 5).join(", ")}`);
+  }
+
+  if (/\b(cigar|cigars|box|boxes|blend|wrapper|maduro|connecticut|corojo|habano|sumatra|reserve|serie|anniversary|robusto|toro)\b/i.test(normalizedSearchableText)) {
+    score += 16;
+    reasons.push("likely cigar or product visual");
+  }
+
+  if (/\b(tobacco\s+business|magazine|publication|newsletter|issue|cover|layers)\b/i.test(normalizedSearchableText)) {
+    score -= 48;
+    reasons.push("likely publication cover or editorial art");
   }
 
   if (width && height) {

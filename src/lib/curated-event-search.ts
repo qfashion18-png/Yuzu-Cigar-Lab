@@ -12,15 +12,15 @@ export type CuratedAreaSearchResult = {
 
 export function searchCuratedArea(market: CuratedCigarMarket, query: string): CuratedAreaSearchResult {
   const cleanQuery = query.trim();
-  const dailyEvents = market.cigarEvents.filter(isDailyCigarEvent);
-  const areaOptions = getCuratedAreaOptions(market, dailyEvents);
+  const visibleEvents = market.cigarEvents.filter(isVisibleCuratedEvent);
+  const areaOptions = getCuratedAreaOptions(market, visibleEvents);
 
   if (!cleanQuery || normalizeSearchText(cleanQuery) === normalizeSearchText(market.label)) {
-    return getAllMarketResults(dailyEvents, market, cleanQuery, areaOptions);
+    return getAllMarketResults(visibleEvents, market, cleanQuery, areaOptions);
   }
 
   const terms = tokenize(cleanQuery);
-  const events = dailyEvents.filter((event) => matchesTerms(getEventSearchText(event), terms));
+  const events = visibleEvents.filter((event) => matchesTerms(getEventSearchText(event), terms));
   const lounges = market.cigarLounges.filter((lounge) => matchesTerms(getLoungeSearchText(lounge), terms));
   const matchedAreas = getMatchedAreas(areaOptions, terms, events, lounges);
 
@@ -53,7 +53,7 @@ export function getCuratedAreaOptions(market: CuratedCigarMarket, events: Curate
 }
 
 function getAllMarketResults(
-  dailyEvents: CuratedCigarEvent[],
+  visibleEvents: CuratedCigarEvent[],
   market: CuratedCigarMarket,
   query: string,
   areaOptions: string[]
@@ -63,9 +63,9 @@ function getAllMarketResults(
     hasQuery: Boolean(query),
     areaOptions,
     matchedAreas: areaOptions.slice(0, 6),
-    events: dailyEvents,
+    events: visibleEvents,
     lounges: market.cigarLounges,
-    totalMatches: dailyEvents.length + market.cigarLounges.length,
+    totalMatches: visibleEvents.length + market.cigarLounges.length,
   };
 }
 
@@ -84,11 +84,8 @@ function getEventSearchText(event: CuratedCigarEvent) {
   ].join(" ");
 }
 
-function isDailyCigarEvent(event: CuratedCigarEvent) {
-  const dateText = normalizeSearchText(event.date);
-  const recurrenceText = event.recurrence ? normalizeSearchText(event.recurrence) : "";
-
-  return recurrenceText === "daily" || dateText === "daily" || dateText === "every day" || dateText.includes("daily");
+function isVisibleCuratedEvent(event: CuratedCigarEvent) {
+  return Boolean(event.title && event.date && event.venue && event.sourceUrl);
 }
 
 function getLoungeSearchText(lounge: CuratedCigarLounge) {

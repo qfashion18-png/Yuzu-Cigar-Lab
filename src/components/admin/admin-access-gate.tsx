@@ -51,7 +51,8 @@ export function AdminAccessGate({ children }: { children?: React.ReactNode }) {
           <h1 className="mt-5 font-heading text-4xl text-yuzu-cream">{gateHeading}</h1>
           <p className="mt-4 text-sm leading-6 text-yuzu-muted">{gateCopy}</p>
           <p className="mt-4 text-sm leading-6 text-yuzu-muted">
-            Editorial newsroom tools remain in this app at <a href="/admin/newsroom">/admin/newsroom</a>. That route is not the backend operations console.
+            Editorial newsroom tools remain in this app at <a href="/admin/newsroom">/admin/newsroom</a>, and reviewed event importing lives at{" "}
+            <a href="/admin/events">/admin/events</a>. Those routes are not the backend operations console.
           </p>
           {auth.isAdmin && adminAppUrl ? (
             <div className="mt-6 flex flex-col gap-3 sm:flex-row">
@@ -69,12 +70,19 @@ export function AdminAccessGate({ children }: { children?: React.ReactNode }) {
               >
                 Open Newsroom Agent
               </Button>
+              <Button
+                className="h-11 border-yuzu-line text-yuzu-cream"
+                render={<Link href="/admin/events" />}
+                variant="outline"
+              >
+                Open Event Agent
+              </Button>
             </div>
           ) : null}
           {auth.isAdmin && !adminAppUrl ? (
             <p className="mt-5 border border-yuzu-line bg-yuzu-night/60 p-4 text-sm leading-6 text-yuzu-muted">
               Backend admin URL is not configured for this static deployment. Set NEXT_PUBLIC_ADMIN_APP_URL to enable the authenticated admin hand-off.
-              Editorial flows are still available at <a href="/admin/newsroom">/admin/newsroom</a>.
+              Editorial flows are still available at <a href="/admin/newsroom">/admin/newsroom</a> and <a href="/admin/events">/admin/events</a>.
             </p>
           ) : null}
         </section>

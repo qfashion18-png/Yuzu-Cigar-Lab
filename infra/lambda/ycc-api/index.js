@@ -93,6 +93,9 @@ const HUMIDOR_ALERT_DISPATCH_SECRET_HEADER = "x-humidor-alert-dispatch-secret";
 const HUMIDOR_REORDER_REMINDER_DISPATCH_MARKER = "humidorReorderReminderDispatchedOn";
 const HUMIDOR_ALERT_DISPATCH_NOTIFICATION_TAG = "digital-humidor-alert";
 const HUMIDOR_DISPATCH_ACTOR_SUB = "system.humidor-dispatch";
+const ADMIN_OPERATIONAL_ALERT_NOTIFICATION_TAG = "admin-operational-alert";
+const ADMIN_OPERATIONAL_ALERT_URL = "/admin/console";
+const ADMIN_OPERATIONAL_SMS_OPT_OUT_TEXT = "Reply STOP to opt out.";
 const HUMIDOR_IOT_TELEMETRY_SOURCE = "ycc.humidor.iot.telemetry";
 const HUMIDOR_IOT_TELEMETRY_TOPIC_PREFIX = "ycc/humidor/";
 const HUMIDOR_IOT_TELEMETRY_TOPIC_SUFFIX = "/telemetry";
@@ -552,11 +555,13 @@ async function handleHealth(event, requestId) {
 }
 
 async function handleCognitoPostConfirmationSignUp(event, requestId) {
-  await maybeSendCognitoWelcomeEmail(event, requestId);
+  const details = getCognitoWelcomeEmailDetails(event);
+  await maybeSendCognitoWelcomeEmail(event, requestId, details);
+  await maybeDispatchAdminOperationalAlert(buildAdminNewUserAlert(details), requestId);
   return event;
 }
 
-async function maybeSendCognitoWelcomeEmail(event, requestId) {
+async function maybeSendCognitoWelcomeEmail(event, requestId, details = getCognitoWelcomeEmailDetails(event)) {
   if (process.env.FEATURE_SES !== "ready") {
     console.info(
       JSON.stringify({
@@ -572,7 +577,6 @@ async function maybeSendCognitoWelcomeEmail(event, requestId) {
     };
   }
 
-  const details = getCognitoWelcomeEmailDetails(event);
   if (!details.email) {
     console.warn(
       JSON.stringify({
@@ -642,6 +646,325 @@ function getCognitoWelcomeEmailDetails(event) {
     shopUrl: resolveNewsletterEmailUrl("/shop/"),
     humidorUrl: resolveNewsletterEmailUrl("/humidor/"),
   };
+}
+
+function buildAdminNewUserAlert(details) {
+  if (!details?.email) {
+    return null;
+  }
+
+  const displayName = sanitizeText(details.displayName, 160);
+  const memberLabel = displayName ? `${displayName} (${details.email})` : details.email;
+  const statusLabel = details.membershipTier || details.memberStatus || "new account";
+
+  return {
+    type: "new_user",
+    title: "New Yuzu user",
+    body: `${memberLabel} confirmed a Yuzu account. Status: ${statusLabel}.`,
+    smsMessage: `Yuzu alert: New user ${memberLabel}. Status: ${statusLabel}. Admin: ${resolveNewsletterEmailUrl(ADMIN_OPERATIONAL_ALERT_URL)}. ${ADMIN_OPERATIONAL_SMS_OPT_OUT_TEXT}`,
+    url: ADMIN_OPERATIONAL_ALERT_URL,
+  };
+}
+
+function buildAdminNewOrderAlert(stripeEvent, action, processing) {
+  if (action !== "record_checkout_completion" || processing?.duplicate || !processing?.orderId) {
+    return null;
+  }
+
+  const session = stripeEvent?.data?.object;
+  if (!session || typeof session !== "object") {
+    return null;
+  }
+
+  if (sanitizeText(session.payment_status, 40).toLowerCase() !== "paid") {
+    return null;
+  }
+
+  const metadata = session.metadata && typeof session.metadata === "object" ? session.metadata : {};
+  const email =
+    normalizeEmailAddresses(session.customer_details?.email, 1)[0] ||
+    normalizeEmailAddresses(session.customer_email, 1)[0] ||
+    normalizeEmailAddresses(metadata.customer_email, 1)[0] ||
+    "unknown customer";
+  const total = formatCurrencyCents(session.amount_total, session.currency);
+  const checkoutSessionId = sanitizeText(session.id, 120);
+
+  return {
+    type: "new_order",
+    title: "New Yuzu order",
+    body: `${total} paid order from ${email}. Fulfillment review is ready in admin.`,
+    smsMessage: `Yuzu alert: New paid order ${total} from ${email}${checkoutSessionId ? ` (${checkoutSessionId})` : ""}. Admin: ${resolveNewsletterEmailUrl(ADMIN_OPERATIONAL_ALERT_URL)}. ${ADMIN_OPERATIONAL_SMS_OPT_OUT_TEXT}`,
+    url: ADMIN_OPERATIONAL_ALERT_URL,
+  };
+}
+
+async function maybeDispatchAdminOperationalAlert(alert, requestId) {
+  if (!alert) {
+    return {
+      sms: { sent: 0, failed: 0, skipped: true },
+      push: { sent: 0, failed: 0, skipped: true },
+    };
+  }
+
+  const sms = await maybeSendAdminOperationalSmsAlerts(alert, requestId);
+  const push = await maybeSendAdminOperationalPushAlerts(alert, requestId);
+  console.info(
+    JSON.stringify({
+      level: "info",
+      event: "admin_operational_alert_dispatched",
+      requestId,
+      alertType: alert.type,
+      sms,
+      push,
+    })
+  );
+
+  return { sms, push };
+}
+
+async function maybeSendAdminOperationalSmsAlerts(alert, requestId) {
+  const phoneNumbers = getConfiguredAdminAlertPhoneNumbers();
+  if (!phoneNumbers.length) {
+    return { sent: 0, failed: 0, skipped: true, reason: "no_admin_alert_phone_configured" };
+  }
+
+  let sns;
+  try {
+    sns = require("@aws-sdk/client-sns");
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        event: "admin_operational_sms_dependency_missing",
+        requestId,
+        alertType: alert.type,
+        message: error instanceof Error ? error.message : String(error),
+      })
+    );
+    return { sent: 0, failed: phoneNumbers.length, skipped: true, reason: "sns_dependency_missing" };
+  }
+
+  const client = new sns.SNSClient({ region: getAdminAlertSmsRegion() });
+  const message = sanitizeText(alert.smsMessage || alert.body, 1400);
+  let sent = 0;
+  let failed = 0;
+
+  for (const phoneNumber of phoneNumbers) {
+    try {
+      await client.send(
+        new sns.PublishCommand({
+          Message: message,
+          MessageAttributes: getAdminAlertSmsMessageAttributes(),
+          PhoneNumber: phoneNumber,
+        })
+      );
+      sent += 1;
+    } catch (error) {
+      failed += 1;
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          event: "admin_operational_sms_failed",
+          requestId,
+          alertType: alert.type,
+          phoneHash: hashActor(phoneNumber),
+          name: error instanceof Error ? error.name : "UnknownError",
+          message: error instanceof Error ? error.message : String(error),
+        })
+      );
+    }
+  }
+
+  return { sent, failed, skipped: false };
+}
+
+async function maybeSendAdminOperationalPushAlerts(alert, requestId) {
+  if (!shouldPersistDatabaseWrites()) {
+    return { sent: 0, failed: 0, skipped: true, reason: getDatabasePersistenceStatus() };
+  }
+
+  const vapidPublicKey = sanitizeText(process.env.VAPID_PUBLIC_KEY || "", 900);
+  const vapidPrivateKey = sanitizeText(process.env.VAPID_PRIVATE_KEY || "", 900);
+  const vapidSubject = sanitizeText(process.env.VAPID_SUBJECT || "", 320);
+  if (!vapidPublicKey || !vapidPrivateKey || !vapidSubject) {
+    return { sent: 0, failed: 0, skipped: true, reason: "vapid_not_configured" };
+  }
+
+  try {
+    webPush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey);
+    return await withDatabaseClient("ycc-api-admin-operational-alerts", async (client) => {
+      const recipients = await loadAdminOperationalAlertRecipients(client);
+      const payload = JSON.stringify(buildAdminOperationalPushPayload(alert));
+      const seenEndpoints = new Set();
+      let sent = 0;
+      let failed = 0;
+
+      for (const recipient of recipients) {
+        const pushSubscription = normalizeHumidorPushSubscription(recipient.pushSubscription);
+        if (!pushSubscription || seenEndpoints.has(pushSubscription.endpoint)) {
+          continue;
+        }
+
+        seenEndpoints.add(pushSubscription.endpoint);
+        try {
+          await webPush.sendNotification(pushSubscription, payload);
+          sent += 1;
+        } catch (error) {
+          failed += 1;
+          console.warn(
+            JSON.stringify({
+              level: "warn",
+              event: "admin_operational_push_failed",
+              requestId,
+              alertType: alert.type,
+              memberId: recipient.memberId,
+              pushEndpointHash: hashActor(pushSubscription.endpoint),
+              statusCode: Number.isFinite(Number(error?.statusCode)) ? Number(error.statusCode) : null,
+              name: error instanceof Error ? error.name : "UnknownError",
+            })
+          );
+        }
+      }
+
+      return { sent, failed, skipped: false, recipients: recipients.length };
+    });
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        event: "admin_operational_push_dispatch_failed",
+        requestId,
+        alertType: alert.type,
+        name: error instanceof Error ? error.name : "UnknownError",
+        message: error instanceof Error ? error.message : String(error),
+      })
+    );
+    return { sent: 0, failed: 0, skipped: true, reason: "push_dispatch_failed" };
+  }
+}
+
+async function loadAdminOperationalAlertRecipients(client) {
+  const recipientEmails = getConfiguredAdminAlertRecipientEmails();
+  const result = await client.query(
+    `
+      select /* admin_operational_alert_recipients */
+        m.id as member_id,
+        m.email,
+        m.role,
+        mp.preferences->'pushSubscription' as push_subscription
+      from public.members m
+      join public.member_profiles mp on mp.member_id = m.id
+      where lower(m.role) in ('admin', 'operator')
+        and coalesce((mp.preferences->>'pushEnabled')::boolean, false) = true
+        and mp.preferences->'pushSubscription' is not null
+        and (cardinality($1::text[]) = 0 or lower(m.email) = any($1::text[]))
+      order by
+        case lower(m.role) when 'admin' then 0 else 1 end,
+        m.email
+    `,
+    [recipientEmails]
+  );
+
+  return result.rows.map((row) => ({
+    memberId: String(row.member_id || ""),
+    email: normalizeEmailAddresses(row.email, 1)[0] || "",
+    role: sanitizeText(row.role, 40).toLowerCase(),
+    pushSubscription: row.push_subscription,
+  }));
+}
+
+function buildAdminOperationalPushPayload(alert) {
+  return {
+    title: alert.title || "Yuzu admin alert",
+    body: alert.body || "A Yuzu admin event needs review.",
+    data: {
+      tag: ADMIN_OPERATIONAL_ALERT_NOTIFICATION_TAG,
+      type: alert.type || "admin_alert",
+      url: sanitizeSameOriginRelativeUrl(alert.url, ADMIN_OPERATIONAL_ALERT_URL),
+    },
+  };
+}
+
+function getConfiguredAdminAlertRecipientEmails() {
+  return normalizeEmailAddresses(process.env.YCC_ADMIN_ALERT_RECIPIENT_EMAILS || "", 25);
+}
+
+function getConfiguredAdminAlertPhoneNumbers() {
+  const raw = [
+    process.env.YCC_ADMIN_ALERT_PHONE_E164,
+    process.env.YCC_ADMIN_ALERT_PHONE_NUMBERS,
+    process.env.ADMIN_ALERT_PHONE_E164,
+  ]
+    .filter(Boolean)
+    .join(",");
+  const phoneNumbers = raw
+    .split(/[,\s;]+/)
+    .map(normalizeE164PhoneNumber)
+    .filter(Boolean);
+
+  return [...new Set(phoneNumbers)].slice(0, 5);
+}
+
+function normalizeE164PhoneNumber(value) {
+  const normalized = sanitizeText(String(value || ""), 40).replace(/[^\d+]/g, "");
+  if (/^\+[1-9]\d{7,14}$/.test(normalized)) {
+    return normalized;
+  }
+
+  const digits = normalized.replace(/\D/g, "");
+  if (/^\d{10}$/.test(digits)) {
+    return `+1${digits}`;
+  }
+
+  if (/^1\d{10}$/.test(digits)) {
+    return `+${digits}`;
+  }
+
+  return "";
+}
+
+function getAdminAlertSmsRegion() {
+  return sanitizeText(process.env.YCC_ADMIN_ALERT_SMS_REGION || process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "us-east-1", 80);
+}
+
+function getAdminAlertSmsMessageAttributes() {
+  const attributes = {
+    "AWS.SNS.SMS.SMSType": {
+      DataType: "String",
+      StringValue: "Transactional",
+    },
+  };
+  const maxPrice = sanitizeText(process.env.YCC_ADMIN_ALERT_SMS_MAX_PRICE_USD || "", 20);
+  if (/^\d+(?:\.\d{1,2})?$/.test(maxPrice)) {
+    attributes["AWS.SNS.SMS.MaxPrice"] = {
+      DataType: "Number",
+      StringValue: maxPrice,
+    };
+  }
+
+  return attributes;
+}
+
+function sanitizeSameOriginRelativeUrl(value, fallback) {
+  const text = sanitizeText(value, 300);
+  if (/^\/[A-Za-z0-9/_?=&%#.-]*$/.test(text)) {
+    return text;
+  }
+
+  return fallback;
+}
+
+function formatCurrencyCents(value, currency) {
+  const cents = Number(value);
+  if (!Number.isFinite(cents)) {
+    return "total pending";
+  }
+
+  const currencyCode = sanitizeText(currency, 12).toUpperCase() || "USD";
+  return new Intl.NumberFormat("en-US", {
+    currency: currencyCode,
+    style: "currency",
+  }).format(Math.max(0, cents) / 100);
 }
 
 function buildCognitoWelcomeEmailContent(details, requestId) {
@@ -1447,27 +1770,39 @@ async function handleCommerceCheckoutSession(event, requestId) {
 
   const stripe = createStripeClient(commerceEnv);
   const statusToken = createCheckoutStatusToken();
-  const session = await createCommerceCheckoutSession(stripe, {
-    cartId: body.value.cartId,
-    customer,
-    items: compliance.normalizedItems,
-    statusToken,
-    shipping: {
-      methodId: compliance.shipping.methodId,
-      title: compliance.shipping.title,
-      carrier: compliance.shipping.carrier,
-      adultSignatureRequired: compliance.shipping.adultSignatureRequired,
-      deliveryAmountCents: compliance.shipping.deliveryAmountCents,
-      handlingFeeCents: compliance.shipping.handlingFeeCents,
-      amountCents: compliance.shipping.amountCents,
-      address: shippingAddress,
-    },
-    compliance: {
-      ageVerificationId: ageVerification.value.vendorTransactionId,
-      verifiedAt: ageVerification.value.verifiedAt,
-      policyVersion: "2026-05-07",
-    },
-  }, commerceEnv);
+  let session;
+  try {
+    session = await createCommerceCheckoutSession(stripe, {
+      cartId: body.value.cartId,
+      customer,
+      items: compliance.normalizedItems,
+      statusToken,
+      shipping: {
+        methodId: compliance.shipping.methodId,
+        title: compliance.shipping.title,
+        carrier: compliance.shipping.carrier,
+        adultSignatureRequired: compliance.shipping.adultSignatureRequired,
+        deliveryAmountCents: compliance.shipping.deliveryAmountCents,
+        handlingFeeCents: compliance.shipping.handlingFeeCents,
+        amountCents: compliance.shipping.amountCents,
+        address: shippingAddress,
+      },
+      compliance: {
+        ageVerificationId: ageVerification.value.vendorTransactionId,
+        verifiedAt: ageVerification.value.verifiedAt,
+        policyVersion: "2026-05-07",
+      },
+    }, commerceEnv);
+  } catch (error) {
+    if (isStripeAccountNotReadyError(error)) {
+      return json(409, requestId, {
+        error: "stripe_account_not_ready",
+        message: "Yuzu checkout is temporarily unavailable while payment activation finishes.",
+      });
+    }
+
+    throw error;
+  }
 
   return json(200, requestId, {
     id: session.id,
@@ -1842,6 +2177,11 @@ async function handleStripeWebhook(event, requestId) {
 
     if (shouldPersistDatabaseWrites()) {
       processing = await processStripeWebhookEvent(event, requestId, stripeEvent, action, stripe);
+    }
+
+    const orderAlert = buildAdminNewOrderAlert(stripeEvent, action, processing);
+    if (orderAlert) {
+      await maybeDispatchAdminOperationalAlert(orderAlert, requestId);
     }
 
     return json(200, requestId, {

@@ -135,6 +135,12 @@
       }
     },
     {
+      "Sid": "PublishTransactionalOwnerSmsAlerts",
+      "Effect": "Allow",
+      "Action": "sns:Publish",
+      "Resource": "*"
+    },
+    {
       "Sid": "SendEmailFromVerifiedYccIdentities",
       "Effect": "Allow",
       "Action": [

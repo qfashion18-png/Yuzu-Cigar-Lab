@@ -778,6 +778,11 @@ export type EventExperience = {
   description: string;
   host: string;
   capacity: string;
+  sourceUrl?: string;
+  coordinates?: {
+    latitude: number;
+    longitude: number;
+  };
   includes: string[];
   agenda: { time: string; label: string }[];
   goodFor: string[];
@@ -800,6 +805,10 @@ export const events: EventExperience[] = [
       "The time has come to bless the rooftop patio of Puro. Aire by Puro is a unique open-air venue made for the breeze and stars, and this free open event invites guests to enjoy the outdoors while the weather is still cool enough. Bring a friend and settle in with Tap That Ash.",
     host: "Tap That Ash",
     capacity: "Open RSVP",
+    coordinates: {
+      latitude: 33.3026,
+      longitude: -111.8423,
+    },
     includes: ["Free admission", "Rooftop patio opening", "Open-air evening gathering"],
     agenda: [
       { time: "7:00 PM", label: "Open event begins on the rooftop patio" },
@@ -824,6 +833,10 @@ export const events: EventExperience[] = [
       "Join the Yuzu team for a seated reserve tasting built around boxes we would personally make room for in the humidor. Expect a calm lounge pace, hosted tasting notes, pairing guidance, and first look access to the next member allocation window.",
     host: "Yuzu Founder Table",
     capacity: "18 seats",
+    coordinates: {
+      latitude: 33.4484,
+      longitude: -112.074,
+    },
     includes: ["Reserve cigar flight", "Pairing guidance", "Member allocation preview"],
     agenda: [
       { time: "7:00 PM", label: "Welcome pour and cellar notes" },
@@ -872,6 +885,10 @@ export const events: EventExperience[] = [
       "Allocation Night is designed for members who want a fair, transparent path into rare boxes. We will review eligibility, explain reserve limits, taste a companion selection, and open the first claim window for qualifying members.",
     host: "Yuzu Allocation Team",
     capacity: "12 seats",
+    coordinates: {
+      latitude: 33.4484,
+      longitude: -112.074,
+    },
     includes: ["Eligibility review", "Companion tasting", "Priority claim window"],
     agenda: [
       { time: "8:00 PM", label: "Private locker room check-in" },
@@ -879,6 +896,64 @@ export const events: EventExperience[] = [
       { time: "9:10 PM", label: "Member claim window opens" },
     ],
     goodFor: ["Sensei and Daimyo members", "Rare box collectors", "Members who prefer clear allocation rules"],
+  },
+  {
+    slug: "fox-cigar-bar-second-saturday",
+    title: "Fox Cigar Bar Second Saturday",
+    startsAt: "2026-07-11T19:00:00-07:00",
+    endsAt: "2026-07-12T00:00:00-07:00",
+    date: "July 11, 2026",
+    time: "7:00 PM - 12:00 AM MST",
+    location: "Fox Cigar Bar, 1464 E Williams Field Rd, Gilbert, AZ 85295",
+    access: "Open",
+    image: "/assets/events/fox-cigar-bar-second-saturday.jpg",
+    imagePosition: "50% 50%",
+    deck: "A Facebook-listed second-Saturday cigar night at Fox Cigar Bar in Gilbert with cigars, drinks, and fellowship.",
+    description:
+      "Fox Cigar Bar's second-Saturday cigar night is a local East Valley meetup for adults looking for a relaxed lounge evening. The Facebook event lists Brothers of Prometheus 87 as the gathering host and invites guests for cigars, drinks, or fellowship.",
+    host: "Brothers of Prometheus 87 at Fox Cigar Bar",
+    capacity: "Open lounge",
+    sourceUrl: "https://www.facebook.com/events/2502127350222287/",
+    coordinates: {
+      latitude: 33.3079,
+      longitude: -111.7596,
+    },
+    includes: ["Second-Saturday lounge meetup", "Cigars, drinks, and fellowship", "Gilbert East Valley event signal"],
+    agenda: [
+      { time: "7:00 PM", label: "Cigar night begins at Fox Cigar Bar" },
+      { time: "9:00 PM", label: "Second-Saturday lounge session" },
+      { time: "11:30 PM", label: "Final fellowship hour" },
+    ],
+    goodFor: ["East Valley cigar guests", "Members looking for a casual local lounge night", "Adults scanning recurring cigar meetups"],
+  },
+  {
+    slug: "smoke-n-the-desert-phx-cigar-week-2026",
+    title: "Smoke 'N The Desert: PHX Cigar Week 2026",
+    startsAt: "2026-10-08T00:00:00-07:00",
+    endsAt: "2026-10-11T23:59:00-07:00",
+    date: "October 8, 2026",
+    time: "Oct 8 at 12:00 AM - Oct 11 at 11:59 PM MST",
+    location: "Greater Phoenix Metro - Chandler, Tempe, Phoenix, and Scottsdale",
+    access: "Ticketed",
+    image: "/assets/events/smoke-n-the-desert-phx-cigar-week-2026.jpg",
+    imagePosition: "50% 42%",
+    deck: "A multi-day Phoenix-area cigar week anchored in Chandler with event signals across the Greater Phoenix metro.",
+    description:
+      "Smoke 'N The Desert: PHX Cigar Week 2026 is listed on Facebook as a multi-day cigar week running Thursday, October 8 through Sunday, October 11, 2026. The listing anchors the event in Chandler and references Greater Phoenix Metro activity across Chandler, Tempe, Phoenix, and Scottsdale.",
+    host: "Smoke 'N The Desert / PHX Cigar Week",
+    capacity: "Ticketed event",
+    sourceUrl: "https://www.facebook.com/events/4317156221888698/",
+    coordinates: {
+      latitude: 33.301,
+      longitude: -111.842,
+    },
+    includes: ["Phoenix-area cigar week", "Chandler event anchor", "Greater Phoenix metro activations"],
+    agenda: [
+      { time: "Oct 8", label: "PHX Cigar Week opens in the Greater Phoenix metro" },
+      { time: "Oct 9-10", label: "Metro cigar-week activations" },
+      { time: "Oct 11", label: "Final day of Smoke 'N The Desert programming" },
+    ],
+    goodFor: ["Phoenix-area cigar week travelers", "Members watching regional cigar events", "Adults planning a multi-day local cigar weekend"],
   },
 ];
 
@@ -974,6 +1049,34 @@ export const curatedCigarMarkets: CuratedCigarMarket[] = [
         sourceUrl: "https://churchillsaz.com/",
         areaAliases: ["85018", "85255", "arcadia", "ahwatukee", "glendale"],
         searchTerms: ["bourbon"],
+      },
+      {
+        title: "Smoke 'N The Desert: PHX Cigar Week 2026",
+        date: "October 8-11, 2026",
+        recurrence: "special",
+        venue: "Smoke 'N The Desert / PHX Cigar Week",
+        area: "Chandler / Phoenix / Scottsdale / Tempe",
+        distance: "Greater Phoenix Metro",
+        access: "Ticketed event",
+        summary:
+          "A multi-day Phoenix-area cigar week anchored in Chandler, with metro activations across Chandler, Tempe, Phoenix, and Scottsdale.",
+        sourceUrl: "https://www.facebook.com/events/4317156221888698/",
+        areaAliases: ["85225", "downtown chandler", "phoenix cigar week", "smoke n the desert", "east valley"],
+        searchTerms: ["facebook", "festival", "cigar week", "smoke n the desert", "early bird"],
+      },
+      {
+        title: "Fox Cigar Bar Second Saturday",
+        date: "Second Saturdays - next listed July 11, 2026",
+        recurrence: "monthly",
+        venue: "Fox Cigar Bar",
+        area: "Gilbert",
+        distance: "East Valley",
+        access: "Open lounge",
+        summary:
+          "A recurring fellowship cigar night at Fox Cigar Bar in Gilbert, listed on Facebook for every second Saturday from 7 PM to midnight.",
+        sourceUrl: "https://www.facebook.com/events/2502127350222287/",
+        areaAliases: ["85295", "williams field", "east valley", "gilbert"],
+        searchTerms: ["facebook", "fox cigar bar", "second saturday", "brothers of prometheus"],
       },
     ],
     cigarLounges: [
