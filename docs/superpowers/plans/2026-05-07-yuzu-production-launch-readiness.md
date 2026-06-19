@@ -545,8 +545,8 @@ Expected: sitemap includes product/event URLs and product pages include structur
 - [ ] Store Stripe secrets, age-verification secrets, tax-provider secrets, and database credentials in Secrets Manager.
 - [ ] Limit Lambda IAM permissions to the secrets and AWS services it needs.
 - [ ] Configure WAF/rate limiting for public API Gateway routes.
-- [ ] Configure CloudWatch alarms for Lambda errors, API 4xx/5xx, Stripe webhook failures, RDS connection failures, SES bounce/complaint signals, and age-verification vendor failures.
-- [ ] Confirm SES production access and verified sender/domain identities.
+- [ ] Configure CloudWatch alarms for Lambda errors, API 4xx/5xx, Stripe webhook failures, RDS connection failures, replacement-email-provider failures, and age-verification vendor failures.
+- [ ] Replace outbound SES after final denial of AWS case `177809591700724`; verify sender/domain identities, bounce/complaint handling, and support/newsletter/welcome email smoke tests with the replacement provider.
 - [ ] Configure structured log fields for request ID, route key, actor hash, Stripe event ID, order ID, compliance hold ID, and duration.
 - [ ] Re-run RDS connectivity from the same network path Lambda will use.
 
@@ -683,7 +683,7 @@ Yuzu should not launch production commerce until all of these are true:
 - Tax and tobacco excise/compliance process is documented and verified with the chosen provider or legal/accounting operator.
 - Cognito/RBAC controls admin and member routes in production.
 - Local backup admin cannot grant production admin access.
-- RDS connectivity, TLS, deletion protection, backups, WAF, alarms, and SES production access are complete.
+- RDS connectivity, TLS, deletion protection, backups, WAF, alarms, and replacement outbound email provider readiness are complete.
 - Product pages have metadata, JSON-LD, canonical URLs, and sitemap entries.
 - Amplify zip is built from current `out/` contents with forward-slash paths.
 - Launch runbook covers rollback, support, refunds, chargebacks, compliance holds, webhook replay, and incident response.

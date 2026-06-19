@@ -25,6 +25,7 @@ export default function NewArrivalsPage() {
       <section className="luxury-card grid overflow-hidden lg:grid-cols-[0.9fr_1.1fr]">
         <div className="flex flex-col justify-center p-8 lg:p-10">
           <SectionHeading
+            as="h1"
             kicker="New Arrivals"
             title="Fresh boxes with a proper aging path."
             copy="Latest curated boxes, inspected for wrapper integrity, box condition, age, and member value before release."

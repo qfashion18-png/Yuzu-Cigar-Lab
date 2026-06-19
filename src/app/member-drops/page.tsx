@@ -30,6 +30,7 @@ export default function MemberDropsPage() {
       <section className="luxury-card grid overflow-hidden lg:grid-cols-[0.9fr_1.1fr]">
         <div className="flex flex-col justify-center gap-6 p-8 lg:p-10">
           <SectionHeading
+            as="h1"
             kicker="Member-only Drops"
             title="Member selections released with clear allocation rules."
             copy="Monthly cigar lists and rare drops open during defined online windows, with first-come selections from the available member list."

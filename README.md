@@ -20,6 +20,8 @@ Use `npm run launch:check` for the local CI-equivalent sequence. `npm audit --om
 
 ## Local Commands
 
+Use Node 22, matching `.nvmrc` and CI.
+
 ```bash
 npm install
 npm run dev
@@ -27,6 +29,7 @@ npm run lint
 npm run build
 npm run start
 npm run preview
+npm run amplify:package
 npm run launch:ops-check
 npm run launch:go-live-check
 npm run db:check
@@ -34,6 +37,7 @@ npm run db:check
 
 `npm run build` exports the site to `out/` for Amplify static hosting.
 `npm run start` serves the existing static export from `out/`; use `npm run preview` to rebuild first and then serve it locally.
+`npm run amplify:package` rebuilds the app, zips the contents of `out/` at the archive root, validates POSIX forward-slash entries, and prints the artifact path.
 `npm run launch:ops-check` reports production-readiness gaps without blocking local work; `npm run launch:go-live-check` runs the same checks in strict mode for external approvals, live Stripe/provider settings, staging QA, and AWS risk gates.
 
 ## Database
@@ -48,6 +52,12 @@ Use `npm run db:check` to verify local connectivity. The script prints only a re
 Generate a fresh static export before every upload. The deploy zip must contain the contents of `out/` at the archive root, with POSIX forward-slash paths for entries such as `_next/static/...` and `assets/...`.
 
 Do not zip the project source folder, `out/` as a parent folder, `.next`, `node_modules`, `output`, old zip files, `.git`, or local environment files.
+
+Use `npm run amplify:package` for the reproducible local artifact. To validate a specific artifact during strict readiness, pass it through the launch gate, for example:
+
+```bash
+npm run launch:go-live-check -- --zip yuzu-cigar-club-amplify-static-YYYYMMDD-HHMMSS.zip
+```
 
 If you connect a repo instead of uploading the static artifact, use the included `amplify.yml`.
 

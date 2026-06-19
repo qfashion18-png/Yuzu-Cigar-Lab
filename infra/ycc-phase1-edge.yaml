@@ -133,22 +133,28 @@ Resources:
         DefaultEmailOption: CONFIRM_WITH_CODE
         EmailSubject: Yuzu Cigar Club verification code
         EmailMessage: |
-          YUZU CIGAR CLUB
-          Friends & Family Box Pass
+          <div style="margin:0;padding:0;background:#10130f;color:#f8efe2;font-family:Arial,Helvetica,sans-serif;">
+            <div style="max-width:560px;margin:0 auto;padding:28px 16px;">
+              <div style="border:1px solid #c9a45d;background:#191d16;padding:28px;">
+                <p style="margin:0 0 10px;color:#c9a45d;font-size:12px;font-weight:700;letter-spacing:2px;text-transform:uppercase;">Yuzu Cigar Club</p>
+                <h1 style="margin:0 0 12px;color:#f8efe2;font-size:28px;line-height:34px;font-weight:700;">Confirm your Friends &amp; Family invite</h1>
+                <p style="margin:0 0 22px;color:#c9c0af;font-size:15px;line-height:24px;">Use this code to finish creating your account and activate your 1-year Box Access Pass.</p>
 
-          Your verification code
+                <div style="margin:0 0 22px;padding:18px 20px;border:1px solid #3a3327;background:#10130f;text-align:center;">
+                  <p style="margin:0 0 8px;color:#c9a45d;font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;">Confirmation code</p>
+                  <p style="margin:0;color:#f8efe2;font-size:32px;line-height:38px;font-weight:700;letter-spacing:6px;">{####}</p>
+                </div>
 
-          ------------------------------
-                      {####}
-          ------------------------------
+                <a href="https://yuzucigarclub.com/friends-family/?confirmation_code={####}" style="display:block;margin:0 0 18px;padding:14px 18px;background:#c9a45d;color:#10130f;font-size:14px;font-weight:700;letter-spacing:1px;text-align:center;text-decoration:none;text-transform:uppercase;">Open Yuzu confirmation page</a>
 
-          Enter this code on the Yuzu Friends & Family page to confirm your account and finish activating your invite.
+                <p style="margin:0 0 12px;color:#c9c0af;font-size:14px;line-height:22px;">The confirmation page will fill in this code for you. Click <strong style="color:#f8efe2;">Confirm and Claim Pass</strong> to finish.</p>
+                <p style="margin:0 0 18px;color:#c9c0af;font-size:14px;line-height:22px;">If the link opens on a different browser or device, enter the same email you used to sign up, then click confirm.</p>
 
-          If you did not create a Yuzu account, you can safely ignore this email.
-
-          Yuzu Cigar Club
-          Adults 21+ only
-          https://www.yuzucigarclub.com
+                <p style="margin:0;color:#8e877a;font-size:12px;line-height:20px;">If you did not create a Yuzu account, you can safely ignore this email.</p>
+              </div>
+              <p style="margin:16px 0 0;color:#8e877a;font-size:12px;line-height:18px;text-align:center;">Yuzu Cigar Club | Adults 21+ only | https://www.yuzucigarclub.com</p>
+            </div>
+          </div>
       LambdaConfig:
         PostConfirmation: !Ref ExistingLambdaLiveAliasArn
       DeletionProtection: ACTIVE

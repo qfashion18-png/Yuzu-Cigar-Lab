@@ -31,6 +31,11 @@ const sections = [
       "Transactional support emails are sent in response to member, billing, order, humidor, or account support needs. Newsletter and promotional updates require opt-in consent, include a clear unsubscribe path, and are not sent to purchased, rented, scraped, or third-party lists.",
   },
   {
+    title: "Mobile Opt-In And SMS Privacy",
+    copy:
+      "Mobile numbers and SMS opt-in records are used only to operate the specific Yuzu Cigar Club text message program the recipient chose, such as owner or authorized-admin operational alerts. Mobile opt-in data, consent records, and phone numbers are not sold, rented, or shared with third parties or affiliates for marketing or promotional purposes.",
+  },
+  {
     title: "Service Providers",
     copy:
       "We use trusted service providers for hosting, authentication, payments, age verification, shipping, analytics, email handling, support operations, and data storage. These providers process information only as needed to support Yuzu Cigar Club services and compliance obligations.",

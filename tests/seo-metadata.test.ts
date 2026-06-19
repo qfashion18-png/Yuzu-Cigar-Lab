@@ -167,6 +167,19 @@ test("public listing pages own their canonical metadata instead of inheriting ho
   }
 });
 
+test("trust pages include SMS carrier compliance disclosures", () => {
+  const privacySource = publicPageMetadataSources.find(([route]) => route === "privacy")?.[1] || "";
+  const termsSource = publicPageMetadataSources.find(([route]) => route === "terms")?.[1] || "";
+
+  assert.match(privacySource, /Mobile Opt-In And SMS Privacy/);
+  assert.match(privacySource, /not sold, rented, or shared with third parties or affiliates/);
+  assert.match(termsSource, /SMS Text Messaging Terms/);
+  assert.match(termsSource, /Message and data rates may apply/);
+  assert.match(termsSource, /Reply STOP to opt out, reply HELP for help/);
+  assert.match(termsSource, /Wireless carriers are not liable for delayed or undelivered messages/);
+  assert.match(termsSource, /Privacy Policy explains how we handle mobile opt-in data/);
+});
+
 test("private commerce, account, and admin routes opt out of indexing at metadata layer", () => {
   for (const [route, source] of privateRouteMetadataSources) {
     assert.match(source, /privatePageMetadata|noIndexPageMetadata|index:\s*false/, `${route} should publish noindex metadata`);

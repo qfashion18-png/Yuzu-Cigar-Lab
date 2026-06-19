@@ -2,7 +2,7 @@
 
 import Link from "@/components/static-link";
 import { ArrowRight, CheckCircle2, LoaderCircle, LogIn, MailCheck, UserPlus } from "lucide-react";
-import { type FormEvent, type ReactNode, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useState } from "react";
 
 import { useBackupAuth } from "@/components/backup-auth-provider";
 import { Button } from "@/components/ui/button";
@@ -27,7 +27,58 @@ const friendsFamilyClientMetadata = {
   ycc_landing_path: friendsFamilyMembershipOffer.landingPath,
 };
 const confirmationEmailHelpText =
-  'Look for an email with the subject "Yuzu Cigar Club verification code." It may still show an AWS-managed sender while Yuzu domain sending is in review. Check spam or promotions, then use Send a new code if needed.';
+  'Look for an email with the subject "Yuzu Cigar Club verification code." Open its Yuzu confirmation link to fill in the code, or paste the code here. Check spam or promotions, then use Send a new code if needed.';
+const pendingConfirmationEmailStorageKey = "yuzu-friends-family-pending-confirmation-email";
+
+function normalizePendingEmail(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function normalizeConfirmationCode(value: string) {
+  return value.trim().replace(/\s+/g, "");
+}
+
+function rememberPendingConfirmationEmail(value: string) {
+  const normalizedEmail = normalizePendingEmail(value);
+
+  if (!normalizedEmail || typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(pendingConfirmationEmailStorageKey, normalizedEmail);
+  } catch {
+    // Confirmation still works if browser storage is unavailable.
+  }
+}
+
+function readPendingConfirmationEmail() {
+  if (typeof window === "undefined") {
+    return "";
+  }
+
+  try {
+    return window.localStorage.getItem(pendingConfirmationEmailStorageKey)?.trim() ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function forgetPendingConfirmationEmail() {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.removeItem(pendingConfirmationEmailStorageKey);
+  } catch {
+    // The pending email is only a convenience for the return-link flow.
+  }
+}
+
+function createBearerHeaders(idToken: string | undefined): Record<string, string> {
+  return idToken ? { Authorization: `Bearer ${idToken}` } : {};
+}
 
 export function FriendsFamilyPassClaim() {
   const auth = useBackupAuth();
@@ -41,34 +92,76 @@ export function FriendsFamilyPassClaim() {
   const [confirmationCode, setConfirmationCode] = useState("");
   const signedInEmail = auth.session?.email ?? "";
 
-  async function claimPass(customer = { email: signedInEmail, fullName: auth.session?.name ?? "" }) {
-    if (!customer.email) {
-      setStatusMessage("Create or sign in to your Yuzu account first so the pass can attach to the right email.");
+  /* eslint-disable react-hooks/set-state-in-effect -- Hydrates browser-only return-link state from URL/localStorage after mount. */
+  useEffect(() => {
+    const storedEmail = readPendingConfirmationEmail();
+
+    if (storedEmail) {
+      setEmail((currentEmail) => currentEmail || storedEmail);
+    }
+
+    const returnUrl = new URL(window.location.href);
+    const urlConfirmationCode = returnUrl.searchParams.get("confirmation_code") ?? returnUrl.searchParams.get("code") ?? "";
+    const normalizedCode = normalizeConfirmationCode(urlConfirmationCode);
+
+    if (!normalizedCode) {
       return;
     }
 
+    setConfirmationCode(normalizedCode);
+    setNeedsConfirmation(true);
+    setStatusMessage(
+      storedEmail
+        ? "Your confirmation code is ready. Click Confirm and Claim Pass to finish."
+        : "Your confirmation code is ready. Enter the email you used to sign up, then click Confirm and Claim Pass."
+    );
+
+    returnUrl.searchParams.delete("confirmation_code");
+    returnUrl.searchParams.delete("code");
+    window.history.replaceState(null, "", `${returnUrl.pathname}${returnUrl.search}${returnUrl.hash}`);
+  }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  async function claimPass(customer = { email: signedInEmail, fullName: auth.session?.name ?? "" }) {
     setIsSubmitting(true);
+
+    try {
+      return await activateFriendsFamilyPass(customer, await auth.createApiHeaders());
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function activateFriendsFamilyPass(customer: { email: string; fullName?: string }, headers: Record<string, string> = {}) {
+    if (!customer.email) {
+      setStatusMessage("Create or sign in to your Yuzu account first so the pass can attach to the right email.");
+      return false;
+    }
+
     setStatusMessage("Activating your Friends & Family Box Pass...");
 
     try {
-      const session = await createMembershipCheckoutSession({
-        tierName: "Box Access Pass",
-        billingPeriod: "yearly",
-        customer,
-        membershipOffer: friendsFamilyMembershipOffer,
-      });
+      const session = await createMembershipCheckoutSession(
+        {
+          tierName: "Box Access Pass",
+          billingPeriod: "yearly",
+          customer,
+          membershipOffer: friendsFamilyMembershipOffer,
+        },
+        headers
+      );
 
       if (session.membershipClaim) {
         auth.applyMembershipAccess({ tier: "Box Access Pass", status: "member" });
         setStatusMessage("Your 1-year Box Access Pass is active. Welcome into the box room.");
-        return;
+        return true;
       }
 
       window.location.assign(session.url);
+      return true;
     } catch (error) {
       setStatusMessage(getCheckoutErrorMessage(error));
-    } finally {
-      setIsSubmitting(false);
+      return false;
     }
   }
 
@@ -82,11 +175,32 @@ export function FriendsFamilyPassClaim() {
       setStatusMessage(result.message);
 
       if (result.status === "signed_in") {
+        forgetPendingConfirmationEmail();
         setPassword("");
-        await claimPass({
-          email: result.session.user.email,
-          fullName: result.session.user.name,
+        await activateFriendsFamilyPass(
+          {
+            email: result.session.user.email,
+            fullName: result.session.user.name,
+          },
+          createBearerHeaders(result.session.tokens.idToken)
+        );
+      } else if (result.status === "confirmation_required") {
+        rememberPendingConfirmationEmail(email);
+        setNeedsConfirmation(true);
+        const resend = await auth.resendCognitoSignUpCode({
+          email,
+          clientMetadata: friendsFamilyClientMetadata,
         });
+        if (resend.status === "confirmation_required") {
+          setStatusMessage(resend.destination ? `${result.message} New code sent to ${resend.destination}.` : `${result.message} ${resend.message}`);
+        } else if (resend.status === "signed_up") {
+          setConfirmationCode("");
+          setNeedsConfirmation(false);
+          setAuthMode("signin");
+          setStatusMessage(resend.message);
+        } else {
+          setStatusMessage(`${result.message} ${resend.message}`);
+        }
       } else if (result.status === "challenge_required") {
         setStatusMessage("This account needs an extra security step before the pass can be claimed. Contact concierge support and mention Friends & Family Box Pass.");
       }
@@ -109,9 +223,11 @@ export function FriendsFamilyPassClaim() {
       });
 
       if (result.status === "confirmation_required") {
+        rememberPendingConfirmationEmail(email);
         setStatusMessage(result.destination ? `${result.message} Sent to ${result.destination}.` : result.message);
         setNeedsConfirmation(true);
       } else if (result.status === "signed_up") {
+        forgetPendingConfirmationEmail();
         setStatusMessage(result.message);
         setAuthMode("signin");
       } else {
@@ -139,17 +255,32 @@ export function FriendsFamilyPassClaim() {
         return;
       }
 
+      forgetPendingConfirmationEmail();
+      setConfirmationCode("");
+      setNeedsConfirmation(false);
+
+      if (!password) {
+        setAuthMode("signin");
+        setStatusMessage("Your Yuzu account is confirmed. Sign in below to claim the pass.");
+        return;
+      }
+
       const signIn = await auth.signInWithCognitoPassword({ username: email, password });
       setStatusMessage(signIn.message);
 
       if (signIn.status === "signed_in") {
+        forgetPendingConfirmationEmail();
         setPassword("");
-        setConfirmationCode("");
-        setNeedsConfirmation(false);
-        await claimPass({
-          email: signIn.session.user.email,
-          fullName: signIn.session.user.name,
-        });
+        await activateFriendsFamilyPass(
+          {
+            email: signIn.session.user.email,
+            fullName: signIn.session.user.name,
+          },
+          createBearerHeaders(signIn.session.tokens.idToken)
+        );
+      } else {
+        setAuthMode("signin");
+        setStatusMessage(signIn.message);
       }
     } finally {
       setIsSubmitting(false);
@@ -161,18 +292,32 @@ export function FriendsFamilyPassClaim() {
     setStatusMessage("Sending a new Yuzu code...");
 
     try {
+      rememberPendingConfirmationEmail(email);
       const result = await auth.resendCognitoSignUpCode({
         email,
         clientMetadata: friendsFamilyClientMetadata,
       });
       if (result.status === "confirmation_required") {
         setStatusMessage(result.destination ? `${result.message} Sent to ${result.destination}.` : result.message);
+      } else if (result.status === "signed_up") {
+        forgetPendingConfirmationEmail();
+        setConfirmationCode("");
+        setNeedsConfirmation(false);
+        setAuthMode("signin");
+        setStatusMessage(result.message);
       } else {
         setStatusMessage(result.message);
       }
     } finally {
       setIsSubmitting(false);
     }
+  }
+
+  function openConfirmationRecovery() {
+    rememberPendingConfirmationEmail(email);
+    setConfirmationCode("");
+    setNeedsConfirmation(true);
+    setStatusMessage("Enter the code from your Yuzu email, or send a new code.");
   }
 
   return (
@@ -234,6 +379,17 @@ export function FriendsFamilyPassClaim() {
                 Confirm your Yuzu account
               </div>
               <p className="text-xs leading-5 text-yuzu-muted">{confirmationEmailHelpText}</p>
+              <label className="grid gap-2 text-xs font-bold uppercase tracking-[0.14em] text-yuzu-muted">
+                Email
+                <Input
+                  autoComplete="email"
+                  className="h-11 rounded-sm border-yuzu-line bg-yuzu-night text-sm normal-case tracking-normal text-yuzu-cream"
+                  onChange={(event) => setEmail(event.currentTarget.value)}
+                  required
+                  type="email"
+                  value={email}
+                />
+              </label>
               <Input
                 autoComplete="one-time-code"
                 className="h-11 rounded-sm border-yuzu-line bg-yuzu-night text-yuzu-cream"
@@ -290,6 +446,9 @@ export function FriendsFamilyPassClaim() {
                 {isSubmitting ? <LoaderCircle className="animate-spin" data-icon="inline-start" /> : <UserPlus data-icon="inline-start" />}
                 Create Yuzu Account
               </Button>
+              <Button type="button" className="h-10 border-yuzu-line text-yuzu-cream" onClick={openConfirmationRecovery} variant="outline" disabled={isSubmitting}>
+                I already have a confirmation code
+              </Button>
             </form>
           ) : (
             <form className="grid gap-3" onSubmit={handleSignIn}>
@@ -318,6 +477,9 @@ export function FriendsFamilyPassClaim() {
               <Button type="submit" className="h-12 bg-yuzu-gold text-yuzu-ink hover:bg-yuzu-gold-light" disabled={isSubmitting}>
                 {isSubmitting ? <LoaderCircle className="animate-spin" data-icon="inline-start" /> : <LogIn data-icon="inline-start" />}
                 Sign In and Claim Pass
+              </Button>
+              <Button type="button" className="h-10 border-yuzu-line text-yuzu-cream" onClick={openConfirmationRecovery} variant="outline" disabled={isSubmitting}>
+                I already have a confirmation code
               </Button>
             </form>
           )}

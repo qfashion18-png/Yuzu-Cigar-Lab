@@ -15,6 +15,7 @@ import {
   getCognitoTokenResponse,
   hydrateCognitoSessionFromProfile,
   resolveCognitoConfig,
+  resendCognitoSignUpCode,
   shouldShowInlineCognitoSignIn,
   signInWithCognitoPassword,
   signUpWithCognitoPassword,
@@ -209,6 +210,44 @@ test("Cognito confirmation uses ConfirmSignUp without hosted Cognito", async () 
   assert.equal(result.message, "Your Yuzu account is confirmed. Signing you in now.");
 });
 
+test("Cognito confirmation treats already-confirmed accounts as recovery success", async () => {
+  const result = await confirmCognitoSignUp(
+    config,
+    { email: "friend@example.com", confirmationCode: "123456" },
+    async () => ({
+      ok: false,
+      async json() {
+        return {
+          __type: "NotAuthorizedException",
+          message: "User cannot be confirmed. Current status is CONFIRMED",
+        };
+      },
+    })
+  );
+
+  assert.equal(result.status, "confirmed");
+  assert.equal(result.message, "Your Yuzu account is already confirmed. Sign in to claim the pass.");
+});
+
+test("Cognito resend treats already-confirmed accounts as sign-in recovery", async () => {
+  const result = await resendCognitoSignUpCode(
+    config,
+    { email: "friend@example.com" },
+    async () => ({
+      ok: false,
+      async json() {
+        return {
+          __type: "InvalidParameterException",
+          message: "User is already confirmed.",
+        };
+      },
+    })
+  );
+
+  assert.equal(result.status, "signed_up");
+  assert.equal(result.message, "Your Yuzu account is already confirmed. Sign in to claim the pass.");
+});
+
 test("Cognito password auth stores a storefront session from AuthenticationResult", async () => {
   const idToken = createJwt({
     sub: "member-123",
@@ -282,6 +321,30 @@ test("Cognito password auth surfaces service errors without changing screens", a
 
   assert.equal(result.status, "error");
   assert.equal(result.message, "Incorrect username or password.");
+});
+
+test("Cognito password auth opens confirmation recovery for unconfirmed accounts", async () => {
+  const result = await signInWithCognitoPassword(
+    config,
+    { username: "friend@example.com", password: "Secret123!Pass" },
+    async () => ({
+      ok: false,
+      async json() {
+        return {
+          __type: "UserNotConfirmedException",
+          message: "User is not confirmed.",
+        };
+      },
+    })
+  );
+
+  assert.equal(result.status, "confirmation_required");
+
+  if (result.status !== "confirmation_required") {
+    throw new Error("Expected confirmation_required result");
+  }
+
+  assert.equal(result.message, "That Yuzu account still needs email confirmation. Send a new code, then enter it here.");
 });
 
 test("Cognito password auth gives hosted UI recovery for challenge states", async () => {
@@ -636,10 +699,13 @@ test("Cognito signup verification email is Yuzu branded", () => {
   assert.match(cognitoTemplateSource, /ReplyToEmailAddress: support@yuzucigarclub\.com/);
   assert.match(cognitoTemplateSource, /VerificationMessageTemplate:/);
   assert.match(cognitoTemplateSource, /EmailSubject: Yuzu Cigar Club verification code/);
-  assert.match(cognitoTemplateSource, /YUZU CIGAR CLUB/);
-  assert.match(cognitoTemplateSource, /Friends & Family Box Pass/);
-  assert.match(cognitoTemplateSource, /Your verification code/);
-  assert.match(cognitoTemplateSource, /-{10,}[\s\S]*\{####\}[\s\S]*-{10,}/);
+  assert.match(cognitoTemplateSource, /Yuzu Cigar Club/);
+  assert.match(cognitoTemplateSource, /Confirm your Friends &amp; Family invite/);
+  assert.match(cognitoTemplateSource, /Confirmation code/);
+  assert.match(cognitoTemplateSource, /confirmation_code=\{####\}/);
+  assert.match(cognitoTemplateSource, /Open Yuzu confirmation page/);
+  assert.match(cognitoTemplateSource, /Confirm and Claim Pass/);
+  assert.match(cognitoTemplateSource, /different browser or device/);
   assert.match(cognitoTemplateSource, /Adults 21\+ only/);
 });
 

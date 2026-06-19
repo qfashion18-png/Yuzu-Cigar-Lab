@@ -21,3 +21,9 @@ test("mobile navigation selections close the site header sheet", () => {
   assert.ok(siteHeaderSource.includes("onClick={handleMobileJoin}"), "mobile join should use the shared signup opener");
   assert.ok(siteHeaderSource.includes("onClick={handleMobileSignOut}"), "mobile sign out should close the sheet too");
 });
+
+test("site header marks nested routes as active navigation paths", () => {
+  assert.ok(siteHeaderSource.includes("function isActiveNavPath"), "header should use a shared active route matcher");
+  assert.ok(siteHeaderSource.includes('currentPath.startsWith(`${targetPath}/`)'), "active matcher should include nested routes");
+  assert.ok(siteHeaderSource.includes("isActiveNavPath(pathname, item.href)"), "desktop and mobile navigation should use the matcher");
+});

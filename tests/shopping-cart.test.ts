@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { getStorefrontProductBySlug } from "../src/lib/catalog";
@@ -44,6 +45,8 @@ const lighterItem = {
   unitPrice: 24,
   maxQuantity: 20,
 };
+
+const cartProviderSource = readFileSync(new URL("../src/components/cart-provider.tsx", import.meta.url), "utf8");
 
 test("adds catalog items to cart and merges repeat variants", () => {
   const emptyCart = createEmptyShoppingCart();
@@ -168,4 +171,10 @@ test("reprices stored cart lines when member authentication changes", () => {
 
   assert.equal(repricedForPublic.items[0].unitPrice, publicPrice);
   assert.equal(repricedForPublic.updatedAt, 4004);
+});
+
+test("cart provider normalizes stored cart data before hydrating global UI", () => {
+  assert.ok(cartProviderSource.includes("normalizeStoredShoppingCart(storedCart)"), "stored cart should be normalized before hydration");
+  assert.ok(cartProviderSource.includes("normalizeStoredCartItem"), "stored cart line items should be validated");
+  assert.ok(cartProviderSource.includes("createEmptyShoppingCart(now)"), "malformed stored carts should fall back to an empty cart");
 });

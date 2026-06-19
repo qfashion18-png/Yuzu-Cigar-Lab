@@ -54,6 +54,8 @@ test("checkout session request sends cart identifiers, price snapshots, customer
     },
     shippingMethodId: "usps-adult-signature-ground",
     complianceToken: "age_txn_123",
+    deliveryPrice: 18,
+    taxRate: 0.066,
   });
 
   assert.deepEqual(request.items, [{ sku: "APPROVED-BOX", quantity: 2, unitPrice: 120 }]);
@@ -62,8 +64,10 @@ test("checkout session request sends cart identifiers, price snapshots, customer
   assert.equal(request.shippingMethodId, "usps-adult-signature-ground");
   assert.equal(request.compliance.ageVerificationToken, "age_txn_123");
   assert.equal(request.quote.subtotal, 240);
+  assert.equal((request.quote as { shipping?: number }).shipping, 18);
   assert.equal((request.quote as { handling?: number }).handling, 10);
-  assert.equal((request.quote as { total?: number }).total, 250);
+  assert.equal((request.quote as { tax?: number }).tax, 15.84);
+  assert.equal((request.quote as { total?: number }).total, 283.84);
   assert.equal(request.quote.currency, "USD");
   assert.equal(JSON.stringify(request).includes("paymentMethodId"), false);
   assert.equal(JSON.stringify(request).includes("card"), false);
@@ -86,11 +90,15 @@ test("member checkout request carries the membership entitlement and waives the 
     },
     shippingMethodId: "usps-adult-signature-ground",
     complianceToken: "age_txn_123",
+    deliveryPrice: 18,
+    taxRate: 0.066,
   });
 
   assert.equal(request.membership?.entitlementToken, "yccmem1.payload.signature");
+  assert.equal((request.quote as { shipping?: number }).shipping, 18);
   assert.equal((request.quote as { handling?: number }).handling, 0);
-  assert.equal((request.quote as { total?: number }).total, 240);
+  assert.equal((request.quote as { tax?: number }).tax, 15.84);
+  assert.equal((request.quote as { total?: number }).total, 273.84);
 });
 
 test("checkout client posts to the configured commerce API and returns the hosted Stripe URL", async () => {

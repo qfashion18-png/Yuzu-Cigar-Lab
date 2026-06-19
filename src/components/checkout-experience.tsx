@@ -175,6 +175,8 @@ function CheckoutExperienceContent({ accountSession }: { accountSession: BackupA
         shippingMethodId: selectedDelivery.id,
         complianceToken: ageVerificationToken,
         membershipEntitlementToken,
+        deliveryPrice: selectedDelivery.price,
+        taxRate,
       });
 
       window.location.assign(session.url);

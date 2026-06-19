@@ -27,7 +27,9 @@ export type CheckoutSessionRequest = {
   };
   quote: {
     subtotal: number;
+    shipping: number;
     handling: number;
+    tax: number;
     total: number;
     currency: "USD";
   };
@@ -41,8 +43,17 @@ export type CheckoutSessionResponse = {
   url: string;
   membershipClaim?: {
     tier: "Box Access Pass" | "Kisha" | "Sensei" | "Daimyo" | string;
+    tierKey?: string;
     status: "member" | "non_member" | "active" | string;
+    memberStatus?: string;
     expiresAt?: string | null;
+    memberId?: string;
+    stripeCustomerId?: string | null;
+    memberWelcomeEmail?: {
+      kind?: "member_welcome" | string;
+      status: "sent" | "pending_ses" | "failed" | "skipped" | string;
+      sesMessageId?: string | null;
+    };
   };
 };
 
@@ -97,6 +108,8 @@ export function buildCheckoutSessionRequest(input: {
   complianceToken: string;
   isMember?: boolean;
   membershipEntitlementToken?: string;
+  deliveryPrice?: number;
+  taxRate?: number;
 }): CheckoutSessionRequest {
   const hasMemberOnlyItems = isCartMemberOnlyLocked(input.cart);
   const isMember = Boolean(input.isMember);
@@ -124,6 +137,8 @@ export function buildCheckoutSessionRequest(input: {
 
   const totals = calculateCartTotals(input.cart, {
     isMember,
+    deliveryPrice: input.deliveryPrice,
+    taxRate: input.taxRate,
   });
 
   const request: CheckoutSessionRequest = {
@@ -148,7 +163,9 @@ export function buildCheckoutSessionRequest(input: {
     },
     quote: {
       subtotal: totals.subtotal,
+      shipping: totals.shipping,
       handling: totals.handling,
+      tax: totals.tax,
       total: totals.total,
       currency: "USD",
     },
@@ -190,8 +207,8 @@ export async function createCheckoutSession(input: Parameters<typeof buildChecko
   return postCommerce<CheckoutSessionResponse>("/commerce/checkout-session", buildCheckoutSessionRequest(input));
 }
 
-export async function createMembershipCheckoutSession(input: MembershipCheckoutInput) {
-  return postCommerce<CheckoutSessionResponse>("/commerce/membership-session", input);
+export async function createMembershipCheckoutSession(input: MembershipCheckoutInput, headers: Record<string, string> = {}) {
+  return postCommerce<CheckoutSessionResponse>("/commerce/membership-session", input, headers);
 }
 
 export async function createCustomerPortalSession() {
@@ -233,6 +250,9 @@ export function getCheckoutErrorMessage(error: unknown) {
     payment_failed: "The payment could not be completed. Please try another payment method in Stripe Checkout.",
     stripe_not_ready: "Secure checkout is not configured for this environment yet.",
     stripe_account_not_ready: "Yuzu checkout is temporarily unavailable while payment activation finishes. Your account is still ready for the Friends & Family pass.",
+    membership_claim_auth_required: "Sign in with your verified Yuzu account before activating the Friends & Family pass.",
+    membership_claim_email_unverified: "Confirm your Yuzu account email before activating the Friends & Family pass.",
+    membership_claim_email_mismatch: "The Friends & Family pass can only be activated for the signed-in account email.",
     membership_claim_not_ready: "Yuzu could not activate the pass yet. Please contact concierge support and mention Friends & Family Box Pass.",
     commerce_not_configured: "Secure checkout is not configured for this environment yet.",
   };

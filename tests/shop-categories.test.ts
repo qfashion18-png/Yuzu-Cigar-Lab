@@ -107,6 +107,13 @@ test("shop catalog category filter subscribes to Next URL search params", () => 
   );
 });
 
+test("shop browsing pages expose route-level headings and labeled catalog search", () => {
+  assert.ok(shopPageSource.includes("as=\"h1\""), "shop hero should provide the route-level h1");
+  assert.ok(newArrivalsPageSource.includes("as=\"h1\""), "new arrivals hero should provide the route-level h1");
+  assert.ok(memberDropsPageSource.includes("as=\"h1\""), "member drops hero should provide the route-level h1");
+  assert.ok(shopCatalogSource.includes("<span className=\"sr-only\">Search catalog</span>"), "catalog search input should have a dependable label");
+});
+
 test("sitemap includes shareable shop category URLs", () => {
   const urls = sitemap().map((entry) => entry.url);
   const hasLuxuryCategoryUrl = urls.some((url) => new URL(url).pathname === `/shop/categories/${getCategorySlug("Luxury Cigars ($300+)")}/`);

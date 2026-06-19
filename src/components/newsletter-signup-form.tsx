@@ -38,6 +38,8 @@ const tierOptions = [
   { value: "daimyo", label: "Daimyo" },
 ];
 
+const marketingConsentLabel = "I am 21+ and agree to receive Yuzu Cigar Club email updates.";
+
 export function NewsletterSignupForm({
   source,
   variant = "panel",
@@ -54,7 +56,7 @@ export function NewsletterSignupForm({
   const [wantsMonthlyMembership, setWantsMonthlyMembership] = useState(defaultMonthlyInterest);
   const [preferredTier, setPreferredTier] = useState("sensei");
   const [brandPreferences, setBrandPreferences] = useState<NewsletterBrandPreference[]>([]);
-  const [consent, setConsent] = useState(true);
+  const [consent, setConsent] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [status, setStatus] = useState<SignupStatus>({ kind: "idle", message: "" });
 
@@ -135,12 +137,21 @@ export function NewsletterSignupForm({
           />
           <button
             className="h-11 w-full rounded-none bg-yuzu-gold px-4 text-xs font-black uppercase tracking-[0.18em] text-yuzu-ink transition hover:bg-yuzu-gold-light disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto xl:w-full"
-            disabled={submitting}
+            disabled={submitting || !consent}
             type="submit"
           >
             {submitting ? "Saving" : "Subscribe"}
           </button>
         </div>
+        <label className="flex items-start gap-2 text-xs leading-5 text-yuzu-muted">
+          <input
+            checked={consent}
+            className="mt-1 size-4 accent-yuzu-gold"
+            onChange={(event) => setConsent(event.currentTarget.checked)}
+            type="checkbox"
+          />
+          <span>{marketingConsentLabel}</span>
+        </label>
         <label className="flex items-start gap-2 text-xs leading-5 text-yuzu-muted">
           <input
             checked={wantsMonthlyMembership}
@@ -246,11 +257,11 @@ export function NewsletterSignupForm({
           onChange={(event) => setConsent(event.currentTarget.checked)}
           type="checkbox"
         />
-        <span>I am 21+ and agree to receive Yuzu Cigar Club email updates.</span>
+        <span>{marketingConsentLabel}</span>
       </label>
       <Button
         className="h-12 rounded-none bg-yuzu-gold px-6 text-xs font-black uppercase tracking-[0.18em] text-yuzu-ink hover:bg-yuzu-gold-light"
-        disabled={submitting}
+        disabled={submitting || !consent}
         type="submit"
       >
         {submitting ? "Saving" : brandPreferences.length ? "Send cigar picks and pricing" : "Join the Newsletter"}

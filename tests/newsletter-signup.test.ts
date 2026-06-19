@@ -146,6 +146,8 @@ test("newsletter signup form exposes favorite-brand selection and pricing copy",
 
   assert.match(source, /Favorite cigar brands/);
   assert.match(source, /Send cigar picks and pricing/);
+  assert.match(source, /const \[consent, setConsent\] = useState\(false\)/);
+  assert.match(source, /disabled=\{submitting \|\| !consent\}/);
 });
 
 test("local newsletter store dedupes by email and keeps latest membership intent", () => {

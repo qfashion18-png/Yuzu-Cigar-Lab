@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   assessLaunchReadiness,
+  assessDeployZipReadiness,
   findPlaceholderKeys,
   materializeCommerceSecretEnv,
   parseEnvSource,
@@ -28,6 +29,7 @@ const completeEnv = {
   NEXT_PUBLIC_REQUIRE_LIVE_AUTH: "true",
   NEXT_PUBLIC_ENABLE_BACKUP_ADMIN: "false",
   NEXT_PUBLIC_ADMIN_APP_URL: "https://admin.yuzucigarclub.com",
+  NEXT_PUBLIC_AGECHECKER_API_KEY: "agechecker-public-key",
   NEXT_PUBLIC_VAPID_PUBLIC_KEY: "vapid-public-key",
   VAPID_PUBLIC_KEY: "vapid-public-key",
   VAPID_PRIVATE_KEY: "vapid-private-key",
@@ -113,6 +115,21 @@ test("go-live readiness requires mobile push VAPID settings", () => {
     "vapid-subject-configured",
     "vapid-public-key-match",
   ].sort());
+});
+
+test("go-live readiness requires the browser AgeChecker key for checkout", () => {
+  const checks = assessLaunchReadiness(
+    {
+      ...completeEnv,
+      NEXT_PUBLIC_AGECHECKER_API_KEY: "",
+      NEXT_PUBLIC_AGE_VERIFICATION_API_KEY: "",
+    },
+    { strictExternal: true },
+  );
+
+  const ageCheckerCheck = checks.find((check) => check.id === "agechecker-public-key-configured");
+  assert.ok(ageCheckerCheck, "AgeChecker browser key check should run");
+  assert.equal(ageCheckerCheck.status, "fail");
 });
 
 test("go-live readiness requires matching browser and server VAPID public keys", () => {
@@ -255,6 +272,24 @@ test("deploy zip validation rejects Windows paths and nested build folders", () 
     "assets\\yuzu-logo.png",
     ".next/server/app.js",
   ]);
+});
+
+test("strict readiness fails when no deploy zip is available", () => {
+  assert.deepEqual(assessDeployZipReadiness(null, true), {
+    id: "deploy-zip-shape",
+    status: "fail",
+    message: "No deploy zip was found. Create one with npm run amplify:package before go-live promotion.",
+  });
+});
+
+test("Amplify package script uses Python zipfile with POSIX entry paths", () => {
+  const packageJson = JSON.parse(readFileSync("package.json", "utf8")) as { scripts: Record<string, string> };
+  const scriptSource = readFileSync("scripts/package-amplify-static.py", "utf8");
+
+  assert.equal(packageJson.scripts["amplify:package"], "python scripts/package-amplify-static.py");
+  assert.match(scriptSource, /relative_to\(out_dir\)\.as_posix\(\)/u);
+  assert.match(scriptSource, /zipfile\.ZipFile/u);
+  assert.match(scriptSource, /npm", "run", "build"/u);
 });
 
 test("Amplify custom headers include production browser security headers", () => {

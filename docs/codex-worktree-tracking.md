@@ -1,10 +1,149 @@
 # Codex Worktree Tracking
 
-Last updated: 2026-06-13
+Last updated: 2026-06-19
 
 Purpose: track the dirty worktree I encounter while expanding and verifying the Yuzu admin/backend. This file is Codex-owned working notes, so future passes have a stable place to record what was changed, verified, and still needs audit.
 
 Project memory: `AGENTS.md` now requires Codex to use this file as the persistent worktree ledger. Every meaningful update, fix, audit, verification pass, or newly discovered dirty/untracked area should be recorded here in the same turn.
+
+### 2026-06-19 Deploy All Updates And Clean Worktree
+
+- User requested deploying all current updates and cleaning the worktree.
+- Predeploy full gate passed with `npm run launch:check`:
+  - `npm run lint` passed with the two known unused-import warnings in `scripts/render-yuzu-strength-heygen-avatar-lead-composite.mjs`.
+  - `npx tsc --noEmit` passed.
+  - `npm test` passed 592/592.
+  - `npm run build` passed on Next.js `16.2.9` and generated 1,022 static pages.
+  - `npm audit --omit=dev` reported 0 production vulnerabilities.
+- Backend deploy:
+  - Packaged `ycc-api-all-updates-clean-worktree-20260619.zip` with `node scripts/package-ycc-api-lambda.mjs ycc-api-all-updates-clean-worktree-20260619`.
+  - Package code hash: `mVCFnM1lHLS1Ut6qQY0tDX7r5g600JZVFJS848Y6+bo=`.
+  - Updated Lambda `ycyyy` using scoped operator role `CodexMcpYccOperatorRole`.
+  - Published Lambda version `43` and promoted alias `live` to version `43`.
+  - Alias/config readback: `ycyyy:live`, `State=Active`, `LastUpdateStatus=Successful`, runtime `nodejs22.x`, matching code hash.
+  - API smoke passed: `https://api.yuzucigarclub.com/health?deep=1` returned HTTP 200.
+- Static Amplify deploy:
+  - Used the `deploy-yuzu-amplify` helper with `--skip-build --label all-updates-clean-worktree-20260619`.
+  - Created static export zip `yuzu-cigar-club-amplify-deploy-all-updates-clean-worktree-20260619-2026-06-18-183902.zip` with 9,479 entries and 178,373,833 bytes.
+  - Deployed to Amplify app `d2yxcklt245wh0`, branch `staging`, using scoped deployment role `CodexMcpYccDeploymentRole`.
+  - Amplify job `163` reached `SUCCEED`.
+  - Helper smoke passed: staging home returned HTTP 200 and referenced static asset `/_next/static/chunks/2gvbee7pkfg8e.css` returned HTTP 200.
+- Postdeploy verification:
+  - `npm run launch:go-live-check -- --zip "C:\Users\qfash\Documents\Yuzu Deploy Artifacts\yuzu-cigar-club-amplify-deploy-all-updates-clean-worktree-20260619-2026-06-18-183902.zip"` passed with no generated-artifact warning after cleanup.
+  - `npx tsx scripts/e2e-runtime-audit.ts` passed: 141 routes checked, 114 internal links followed, 98 runtime assets checked, 0 warnings.
+  - Direct smokes returned HTTP 200 for staging home, `www.yuzucigarclub.com`, staging `/friends-family/`, staging `/checkout/`, and API deep health.
+- Cleanup:
+  - Moved the static deploy zip and Lambda zip to `C:\Users\qfash\Documents\Yuzu Deploy Artifacts`.
+  - Moved the repo-local generated `output/` folder to `C:\Users\qfash\Documents\Yuzu Deploy Artifacts\output-archive-20260619-183902` after confirming it contained no tracked files.
+  - Confirmed the Lambda staging directory `output/ycc-api-all-updates-clean-worktree-20260619` was removed as part of the archived `output/` move.
+  - Precommit secret-pattern scan over staged-candidate files found only false positives in helper-call code and test placeholder values; no committed secret material was found.
+  - Next step in this turn: stage and commit all source, docs, script, and test updates so `git status --short` is clean.
+
+### 2026-06-19 Frontend To Backend Deep Audit
+
+- User requested a deep frontend-to-backend audit, issue/gap fixes, end-to-end process hardening, and parallel subagents.
+- Started with three read-only subagents:
+  - UI/routes/components/accessibility/SEO/static frontend audit.
+  - Backend/API/data-flow/env/security/static-export compatibility audit.
+  - Build/test/deploy/process/dependency/static Amplify zip audit.
+- Local inventory found the repo is already dirty from earlier work. Existing dirty areas include package metadata, AWS/live-architecture docs, Lambda API files, infra template files, privacy/terms pages, friends-and-family/newsletter components, Cognito/Stripe libs, and multiple E2E scripts/tests for Cognito email, SES, SMS, push, notifications, and Humidor image checks. These are treated as pre-existing work and will not be reverted.
+- Installed framework readback: Next.js `16.2.9`, React `19.2.7`, static export enabled via `output: "export"`, `trailingSlash: true`, and `images.unoptimized: true`.
+- Baseline verification before edits passed:
+  - `npm run lint` passed with the two pre-existing unused-import warnings in `scripts/render-yuzu-strength-heygen-avatar-lead-composite.mjs`.
+  - `npx tsc --noEmit --pretty false` passed.
+  - `npm test` passed 581/581.
+  - `npm run build` passed and generated 1,022 static pages with Next.js `16.2.9`.
+- Frontend fixes:
+  - Added route-level `h1` support to `SectionHeading` and applied it to `/shop/`, `/new-arrivals/`, and `/member-drops/`.
+  - Added a stable screen-reader label to shop catalog search.
+  - Made header active navigation match nested routes.
+  - Normalized persisted cart state before hydration so malformed local storage cannot poison the global cart.
+  - Fixed checkout session quote construction to include selected delivery price and tax, matching the visible checkout total.
+  - Updated the Friends & Family claim client to activate the free pass only after Cognito sign-in and to send the Cognito bearer header with the claim.
+- Backend/API fixes:
+  - Required a signed-in, email-verified Cognito actor whose email matches the requested customer email before granting the Friends & Family one-year Box Access Pass.
+  - Added public JSON body byte caps and `413 request_body_too_large` failures before validation for newsletter, public support, checkout, age-verification, and membership-session inputs.
+  - Made public support contact intake accept/store cases when `FEATURE_SES` is not `ready`, return `pending_ses`, and skip outbound SES attempts until a provider is ready.
+  - Added a five-minute warm-Lambda TTL for commerce provider secret/catalog reads instead of caching Secrets Manager/S3-derived values indefinitely.
+  - Ignored wildcard CORS origin configuration in production-like runtime and fell back to explicit Yuzu origins.
+- Process/deploy fixes:
+  - Added reproducible `npm run amplify:package` using Python `zipfile` and POSIX archive paths rooted at `out/` contents.
+  - Strengthened launch readiness for browser AgeChecker key, VAPID settings, shipping provider, and deploy-zip shape, with `--zip` support.
+  - Updated GitHub launch gates to use `.nvmrc`, package the Amplify zip before strict readiness, run runtime audit, and run production dependency audit.
+  - Synced package metadata with `npm install --package-lock-only`.
+  - Confirmed Next 16 re-adds `.next/dev/types/**/*.ts` during build per local docs/typegen behavior, so `tsconfig.json` was restored to the repo baseline to avoid recurring build churn.
+- Verification after fixes:
+  - Targeted regression suite passed 203/203: `node --import tsx --test tests/launch-readiness.test.ts tests/checkout-flow.test.ts tests/shopping-cart.test.ts tests/shop-categories.test.ts tests/site-header.test.ts tests/friends-family-page.test.ts tests/lambda-ycc-api.test.ts tests/lambda-cors-origin.test.ts`.
+  - Focused Lambda/Friends/CORS rerun passed 155/155.
+  - Full `npm test` passed 592/592.
+  - `npm run lint` passed with only the two pre-existing warnings in `scripts/render-yuzu-strength-heygen-avatar-lead-composite.mjs`.
+  - `npx tsc --noEmit --pretty false` passed.
+  - `npm run build` passed and generated 1,022 static pages.
+  - `npx tsx scripts/e2e-runtime-audit.ts` passed: 141 routes checked, 114 internal links followed, 98 runtime assets checked, 0 warnings.
+  - `npm audit --omit=dev` found 0 production vulnerabilities; a follow-up `npm audit fix --package-lock-only` cleared the two dev/transitive audit findings, and full `npm audit --json` reported 0 total vulnerabilities.
+  - `npm run amplify:package -- --skip-build --output-dir output/deploy-zips --name yuzu-cigar-club-audit-test.zip` created `output/deploy-zips/yuzu-cigar-club-audit-test.zip` with 9,479 entries.
+  - `npm run launch:ops-check -- --zip output/deploy-zips/yuzu-cigar-club-audit-test.zip` passed all checks with one local generated-artifact cleanup warning.
+  - Static preview browser smoke on `http://127.0.0.1:3037` checked `/shop/`, `/new-arrivals/`, `/member-drops/`, `/checkout/`, and `/friends-family/`: HTTP 200, route `h1`s rendered, shop search label present, shop nav active, no hydration text, and Chrome console had 0 warnings/errors.
+
+### 2026-06-18 Humidor Agent Image Identification Audit
+
+- User asked for research, a full AI-agent audit, and a full Humidor Agent image-identification test so the AI has the tools needed to locate cigars from images.
+- Official docs checked:
+  - Bedrock Agents action groups and Lambda action-group contracts.
+  - Bedrock Converse API multimodal message and image-source limits.
+  - Amazon Nova Lite multimodal model card.
+  - Amazon Rekognition `DetectLabels` image input and confidence behavior.
+  - Bedrock Knowledge Bases `Retrieve` API and knowledge-base grounding model.
+  - Bedrock Guardrails multimodal/image filter behavior.
+- Added repeatable Humidor Agent image E2E coverage:
+  - `scripts/humidor-agent-image-e2e-check.ts`
+  - `tests/humidor-agent-image-e2e-check.test.ts`
+  - npm script: `humidor-agent:image-e2e`.
+- The new check is non-mutating by default. Live mode verifies local route wiring, deployed Lambda environment, Lambda IAM for Bedrock/Rekognition/S3/KB/Guardrail/Agent tools, Humidor Agent action group configuration, unauthenticated API boundary, and one direct live image-identification invoke using `public/assets/product-padron.png`.
+- Live audit results:
+  - `npm run ai-agents:ops-check -- --live --json` passed with `failed=0`; all six Bedrock agents and prod aliases were prepared, Lambda `ycyyy:live` was version `42`, guardrail version `8` was ready, KB `YCCKnowledgeBaseV2` was active, latest ingestion `ODXEKTRRPY` was complete, API deep health passed, and unauthenticated concierge still returned `401`.
+  - AWS readbacks confirmed Lambda `ycyyy:live` has Bedrock Runtime, Rekognition image understanding, Nova Lite, guardrail, KB, Humidor Agent alias, web-search, catalog-secret, and S3 bucket wiring. Secret values were not recorded here.
+  - IAM readbacks confirmed Lambda can call Rekognition `DetectText`/`DetectLabels`, Bedrock Nova Lite, Bedrock guardrails, KB retrieval, tagged Bedrock agent invocation, and YCC S3 object get/put.
+  - Humidor Agent readbacks confirmed `YCCHumidorAgent` is `PREPARED`, prod alias is `PREPARED`, action group `YCCOperations` is `ENABLED`, executor is Lambda `ycyyy:live`, and `AddHumidorItem` still requires confirmation.
+  - `npm run humidor-agent:image-e2e -- --live --json` passed with `failed=0`; the live Padron image invoke returned HTTP `200`, `ai.status=bedrock_runtime`, `name=Padron Anniversary Series`, `brand=Padron`, medium confidence, Rekognition text/labels, `confirm_add_to_humidor` as the next action, and `persisted=false`.
+- Local verification:
+  - `node --import tsx --test --test-name-pattern "humidor image identification|humidor item enrichment|Rekognition|AI agents ops|Bedrock|bedrock" tests\lambda-ycc-api.test.ts tests\bedrock-infra-contract.test.ts tests\ai-agents-ops-check.test.ts tests\api-gateway-contract.test.ts` passed 39/39.
+  - `node --import tsx --test tests\humidor-agent-image-e2e-check.test.ts` passed 1/1.
+  - `npm run humidor-agent:image-e2e -- --dry-run --json` passed.
+  - `npx eslint scripts\humidor-agent-image-e2e-check.ts tests\humidor-agent-image-e2e-check.test.ts` passed.
+  - Full `npm run lint` passed with only the two pre-existing warnings in `scripts\render-yuzu-strength-heygen-avatar-lead-composite.mjs`.
+  - `npx tsc --noEmit --pretty false` passed.
+  - Full `npm test` passed 581/581.
+
+### 2026-06-18 SMS SES Push E2E Audit
+
+- User asked to make sure SMS, SES, and push are set up end to end and to research AWS docs.
+- Official docs checked:
+  - AWS End User Messaging SMS / SNS sandbox docs for verified destination numbers and US toll-free registration/review.
+  - Amazon SES docs for sandbox/production access, verified identities, receipt-rule S3/Lambda actions, event destinations, and the mailbox simulator.
+  - AWS End User Messaging Push and Amazon SNS mobile-push docs for native APNs/FCM/ADM/Baidu/platform-application requirements.
+  - Local Next 16 docs under `node_modules/next/dist/docs/` for environment variables, static exports, and PWA/Web Push service-worker guidance before adding code.
+- Added repeatable E2E checks:
+  - `scripts/ses-e2e-check.ts`
+  - `scripts/push-e2e-check.ts`
+  - `scripts/notifications-e2e-check.ts`
+  - `tests/ses-e2e-check.test.ts`
+  - `tests/push-e2e-check.test.ts`
+  - `tests/notifications-e2e-check.test.ts`
+  - npm scripts: `ses:e2e`, `push:e2e`, and `notifications:e2e`.
+- Updated `docs/aws-live-architecture-setup.md` with current notification E2E commands, mutating-send flags, live status, and corrected Lambda `ycyyy:live` from version `41` to version `42`.
+- Live check results:
+  - `npm run sms-signup:e2e -- --live --json` failed only on expected AWS gates: SNS sandbox destination ending `7369` is `Pending`, and toll-free originator ending `8058` is `PENDING:REVIEWING`; Cognito trigger, Lambda invoke permission, and Lambda SMS env passed.
+  - `npm run ses:e2e -- --live --json` failed only on SES production outbound access: `ProductionAccessEnabled=false`, `ReviewStatus=DENIED`, case `177809591700724`; identities, inbound receipt rules, Lambda receipt permission, S3 raw prefixes, and SES feedback SNS/SQS passed.
+  - `npm run ses:e2e -- --live --send-simulator --json` still failed the production-access gate but successfully sent one SES mailbox simulator message from the verified YCC support identity.
+  - `npm run push:e2e -- --live --json` passed with `failed=0`; deployed service worker, manifest, humidor route, local Web Push wiring, Lambda VAPID env, API routes, EventBridge dispatcher, and dispatch auth boundary all passed. It warned that no AWS native mobile-push apps exist because the current implementation uses browser Web Push/VAPID rather than SNS or AWS End User Messaging Push APNs/FCM.
+  - `npm run notifications:e2e -- --live --json` reported `failed=3`: the two SMS AWS gates plus the one SES production-access gate; push passed.
+- Local verification:
+  - `npx eslint scripts\ses-e2e-check.ts scripts\push-e2e-check.ts scripts\notifications-e2e-check.ts tests\ses-e2e-check.test.ts tests\push-e2e-check.test.ts tests\notifications-e2e-check.test.ts` passed.
+  - `node --import tsx --test tests\ses-e2e-check.test.ts tests\push-e2e-check.test.ts tests\notifications-e2e-check.test.ts` passed 3/3.
+  - `npx tsc --noEmit --pretty false` passed.
+  - Full `npm run lint` passed with only the two pre-existing warnings in `scripts\render-yuzu-strength-heygen-avatar-lead-composite.mjs`.
+  - Full `npm test` passed 580/580.
 
 ## 2026-06-13 Deploy All Updates And Clean Worktree
 
@@ -161,6 +300,101 @@ Project memory: `AGENTS.md` now requires Codex to use this file as the persisten
     - `STL Bourbon & Cigar Society`
   - Bourbon retry note: the first automated attempt left the composer empty with the Post button disabled, so no partial post was created; a manual clipboard-paste retry posted successfully and verified visible.
   - Updated `output/social/facebook-group-thanks-add-2026-06-13/POST-KIT.md` and `output/social/facebook-group-thanks-add-2026-06-13/publish-log.json` with posted/verified statuses.
+- 2026-06-14 Batch 02 prep:
+  - User asked to finish posting to all groups.
+  - Continued with the `facebook-group-posting-prep` skill and re-read the Meta docs reference.
+  - Built a next batch from newly joined June 12 public cigar group logs, excluding first-batch posted groups, known held groups, obvious commercial/sales rows, and live warning signals.
+  - Live read-only browser checks found these Batch 02 candidates joined, public, composer-visible, and without pending/no-promo/buy-sell/unavailable warnings:
+    - `Cuban Cigar Federation` `https://www.facebook.com/groups/927077525341183/`
+    - `Rocky Patel Cigars Group` `https://www.facebook.com/groups/RockyPatelCigarsGroup/`
+    - `Philippine Cigar Enthusiasts (PCE)` `https://www.facebook.com/groups/162099949278655/`
+    - `Cigar family` `https://www.facebook.com/groups/780567836810716/`
+    - `Smoke Classy Cigar Lifestyle` `https://www.facebook.com/groups/210232828290311/`
+    - `The Thunderkats Cigar Group` `https://www.facebook.com/groups/228907807644828/`
+    - `Women Who Love Cigars` `https://www.facebook.com/groups/2811789292405613/`
+    - `Cigar Aficionados BOTL and SOTL` `https://www.facebook.com/groups/242454582626888/`
+    - `Cigar, The Lifestyle & Friendship of Atlanta` `https://www.facebook.com/groups/1808959169379659/`
+    - `Texas Worldwide Cigar Social Club` `https://www.facebook.com/groups/381879882803260/`
+  - Held `Cuenca Cigars of Hollywood` because live page text triggered a no-promo signal.
+  - Created ready-for-confirmation kit:
+    - `output/social/facebook-group-thanks-add-2026-06-14-batch-02/POST-KIT.md`
+    - `output/social/facebook-group-thanks-add-2026-06-14-batch-02/publish-log.json`
+  - No Batch 02 live posts, media uploads, or submit clicks have been performed yet; exact action-time confirmation is required before posting.
+- 2026-06-14 Batch 02 posting:
+  - User gave action-time confirmation: `yes, post batch 02`.
+  - Posted/submitted the supplied image with each tailored no-link/no-sales thanks-for-the-add caption to all ten Batch 02 groups through the live Facebook UI.
+  - Visible feed readback after posting:
+    - `Rocky Patel Cigars Group`
+    - `Women Who Love Cigars`
+    - `Cigar Aficionados BOTL and SOTL`
+    - `Texas Worldwide Cigar Social Club`
+  - Submitted with pending-admin-approval readback after posting:
+    - `Cuban Cigar Federation`
+    - `Philippine Cigar Enthusiasts (PCE)`
+    - `Cigar family`
+    - `Smoke Classy Cigar Lifestyle`
+    - `The Thunderkats Cigar Group`
+    - `Cigar, The Lifestyle & Friendship of Atlanta`
+  - Updated `output/social/facebook-group-thanks-add-2026-06-14-batch-02/POST-KIT.md` and `output/social/facebook-group-thanks-add-2026-06-14-batch-02/publish-log.json` with posted/submitted statuses.
+- 2026-06-14 remaining thanks-for-the-add count audit:
+  - Recounted saved June 12 new-join campaign sources: `docs/facebook-public-group-join-results-2026-06-12.csv` and `docs/facebook-whiskey-bourbon-cigar-large-join-final-status-2026-06-12.csv`.
+  - Campaign sources contain 73 unique joined/already-joined group URLs.
+  - Thanks-for-the-add posts have been posted or submitted to 15 unique campaign groups: 9 visible/public readbacks and 6 submitted pending admin approval.
+  - Raw unposted campaign remainder is 58 unique joined URLs.
+  - After known holds (3 among the remaining campaign URLs) and known commercial/sales-surface skips (3), the next live-check pool is 52 likely candidate groups.
+  - If also counting the broader saved joined-sidebar list `docs/facebook-joined-cigar-groups-2026-06-12.csv`, there are 125 unique joined URLs, 110 raw unposted URLs, and 104 likely candidates after the same known exclusions; treat that as broader inventory, not the current June 12 new-join campaign count.
+- 2026-06-14 Batch 03 prep:
+  - User asked to make batches of 20 and start posting.
+  - Continued with the `facebook-group-posting-prep` skill and Codex in-app browser read-only checks.
+  - Scanned 25 remaining June 12 new-join campaign candidates to produce a full 20-group Batch 03.
+  - Ready Batch 03 targets:
+    - `Hội Cigar Chất Lượng.` `https://www.facebook.com/groups/1015932059546283/`
+    - `Cigars,Whiskey Club` `https://www.facebook.com/groups/cigarwomen/`
+    - `Florida Cigar Lovers` `https://www.facebook.com/groups/993350998687640/`
+    - `Queen City Cigar Fest` `https://www.facebook.com/groups/568749817712088/`
+    - `The Cigar Connoisseurs` `https://www.facebook.com/groups/1502119617384429/`
+    - `Black Star Line Cigars` `https://www.facebook.com/groups/3567600089970263/`
+    - `Cigar Smokers That Post More Than Only Cigars` `https://www.facebook.com/groups/467012384195622/`
+    - `cigar tamhi sonirhogchid` `https://www.facebook.com/groups/650050733300294/`
+    - `Smoke and Sip cigar` `https://www.facebook.com/groups/913721585695105/`
+    - `Bourbon and Cigars Lovers` `https://www.facebook.com/groups/848932042475785/`
+    - `NY Cigar Smokers Club` `https://www.facebook.com/groups/128943639068251/`
+    - `Cigar Family` `https://www.facebook.com/groups/50413994481/`
+    - `Cigars, Cigarillo’s and More` `https://www.facebook.com/groups/CigarsCigarillosandMore/`
+    - `CIGAR MAFIA` `https://www.facebook.com/groups/CIGARMOFIA/`
+    - `Cigar ซิการ์ ซิก้าไทย` `https://www.facebook.com/groups/251346278054757/`
+    - `Elements Cigar Lounge` `https://www.facebook.com/groups/477509717657788/`
+    - `Facebook Cigar Group: Post Cigar Events & News: www.TheCigarNetwork.net` `https://www.facebook.com/groups/cigareventsandnews/`
+    - `Grown Smokes Business Cigar Group` `https://www.facebook.com/groups/1643916089136775/`
+    - `Cigar Talk Podcast` `https://www.facebook.com/groups/258321875092252/`
+    - `Cigar Aficionados` `https://www.facebook.com/groups/569683023063268/`
+  - Held from this scan:
+    - `Cigar Group 2` because live scan did not show a composer.
+    - `CLE Cigar Company Est. 2012` because live scan did not show a composer.
+    - `Cigars & Roses` because live scan surfaced an unavailable/error signal.
+  - Ready-looking but not included because Batch 03 is capped at 20:
+    - `Cigars & Shoe Gallery` `https://www.facebook.com/groups/467667114984291/`
+    - `Cigar Aficionados` `https://www.facebook.com/groups/24448821278059176/`
+  - Created ready-for-confirmation kit:
+    - `output/social/facebook-group-thanks-add-2026-06-14-batch-03/POST-KIT.md`
+    - `output/social/facebook-group-thanks-add-2026-06-14-batch-03/publish-log.json`
+  - No Batch 03 live posts, media uploads, or submit clicks have been performed yet; exact action-time confirmation is required before posting.
+- 2026-06-14 Batch 03 posting attempt:
+  - User gave action-time confirmation: `yes, post batch 03`.
+  - Attempted to start posting through the logged-in Codex in-app/browser-extension Facebook session.
+  - No Batch 03 posts were created: the browser surface blocked clipboard-backed caption paste/type with `Browser Use virtual clipboard is not installed`, OS-level paste did not reach the embedded Facebook editor, and the native file picker/image upload route did not open from the in-app browser controls.
+  - A copied temporary Playwright browser profile did not preserve a usable logged-in Facebook session, and the normal Chrome Default profile cookie database is locked by the user's active Chrome process.
+  - The blank Batch 03 composer was closed and verified empty; no media upload, Post click, or submit click completed.
+  - Updated `output/social/facebook-group-thanks-add-2026-06-14-batch-03/POST-KIT.md` and `output/social/facebook-group-thanks-add-2026-06-14-batch-03/publish-log.json` with `blocked_before_posting_browser_input_upload_unavailable`.
+  - Safe unblock path: get explicit user permission to close the active Chrome windows temporarily, copy the unlocked Default profile session into a Playwright profile with file-upload support, then retry Batch 03 posting from the prepared kit.
+- 2026-06-14 Batch 03 close-Chrome retry:
+  - User gave explicit permission: `yes, close Chrome and retry batch 03`.
+  - Closed local Chrome processes and copied Chrome Default profile session files into a temporary Playwright profile with real file-upload support.
+  - Playwright login check against `https://www.facebook.com/groups/1015932059546283/` opened Facebook logged out/content-unavailable, so the copied Chrome Default profile was not the active logged-in Facebook group session.
+  - Removed the temporary copied browser profiles after the retry to avoid leaving copied session data in temp folders.
+  - Rechecked the logged-in Codex in-app Facebook session; it remained joined/composer-visible, but the browser API still blocked `Ctrl+V` through the missing virtual clipboard and exposed no file-upload capability for the supplied image.
+  - Closed the retry blank composer and verified no caption, media upload, Post click, or submit click completed. Batch 03 remains unposted.
+  - Updated `output/social/facebook-group-thanks-add-2026-06-14-batch-03/POST-KIT.md` and `output/social/facebook-group-thanks-add-2026-06-14-batch-03/publish-log.json` with the close-Chrome retry notes.
 
 ## 2026-06-13 AI Agents Audit And Event Import Agent Completion
 
@@ -9368,3 +9602,735 @@ Use this order for follow-up cleanup and fixes:
   - Direct `HEAD` probes for all three new `https://yuzucigarclub.com/assets/news/researched/june-13-2023-*` assets returned HTTP `200` with image content types.
   - API readback returned `imageCount = 3`, the expected image URLs/positions/source URLs, `status = published`, and `startsWithH1 = false`.
   - `git diff --check` passed for touched text files; only expected CRLF working-copy warnings were emitted.
+
+### 2026-06-14 Cigar Flow Facebook Social Run
+
+- Automation requested: publish the Phoenix-date `2026-06-14` Cigar Flow story to the Facebook Page without `--force`, so an existing manifest-published Page post would remain skipped instead of duplicating.
+- Used the requested env vars:
+  - `AWS_PROFILE=ycc-mcp`
+  - `AWS_SDK_LOAD_CONFIG=1`
+  - `YCC_FACEBOOK_SECRET_ID=ycc/social/facebook/prod`
+- Ran:
+  - `npm run cigar-flow:facebook -- --date=2026-06-14 --publish-page`
+  - Windows-safe invocation used `npm.cmd` from PowerShell to avoid the local `npm.ps1` execution-policy trap while preserving the requested npm script path.
+- Resulting artifact folder:
+  - `C:\Users\qfash\Documents\New project\output\social\cigar-flow-facebook-2026-06-14-cigar-industry-highlights-june-14th-press-releases`
+- Manifest verification from `cigar-flow-facebook-social-manifest.json`:
+  - `story.slug = "cigar-industry-highlights-june-14th-press-releases"`
+  - `story.publishedAt = "2026-06-14T15:33:45.484Z"`
+  - `facebook_page.status = "published"`
+  - `facebook_page.postId = "1148511071677542_122109314331350335"`
+  - `facebook_page.permalinkUrl = "https://www.facebook.com/122099394543350335/posts/122109314331350335"`
+  - `facebook_group.status = "kit_created"`
+- Group post kit verification:
+  - `FACEBOOK-GROUP-POST-KIT.md` exists in the output folder and was generated at `2026-06-14 10:03:13 -07:00`.
+- Runtime:
+  - About 1 minute for the publish run, plus verification and ledger updates in the same turn.
+
+### 2026-06-15 Cigar Flow Facebook Social Run
+
+- Automation requested: publish the Phoenix-date `2026-06-15` Cigar Flow story to the Facebook Page without `--force`, so an existing manifest-published Page post would remain skipped instead of duplicating.
+- Used the requested env vars:
+  - `AWS_PROFILE=ycc-mcp`
+  - `AWS_SDK_LOAD_CONFIG=1`
+  - `YCC_FACEBOOK_SECRET_ID=ycc/social/facebook/prod`
+- Ran:
+  - `npm run cigar-flow:facebook -- --date=2026-06-15 --publish-page`
+  - Windows-safe invocation used `npm.cmd` from PowerShell to avoid the local `npm.ps1` execution-policy trap while preserving the requested npm script path.
+- Resulting artifact folder:
+  - `C:\Users\qfash\Documents\New project\output\social\cigar-flow-facebook-2026-06-15-daily-cigar-flow-update-june-15`
+- Manifest verification from `cigar-flow-facebook-social-manifest.json`:
+  - `story.slug = "daily-cigar-flow-update-june-15"`
+  - `story.publishedAt = "2026-06-15T16:39:47.398Z"`
+  - `facebook_page.status = "published"`
+  - `facebook_page.postId = "1148511071677542_122110344843350335"`
+  - `facebook_page.permalinkUrl = "https://www.facebook.com/122099394543350335/posts/122110344843350335"`
+  - `facebook_group.status = "kit_created"`
+  - `facebook_group.reason` confirms this run created a manual/browser-ready group kit because normal Facebook Groups API publishing is deprecated/removed.
+- Group post kit verification:
+  - `FACEBOOK-GROUP-POST-KIT.md` exists in the output folder, length `2072` bytes, last write `2026-06-15 10:02:39 -07:00`.
+- Runtime:
+  - About 27 seconds for the publish run, plus verification and ledger updates in the same turn.
+
+### 2026-06-16 Cigar Flow Facebook Social Run
+
+- Automation requested: publish the Phoenix-date `2026-06-16` Cigar Flow story to the Facebook Page without `--force`, so an existing manifest-published Page post would remain skipped instead of duplicating.
+- Used the requested env vars:
+  - `AWS_PROFILE=ycc-mcp`
+  - `AWS_SDK_LOAD_CONFIG=1`
+  - `YCC_FACEBOOK_SECRET_ID=ycc/social/facebook/prod`
+- Ran:
+  - `npm run cigar-flow:facebook -- --date=2026-06-16 --publish-page`
+  - Windows-safe invocation used `npm.cmd` from PowerShell to avoid the local `npm.ps1` execution-policy trap while preserving the requested npm script path.
+- Resulting artifact folder:
+  - `C:\Users\qfash\Documents\New project\output\social\cigar-flow-facebook-2026-06-16-latest-cigar-flow-updates-june-16-edition`
+- Manifest verification from `cigar-flow-facebook-social-manifest.json`:
+  - `story.slug = "latest-cigar-flow-updates-june-16-edition"`
+  - `story.publishedAt = "2026-06-16T16:32:50.365Z"`
+  - `facebook_page.status = "published"`
+  - `facebook_page.postId = "1148511071677542_122111420919350335"`
+  - `facebook_page.permalinkUrl = "https://www.facebook.com/122099394543350335/posts/122111420919350335"`
+  - `facebook_group.status = "kit_created"`
+  - `facebook_group.reason` confirms this run created a manual/browser-ready group kit because normal Facebook Groups API publishing is deprecated/removed.
+- Group post kit verification:
+  - `FACEBOOK-GROUP-POST-KIT.md` exists in the output folder, length `2075` bytes, last write `2026-06-16 10:02:10 -07:00`.
+- Runtime:
+  - About 38 seconds for the publish run, plus verification and ledger updates in the same turn.
+
+### 2026-06-17 Cigar Flow Facebook Social Run
+
+- Automation requested: publish the Phoenix-date `2026-06-17` Cigar Flow story to the Facebook Page without `--force`, so an existing manifest-published Page post would remain skipped instead of duplicating.
+- Used the requested env vars:
+  - `AWS_PROFILE=ycc-mcp`
+  - `AWS_SDK_LOAD_CONFIG=1`
+  - `YCC_FACEBOOK_SECRET_ID=ycc/social/facebook/prod`
+- Ran:
+  - `npm run cigar-flow:facebook -- --date=2026-06-17 --publish-page`
+  - Windows-safe invocation used `npm.cmd` from PowerShell to avoid the local `npm.ps1` execution-policy trap while preserving the requested npm script path.
+- Resulting artifact folder:
+  - `C:\Users\qfash\Documents\New project\output\social\cigar-flow-facebook-2026-06-17-latest-cigar-flow-updates-june-17-edition`
+- Manifest verification from `cigar-flow-facebook-social-manifest.json`:
+  - `story.slug = "latest-cigar-flow-updates-june-17-edition"`
+  - `story.publishedAt = "2026-06-17T16:16:42.007Z"`
+  - `facebook_page.status = "published"`
+  - `facebook_page.postId = "1148511071677542_122112018645350335"`
+  - `facebook_page.permalinkUrl = "https://www.facebook.com/122099394543350335/posts/122112018645350335"`
+  - `facebook_group.status = "kit_created"`
+  - `facebook_group.reason` confirms this run created a manual/browser-ready group kit because normal Facebook Groups API publishing is deprecated/removed.
+- Group post kit verification:
+  - `FACEBOOK-GROUP-POST-KIT.md` exists in the output folder, length `2027` bytes, last write `2026-06-17 10:02:19 -07:00`.
+- Runtime:
+  - About 1 minute for the publish run, plus verification and ledger updates in the same turn.
+
+### 2026-06-18 Cigar Flow Facebook Social Run
+
+- Automation requested: publish the Phoenix-date `2026-06-18` Cigar Flow story to the Facebook Page without `--force`, so an existing manifest-published Page post would remain skipped instead of duplicating.
+- Used the requested env vars:
+  - `AWS_PROFILE=ycc-mcp`
+  - `AWS_SDK_LOAD_CONFIG=1`
+  - `YCC_FACEBOOK_SECRET_ID=ycc/social/facebook/prod`
+- Ran:
+  - `npm run cigar-flow:facebook -- --date=2026-06-18 --publish-page`
+  - Windows-safe invocation used `npm.cmd` from PowerShell to avoid the local `npm.ps1` execution-policy trap while preserving the requested npm script path.
+- Resulting artifact folder:
+  - `C:\Users\qfash\Documents\New project\output\social\cigar-flow-facebook-2026-06-18-daily-cigar-flow-update-june-18`
+- Manifest verification from `cigar-flow-facebook-social-manifest.json`:
+  - `story.slug = "daily-cigar-flow-update-june-18"`
+  - `story.publishedAt = "2026-06-18T16:10:23.440Z"`
+  - `facebook_page.status = "published"`
+  - `facebook_page.postId = "1148511071677542_122112684255350335"`
+  - `facebook_page.permalinkUrl = "https://www.facebook.com/122099394543350335/posts/122112684255350335"`
+  - `facebook_group.status = "kit_created"`
+  - `facebook_group.reason` confirms this run created a manual/browser-ready group kit because normal Facebook Groups API publishing is deprecated/removed.
+- Group post kit verification:
+  - `FACEBOOK-GROUP-POST-KIT.md` exists in the output folder, length `2150` bytes, last write `2026-06-18 10:01:41 -07:00`.
+- Runtime:
+  - About 2 minutes total including publish, verification, ledger, and memory updates.
+
+### 2026-06-18 Cognito Signup Issue Check
+
+- Goal: check whether any live users are having trouble signing up.
+- Used read-only AWS checks with `AWS_PROFILE=ycc-mcp`, `AWS_SDK_LOAD_CONFIG=1`, region `us-east-1`, account `374587466106` through `CodexMcpYccOperatorRole`.
+- Audit window: `2026-06-09T00:00:00Z` through `2026-06-18T20:14:16Z`.
+- Checked Cognito user pool `YCCMembers` (`us-east-1_63U9PflAX`), app client `ycc-storefront` (`2i2nvtt41l94n0mivc4tu4f9ms`), CloudTrail Cognito events, Lambda logs `/aws/lambda/ycyyy`, and API Gateway access logs `/aws/apigateway/ycc-api-access`.
+- Cognito user status:
+  - Pool has 12 users total: 10 `CONFIRMED`, 2 `UNCONFIRMED`.
+  - Four users were created during the audit window: 2 `CONFIRMED`, 2 `UNCONFIRMED`.
+  - The two unconfirmed users were created on `2026-06-12` Phoenix time; raw emails were masked in command output and intentionally not recorded here.
+- CloudTrail Cognito activity in the audit window:
+  - `SignUp`: 6 successful events.
+  - `ConfirmSignUp`: 3 events; 2 successful, 1 failed with `CodeMismatchException` at `2026-06-13T01:26:30Z` (`2026-06-12 18:26:30 -07:00`) with message `Invalid verification code provided, please try again.`
+  - `ResendConfirmationCode`: 3 successful events.
+  - `InitiateAuth`: 31 events; 6 failed with `NotAuthorizedException` / incorrect username or password clustered around `2026-06-13T05:44:49Z` to `2026-06-13T05:45:16Z`.
+  - `AdminDeleteUser`: 2 events, consistent with test/setup cleanup.
+- Cognito configuration readback:
+  - `AutoVerifiedAttributes=email`.
+  - Account recovery uses `verified_email`.
+  - Email sending account is `COGNITO_DEFAULT`.
+  - App client auth flows include `ALLOW_USER_PASSWORD_AUTH`, `ALLOW_USER_SRP_AUTH`, and `ALLOW_REFRESH_TOKEN_AUTH`.
+  - `PreventUserExistenceErrors=ENABLED`.
+- Lambda/API evidence:
+  - Real June 12 confirmations predated the June 13 post-confirmation alert/welcome-email deployment, so no Lambda post-confirmation logs are expected for those actual users.
+  - Synthetic June 13 Cognito post-confirmation invokes logged `cognito_welcome_email_pending_ses`, `admin_operational_alert_dispatched`, and `request_completed`, confirming the live trigger path worked after that deployment.
+  - `POST /commerce/membership-session` had 17 calls in the window: three `200` pass activations after confirmations, ten `400`, two `409`, and two `500`.
+  - The non-200 membership-session calls came from the operator IP and match test/config probes, including the known `Your account cannot currently make live charges` readiness checks; they do not look like customer signup failures.
+- Conclusion:
+  - There is evidence of signup friction, but not a broad signup outage.
+  - Current actionable users: 2 enabled `UNCONFIRMED` Cognito accounts stuck at email confirmation.
+  - Specific observed failure: one wrong confirmation-code attempt on June 12 Phoenix time, followed by successful resend-code activity in the overall window.
+  - Recommended follow-up: reach out to or resend confirmation codes for the two unconfirmed accounts, and continue monitoring `UNCONFIRMED` users plus `CodeMismatchException`/`NotAuthorizedException` CloudTrail events.
+
+### 2026-06-18 Signup Confirmation Recovery Fix And Resend
+
+- Goal: fix the observed Cognito signup confirmation recovery friction and resend codes to currently unconfirmed users.
+- Root cause handled:
+  - Cognito was accepting signup and resend requests, but an account that remained `UNCONFIRMED` could fall into a poor recovery path after reload/sign-in retry.
+  - `UserNotConfirmedException` from inline password auth was previously treated as a generic auth error instead of reopening the confirmation step.
+  - The Friends & Family confirmation form also depended on email already being in component state, so a user returning with an existing code after reload had no editable email field in that confirmation state.
+- Implemented:
+  - `src/lib/cognito-auth.ts` now maps `UserNotConfirmedException` to `status: "confirmation_required"` with Yuzu-specific recovery copy.
+  - `src/components/friends-family-pass-claim.tsx` now reopens confirmation recovery when sign-in reports an unconfirmed account and automatically requests a new Cognito code for that email.
+  - The Friends & Family page now exposes an `I already have a confirmation code` recovery button from both signup and sign-in forms.
+  - The confirmation form now includes an editable required email field plus the existing one-time-code input and `Send a new code` action.
+- Tests added/updated:
+  - Added a Cognito auth regression for `UserNotConfirmedException`.
+  - Updated the Friends & Family page contract test to require reload-safe confirmation recovery and sign-in recovery wiring.
+- Live Cognito action:
+  - Used `AWS_PROFILE=ycc-mcp`, `AWS_SDK_LOAD_CONFIG=1`, region `us-east-1`.
+  - Rechecked caller identity as account `374587466106`.
+  - Found 2 current `UNCONFIRMED` users and successfully ran `resend-confirmation-code` for both.
+  - Both resend responses used `EMAIL`; raw emails were masked in command output and are not recorded here.
+- Verification:
+  - Red focused test run failed before implementation on the new `confirmation_required` and recovery-button assertions.
+  - `node --import tsx --test tests\cognito-auth.test.ts tests\friends-family-page.test.ts` passed 24/24 after implementation.
+  - `npx eslint src\lib\cognito-auth.ts src\components\friends-family-pass-claim.tsx tests\cognito-auth.test.ts tests\friends-family-page.test.ts` passed.
+  - `npx tsc --noEmit` passed.
+  - In-app Browser QA on `http://127.0.0.1:3027/friends-family/` verified page identity, nonblank content, no console warnings/errors, and the recovery button opening exactly one confirmation form with an email field, code field, and resend button.
+  - Browser screenshot capture timed out twice; fallback Playwright screenshots were captured outside the repo for desktop and mobile after setting the age-confirmation local storage value. Both fallback captures had zero console warnings/errors and showed no obvious overlap or clipping.
+  - Full `npm test -- --test-name-pattern "Cognito|friends and family"` invocation ran the suite and passed 571/571.
+  - `npm run build` passed on Next.js `16.2.9` and generated 1,022 static pages.
+- Amplify deployment:
+  - Initial `deploy_amplify_static.py --skip-build` attempt created POSIX zip `yuzu-cigar-club-amplify-deploy-signup-confirmation-recovery-2026-06-18-2026-06-18-133142.zip` and Amplify job `157`, but the signed upload connection reset before the deployment file uploaded.
+  - A retry created zip `yuzu-cigar-club-amplify-deploy-signup-confirmation-recovery-2026-06-18-retry-2026-06-18-133512.zip`; `create-deployment` left job `158` pending before the helper exited.
+  - Both zips were verified to contain 9,479 entries, `index.html`, and `_next/static/...` at archive root with no backslash paths or bad parent folders.
+  - The roles available in this session could not call `amplify:StopJob`, and `start-deployment --job-id` for jobs `157` and `158` reported that the deployment file had not been uploaded.
+  - Uploaded the verified retry zip to private S3 key `s3://classroom2/ycc/amplify-deploys/yuzu-cigar-club-amplify-deploy-signup-confirmation-recovery-2026-06-18.zip`.
+  - Started Amplify deployment from a short-lived presigned S3 source URL; job `158` reached `SUCCEED` at `2026-06-18T20:39:08Z`.
+  - Required smokes passed:
+    - `https://staging.d2yxcklt245wh0.amplifyapp.com/friends-family/?deploy=158` returned HTTP `200`, length `85023`, and contained `I already have a confirmation code`.
+    - Referenced asset `/_next/static/chunks/2gvbee7pkfg8e.css` returned HTTP `200`.
+    - `https://www.yuzucigarclub.com/friends-family/?deploy=158` returned HTTP `200`, length `85023`.
+  - Remaining deploy note: job `157` remains `PENDING` from the interrupted upload and could not be stopped with current permissions; live job `158` is the successful deployed fix.
+- Cleanup:
+  - Moved both generated root deploy zip files to `C:\Users\qfash\Documents\Yuzu Deploy Artifacts\`.
+  - Stopped local dev server process on port `3027`.
+
+### 2026-06-18 Cognito Confirmation Email Link Fix
+
+- Goal: update the Cognito signup confirmation email so users have the correct Friends & Family page URL for entering the verification code.
+- Implemented:
+  - Updated `infra/ycc-phase1-edge.yaml` verification email copy to point users to `https://yuzucigarclub.com/friends-family/`.
+  - Added a regression assertion in `tests/cognito-auth.test.ts` so the branded Cognito verification template keeps the Friends & Family URL.
+- Live Cognito action:
+  - Confirmed AWS caller identity with `AWS_PROFILE=ycc-mcp`, `AWS_SDK_LOAD_CONFIG` implicit CLI profile loading, region `us-east-1`, account `374587466106`, role `CodexMcpYccOperatorRole`.
+  - `describe-stacks --stack-name ycc-phase1-edge` returned no stack, matching prior notes that the phase 1 resources were created directly rather than managed by a live CloudFormation stack.
+  - Read live user pool `YCCMembers` (`us-east-1_63U9PflAX`) before update; the verification email still had the old "Yuzu Friends & Family page" copy without the direct `/friends-family/` link.
+  - Updated the live Cognito user pool using a full `DescribeUserPool`-derived `update-user-pool` payload to avoid Cognito resetting omitted settings to defaults. Only `EmailVerificationMessage` and `VerificationMessageTemplate.EmailMessage` were changed.
+  - Live readback confirmed both Cognito email-message fields now contain `Enter this code at https://yuzucigarclub.com/friends-family/ to confirm your account and finish activating your invite.`
+  - Readback after update preserved observed live `MfaConfiguration=OPTIONAL`, `UserPoolTier=ESSENTIALS`, and current `LambdaConfig={}`.
+- Verification:
+  - `node --import tsx --test tests\cognito-auth.test.ts` passed 23/23.
+  - `git diff --check -- infra/ycc-phase1-edge.yaml tests/cognito-auth.test.ts docs/codex-worktree-tracking.md` passed with only expected CRLF working-copy warnings.
+
+### 2026-06-18 AWS SES Production Access Final Denial
+
+- User provided final AWS Support response for `RE:[CASE 177809591700724] SES: Production Access`.
+- AWS Support conclusion:
+  - SES production access will not be granted for this account/use case.
+  - AWS says it cannot provide specific denial details for security reasons.
+  - AWS says there will be no additional responses on the subject.
+- Project impact:
+  - Treat AWS SES outbound production sending as final-denied, not pending/reopenable.
+  - Keep `FEATURE_SES=pending_production_access` or another non-ready value so welcome, newsletter, support contact, and support-send paths do not attempt production SES outbound sends.
+  - Cognito verification emails can continue on `COGNITO_DEFAULT`; do not switch Cognito to SES `DEVELOPER` for this account while production access remains denied.
+  - Next implementation path is replacing outbound SES with an approved transactional email provider/sender path, then smoke testing before enabling production outbound mail.
+- Documentation updated:
+  - `.env.example` now notes case `177809591700724` was final-denied and keeps `FEATURE_SES` non-ready.
+  - `docs/aws-live-architecture-setup.md` now marks the SES production gate as final-denied and removes the prior appeal/reopen wording.
+  - `infra/lambda/ycc-api/README.md` and `docs/superpowers/plans/2026-05-07-yuzu-production-launch-readiness.md` now point launch work toward a replacement outbound email provider instead of SES production access.
+
+### 2026-06-18 Current Email Path Audit Without SES Production Access
+
+- Goal: research the current email path and understand how detailed the confirmation email can be without SES production access.
+- Live read-only checks:
+  - AWS caller identity used `AWS_PROFILE=ycc-mcp`, region `us-east-1`, account `374587466106`, role `CodexMcpYccOperatorRole`.
+  - Cognito user pool `YCCMembers` (`us-east-1_63U9PflAX`) has `EmailSendingAccount=COGNITO_DEFAULT`, `SourceArn=arn:aws:ses:us-east-1:374587466106:identity/support@yuzucigarclub.com`, `ReplyToEmailAddress=support@yuzucigarclub.com`, `DefaultEmailOption=CONFIRM_WITH_CODE`, and current verification subject/body with the `/friends-family/` link.
+  - Cognito user pool live `LambdaConfig={}`; the current signup-code path is Cognito built-in delivery, not a Lambda custom-message or post-confirmation path.
+  - App client `ycc-storefront` (`2i2nvtt41l94n0mivc4tu4f9ms`) has `ALLOW_USER_PASSWORD_AUTH`, `ALLOW_USER_SRP_AUTH`, `ALLOW_REFRESH_TOKEN_AUTH`, OAuth code flow, and scopes `email`, `openid`, `profile`.
+  - Live Lambda alias `ycyyy:live` version `40` has `FEATURE_SES=pending_production_access`; live deep health returned `capabilities.ses=pending_production_access`.
+  - SESv2 account remains `ProductionAccessEnabled=false`, `SendingEnabled=true`, `EnforcementStatus=HEALTHY`, `ReviewDetails.Status=DENIED`, case `177809591700724`, `Max24HourSend=200`, `MaxSendRate=1`, `SentLast24Hours=0`.
+- Repo path:
+  - Friends & Family signup calls Cognito directly from `src/lib/cognito-auth.ts` via `SignUp`, `ConfirmSignUp`, and `ResendConfirmationCode`; the confirmation email comes from the Cognito user-pool template in `infra/ycc-phase1-edge.yaml`.
+  - Lambda has detailed HTML/text templates for Cognito welcome email and newsletter follow-ups, but they call the SESv2 `sendSupportEmail` helper and are gated by `FEATURE_SES !== "ready"`.
+  - Admin/operator `POST /support/email-send` is also gated and returns `409 ses_not_ready` when `FEATURE_SES` is non-ready.
+  - Public `POST /support/contact` currently calls the SES helper directly and has tests expecting SES delivery; this is a current mismatch with the final-denied SES state and should be guarded or moved to the replacement provider before relying on the contact form API path.
+- AWS documentation findings:
+  - Cognito `COGNITO_DEFAULT` uses Cognito built-in email delivery and can use a verified `SourceArn` as the custom From address, but has limited daily delivery volume compared with SES `DEVELOPER`.
+  - Cognito verification-code email templates require `{####}`, can be up to 20,000 UTF-8 characters including the code, and AWS docs say HTML tags may be used.
+  - Cognito custom message Lambda responses that set `emailMessage` or `emailSubject` require `EmailSendingAccount=DEVELOPER`; returning those fields under `COGNITO_DEFAULT` causes `InvalidLambdaResponseException`.
+  - Cognito custom email sender Lambda can route Cognito notifications to a third-party provider, but that is a new Lambda/provider integration and would process Cognito secrets/codes; it is not the current path.
+
+### 2026-06-18 Friends & Family Confirmed-Code Loop And Stripe Customer Fix
+
+- Goal: investigate the user-reported confirmation-code loop for the Ray account and make the Friends & Family signup path resilient enough that confirmed users do not get stranded before Stripe customer creation.
+- Live investigation:
+  - Used `AWS_PROFILE=ycc-mcp`, region `us-east-1`, account `374587466106`, Cognito user pool `YCCMembers` (`us-east-1_63U9PflAX`), app client `ycc-storefront` (`2i2nvtt41l94n0mivc4tu4f9ms`).
+  - The user-provided Ray account is `CONFIRMED`, enabled, and `email_verified=true`; Cognito last modified the account at `2026-06-18T14:22:55.993000-07:00`.
+  - CloudTrail showed successful `ConfirmSignUp` events for that account on `2026-06-18` around `14:22` through `14:25` Phoenix time, with no Cognito rejection in the checked window.
+  - Root cause: the frontend could keep a confirmed user in the code form after reload/recovery because the page depended on password state still being present after confirmation. That also meant the Friends & Family pass activation endpoint was not reached, so Stripe customer creation/linking did not happen.
+- Implemented:
+  - `src/lib/cognito-auth.ts` maps `UserNotConfirmedException` to a structured `confirmation_required` sign-in result.
+  - `confirmCognitoSignUp` treats AWS "already confirmed" responses as recovery success and now exposes `alreadyConfirmed` so the UI can distinguish a fresh code acceptance from an old-code recovery.
+  - `resendCognitoSignUpCode` treats AWS "User is already confirmed" responses as sign-in recovery instead of another failed code-loop state.
+  - `src/components/friends-family-pass-claim.tsx` now has a reusable `activateFriendsFamilyPass` path. Fresh successful confirmations activate/link the Box Access Pass before inline sign-in recovery; already-confirmed old-code recovery moves users to sign-in first, then activates after successful sign-in.
+  - The confirmation form remains reload-safe with editable email, confirmation code, resend, and "I already have a confirmation code" entry points from both signup and sign-in.
+  - `src/lib/stripe-checkout.ts` now types the Friends & Family `membershipClaim` fields returned by the backend, including `stripeCustomerId`.
+- Live Ray repair:
+  - Called the production `POST /commerce/membership-session` Friends & Family offer path for the confirmed Ray account.
+  - Response returned `membershipClaim.tier=Box Access Pass`, `status=member`, `memberStatus=active`, `stripeCustomerId` present, and `expiresAt=2027-06-18T21:50:04.296Z`.
+- Verification:
+  - `node --import tsx --test tests\cognito-auth.test.ts tests\friends-family-page.test.ts` passed 26/26.
+  - `npx eslint src\lib\cognito-auth.ts src\components\friends-family-pass-claim.tsx src\lib\stripe-checkout.ts tests\cognito-auth.test.ts tests\friends-family-page.test.ts` passed.
+  - `npx tsc --noEmit` passed.
+  - `git diff --check -- src\components\friends-family-pass-claim.tsx src\lib\cognito-auth.ts src\lib\stripe-checkout.ts tests\cognito-auth.test.ts tests\friends-family-page.test.ts` passed with only expected CRLF warnings.
+  - Local Chrome/Playwright smoke on `http://127.0.0.1:3027/friends-family/` verified the recovery form opens with editable email, code input, resend button, confirm button, and zero console warnings/errors; screenshot saved under `output/`.
+  - `npm run build` passed on Next.js `16.2.9` and generated 1,022 static pages.
+- Amplify deployment:
+  - Used `deploy_amplify_static.py --skip-build --label signup-confirmation-stripe-recovery-2026-06-18`.
+  - Created POSIX deploy zip with 9,479 entries, `index.html` at archive root, `_next/static/...` present, and no backslash paths or bad parent folders.
+  - Amplify staging job `159` reached `SUCCEED` at `2026-06-18T14:48:44.052000-07:00`.
+  - Helper smoke passed with live HTTP `200` and referenced asset `/_next/static/chunks/2gvbee7pkfg8e.css` HTTP `200`.
+  - Route smokes passed:
+    - `https://staging.d2yxcklt245wh0.amplifyapp.com/friends-family/?deploy=159` returned HTTP `200`, length `85023`, and contained `I already have a confirmation code`.
+    - `https://www.yuzucigarclub.com/friends-family/?deploy=159` returned HTTP `200`, length `85023`, and contained `I already have a confirmation code`.
+- Cleanup:
+  - Moved generated deploy zip to `C:\Users\qfash\Documents\Yuzu Deploy Artifacts\`.
+  - Stopped the local dev server on port `3027`.
+
+### 2026-06-18 Stripe API Verification For Ray Customer
+
+- Goal: verify directly with the Stripe API whether the user-provided Ray account exists as a Stripe Customer after Friends & Family activation.
+- Stripe API checks:
+  - Read the production commerce Stripe key from AWS Secrets Manager secret `ycc/commerce/prod` without printing the key.
+  - Queried Stripe `/v1/account` using API version `2026-02-25.clover`; the configured key is `live` mode for account `acct_1SofC90r0rWXiDV5`, country `US`.
+  - Queried `/v1/customers?email=raymoorex%40gmail.com&limit=100`; exact email lookup returned 1 live Customer.
+  - Queried `/v1/customers/search` with `email:'raymoorex@gmail.com'`; Customer Search also returned 1 live Customer.
+- Result:
+  - Stripe Customer `cus_UjGLsLoZXrXwXk` exists in live mode with email `raymoorex@gmail.com`, name `Ray Moore`, created `2026-06-18T21:50:06Z`.
+  - Metadata confirms `membership_path=friends_family_box_pass`, `tier_key=box_access_pass`, `member_status=active`, and `friends_family_expires_at=2027-06-18T21:50:04.296Z`.
+  - If this customer is not visible in the Dashboard, check that the Dashboard is on Live mode and the selected Stripe account is `acct_1SofC90r0rWXiDV5`.
+
+### 2026-06-18 Stripe Dashboard Screenshot Recheck For Ray
+
+- User shared a Stripe Dashboard screenshot at `dashboard.stripe.com/acct_1SofC90r0rWXiDV5/customers` showing only the two older June 12 customers.
+- Re-ran live Stripe API checks immediately after the screenshot:
+  - Direct retrieve of `cus_UjGLsLoZXrXwXk` succeeded.
+  - Exact email list lookup for `raymoorex@gmail.com` returned 1 Customer.
+  - Customer Search for `email:'raymoorex@gmail.com'` returned 1 Customer.
+  - `/v1/customers?limit=10` returned Ray as the newest customer, ahead of the two customers visible in the screenshot.
+- Conclusion:
+  - The Stripe API and account are correct; the screenshot is showing a stale/unrefreshed Dashboard table.
+  - Direct Dashboard URL for the customer is `https://dashboard.stripe.com/acct_1SofC90r0rWXiDV5/customers/cus_UjGLsLoZXrXwXk`.
+
+### 2026-06-18 Cognito Other Recent Signup Lookup
+
+- Goal: answer which other non-Ray user email recently tried signup.
+- AWS read-only check:
+  - Confirmed caller identity with `AWS_PROFILE=ycc-mcp`, region `us-east-1`, account `374587466106`, role `CodexMcpYccOperatorRole`.
+  - Listed Cognito users in pool `YCCMembers` (`us-east-1_63U9PflAX`) and sorted by `UserCreateDate`.
+- Result:
+  - The other real recent signup email is `qfashion18@gmail.com`, name `QUON mOORE`, `CONFIRMED`, created `2026-06-12T22:35:09.042000-07:00`, modified `2026-06-12T22:36:37.953000-07:00`.
+  - Other nearby June 12 entries with `codex-*` addresses are smoke/test accounts, not real customer signups.
+
+### 2026-06-18 Friends & Family Confirmation Email Return Link
+
+- Goal: create a cleaner Cognito confirmation email and make the email link open `/friends-family/` with the code already filled in.
+- Implemented:
+  - Updated `infra/ycc-phase1-edge.yaml` Cognito verification template to a branded HTML email with visible confirmation code, "Open Yuzu confirmation page" button, and `https://yuzucigarclub.com/friends-family/?confirmation_code={####}` return link.
+  - Updated `src/components/friends-family-pass-claim.tsx` to read `confirmation_code` or `code` from the URL, enter the code into the confirmation form, clean the code from the visible URL, and remember the pending signup email in `localStorage` for same-browser return links.
+  - Updated confirmation help copy so users know the email link can fill the code or they can paste the code manually.
+  - Added regression assertions in `tests/cognito-auth.test.ts` and `tests/friends-family-page.test.ts` for the HTML template, return-link query parameter, code prefill, pending-email storage, and URL cleanup.
+- Live Cognito action:
+  - Confirmed AWS caller identity with `AWS_PROFILE=ycc-mcp`, region `us-east-1`, account `374587466106`, role `CodexMcpYccOperatorRole`.
+  - Read live user pool `YCCMembers` (`us-east-1_63U9PflAX`) before update; it still had the older plain-text `/friends-family/` body.
+  - Generated a full `DescribeUserPool`-derived `update-user-pool` payload and validated it before applying.
+  - The first live update attempt was rejected before any change because the temporary PowerShell payload omitted `AutoVerifiedAttributes`; regenerated the payload with the one-item arrays preserved and retried successfully.
+  - Live readback confirmed `EmailSendingAccount=COGNITO_DEFAULT`, `DefaultEmailOption=CONFIRM_WITH_CODE`, `MfaConfiguration=OPTIONAL`, `UserPoolTier=ESSENTIALS`, `AutoVerifiedAttributes=email`, `AttributesRequireVerificationBeforeUpdate=email`, and both current/legacy email-message fields containing the `confirmation_code={####}` return link.
+- Behavior note:
+  - Cognito's static verification template can insert `{####}` into the email and link, but it does not provide a user-email placeholder. Same-browser links therefore prefill both email and code from local storage; different-browser/device links prefill the code and still require the user to enter the signup email before clicking confirm.
+- Verification:
+  - `node --import tsx --test tests\cognito-auth.test.ts tests\friends-family-page.test.ts` passed 26/26.
+  - `npx eslint src\components\friends-family-pass-claim.tsx tests\cognito-auth.test.ts tests\friends-family-page.test.ts` passed.
+  - `npx tsc --noEmit` passed.
+  - `npm run build` passed on Next.js `16.2.9` and generated 1,022 static pages.
+  - Static preview Playwright check loaded `http://127.0.0.1:3031/friends-family/?confirmation_code=654321`, seeded the same-browser pending email, and verified the page showed the confirmation form with code `654321`, email `friend@example.com`, cleaned URL `http://127.0.0.1:3031/friends-family/`, and zero console warnings/errors.
+
+### 2026-06-18 SMS Signup Audit
+
+- Goal: check the SMS/signup paths without creating live signups or sending test SMS messages.
+- Local code/UI findings:
+  - The public Join Now newsletter/member-interest form captures an optional phone value and posts it to `POST /newsletter/subscribe`.
+  - The visible consent copy is email-only: `I am 21+ and agree to receive Yuzu Cigar Club email updates.`
+  - No public signup surface currently exposes explicit SMS/text-message consent copy.
+  - The compact education newsletter signup does not include a phone field.
+- Local verification:
+  - `node --import tsx --test tests/newsletter-signup.test.ts tests/lambda-ycc-api.test.ts --test-name-pattern "newsletter subscribe|Cognito post-confirmation sends owner SMS"` passed the loaded test files, reporting 152/152 pass.
+  - Playwright read-only production UI check on `https://www.yuzucigarclub.com/` verified the Join Now panel opens, shows First name, Last name, Email, Phone, monthly tier, email-consent copy, and no SMS/text-message copy, with zero console warnings/errors.
+- Live AWS read-only checks:
+  - Caller identity used `AWS_PROFILE=ycc-mcp`, region `us-east-1`, account `374587466106`, role `CodexMcpYccOperatorRole`.
+  - Cognito user pool `YCCMembers` (`us-east-1_63U9PflAX`) still has `LambdaConfig={}`, so live Cognito confirmations are not invoking the repo's post-confirmation Lambda path.
+  - The Lambda alias `ycyyy:live` is version `40`, has admin SMS alert phone config, SMS region `us-east-1`, max-price config, and web push config.
+  - `lambda get-policy` for `ycyyy:live` has API Gateway, Bedrock, SES, IoT, and EventBridge invoke permissions, but no Cognito invoke permission.
+  - SNS SMS attributes read back `MonthlySpendLimit=1`.
+  - CloudTrail showed recent Cognito signup/confirmation activity in the last seven days, with latest `ConfirmSignUp` at `2026-06-18T14:25:52-07:00`.
+  - CloudWatch Logs had no `admin_operational_alert_dispatched` `new_user` events in the last two days; last matching new-user SMS alert logs were synthetic/previous checks on `2026-06-13`.
+- Conclusion:
+  - Newsletter/member-interest signup is storing a phone number, but it is not an SMS opt-in flow and should not be treated as SMS marketing consent.
+  - Owner/admin SMS-on-new-user code passes locally and live Lambda has SMS config, but live Cognito is not wired to invoke it. Fixing this requires adding Cognito invoke permission on `ycyyy:live` and updating the live Cognito user pool `LambdaConfig.PostConfirmation` while preserving the full existing user-pool configuration.
+
+### 2026-06-18 Member Welcome Email E2E Setup
+
+- Goal: set up the post-membership welcome email end to end, using a creative Yuzu-branded email with member benefits and first-box tips, while respecting the final-denied SES production state.
+- Implemented:
+  - Cognito post-confirmation no longer attempts to send the customer welcome email; it logs `cognito_customer_welcome_deferred_until_membership` so the customer welcome is tied to completed membership activation instead of account confirmation.
+  - Added `maybeSendMemberWelcomeEmail` in `infra/lambda/ycc-api/index.js` with branded HTML/text content, member details, benefits, first-box storage tips, member-drop and humidor calls to action, and status reporting.
+  - Friends & Family Box Pass claims now call the welcome-email path after the entitlement is granted and Stripe Customer linkage is attempted. The API response exposes `membershipClaim.memberWelcomeEmail`.
+  - Stripe `customer.subscription.created` webhooks now call the welcome-email path after an active subscription is stored and the event is not a duplicate. The webhook response exposes `processing.subscription.memberWelcomeEmail`.
+  - `src/lib/stripe-checkout.ts` now types the optional `memberWelcomeEmail` claim response for storefront callers.
+  - Updated `infra/lambda/ycc-api/README.md` and `docs/aws-live-architecture-setup.md` to document that member welcome email is member-activation-only and still guarded by `FEATURE_SES` until outbound mail moves off final-denied SES.
+- Email delivery caveat:
+  - Local tests run with mocked `FEATURE_SES=ready` and assert the outbound SES command. Live Lambda currently keeps `FEATURE_SES=pending_production_access`; production activation events will therefore report `pending_ses` until a replacement transactional sender is configured and smoke-tested.
+- Live deployment:
+  - Confirmed AWS caller identity as `CodexMcpYccOperatorRole` in account `374587466106`.
+  - Packaged `output/ycc-api-member-welcome-email-20260618.zip` with code hash `EMYU78bngAbT/8yowT+hslmMk+IlVtyl0fDr8aLQsig=`.
+  - Updated Lambda `ycyyy`, published immutable version `41`, and promoted alias `ycyyy:live` from version `40` to version `41` with description `Live API member welcome email after activation 2026-06-18`.
+  - Alias readback: `FunctionVersion=41`, revision `9fe32ca3-dde8-46ab-95f6-efb7e646eeed`, state `Active`, `LastUpdateStatus=Successful`, and `FEATURE_SES=pending_production_access`.
+- Verification:
+  - `node --import tsx --test tests\lambda-ycc-api.test.ts --test-name-pattern "Friends|subscription|Cognito post-confirmation|welcome|newsletter subscribe sends a brand"` passed the loaded Lambda test file, reporting 146/146 pass.
+  - `node --import tsx --test tests\lambda-ycc-api.test.ts --test-name-pattern "friends and family membership checkout|Stripe subscription webhooks create member subscription records|Cognito post-confirmation defers|Cognito post-confirmation keeps"` passed the loaded Lambda test file, reporting 146/146 pass.
+  - `npx eslint infra\lambda\ycc-api\index.js src\lib\stripe-checkout.ts tests\lambda-ycc-api.test.ts` passed.
+  - `npx tsc --noEmit` passed.
+  - Direct non-mutating `ycyyy:live` health invoke returned HTTP `200`, executed version `41`, `status=ok`, `databaseWrites=schema_ready`, and `ses=pending_production_access`.
+  - Public `https://api.yuzucigarclub.com/health?deep=1` returned HTTP `200`, `status=ok`, database proxy reachable, `databaseWrites=schema_ready`, `bedrock=runtime_ready`, and `ses=pending_production_access`.
+
+### 2026-06-18 SMS Signup E2E Setup
+
+- Goal: set up and verify the live owner/admin SMS-on-new-signup path end to end.
+- Implemented repeatable local command:
+  - Added `scripts/sms-signup-e2e-check.ts`.
+  - Added npm script `sms-signup:e2e`.
+  - Added `tests/sms-signup-e2e-check.test.ts` to assert the command defaults to dry-run and only sends SMS when `--send-sms` is explicitly provided.
+  - The command checks AWS caller identity, Cognito `PostConfirmation`, Lambda invoke permission, live Lambda SMS env, SNS SMS attributes, and can synthetically invoke the deployed Cognito post-confirmation path.
+- Live AWS setup:
+  - Added Lambda permission statement `YccCognitoPostConfirmationInvokeLive` on `ycyyy:live` for principal `cognito-idp.amazonaws.com` scoped to user pool `arn:aws:cognito-idp:us-east-1:374587466106:userpool/us-east-1_63U9PflAX`.
+  - Updated live Cognito user pool `YCCMembers` (`us-east-1_63U9PflAX`) from a full `DescribeUserPool`-derived payload, adding `LambdaConfig.PostConfirmation=arn:aws:lambda:us-east-1:374587466106:function:ycyyy:live` while preserving `MfaConfiguration=OPTIONAL`, `AutoVerifiedAttributes=email`, `EmailSendingAccount=COGNITO_DEFAULT`, and `UserPoolTier=ESSENTIALS`.
+  - Initial `update-user-pool` attempt failed before applying because the temporary JSON was written in a CLI-rejected format; the successful retry wrote UTF-8 without BOM and used the Windows-native `file://C:\...` paramfile path.
+- Verification:
+  - Initial `npm run sms-signup:e2e -- --live --json` failed before setup with missing Cognito trigger and missing invoke permission.
+  - After setup, `npm run sms-signup:e2e -- --live --json` passed with `failed=0`: Cognito trigger configured, invoke permission present, Lambda version `40` SMS env configured, and SNS `MonthlySpendLimit=1`.
+  - `npm run sms-signup:e2e -- --live --send-sms --json` invoked `ycyyy:live`, executed version `40`, and returned `StatusCode=200` with no function error; the first script version missed the inline log-tail evidence and exited nonzero.
+  - Direct CloudWatch verification for that same invoke found request id `df5470a8-8ca7-4e89-8a5c-b5341193f2e5`, `admin_operational_alert_dispatched` with `alertType="new_user"`, `sms.sent=1`, `sms.failed=0`, and `routeKey="COGNITO PostConfirmation_ConfirmSignUp"` status `200` at `2026-06-18T22:13:25Z`.
+  - Updated the E2E script after the false negative so future `--send-sms` runs poll CloudWatch when Lambda's inline log tail omits the SMS evidence.
+  - `node --import tsx --test tests/sms-signup-e2e-check.test.ts tests/api-gateway-contract.test.ts --test-name-pattern "SMS signup E2E|Cognito user signups invoke"` passed 9/9.
+  - `npx eslint scripts/sms-signup-e2e-check.ts tests/sms-signup-e2e-check.test.ts` passed.
+  - `npx tsc --noEmit` passed.
+- Operational note:
+  - The public newsletter/member-interest form still captures phone without SMS marketing consent. This E2E setup is for internal owner/admin operational signup alerts, not subscriber SMS marketing.
+
+### 2026-06-18 SMS Admin Handset Non-Delivery Diagnosis
+
+- User reported they did not receive the synthetic admin SMS on their phone.
+- Follow-up live AWS checks:
+  - Lambda `ycyyy:live` admin SMS destination is configured for phone ending `7369`.
+  - `sns get-sms-sandbox-account-status` returned `IsInSandbox=true`.
+  - `sns list-sms-sandbox-phone-numbers` returned destination `***7369` with `Status=Pending`, so the admin destination is not verified for SNS sandbox delivery.
+  - `pinpoint-sms-voice-v2 describe-phone-numbers` returned US toll-free originator ending `8058` with `Status=PENDING`.
+  - `pinpoint-sms-voice-v2 describe-registrations` returned registration `registration-8720a85d3f2c40d88dae52872699079a` with `RegistrationStatus=REQUIRES_UPDATES`.
+  - `sns check-if-phone-number-is-opted-out` returned `IsOptedOut=false` for the admin destination, so STOP/opt-out suppression is not the blocker.
+- E2E script update:
+  - Updated `scripts/sms-signup-e2e-check.ts` so live read-only mode fails when SNS sandbox destinations are not `Verified` and when there is no active US transactional SMS originator.
+  - Current `npm run sms-signup:e2e -- --live --json` now correctly fails with:
+    - `verify SNS sandbox destination readiness`: `IsInSandbox=true; destinations=***7369:Pending`
+    - `verify US SMS origination readiness`: `***8058:TOLL_FREE:PENDING:REQUIRES_UPDATES`
+  - Fixed the skipped synthetic-send row label after adding the new checks.
+- Verification:
+  - `node --import tsx --test tests/sms-signup-e2e-check.test.ts` passed 1/1.
+  - `npx eslint scripts/sms-signup-e2e-check.ts tests/sms-signup-e2e-check.test.ts` passed.
+- Conclusion:
+  - Lambda/Cognito wiring is live, but actual handset delivery is blocked by AWS SMS account state. The immediate admin-phone path needs the sandbox OTP completed for `***7369`; production-grade delivery also needs the toll-free registration updated/resubmitted until approved and the originator becomes active.
+
+### 2026-06-18 SMS Toll-Free Registration Resubmission
+
+- User provided the AWS End User Messaging SMS toll-free registration URL for `registration-8720a85d3f2c40d88dae52872699079a` and asked to fix it.
+- Diagnosis:
+  - `describe-registration-versions` showed version `1` was denied on 2026-06-17 with `SHAFT Violation - Tobacco Content`.
+  - Current registration values already framed the program as internal owner/admin alerts, but samples and the opt-in mockup included `New paid order` language.
+  - Official AWS review criteria checked during the pass say SHAFT/tobacco-related businesses need a compliant full date-of-birth age gate, and Terms/Privacy need SMS-specific mobile opt-in data, STOP/HELP, message frequency, message/data rates, customer-care, carrier-liability, and privacy-policy language.
+- Code/content changes:
+  - Updated `src/app/privacy/page.tsx` with `Mobile Opt-In And SMS Privacy`, including the carrier-required statement that mobile opt-in data, consent records, and phone numbers are not sold, rented, or shared with third parties or affiliates for marketing/promotional purposes.
+  - Updated `src/app/terms/page.tsx` with `SMS Text Messaging Terms`, including optional owner/admin operational alerts, low-volume/message-frequency language, `Message and data rates may apply`, STOP/HELP, support contact, carrier liability, and privacy-policy linkage.
+  - Added `trust pages include SMS carrier compliance disclosures` coverage to `tests/seo-metadata.test.ts`.
+  - Updated `infra/lambda/ycc-api/index.js` so order SMS copy now says `Admin fulfillment review needed for checkout...` rather than `New paid order...`; admin push/body order copy was not changed.
+  - Updated `tests/lambda-ycc-api.test.ts` to assert the safer SMS wording.
+  - Generated revised opt-in mockup `tmp/sms-owner-admin-alert-optin.png` and uploaded it to AWS as attachment `attachment-28f54af9594c45d3b65ee699f4ac49e4`.
+- Verification before live changes:
+  - `node --import tsx --test tests\seo-metadata.test.ts --test-name-pattern "trust pages include SMS carrier compliance disclosures|public listing pages own"` passed; Node loaded the SEO test file and reported 12/12 pass.
+  - `node --import tsx --test tests\lambda-ycc-api.test.ts --test-name-pattern "Stripe checkout completion sends owner SMS|Cognito post-confirmation sends owner SMS"` passed; Node loaded the Lambda test file and reported 146/146 pass.
+  - `npx eslint src\app\privacy\page.tsx src\app\terms\page.tsx tests\seo-metadata.test.ts infra\lambda\ycc-api\index.js tests\lambda-ycc-api.test.ts` passed.
+- Live Lambda deployment:
+  - Packaged `output/ycc-api-sms-admin-alert-safe-20260618.zip` with code hash `mcpc3SHL7Kh96q9fkiVVZ+sltqMkPPjNjktQnZRRJdA=`.
+  - Updated Lambda `ycyyy`, published version `42`, and promoted alias `ycyyy:live` to version `42` with description `Live API safer owner/admin SMS alert wording 2026-06-18`.
+  - Alias readback confirmed `FunctionVersion=42`, revision `5589cff2-bd39-4ea7-8e43-a9d00b5da9ea`.
+- Static trust-page deployment:
+  - `deploy_amplify_static.py` again hit the Windows Python `npm` lookup issue before build; ran `npm run build` directly and then reran the helper with `--skip-build`.
+  - `npm run build` passed with Next.js `16.2.9` and generated 1,022 static pages.
+  - Amplify deploy helper packaged POSIX zip `yuzu-cigar-club-amplify-deploy-sms-registration-trust-pages-20260618-2026-06-18-154116.zip` with 9,479 entries and 178,314,765 bytes.
+  - Amplify app `d2yxcklt245wh0`, branch `staging`, deployment role `CodexMcpYccDeploymentRole`, job `161`, reached `SUCCEED`.
+  - Helper smoke returned `homeStatus=200`, `assetStatus=200`, asset path `/_next/static/chunks/2gvbee7pkfg8e.css`.
+  - Public `https://www.yuzucigarclub.com/terms/` readback returned HTTP `200` and included `SMS Text Messaging Terms`, `Message and data rates may apply`, and `Wireless carriers are not liable`.
+  - Public `https://www.yuzucigarclub.com/privacy/` readback returned HTTP `200` and included `Mobile Opt-In And SMS Privacy` plus the mobile opt-in no-sharing statement.
+  - Removed the temporary root Amplify deploy zip after recording the job details.
+- Registration update:
+  - Normal operator role `CodexMcpYccOperatorRole` was denied for `sms-voice:CreateRegistrationAttachment`, `sms-voice:CreateRegistrationVersion`, `sms-voice:PutRegistrationFieldValue`, `sms-voice:SubmitRegistrationVersion`, and `SNS:CreateSMSSandboxPhoneNumber`.
+  - IAM simulation for non-root configured identities also returned `implicitDeny` for the registration mutation actions; the one-time registration update used the existing root profile for narrowly scoped `sms-voice` calls only.
+  - Version `2` was created and submitted first but was immediately denied for `Missing required field` because the new version did not inherit required business/contact/select fields.
+  - Version `3` was created by explicitly repopulating all required business, tax, contact, use-case, opt-in, message-sample, and attachment fields.
+  - Version `3` submitted at `2026-06-18T22:49:47Z` with `AwsReview=true`; readback showed `RegistrationStatus=REVIEWING`, `CurrentVersionNumber=3`, and version `3` `RegistrationVersionStatus=REVIEWING`.
+- Current live SMS E2E status:
+  - `npm run sms-signup:e2e -- --live --json` still exits nonzero with `failed=2`.
+  - Passing checks: AWS caller, Cognito post-confirmation trigger, Cognito invoke permission on `ycyyy:live`, and live Lambda SMS env (`version=42`, destination `***7369`, region `us-east-1`, max price configured).
+  - Expected failing checks while AWS review is pending:
+    - SNS sandbox destination readiness: `IsInSandbox=true; MonthlySpendLimit=1; destinations=***7369:Pending`
+    - US SMS origination readiness: toll-free originator ending `8058` is `PENDING:REVIEWING`
+  - Attempting to resend the SNS sandbox OTP for `***7369` with an admin/root profile returned `No origination entities available to send`, so sandbox verification cannot be completed until the toll-free originator becomes active.
+
+### 2026-06-18 Welcome Email Send Blocked By SES Sandbox
+
+- User asked to send the member welcome email to the two real recent users.
+- Live read-only checks:
+  - Confirmed AWS caller identity as `CodexMcpYccOperatorRole` in account `374587466106`.
+  - Identified the two real recent Cognito users as `raymoorex@gmail.com` / Ray Moore and `qfashion18@gmail.com` / QUON mOORE; both are `CONFIRMED`, enabled, and `email_verified=true`.
+  - Lambda alias `ycyyy:live` is version `41` and still has `FEATURE_SES=pending_production_access`.
+  - SES account remains `ProductionAccessEnabled=false` with review status `DENIED` under case `177809591700724`.
+  - Verified SES identities are limited to `yuzucigarclub.com`, `ses-support.yuzucigarclub.com`, and `support@yuzucigarclub.com`.
+  - SES identity lookups for `raymoorex@gmail.com` and `qfashion18@gmail.com` both returned `NotFoundException`, so direct sandbox sends to those Gmail destinations would be rejected.
+- Result:
+  - No welcome email was sent and no production mail guard was bypassed.
+  - The next viable path is to migrate outbound member email to an approved transactional sender, then replay/send the member welcome template to those two users.
+
+### 2026-06-18 SES Recipient Verification Setup
+
+- User asked to set things up so the two users can SES-verify.
+- Live AWS setup with `AWS_PROFILE=ycc-mcp`, region `us-east-1`:
+  - Confirmed SES account is still sandboxed: `ProductionAccessEnabled=false`, `SendingEnabled=true`, review `DENIED`, case `177809591700724`.
+  - Existing SES identities before setup were `yuzucigarclub.com`, `ses-support.yuzucigarclub.com`, and `support@yuzucigarclub.com`.
+  - First `create-email-identity` attempt for `raymoorex@gmail.com` with tags was rejected because `CodexMcpYccOperatorRole` lacks `ses:TagResource`; no identity was set up from that failed tagged call.
+  - Created SES email identities without tags for `raymoorex@gmail.com` and `qfashion18@gmail.com`, which triggers AWS SES verification emails to those inboxes.
+- Readback:
+  - `raymoorex@gmail.com`: `IdentityType=EMAIL_ADDRESS`, `VerificationStatus=PENDING`, `VerifiedForSendingStatus=false`.
+  - `qfashion18@gmail.com`: `IdentityType=EMAIL_ADDRESS`, `VerificationStatus=PENDING`, `VerifiedForSendingStatus=false`.
+- Follow-up readback after the screenshot:
+  - `qfashion18@gmail.com` is now `VerificationStatus=SUCCESS`, `SendingEnabled=true`.
+  - `raymoorex@gmail.com` remains `VerificationStatus=PENDING`, `SendingEnabled=false`.
+- Next step:
+  - Each user must open the AWS SES verification email and click the verification link. After both read back as `SUCCESS`, sandbox sends to those two recipients can be retried without moving SES out of sandbox.
+
+### 2026-06-18 Customer Signup Email Brand Guardrail
+
+- User shared screenshot `C:\Users\qfash\Desktop\dfgodgedogk[eogrt.PNG` showing the SES recipient verification message for `qfashion18@gmail.com`.
+- Finding:
+  - The message is visibly from `Amazon Web Services <no-reply-aws@amazon.com>` with subject `Amazon Web Services - Email Address Verification Request in region US East (N. Virginia)`.
+  - This confirms per-recipient SES sandbox verification is not acceptable as a customer signup/onboarding email because it does not look like a Yuzu Cigar Club message.
+- Documentation updates:
+  - `.env.example`, `infra/lambda/ycc-api/README.md`, and `docs/aws-live-architecture-setup.md` now explicitly say not to create per-customer SES recipient identities from signup, post-confirmation, membership activation, or newsletter flows.
+  - Customer account confirmation should continue through the branded Cognito verification email.
+  - Support, newsletter, and member welcome email must wait for an approved transactional sender or a Cognito custom email sender backed by that approved provider.
+
+### 2026-06-18 SendGrid Account Activation Denied
+
+- User shared Twilio SendGrid ticket `27589567`, closed as solved on 2026-06-18 at 3:59 PM PDT.
+- SendGrid result:
+  - Twilio Onboarding & Compliance Operations denied account activation for `unified_acct_UScdd6447b628befe0ef01375524876503` / `109536481`.
+  - The response did not provide specific vetting reasons and framed the decision as unable to proceed with activating the account.
+- Impact:
+  - Treat Twilio SendGrid as unavailable for Yuzu outbound transactional email unless Twilio explicitly reverses the account decision.
+  - Updated `docs/aws-live-architecture-setup.md` so future sender selection does not assume SendGrid is viable.
+- Current recommendation:
+  - Primary next candidate: Brevo, because its published acceptable-use policy explicitly routes legal drugs such as alcohol or tobacco through support-team vetting before sending.
+  - Secondary candidate: Mailgun, but only after sales/support pre-clearance because its AUP requires sufficient and specific guarantees for higher-risk senders.
+  - Keep Cognito's branded verification email for signup; move support, newsletter, and member welcome email only after a provider approves the Yuzu legal-tobacco use case in writing.
+
+### 2026-06-18 GoDaddy Email Sender Evaluation
+
+- User asked whether to use GoDaddy email for Yuzu outbound email.
+- Current-context check:
+  - GoDaddy/Microsoft 365 email can provide a branded mailbox and supports SMTP Authentication for apps/reporting servers when explicitly enabled.
+  - Microsoft 365 from GoDaddy documents limits such as 30 outgoing messages per minute, 10,000 messages per 24 hours, and 500 recipients per message.
+  - GoDaddy Email Services agreement says the service is for core email/mailbox use and may not be used to send high-volume, mass, or bulk email.
+  - The current Yuzu root MX is intentionally pointed at SES inbound capture, so moving root-domain mailboxes to GoDaddy/Microsoft 365 would require a DNS/inbound-routing decision and could disrupt the existing SES raw capture path.
+- Recommendation:
+  - Use GoDaddy/Microsoft 365 only for human-operated branded inboxes such as `support@` and `concierge@`, plus manual low-volume customer replies.
+  - Do not treat GoDaddy email as the production transactional sender for Lambda-driven support, newsletter, or member welcome automation. It lacks the API-first deliverability, webhook, bounce/complaint, suppression, template, and compliance controls expected for app email.
+  - Continue Cognito branded verification for first account signup and pursue a pre-cleared transactional provider for automated non-Cognito email.
+
+### 2026-06-18 AWS-Recommended Email Options Check
+
+- User asked whether AWS recommends other email options after SES production denial and SendGrid account activation denial.
+- AWS documentation check:
+  - Amazon SES remains AWS's primary product for transactional/promotional application email, but this account is final-denied for SES production access.
+  - Amazon Pinpoint email is not a good replacement path because AWS has announced Pinpoint end of support on 2026-10-30 and points email deliverability functionality back toward SES.
+  - AWS End User Messaging covers SMS, push, voice, and WhatsApp/social messaging; AWS documentation lists SES as the related service for email rather than offering a separate email channel.
+  - Amazon Cognito default email remains appropriate for signup verification, password reset, MFA, invitations, and temporary passwords, but AWS documents daily limits and recommends SES for higher-volume production email.
+  - Cognito custom sender triggers are the AWS-recommended bridge when a user pool needs third-party email/SMS delivery; Cognito invokes Lambda and the Lambda uses the method/provider chosen by the app.
+  - Amazon WorkMail is a managed mailbox/calendar service with SMTP support and mailbox quotas, not the API-first transactional sender replacement Yuzu needs.
+- Recommendation:
+  - Keep Cognito default/branded email for first signup and auth messages.
+  - For full control of Cognito auth emails, use Cognito `CustomEmailSender` Lambda with the approved provider once selected.
+  - For support/newsletter/member welcome automation, choose a pre-cleared non-AWS transactional sender because there is no separate AWS email service that avoids the SES production-access denial.
+
+### 2026-06-18 Mailgun Account Setup Prep
+
+- User asked to set up a Mailgun account.
+- Current state:
+  - Account creation itself requires the owner's email, password/SSO, billing details, and likely anti-abuse checks that Codex should not invent or store.
+  - Mailgun/Sinch AUP requires lawful/consented sending, forbids bought/rented/scraped third-party lists, and reserves account suspension/termination discretion for AUP violations.
+  - Mailgun docs require domain verification before real sending and recommend separate domains/subdomains for transactional, marketing, and corporate mail.
+- Created setup runbook:
+  - `docs/mailgun-transactional-email-setup-2026-06-18.md`
+- Recommendation:
+  - Use `mg.yuzucigarclub.com` as the transactional sending subdomain.
+  - Keep Cognito branded email for account verification.
+  - Pre-clear the legal cigar/tobacco use case with Mailgun/Sinch before adding DNS/API integration.
+  - Do not move root-domain MX because Yuzu currently uses SES inbound capture for root-domain raw mail.
+
+### 2026-06-18 Amazon WorkMail Research And E2E Feasibility
+
+- User asked to research Amazon WorkMail after asking to use WorkMail e2e/test/verify.
+- Official AWS documentation findings:
+  - Amazon WorkMail no longer accepts new customers beginning 2026-04-30.
+  - Amazon WorkMail end of support is 2027-03-31.
+  - WorkMail is a managed mailbox/calendar service, not an API-first transactional sender.
+  - WorkMail uses SES for outgoing email and points bulk email use cases to SES.
+  - WorkMail supports mailbox SMTP over SSL/TLS on port `465`, IMAP over SSL on port `993`, 50 GB mailboxes, 40 MB MIME messages, and 100,000 external recipients per AWS account per day, but says it is not intended for bulk email.
+- Live AWS read-only checks with `AWS_PROFILE=ycc-mcp`:
+  - `aws workmail list-organizations --region us-east-1` returned no organizations.
+  - `aws workmail list-organizations --region us-west-2` returned no organizations.
+  - `aws workmail list-organizations --region eu-west-1` returned no organizations.
+- Result:
+  - A real WorkMail e2e send is blocked before code because there is no existing WorkMail organization/mailbox in the account and WorkMail is no longer accepting new customers.
+  - Created `docs/amazon-workmail-research-2026-06-18.md` with the research, live account checks, and Yuzu recommendation.
+- Recommendation:
+  - Do not use WorkMail for Yuzu. Keep Cognito branded auth email, use a normal mailbox provider for human inboxes, and choose a pre-cleared transactional sender for automated support/newsletter/member-welcome email.
+
+### 2026-06-18 Email Operating Process
+
+- User asked to find a solid process to use for email.
+- Created `docs/email-operating-process-2026-06-18.md`.
+- Process decision:
+  - Lane 1: Cognito branded email for signup verification, password reset, MFA/OTP, temporary passwords, and resend-confirmation flows.
+  - Lane 2: a human mailbox provider such as Google Workspace, Microsoft 365/GoDaddy M365, or Zoho Mail for `support@` and `concierge@` manual inboxes.
+  - Lane 3: a pre-cleared transactional provider, with Brevo then Mailgun as current candidates, for automated member welcome, support, order/billing, membership, and opt-in newsletter email.
+- Guardrails:
+  - Do not use SES recipient verification as customer onboarding.
+  - Do not use WorkMail.
+  - Do not use SendGrid unless Twilio reverses ticket `27589567`.
+  - Do not route app automation through mailbox SMTP as the production transactional sender.
+  - Do not move root MX without a separate inbound support-routing migration plan because root mail currently terminates at SES inbound capture.
+
+### 2026-06-18 Cognito Email E2E Setup And Verification
+
+- Goal: make sure Cognito signup verification email is set up end to end, including the live email template, disposable delivery capture, and the Friends & Family confirmation-link browser behavior.
+- Implemented repeatable local command:
+  - Added `scripts/cognito-email-e2e-check.ts`.
+  - Added npm script `cognito-email:e2e`.
+  - Added `tests/cognito-email-e2e-check.test.ts` to assert the helper defaults to dry-run, requires `--send-email` for a disposable live Cognito signup, and requires `--confirm-signup` before confirming the disposable account.
+  - The helper checks AWS caller identity, Cognito email sender/template settings, public app-client signup readiness, root-domain raw email capture readability, and optional disposable email send/capture.
+- Live read-only verification:
+  - `npm run cognito-email:e2e -- --live --json` passed with `failed=0`.
+  - Confirmed account `374587466106`, profile `ycc-mcp`, region `us-east-1`.
+  - Confirmed user pool `YCCMembers` (`us-east-1_63U9PflAX`) uses `EmailSendingAccount=COGNITO_DEFAULT`, `SourceArn=arn:aws:ses:us-east-1:374587466106:identity/support@yuzucigarclub.com`, `ReplyTo=support@yuzucigarclub.com`, `DefaultEmailOption=CONFIRM_WITH_CODE`, and subject `Yuzu Cigar Club verification code`.
+  - Confirmed the live template contains `{####}`, `https://yuzucigarclub.com/friends-family/?confirmation_code={####}`, the branded "Open Yuzu confirmation page" button, and styled HTML.
+  - Confirmed app client `ycc-storefront` (`2i2nvtt41l94n0mivc4tu4f9ms`) allows self-signup, has no client secret, and keeps expected auth flows.
+  - Confirmed `s3://classroom2/ycc/root-email/raw/` is readable for root-domain inbound capture.
+- Live disposable email send:
+  - First `--send-email` run created and deleted disposable user `codex-cognito-email-e2e-20260618222842@yuzucigarclub.com`; the raw email was captured, but the helper initially failed to parse the code because it applied quoted-printable decoding to a 7bit body and corrupted `confirmation_code=######`.
+  - Fixed the helper decoder so quoted-printable decoding only runs for quoted-printable transport parts.
+  - Final `npm run cognito-email:e2e -- --live --send-email --json` passed with `failed=0`.
+  - Captured raw email key `ycc/root-email/raw/vtsovhbf9lqt2fpqsasbh9unts7apvvfle5hi9o1`, subject `Yuzu Cigar Club verification code`, from `support@yuzucigarclub.com`, to disposable user `codex-cognito-email-e2e-20260618223017@yuzucigarclub.com`, HTML body present, branded button present, and delivered link `https://yuzucigarclub.com/friends-family/?confirmation_code=******`.
+  - Verified both disposable users no longer exist in Cognito after cleanup.
+- Frontend live gap and deploy:
+  - Browser check against the captured email link initially showed production still stayed on the create-account form instead of auto-opening the confirmation form from `confirmation_code`.
+  - Ran `npm run build` successfully on Next.js `16.2.9`, generating 1,022 static pages.
+  - The Amplify helper's internal Python `npm` subprocess lookup failed before upload, so the build was run directly and the helper was rerun with `--skip-build`.
+  - Deployed POSIX-path static zip `yuzu-cigar-club-amplify-deploy-cognito-email-e2e-20260618-2026-06-18-153702.zip`: 9,479 entries, 178,318,342 bytes.
+  - Amplify app `d2yxcklt245wh0`, branch `staging`, deployment role `CodexMcpYccDeploymentRole`, job `160`, reached `SUCCEED`.
+  - Helper smoke returned `homeStatus=200`, `assetStatus=200`, asset path `/_next/static/chunks/2gvbee7pkfg8e.css`.
+  - Moved the generated deploy zip to `C:\Users\qfash\Documents\Yuzu Deploy Artifacts\yuzu-cigar-club-amplify-deploy-cognito-email-e2e-20260618-2026-06-18-153702.zip` after verification.
+- Post-deploy browser verification:
+  - Playwright opened the captured production email link with the age gate pre-confirmed and did not submit the form.
+  - Verified the confirmation-code input was present and prefilled with a six-digit code, the visible URL was cleaned of `confirmation_code`, the confirmation heading was present once, the submit button text was `Confirm and Claim Pass`, and there were zero console warnings/errors.
+  - Email was not prefilled in the fresh browser context, which is expected because Cognito's static template can insert `{####}` but not the user's email; same-browser returns still use localStorage to prefill the email.
+- Verification:
+  - `node --import tsx --test tests\cognito-email-e2e-check.test.ts tests\cognito-auth.test.ts tests\friends-family-page.test.ts` passed 28/28.
+  - `node --import tsx --test tests\cognito-email-e2e-check.test.ts` passed 2/2 after the parser fix.
+  - `npx eslint scripts\cognito-email-e2e-check.ts tests\cognito-email-e2e-check.test.ts` passed.
+  - `npx tsc --noEmit` passed.
+
+### 2026-06-18 AWS 21+ Brand Readiness Audit
+
+- User asked to review and audit all AWS setup against AWS expectations for a 21+ cigar/tobacco brand, research AWS docs, and identify gaps.
+- Used the local `aws` skill and ran read-only live checks with profile `ycc-mcp`, primarily in `us-east-1`.
+- Official documentation checked included AWS AUP, AWS End User Messaging SMS age-restricted opt-in/SHAFT guidance, SES reputation/enforcement, Cognito email settings, CloudTrail, AWS Config, Security Hub FSBP, S3 account-level Block Public Access, Amplify WAF, API Gateway default endpoint behavior, WorkMail end of support, Pinpoint end of support, plus FTC CAN-SPAM and FDA cigar-retail references for non-AWS 21+ context.
+- Created audit report:
+  - `docs/aws-21-plus-brand-audit-2026-06-18.md`
+- Highest-priority findings recorded:
+  - Root MFA is enabled, but IAM account summary reports a root access key is present.
+  - No CloudTrail trail, no AWS Config recorder, no GuardDuty detector, no Security Hub subscription, no Inspector scanning, no IAM Access Analyzer, and no account-level S3 Public Access Block.
+  - SES production access remains denied under case `177809591700724`; app customer email must stay off SES production sends and should move to a pre-cleared transactional provider.
+  - SNS SMS remains in sandbox; admin destination is pending; toll-free originator is pending; registration version `3` is reviewing after an earlier tobacco/SHAFT denial.
+  - WAF web ACL `ycc-amplify-edge` exists but Amplify app `d2yxcklt245wh0` still reads back `wafWebAclArn=null`.
+  - API custom domain is live with TLS 1.2 and access logs, but the default execute-api endpoint remains enabled.
+  - Mail DNS is mixed between SES inbound, GoDaddy/Microsoft traces, and future transactional-provider needs.
+  - CloudFormation drift has not been checked on active stacks.
+  - Backup plan and recent recovery points exist for `database-1ycc`, but the backup vault is not locked.
+  - Alternate account contacts and budgets are not configured; Cost Explorer/Trusted Advisor/Health checks were blocked by access or support-level limits.
+- Positive controls recorded:
+  - Cognito branded signup email, deletion protection, strong password policy, token revocation, and no unauthenticated identity-pool access.
+  - API access logs, detailed metrics, throttling, restricted CORS, and green YCC alarms.
+  - Private/encrypted RDS, TLS-required RDS Proxy, deletion protection, daily AWS Backup recovery points.
+  - `classroom2` bucket has bucket-level public access block, encryption, and versioning.
+  - Bedrock agents and guardrail version `8` are ready, including minor-bypass and tobacco-health-claim guardrails.
+  - Global age gate uses full DOB, and commerce checkout requires server-validated AgeChecker.Net token.
+
+### 2026-06-18 AWS Blocker Remediation E2E
+
+- User asked to fix all AWS/app blockers that could be fixed end to end.
+- Used `aws`, `deploy-yuzu-amplify`, and `playwright` skills.
+- Live AWS fixes completed with profile `ycc-mcp` in `us-east-1` where applicable:
+  - Deleted the root access key after temporarily using root-only access for account-level remediations; `AccountAccessKeysPresent=0`, `AccountMFAEnabled=1`, and the old root CLI profiles now fail with `InvalidClientTokenId`.
+  - Added narrow `YccLambdaAliasPromotionPolicy` to `CodexMcpYccOperatorRole` so the operator can promote/read Lambda aliases for `ycyyy` without routine root CLI use.
+  - Enabled account-level S3 Block Public Access with all four controls set to true.
+  - Created and verified multi-region CloudTrail `ycc-security-trail`, bucket `ycc-cloudtrail-logs-374587466106-us-east-1`, CloudWatch log group `/aws/cloudtrail/ycc-security`, and role `YccCloudTrailCloudWatchLogsRole`; delivery readback succeeded.
+  - Enabled AWS Config with bucket `ycc-config-recordings-374587466106-us-east-1`, role `YccAwsConfigServiceRole`, recorder `default`, and managed rules for CloudTrail validation, IAM password policy, multi-region CloudTrail, RDS public access, RDS encryption, root MFA, and S3 account public access blocks.
+  - Enabled GuardDuty detector `9bf00e4ceaa941cc8f499eaa0a6d8e40`.
+  - Enabled Security Hub standards; FSBP v1.0.0 and CIS AWS Foundations Benchmark v1.2.0 read back `READY`.
+  - Enabled Inspector v2 for EC2, ECR, Lambda, and Lambda code.
+  - Created Access Analyzer `ycc-account-external-access`, type `ACCOUNT`, status `ACTIVE`.
+  - Added an IAM password policy requiring length 14, upper/lower/number/symbol, 90-day max age, 24-password reuse prevention, and hard expiry.
+  - Added SECURITY, OPERATIONS, and BILLING alternate account contacts using `support@yuzucigarclub.com`.
+  - Created monthly budget `YCC Monthly AWS Cost Guardrail` with a `$250` limit and actual/forecast notifications.
+  - Associated WAF web ACL `ycc-amplify-edge` to Amplify app `d2yxcklt245wh0`; Amplify app readback still leaves `wafWebAclArn=null`, but `wafv2 get-web-acl-for-resource` confirms the live association.
+  - Disabled the API Gateway default execute-api endpoint for API `13710cp67l`; custom-domain health stays `200`, raw execute-api health now returns `404`.
+  - Ran CloudFormation drift detection; active platform stack `SlimHarpoPlatformStack` is `IN_SYNC`, while legacy/non-Yuzu stacks remain documented drift and were not silently modified.
+- Frontend consent fix:
+  - Updated `src/components/newsletter-signup-form.tsx` so newsletter consent starts unchecked in both form variants and submit buttons stay disabled until explicit consent.
+  - Updated `tests/newsletter-signup.test.ts` to cover the unchecked default and disabled-until-consent behavior.
+- Verification completed:
+  - `node --import tsx --test tests/newsletter-signup.test.ts` passed 6/6.
+  - `npx eslint src/components/newsletter-signup-form.tsx tests/newsletter-signup.test.ts` passed.
+  - `npx tsc --noEmit` passed.
+  - `npm run build` passed on Next.js `16.2.9`, generating 1,022 static pages.
+  - `npm test` passed 581/581.
+  - Deployed Amplify job `162` from POSIX-path zip `yuzu-cigar-club-amplify-deploy-aws-blocker-remediation-20260618-2026-06-18-172936.zip`; job reached `SUCCEED` and smoke checks returned `homeStatus=200`, `assetStatus=200`.
+  - Moved deploy zip to `C:\Users\qfash\Documents\Yuzu Deploy Artifacts\yuzu-cigar-club-amplify-deploy-aws-blocker-remediation-20260618-2026-06-18-172936.zip`.
+  - Playwright verified deployed `/education/?deploy=162` with age gate pre-confirmed: newsletter consent was unchecked, submit disabled before consent, submit enabled after checking consent, and no console warnings/errors.
+- Docs updated:
+  - `docs/aws-21-plus-brand-audit-2026-06-18.md`
+  - `docs/aws-live-architecture-setup.md`
+- Remaining blockers and owner decisions:
+  - SES production access remains denied under case `177809591700724`; customer transactional email still needs a pre-cleared external provider.
+  - SMS remains blocked by SNS sandbox/pending destination, toll-free pending state, and registration version `3` review after prior tobacco/SHAFT denial.
+  - Final mail DNS/provider lane is still a business/provider decision; do not move root MX until inbound support routing is planned.
+  - Backup Vault Lock was not enabled because it is retention-sensitive and should be an explicit owner decision.
+  - AWS Config rule `ycc-s3-account-public-access-blocks` was `INSUFFICIENT_DATA` immediately after creation even though direct S3Control readback is correct; it should be rechecked after the next Config evaluation cycle.
+  - Drifted legacy/non-Yuzu stacks remain known drift and should be handled only after ownership is confirmed.

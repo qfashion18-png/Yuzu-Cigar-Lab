@@ -3,13 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "engines": {
-    "node": ">=20.9.0"
+    "node": ">=22 <23"
   },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "node scripts/static-preview.mjs out",
     "preview": "npm run build && npm run start",
+    "amplify:package": "python scripts/package-amplify-static.py",
     "e2e:runtime-audit": "npm run build && tsx scripts/e2e-runtime-audit.ts",
     "lint": "eslint",
     "test": "node --import tsx --test --test-concurrency=1 tests/*.test.ts",
@@ -21,6 +22,12 @@
     "lambda:package": "node scripts/package-ycc-api-lambda.mjs",
     "db:check": "tsx scripts/check-rds-connection.ts",
     "ai-agents:ops-check": "tsx scripts/ai-agents-ops-check.ts",
+    "humidor-agent:image-e2e": "tsx scripts/humidor-agent-image-e2e-check.ts",
+    "sms-signup:e2e": "tsx scripts/sms-signup-e2e-check.ts",
+    "cognito-email:e2e": "tsx scripts/cognito-email-e2e-check.ts",
+    "ses:e2e": "tsx scripts/ses-e2e-check.ts",
+    "push:e2e": "tsx scripts/push-e2e-check.ts",
+    "notifications:e2e": "tsx scripts/notifications-e2e-check.ts",
     "cigar-flow:daily": "tsx scripts/daily-cigar-news-run.ts",
     "cigar-flow:facebook": "tsx scripts/cigar-flow-facebook-run.ts",
     "nova-act:e2e": "python scripts/nova_act_cigar_enrichment_e2e.py"

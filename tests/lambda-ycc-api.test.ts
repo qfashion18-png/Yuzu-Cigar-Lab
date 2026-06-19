@@ -1,7 +1,7 @@
 import { createRequire } from "node:module";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -2802,6 +2802,14 @@ test("commerce checkout rejects unsigned age verification tokens", async () => {
   }
 });
 
+test("commerce runtime secret cache is bounded by a warm Lambda TTL", () => {
+  const lambdaSource = readFileSync(new URL("../infra/lambda/ycc-api/index.js", import.meta.url), "utf8");
+
+  assert.match(lambdaSource, /COMMERCE_RUNTIME_SECRET_CACHE_TTL_MS = 5 \* 60 \* 1000/u);
+  assert.match(lambdaSource, /commerceRuntimeSecretCache\.expiresAtMs <= nowMs/u);
+  assert.match(lambdaSource, /expiresAtMs: nowMs \+ COMMERCE_RUNTIME_SECRET_CACHE_TTL_MS/u);
+});
+
 test("membership checkout rejects client-supplied Stripe price ids when the server price env is missing", async () => {
   const mock = installStripeMock();
   try {
@@ -2825,6 +2833,60 @@ test("membership checkout rejects client-supplied Stripe price ids when the serv
     assert.equal(mock.checkoutSessionsCreated.length, 0);
   } finally {
     mock.restore();
+  }
+});
+
+test("friends and family membership claim requires the signed-in verified Cognito email", async () => {
+  const stripeMock = installStripeMock();
+  try {
+    const baseBody = {
+      tierName: "Box Access Pass",
+      billingPeriod: "yearly",
+      customer: { email: "friend@example.com", fullName: "Family Friend" },
+      membershipOffer: {
+        code: "friends-family-box-pass",
+        source: "friends-family-page",
+        campaign: "friends-family-1-year-box-pass",
+        landingPath: "/friends-family",
+        access: "box_access_pass_1_year",
+        trialPeriodDays: 365,
+      },
+    };
+
+    const unauthenticated = await handler({
+      routeKey: "POST /commerce/membership-session",
+      rawPath: "/commerce/membership-session",
+      body: JSON.stringify(baseBody),
+      requestContext: { requestId: "req-membership-friends-family-unauth", http: { method: "POST" } },
+    });
+
+    assert.equal(unauthenticated.statusCode, 401);
+    assert.equal(JSON.parse(unauthenticated.body).error, "membership_claim_auth_required");
+
+    const mismatchedEmail = await handler({
+      routeKey: "POST /commerce/membership-session",
+      rawPath: "/commerce/membership-session",
+      body: JSON.stringify(baseBody),
+      requestContext: {
+        requestId: "req-membership-friends-family-mismatch",
+        http: { method: "POST" },
+        authorizer: {
+          jwt: {
+            claims: {
+              ...actorClaims,
+              email: "other@example.com",
+              email_verified: "true",
+            },
+          },
+        },
+      },
+    });
+
+    assert.equal(mismatchedEmail.statusCode, 403);
+    assert.equal(JSON.parse(mismatchedEmail.body).error, "membership_claim_email_mismatch");
+    assert.equal(stripeMock.customersCreated.length, 0);
+  } finally {
+    stripeMock.restore();
   }
 });
 
@@ -2853,7 +2915,21 @@ test("friends and family membership checkout creates a Stripe Customer without C
           trialPeriodDays: 365,
         },
       }),
-      requestContext: { requestId: "req-membership-friends-family", http: { method: "POST" } },
+      requestContext: {
+        requestId: "req-membership-friends-family",
+        http: { method: "POST" },
+        authorizer: {
+          jwt: {
+            claims: {
+              ...actorClaims,
+              sub: "friends-family-cognito-sub",
+              email: "friend@example.com",
+              email_verified: "true",
+              name: "Family Friend",
+            },
+          },
+        },
+      },
     });
 
     assert.equal(response.statusCode, 200);
@@ -2881,6 +2957,28 @@ test("friends and family membership checkout creates a Stripe Customer without C
     assert.equal(body.membershipClaim.source, "friends-family-page");
     assert.equal(body.membershipClaim.stripeCustomerId, "cus_friends_family_123");
     assert.match(body.membershipClaim.expiresAt, /^\d{4}-\d{2}-\d{2}T/);
+    assert.deepEqual(body.membershipClaim.memberWelcomeEmail, {
+      kind: "member_welcome",
+      status: "sent",
+      sesMessageId: "ses-outbound-message-123",
+    });
+
+    assert.equal(persistenceMock.sesInvocations.length, 1);
+    assert.equal(persistenceMock.sesInvocations[0].FromEmailAddress, "support@yuzucigarclub.com");
+    assert.deepEqual(persistenceMock.sesInvocations[0].Destination, { ToAddresses: ["friend@example.com"] });
+    const welcomeEmail = persistenceMock.sesInvocations[0].Content as {
+      Simple: {
+        Subject: { Data: string };
+        Body: { Text: { Data: string }; Html: { Data: string } };
+      };
+    };
+    assert.match(welcomeEmail.Simple.Subject.Data, /Your Box Access Pass is active/i);
+    assert.match(welcomeEmail.Simple.Body.Text.Data, /Member-cost pricing on full cigar boxes/i);
+    assert.match(welcomeEmail.Simple.Body.Text.Data, /First box tips/i);
+    assert.match(welcomeEmail.Simple.Body.Text.Data, /65%-72% relative humidity/i);
+    assert.match(welcomeEmail.Simple.Body.Html.Data, /Welcome inside, Family/i);
+    assert.match(welcomeEmail.Simple.Body.Html.Data, /Browse member drops/i);
+    assert.match(welcomeEmail.Simple.Body.Html.Data, /Open digital humidor/i);
 
     const queries = persistenceMock.clients.flatMap((client) => client.queries.map((query) => query.sql));
     assert.ok(
@@ -3282,7 +3380,8 @@ test("Stripe checkout completion sends owner SMS and admin mobile push for new p
 
     assert.equal(persistenceMock.snsInvocations.length, 1);
     assert.equal(persistenceMock.snsInvocations[0].PhoneNumber, "+14805550101");
-    assert.match(String(persistenceMock.snsInvocations[0].Message || ""), /\$127\.92/);
+    assert.match(String(persistenceMock.snsInvocations[0].Message || ""), /Admin fulfillment review needed/);
+    assert.match(String(persistenceMock.snsInvocations[0].Message || ""), /cs_webhook_alert/);
     assert.match(String(persistenceMock.snsInvocations[0].Message || ""), /member@example\.com/);
     assert.match(String(persistenceMock.snsInvocations[0].Message || ""), /Reply STOP to opt out\./);
     assert.deepEqual(persistenceMock.snsInvocations[0].MessageAttributes, {
@@ -3350,6 +3449,8 @@ test("Stripe subscription webhooks create member subscription records", async ()
     const body = JSON.parse(response.body);
     assert.equal(body.processing.duplicate, false);
     assert.equal(body.processing.eventStored, true);
+    assert.equal(body.processing.subscription.memberWelcomeEmail.status, "sent");
+    assert.equal(body.processing.subscription.memberWelcomeEmail.kind, "member_welcome");
 
     const queries = persistenceMock.clients.flatMap((client) => client.queries);
     assert.ok(
@@ -3364,6 +3465,18 @@ test("Stripe subscription webhooks create member subscription records", async ()
       queries.some((query) => query.sql.includes("update public.members") && query.sql.includes("stripe_customer_id")),
       "subscription webhook should link the matched member row to the Stripe customer"
     );
+    assert.equal(persistenceMock.sesInvocations.length, 1);
+    const welcomeEmail = persistenceMock.sesInvocations[0].Content as {
+      Simple: {
+        Subject: { Data: string };
+        Body: { Text: { Data: string }; Html: { Data: string } };
+      };
+    };
+    assert.match(welcomeEmail.Simple.Subject.Data, /Your Sensei is active/i);
+    assert.match(welcomeEmail.Simple.Body.Text.Data, /Monthly selection window/i);
+    assert.match(welcomeEmail.Simple.Body.Text.Data, /Concierge recommendations/i);
+    assert.match(welcomeEmail.Simple.Body.Html.Data, /Benefits now open/i);
+    assert.match(welcomeEmail.Simple.Body.Html.Data, /First box tips/i);
   } finally {
     stripeMock.restore();
     persistenceMock.restore();
@@ -3572,7 +3685,7 @@ test("newsletter subscribe keeps the signup when brand preference email is not r
   }
 });
 
-test("Cognito post-confirmation sends a welcome email with account details and marketing", async () => {
+test("Cognito post-confirmation defers customer welcome email until membership is active", async () => {
   const mock = installPersistenceMocks();
   try {
     const response = await (handler as unknown as (event: Record<string, unknown>) => Promise<Record<string, unknown>>)({
@@ -3598,29 +3711,7 @@ test("Cognito post-confirmation sends a welcome email with account details and m
     });
 
     assert.equal(response.triggerSource, "PostConfirmation_ConfirmSignUp");
-    assert.equal(mock.sesInvocations.length, 1);
-    assert.equal(mock.sesInvocations[0].FromEmailAddress, "support@yuzucigarclub.com");
-    assert.deepEqual(mock.sesInvocations[0].Destination, { ToAddresses: ["reader@example.com"] });
-    assert.deepEqual(mock.sesInvocations[0].ReplyToAddresses, ["support@ses-support.yuzucigarclub.com"]);
-
-    const simpleEmail = mock.sesInvocations[0].Content as {
-      Simple: {
-        Subject: { Data: string };
-        Body: { Text: { Data: string }; Html: { Data: string } };
-      };
-    };
-    assert.match(simpleEmail.Simple.Subject.Data, /welcome to yuzu cigar club/i);
-    assert.match(simpleEmail.Simple.Body.Text.Data, /Account details/i);
-    assert.match(simpleEmail.Simple.Body.Text.Data, /Email: reader@example\.com/i);
-    assert.match(simpleEmail.Simple.Body.Text.Data, /Display name: Yuzu Reader/i);
-    assert.match(simpleEmail.Simple.Body.Text.Data, /Membership status: Non-member/i);
-    assert.match(simpleEmail.Simple.Body.Text.Data, /digital humidor/i);
-    assert.match(simpleEmail.Simple.Body.Text.Data, /member drops/i);
-    assert.match(simpleEmail.Simple.Body.Text.Data, /21\+/);
-    assert.match(simpleEmail.Simple.Body.Html.Data, /Yuzu Cigar Club/);
-    assert.match(simpleEmail.Simple.Body.Html.Data, /\/account\//);
-    assert.match(simpleEmail.Simple.Body.Html.Data, /\/membership\//);
-    assert.match(simpleEmail.Simple.Body.Html.Data, /\/shop\//);
+    assert.equal(mock.sesInvocations.length, 0);
   } finally {
     mock.restore();
   }
@@ -3756,6 +3847,24 @@ test("newsletter subscribe validates email and marketing consent", async () => {
 
   assert.equal(missingConsent.statusCode, 400);
   assert.equal(JSON.parse(missingConsent.body).error, "missing_marketing_consent");
+});
+
+test("public JSON routes reject oversized request bodies before validation", async () => {
+  const response = await handler({
+    routeKey: "POST /newsletter/subscribe",
+    rawPath: "/newsletter/subscribe",
+    body: JSON.stringify({
+      email: "reader@example.com",
+      consent: true,
+      source: "x".repeat(20 * 1024),
+    }),
+    requestContext: { requestId: "req-newsletter-oversized", http: { method: "POST" } },
+  });
+
+  assert.equal(response.statusCode, 413);
+  const body = JSON.parse(response.body);
+  assert.equal(body.error, "request_body_too_large");
+  assert.equal(body.maxBytes, 16 * 1024);
 });
 
 test("live page content read is public and backed by the site page content table", async () => {
@@ -6027,6 +6136,52 @@ test("public support contact sends a support email and persists an inbound case"
     );
     assert.ok(queries.some((query) => query.sql.includes("insert into public.audit_log")), "audit row should be inserted");
   } finally {
+    mock.restore();
+  }
+});
+
+test("public support contact stores the case without sending when SES is not ready", async () => {
+  const mock = installPersistenceMocks();
+  const previousFeatureSes = process.env.FEATURE_SES;
+  try {
+    process.env.FEATURE_SES = "pending_production_access";
+
+    const response = await handler({
+      routeKey: "POST /support/contact",
+      rawPath: "/support/contact",
+      body: JSON.stringify({
+        name: "Visitor Name",
+        email: "visitor@example.com",
+        topic: "Order support",
+        message: "Please help me find the tracking update for my monthly box.",
+        pagePath: "/contact/",
+      }),
+      headers: {
+        "user-agent": "node-test",
+      },
+      requestContext: {
+        requestId: "req-public-support-contact-pending-ses",
+        http: { method: "POST", sourceIp: "198.51.100.77" },
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.contact.status, "pending_ses");
+    assert.equal(body.contact.persisted, true);
+    assert.equal(body.contact.sesMessageId, null);
+    assert.equal(mock.sesInvocations.length, 0);
+
+    const metadataParams = mock.clients.flatMap((client) =>
+      client.queries.flatMap((query) => query.params.filter((param) => typeof param === "string" && param.includes("pending_ses")))
+    );
+    assert.ok(metadataParams.length > 0, "pending SES delivery status should be persisted in support metadata");
+  } finally {
+    if (previousFeatureSes === undefined) {
+      delete process.env.FEATURE_SES;
+    } else {
+      process.env.FEATURE_SES = previousFeatureSes;
+    }
     mock.restore();
   }
 });

@@ -29,6 +29,9 @@ const MAX_LIVE_PAGE_EDIT_FIELDS = 80;
 const MAX_LIVE_PAGE_EDIT_FIELD_LENGTH = 2000;
 const MAX_CIGAR_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_VOICE_AUDIO_BYTES = 6 * 1024 * 1024;
+const MAX_PUBLIC_JSON_BODY_BYTES = 16 * 1024;
+const MAX_CHECKOUT_JSON_BODY_BYTES = 64 * 1024;
+const MAX_DEFAULT_JSON_BODY_BYTES = 9 * 1024 * 1024;
 const DEFAULT_SUPPORT_EMAIL_FROM = "support@yuzucigarclub.com";
 const DEFAULT_SUPPORT_EMAIL_RAW_PREFIX = "ycc/support-email/raw/";
 const DEFAULT_BEDROCK_MODEL_ID = "amazon.nova-lite-v1:0";
@@ -268,6 +271,7 @@ const COMMERCE_SECRET_ENV_KEYS = [
   "YCC_COMMERCE_SECRET_ARN",
   "YCC_COMMERCE_SECRET_ID",
 ];
+const COMMERCE_RUNTIME_SECRET_CACHE_TTL_MS = 5 * 60 * 1000;
 const COMMERCE_SECRET_FLAT_KEY_PATTERNS = [
   /^STRIPE_(SECRET_KEY|WEBHOOK_SECRET|API_VERSION|CUSTOMER_PORTAL_CONFIGURATION_ID|LAUNCH_CATALOG_READY|LAUNCH_CATALOG_JSON|LAUNCH_CATALOG_PATH|LAUNCH_CATALOG_S3_URI|TOBACCO_APPROVAL_CONFIRMED)$/,
   /^STRIPE_PRICE_[A-Z0-9_]+$/,
@@ -562,67 +566,20 @@ async function handleCognitoPostConfirmationSignUp(event, requestId) {
 }
 
 async function maybeSendCognitoWelcomeEmail(event, requestId, details = getCognitoWelcomeEmailDetails(event)) {
-  if (process.env.FEATURE_SES !== "ready") {
-    console.info(
-      JSON.stringify({
-        level: "info",
-        event: "cognito_welcome_email_pending_ses",
-        requestId,
-        featureSes: process.env.FEATURE_SES || "pending_identity",
-      })
-    );
-    return {
-      status: "pending_ses",
-      sesMessageId: null,
-    };
-  }
+  console.info(
+    JSON.stringify({
+      level: "info",
+      event: "cognito_customer_welcome_deferred_until_membership",
+      requestId,
+      email: details.email ? hashActor(details.email) : null,
+      userPoolId: sanitizeText(event.userPoolId, 120),
+    })
+  );
 
-  if (!details.email) {
-    console.warn(
-      JSON.stringify({
-        level: "warn",
-        event: "cognito_welcome_email_missing_email",
-        requestId,
-        userPoolId: sanitizeText(event.userPoolId, 120),
-      })
-    );
-    return {
-      status: "skipped",
-      sesMessageId: null,
-    };
-  }
-
-  try {
-    const emailContent = buildCognitoWelcomeEmailContent(details, requestId);
-    const sesMessageId = await sendSupportEmail({
-      bodyHtml: emailContent.bodyHtml,
-      bodyText: emailContent.bodyText,
-      fromAddress: getSupportEmailFrom(),
-      replyToAddresses: [getSupportInboundReplyToAddress()],
-      subject: emailContent.subject,
-      toAddresses: [details.email],
-    });
-
-    return {
-      status: "sent",
-      sesMessageId,
-    };
-  } catch (error) {
-    console.error(
-      JSON.stringify({
-        level: "warn",
-        event: "cognito_welcome_email_failed",
-        requestId,
-        name: error instanceof Error ? error.name : null,
-        message: error instanceof Error ? error.message : String(error),
-      })
-    );
-
-    return {
-      status: "failed",
-      sesMessageId: null,
-    };
-  }
+  return {
+    status: "deferred_until_membership",
+    sesMessageId: null,
+  };
 }
 
 function getCognitoWelcomeEmailDetails(event) {
@@ -693,7 +650,7 @@ function buildAdminNewOrderAlert(stripeEvent, action, processing) {
     type: "new_order",
     title: "New Yuzu order",
     body: `${total} paid order from ${email}. Fulfillment review is ready in admin.`,
-    smsMessage: `Yuzu alert: New paid order ${total} from ${email}${checkoutSessionId ? ` (${checkoutSessionId})` : ""}. Admin: ${resolveNewsletterEmailUrl(ADMIN_OPERATIONAL_ALERT_URL)}. ${ADMIN_OPERATIONAL_SMS_OPT_OUT_TEXT}`,
+    smsMessage: `Yuzu alert: Admin fulfillment review needed for checkout${checkoutSessionId ? ` ${checkoutSessionId}` : ""} from ${email}. Admin: ${resolveNewsletterEmailUrl(ADMIN_OPERATIONAL_ALERT_URL)}. ${ADMIN_OPERATIONAL_SMS_OPT_OUT_TEXT}`,
     url: ADMIN_OPERATIONAL_ALERT_URL,
   };
 }
@@ -967,130 +924,6 @@ function formatCurrencyCents(value, currency) {
   }).format(Math.max(0, cents) / 100);
 }
 
-function buildCognitoWelcomeEmailContent(details, requestId) {
-  return {
-    subject: "Welcome to Yuzu Cigar Club",
-    bodyText: buildCognitoWelcomeEmailText(details, requestId),
-    bodyHtml: buildCognitoWelcomeEmailHtml(details, requestId),
-  };
-}
-
-function buildCognitoWelcomeEmailText(details, requestId) {
-  const greetingName = splitFirstName(details.displayName);
-  const greeting = greetingName ? `Hi ${greetingName},` : "Hi there,";
-  const accountLines = [
-    "Account details",
-    `Email: ${details.email}`,
-    `Display name: ${details.displayName || "Not set yet"}`,
-    `Membership status: ${details.memberStatus}`,
-  ];
-
-  if (details.membershipTier) {
-    accountLines.push(`Membership tier: ${details.membershipTier}`);
-  }
-
-  if (details.username && details.username !== details.email) {
-    accountLines.push(`Cognito username: ${details.username}`);
-  }
-
-  const lines = [
-    greeting,
-    "",
-    "Welcome to Yuzu Cigar Club. Your account is ready.",
-    "",
-    ...accountLines,
-    "",
-    "What to try next:",
-    `- Review and complete your profile: ${details.accountUrl}`,
-    `- Explore the digital humidor for saved cigars, notes, aging, and reorder reminders: ${details.humidorUrl}`,
-    `- Browse current cigar boxes, samplers, and member drops: ${details.shopUrl}`,
-    `- Compare memberships for member pricing, early access, and curated monthly allocations: ${details.membershipUrl}`,
-    "",
-    "Yuzu Cigar Club is for adults 21+. Product availability, pricing, membership benefits, shipping, and compliance checks can vary by location and inventory.",
-    "You can reply to this email for support or preference changes.",
-    `Request ID: ${requestId}`,
-  ];
-
-  return sanitizeMultilineText(lines.join("\n"), MAX_EMAIL_BODY_LENGTH);
-}
-
-function buildCognitoWelcomeEmailHtml(details, requestId) {
-  const greetingName = splitFirstName(details.displayName);
-  const greeting = greetingName ? `Hi ${greetingName},` : "Hi there,";
-  const logoUrl = resolveNewsletterEmailUrl("/assets/yuzu-logo.png");
-  const tierRow = details.membershipTier
-    ? `<tr><td style="padding:10px 0;color:#b7aa96;">Membership tier</td><td align="right" style="padding:10px 0;color:#f8f0df;font-weight:700;">${escapeHtml(details.membershipTier)}</td></tr>`
-    : "";
-  const usernameRow =
-    details.username && details.username !== details.email
-      ? `<tr><td style="padding:10px 0;color:#b7aa96;">Cognito username</td><td align="right" style="padding:10px 0;color:#f8f0df;font-weight:700;">${escapeHtml(details.username)}</td></tr>`
-      : "";
-  const html = `
-<!doctype html>
-<html>
-  <body style="margin:0;padding:0;background:#11100d;color:#f8f0df;font-family:Arial,Helvetica,sans-serif;">
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#11100d;">
-      <tr>
-        <td align="center" style="padding:32px 18px;">
-          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:680px;border:1px solid #4f3b21;background:#18130f;">
-            <tr>
-              <td style="padding:28px 28px 22px;border-bottom:1px solid #4f3b21;background:#1d1711;">
-                <img src="${escapeHtmlAttribute(logoUrl)}" width="88" alt="Yuzu Cigar Club" style="display:block;margin:0 0 18px;border:0;outline:none;text-decoration:none;">
-                <p style="margin:0 0 10px;color:#d8a84f;font-size:11px;font-weight:700;letter-spacing:0.16em;text-transform:uppercase;">Yuzu Cigar Club</p>
-                <h1 style="margin:0;color:#f8f0df;font-size:34px;line-height:1.08;font-weight:800;">Your account is ready</h1>
-                <p style="margin:16px 0 0;color:#d9cfbd;font-size:16px;line-height:1.6;">${escapeHtml(greeting)} Welcome in. Your profile, humidor, shop access, and membership options are ready when you are.</p>
-              </td>
-            </tr>
-            <tr>
-              <td style="padding:24px 28px 8px;">
-                <h2 style="margin:0 0 8px;color:#f8f0df;font-size:20px;line-height:1.3;">Account details</h2>
-                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="font-size:14px;line-height:1.5;border-top:1px solid #352719;">
-                  <tr><td style="padding:10px 0;color:#b7aa96;">Email</td><td align="right" style="padding:10px 0;color:#f8f0df;font-weight:700;">${escapeHtml(details.email)}</td></tr>
-                  <tr><td style="padding:10px 0;color:#b7aa96;">Display name</td><td align="right" style="padding:10px 0;color:#f8f0df;font-weight:700;">${escapeHtml(details.displayName || "Not set yet")}</td></tr>
-                  <tr><td style="padding:10px 0;color:#b7aa96;">Membership status</td><td align="right" style="padding:10px 0;color:#f8f0df;font-weight:700;">${escapeHtml(details.memberStatus)}</td></tr>
-                  ${tierRow}
-                  ${usernameRow}
-                </table>
-              </td>
-            </tr>
-            <tr>
-              <td style="padding:16px 28px 28px;">
-                <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
-                  <tr>
-                    <td style="padding:18px 0;border-top:1px solid #352719;">
-                      <h3 style="margin:0 0 8px;color:#d8a84f;font-size:15px;line-height:1.35;">Digital humidor</h3>
-                      <p style="margin:0 0 12px;color:#d9cfbd;font-size:14px;line-height:1.6;">Save cigars, tasting notes, aging dates, locations, and reorder reminders.</p>
-                      <a href="${escapeHtmlAttribute(details.humidorUrl)}" style="color:#d8a84f;font-weight:700;">Open humidor</a>
-                    </td>
-                  </tr>
-                  <tr>
-                    <td style="padding:18px 0;border-top:1px solid #352719;">
-                      <h3 style="margin:0 0 8px;color:#d8a84f;font-size:15px;line-height:1.35;">Member drops and pricing</h3>
-                      <p style="margin:0 0 12px;color:#d9cfbd;font-size:14px;line-height:1.6;">Browse current cigar boxes, samplers, early-access drops, and member pricing options.</p>
-                      <a href="${escapeHtmlAttribute(details.shopUrl)}" style="color:#d8a84f;font-weight:700;">Browse shop</a>
-                      <span style="color:#6f6252;"> | </span>
-                      <a href="${escapeHtmlAttribute(details.membershipUrl)}" style="color:#d8a84f;font-weight:700;">Compare memberships</a>
-                    </td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
-            <tr>
-              <td style="padding:22px 28px 28px;background:#211911;border-top:1px solid #4f3b21;">
-                <p style="margin:0 0 10px;color:#f8f0df;font-size:14px;line-height:1.6;">Need to adjust account details? Visit <a href="${escapeHtmlAttribute(details.accountUrl)}" style="color:#d8a84f;">your account</a> or reply to this email.</p>
-                <p style="margin:0;color:#b7aa96;font-size:12px;line-height:1.6;">Yuzu Cigar Club is for adults 21+. Availability, pricing, shipping, and compliance checks can vary. Request ID: ${escapeHtml(requestId)}</p>
-              </td>
-            </tr>
-          </table>
-        </td>
-      </tr>
-    </table>
-  </body>
-</html>`;
-
-  return sanitizeEmailHtml(html);
-}
-
 function formatWelcomeAccountLabel(value) {
   const text = sanitizeText(value, 120).replace(/[_-]+/g, " ");
   if (!text) {
@@ -1103,8 +936,301 @@ function formatWelcomeAccountLabel(value) {
     .replace(/\bNon Member\b/g, "Non-member");
 }
 
+async function maybeSendMemberWelcomeEmail(details, requestId) {
+  const email = normalizeEmailAddresses(details?.email, 1)[0] || "";
+  if (!email) {
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        event: "member_welcome_email_missing_email",
+        requestId,
+      })
+    );
+    return {
+      kind: "member_welcome",
+      status: "skipped",
+      sesMessageId: null,
+    };
+  }
+
+  if (process.env.FEATURE_SES !== "ready") {
+    console.info(
+      JSON.stringify({
+        level: "info",
+        event: "member_welcome_email_pending_sender",
+        requestId,
+        featureSes: process.env.FEATURE_SES || "pending_identity",
+      })
+    );
+    return {
+      kind: "member_welcome",
+      status: "pending_ses",
+      sesMessageId: null,
+    };
+  }
+
+  try {
+    const normalizedDetails = normalizeMemberWelcomeEmailDetails({
+      ...details,
+      email,
+    });
+    const emailContent = buildMemberWelcomeEmailContent(normalizedDetails, requestId);
+    const sesMessageId = await sendSupportEmail({
+      bodyHtml: emailContent.bodyHtml,
+      bodyText: emailContent.bodyText,
+      fromAddress: getSupportEmailFrom(),
+      replyToAddresses: [getSupportInboundReplyToAddress()],
+      subject: emailContent.subject,
+      toAddresses: [email],
+    });
+
+    return {
+      kind: "member_welcome",
+      status: "sent",
+      sesMessageId,
+    };
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        level: "warn",
+        event: "member_welcome_email_failed",
+        requestId,
+        name: error instanceof Error ? error.name : null,
+        message: error instanceof Error ? error.message : String(error),
+      })
+    );
+
+    return {
+      kind: "member_welcome",
+      status: "failed",
+      sesMessageId: null,
+    };
+  }
+}
+
+function normalizeMemberWelcomeEmailDetails(details) {
+  const tierKey = normalizeMembershipEntitlementTier(details.membershipTier || details.tierKey) || "box_access_pass";
+  const tierLabel = formatWelcomeAccountLabel(tierKey);
+  const firstName = splitFirstName(details.displayName || details.fullName || details.name);
+
+  return {
+    email: normalizeEmailAddresses(details.email, 1)[0] || "",
+    displayName: sanitizeText(details.displayName || details.fullName || details.name, 160),
+    firstName,
+    tierKey,
+    tierLabel,
+    memberStatus: formatWelcomeAccountLabel(details.memberStatus || "active"),
+    billingPeriod: formatWelcomeAccountLabel(details.billingPeriod || ""),
+    source: sanitizeText(details.source, 80),
+    campaign: sanitizeText(details.campaign, 120),
+    expiresAt: sanitizeText(details.expiresAt || details.currentPeriodEnd, 120),
+    stripeCustomerId: sanitizeText(details.stripeCustomerId, 160),
+    accountUrl: resolveNewsletterEmailUrl("/account/"),
+    humidorUrl: resolveNewsletterEmailUrl("/humidor/"),
+    memberDropsUrl: resolveNewsletterEmailUrl("/member-drops/"),
+    shopUrl: resolveNewsletterEmailUrl("/shop/"),
+    supportUrl: resolveNewsletterEmailUrl("/contact/"),
+  };
+}
+
+function buildMemberWelcomeEmailContent(details, requestId) {
+  return {
+    kind: "member_welcome",
+    subject: `Welcome to Yuzu Cigar Club. Your ${details.tierLabel} is active.`,
+    bodyText: buildMemberWelcomeEmailText(details, requestId),
+    bodyHtml: buildMemberWelcomeEmailHtml(details, requestId),
+  };
+}
+
+function buildMemberWelcomeEmailText(details, requestId) {
+  const greeting = details.firstName ? `Welcome inside, ${details.firstName}.` : "Welcome inside.";
+  const benefits = getMemberWelcomeBenefits(details.tierKey, details.expiresAt);
+  const tips = getMemberWelcomeTips(details.tierKey);
+  const detailLines = [
+    `Membership: ${details.tierLabel}`,
+    `Status: ${details.memberStatus}`,
+    details.billingPeriod ? `Billing: ${details.billingPeriod}` : "",
+    details.expiresAt ? `Access through: ${formatWelcomeDate(details.expiresAt)}` : "",
+    details.stripeCustomerId ? `Stripe customer: ${details.stripeCustomerId}` : "",
+  ].filter(Boolean);
+
+  const lines = [
+    greeting,
+    "",
+    `Your ${details.tierLabel} membership is active. Member-cost boxes, private drops, and your digital humidor are ready.`,
+    "",
+    "Member details",
+    ...detailLines,
+    "",
+    "Benefits now open",
+    ...benefits.map((benefit) => `- ${benefit}`),
+    "",
+    "First box tips",
+    ...tips.map((tip) => `- ${tip}`),
+    "",
+    `Browse member drops: ${details.memberDropsUrl}`,
+    `Open your digital humidor: ${details.humidorUrl}`,
+    `Shop boxes: ${details.shopUrl}`,
+    `Need help choosing? ${details.supportUrl}`,
+    "",
+    "Yuzu Cigar Club is for adults 21+. Product availability, pricing, shipping, and compliance checks can vary by location and inventory.",
+    `Request ID: ${requestId}`,
+  ];
+
+  return sanitizeMultilineText(lines.join("\n"), MAX_EMAIL_BODY_LENGTH);
+}
+
+function buildMemberWelcomeEmailHtml(details, requestId) {
+  const logoUrl = resolveNewsletterEmailUrl("/assets/yuzu-logo.png");
+  const greeting = details.firstName ? `Welcome inside, ${details.firstName}.` : "Welcome inside.";
+  const benefits = getMemberWelcomeBenefits(details.tierKey, details.expiresAt);
+  const tips = getMemberWelcomeTips(details.tierKey);
+  const benefitRows = benefits.map((benefit, index) => buildMemberWelcomeListRow(benefit, index + 1)).join("");
+  const tipRows = tips.map((tip, index) => buildMemberWelcomeListRow(tip, index + 1)).join("");
+  const accessLabel = details.expiresAt ? `Access through ${formatWelcomeDate(details.expiresAt)}` : "Membership active";
+  const html = `
+<!doctype html>
+<html>
+  <body style="margin:0;padding:0;background:#030504;color:#f8edd7;font-family:Arial,Helvetica,sans-serif;">
+    <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">Member-cost boxes, private drops, and your digital humidor are ready.</div>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#030504;">
+      <tr>
+        <td align="center" style="padding:34px 16px;">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:680px;border:1px solid #6f5323;background:#101812;">
+            <tr>
+              <td style="padding:30px 28px 24px;border-bottom:1px solid #6f5323;background:#07110d;">
+                <img src="${escapeHtmlAttribute(logoUrl)}" width="88" alt="Yuzu Cigar Club" style="display:block;margin:0 0 18px;border:0;outline:none;text-decoration:none;">
+                <p style="margin:0 0 10px;color:#dca93a;font-size:11px;font-weight:800;letter-spacing:0.18em;text-transform:uppercase;">Yuzu Cigar Club</p>
+                <h1 style="margin:0;color:#f8edd7;font-family:Georgia,'Times New Roman',serif;font-size:38px;line-height:1.05;font-weight:700;">${escapeHtml(greeting)}</h1>
+                <p style="margin:16px 0 0;color:#b8aa8f;font-size:16px;line-height:1.65;">Your <strong style="color:#f8edd7;">${escapeHtml(details.tierLabel)}</strong> membership is active. Member-cost cigar boxes, private drops, and your digital humidor are ready.</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:22px 28px 0;">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid #6f5323;background:#030504;">
+                  <tr>
+                    <td style="padding:16px 18px;">
+                      <p style="margin:0 0 6px;color:#dca93a;font-size:11px;font-weight:800;letter-spacing:0.16em;text-transform:uppercase;">Member status</p>
+                      <p style="margin:0;color:#f8edd7;font-size:22px;line-height:1.25;font-weight:800;">${escapeHtml(details.tierLabel)}</p>
+                      <p style="margin:8px 0 0;color:#b8aa8f;font-size:13px;line-height:1.5;">${escapeHtml(accessLabel)}</p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:24px 28px 8px;">
+                <p style="margin:0 0 12px;color:#dca93a;font-size:12px;font-weight:800;letter-spacing:0.16em;text-transform:uppercase;">Benefits now open</p>
+                ${benefitRows}
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:10px 28px 8px;">
+                <p style="margin:0 0 12px;color:#dca93a;font-size:12px;font-weight:800;letter-spacing:0.16em;text-transform:uppercase;">First box tips</p>
+                ${tipRows}
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:22px 28px 28px;">
+                <a href="${escapeHtmlAttribute(details.memberDropsUrl)}" style="display:block;margin:0 0 12px;padding:14px 18px;background:#dca93a;color:#07110d;font-size:13px;font-weight:800;letter-spacing:0.14em;text-align:center;text-decoration:none;text-transform:uppercase;">Browse member drops</a>
+                <a href="${escapeHtmlAttribute(details.humidorUrl)}" style="display:block;margin:0;padding:13px 18px;border:1px solid #6f5323;color:#f8edd7;font-size:13px;font-weight:800;letter-spacing:0.14em;text-align:center;text-decoration:none;text-transform:uppercase;">Open digital humidor</a>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:22px 28px 28px;background:#07110d;border-top:1px solid #6f5323;">
+                <p style="margin:0 0 10px;color:#f8edd7;font-size:14px;line-height:1.6;">Need help choosing your first member-cost box? Reply to this email or visit <a href="${escapeHtmlAttribute(details.supportUrl)}" style="color:#dca93a;">concierge support</a>.</p>
+                <p style="margin:0;color:#8f846f;font-size:12px;line-height:1.6;">Yuzu Cigar Club is for adults 21+. Availability, pricing, shipping, and compliance checks can vary. Request ID: ${escapeHtml(requestId)}</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+
+  return sanitizeEmailHtml(html);
+}
+
+function buildMemberWelcomeListRow(text, index) {
+  return `
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:0 0 10px;border-bottom:1px solid rgba(111,83,35,0.55);">
+                  <tr>
+                    <td width="34" style="padding:0 12px 12px 0;vertical-align:top;">
+                      <div style="width:28px;height:28px;border:1px solid #dca93a;color:#dca93a;font-size:12px;font-weight:800;line-height:28px;text-align:center;">${index}</div>
+                    </td>
+                    <td style="padding:0 0 12px;color:#f8edd7;font-size:14px;line-height:1.6;">${escapeHtml(text)}</td>
+                  </tr>
+                </table>`;
+}
+
+function getMemberWelcomeBenefits(tierKey, expiresAt) {
+  const common = [
+    "Member-cost pricing on full cigar boxes.",
+    "Access to private box catalog and member drops.",
+    "Digital humidor tools to track, age, and reorder.",
+  ];
+
+  if (tierKey === "box_access_pass") {
+    return [
+      ...common,
+      expiresAt ? `Friends & Family Box Access through ${formatWelcomeDate(expiresAt)}.` : "Friends & Family Box Access is active.",
+      "Email support from the Yuzu team.",
+    ];
+  }
+
+  if (tierKey === "sensei") {
+    return [
+      ...common,
+      "Monthly selection window with curated cigar access.",
+      "Concierge recommendations and priority drop allocations.",
+    ];
+  }
+
+  if (tierKey === "daimyo") {
+    return [
+      ...common,
+      "VIP concierge support and first access to member-only drops.",
+      "Premium allocation priority for limited releases.",
+    ];
+  }
+
+  return [
+    ...common,
+    "Monthly curated cigar access based on your tier.",
+    "Member support for recommendations and account questions.",
+  ];
+}
+
+function getMemberWelcomeTips(tierKey) {
+  const tips = [
+    "Start with one box you already know you enjoy, then branch into member drops.",
+    "Let shipped boxes rest before smoking so humidity and temperature can settle.",
+    "Keep your humidor around 65%-72% relative humidity and log notes after the first smoke.",
+  ];
+
+  if (tierKey !== "box_access_pass") {
+    tips.push("Use your monthly selection window early so preferred picks are not gone before you choose.");
+  }
+
+  return tips;
+}
+
+function formatWelcomeDate(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return sanitizeText(value, 80);
+  }
+
+  return new Intl.DateTimeFormat("en-US", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  }).format(date);
+}
+
 async function handleNewsletterSubscribe(event, requestId) {
-  const body = parseJsonBody(event);
+  const body = parseJsonBody(event, { maxBytes: MAX_PUBLIC_JSON_BODY_BYTES });
   if (body.error) {
     return body.error;
   }
@@ -1573,7 +1699,7 @@ function escapeHtmlAttribute(value) {
 }
 
 async function handlePublicSupportContact(event, requestId) {
-  const body = parseJsonBody(event);
+  const body = parseJsonBody(event, { maxBytes: MAX_PUBLIC_JSON_BODY_BYTES });
   if (body.error) {
     return body.error;
   }
@@ -1617,18 +1743,37 @@ async function handlePublicSupportContact(event, requestId) {
     requestId,
     topic,
   });
-  const sesMessageId = await sendSupportEmail({
-    bodyText,
-    fromAddress,
-    replyToAddresses: [email],
-    subject,
-    toAddresses: [supportRecipient],
-  });
+  let deliveryStatus = "pending_ses";
+  let sesMessageId = null;
+  if (process.env.FEATURE_SES === "ready") {
+    try {
+      sesMessageId = await sendSupportEmail({
+        bodyText,
+        fromAddress,
+        replyToAddresses: [email],
+        subject,
+        toAddresses: [supportRecipient],
+      });
+      deliveryStatus = "sent";
+    } catch (error) {
+      deliveryStatus = "failed";
+      console.error(
+        JSON.stringify({
+          level: "warn",
+          event: "public_support_contact_email_failed",
+          requestId,
+          name: error instanceof Error ? error.name : null,
+          message: error instanceof Error ? error.message : String(error),
+        })
+      );
+    }
+  }
 
   let persistedCase = null;
   if (shouldPersistDatabaseWrites()) {
     persistedCase = await persistPublicSupportContact(event, requestId, {
       bodyText,
+      deliveryStatus,
       email,
       message,
       name,
@@ -1643,7 +1788,7 @@ async function handlePublicSupportContact(event, requestId) {
 
   return json(200, requestId, {
     contact: {
-      status: "sent",
+      status: deliveryStatus,
       email,
       persisted: Boolean(persistedCase),
       persistence: persistedCase ? "stored" : getDatabasePersistenceStatus(),
@@ -1652,7 +1797,10 @@ async function handlePublicSupportContact(event, requestId) {
       messageId: persistedCase?.emailMessageId || null,
       sesMessageId,
     },
-    nextActions: ["support_team_review", "reply_to_customer_email"],
+    nextActions:
+      deliveryStatus === "sent"
+        ? ["support_team_review", "reply_to_customer_email"]
+        : ["support_team_review", "send_support_email_when_provider_ready"],
   });
 }
 
@@ -1675,7 +1823,7 @@ function buildPublicSupportContactEmailBody(details) {
 }
 
 async function handleCommerceCheckoutSession(event, requestId) {
-  const body = parseJsonBody(event);
+  const body = parseJsonBody(event, { maxBytes: MAX_CHECKOUT_JSON_BODY_BYTES });
   if (body.error) {
     return body.error;
   }
@@ -1811,7 +1959,7 @@ async function handleCommerceCheckoutSession(event, requestId) {
 }
 
 async function handleCommerceAgeVerificationToken(event, requestId) {
-  const body = parseJsonBody(event);
+  const body = parseJsonBody(event, { maxBytes: MAX_PUBLIC_JSON_BODY_BYTES });
   if (body.error) {
     return body.error;
   }
@@ -1874,7 +2022,7 @@ async function handleCommerceAgeVerificationToken(event, requestId) {
 }
 
 async function handleCommerceMembershipSession(event, requestId) {
-  const body = parseJsonBody(event);
+  const body = parseJsonBody(event, { maxBytes: MAX_PUBLIC_JSON_BODY_BYTES });
   if (body.error) {
     return body.error;
   }
@@ -1895,8 +2043,15 @@ async function handleCommerceMembershipSession(event, requestId) {
   });
 
   if (membershipOffer?.code === "friends-family-box-pass") {
+    const actor = getActor(event);
+    const claimActor = validateFriendsFamilyClaimActor(actor, customerEmail, requestId);
+    if (claimActor.error) {
+      return claimActor.error;
+    }
+
     return handleFriendsFamilyBoxPassClaim(
       {
+        actor: claimActor.value,
         customer: {
           ...body.value.customer,
           email: customerEmail,
@@ -1951,6 +2106,38 @@ async function handleCommerceMembershipSession(event, requestId) {
   });
 }
 
+function validateFriendsFamilyClaimActor(actor, customerEmail, requestId) {
+  if (!actor) {
+    return {
+      error: json(401, requestId, {
+        error: "membership_claim_auth_required",
+        message: "Sign in with your verified Yuzu account before activating this Friends & Family pass.",
+      }),
+    };
+  }
+
+  if (!actor.email || !actor.emailVerified) {
+    return {
+      error: json(403, requestId, {
+        error: "membership_claim_email_unverified",
+        message: "Confirm your Yuzu account email before activating this Friends & Family pass.",
+      }),
+    };
+  }
+
+  const actorEmail = normalizeEmailAddresses(actor.email, 1)[0] || "";
+  if (!actorEmail || actorEmail !== customerEmail) {
+    return {
+      error: json(403, requestId, {
+        error: "membership_claim_email_mismatch",
+        message: "The Friends & Family pass can only be activated for the signed-in account email.",
+      }),
+    };
+  }
+
+  return { value: actor };
+}
+
 async function handleFriendsFamilyBoxPassClaim(input, requestId) {
   if (!shouldPersistDatabaseWrites()) {
     return json(409, requestId, {
@@ -1965,6 +2152,19 @@ async function handleFriendsFamilyBoxPassClaim(input, requestId) {
     const member = await grantFriendsFamilyBoxPass(client, input, requestId, expiresAt);
     const stripeCustomerId =
       member.stripeCustomerId || (await createAndLinkFriendsFamilyStripeCustomer(client, member, input, expiresAt));
+    const memberWelcomeEmail = await maybeSendMemberWelcomeEmail(
+      {
+        email: member.email,
+        displayName: member.displayName || input.customer?.fullName || input.customer?.name,
+        membershipTier: "box_access_pass",
+        memberStatus: "active",
+        source: input.membershipOffer.source,
+        campaign: input.membershipOffer.campaign,
+        expiresAt,
+        stripeCustomerId,
+      },
+      requestId
+    );
 
     return json(200, requestId, {
       id: `ff_box_pass_${hashActor(input.customer.email)}`,
@@ -1979,6 +2179,7 @@ async function handleFriendsFamilyBoxPassClaim(input, requestId) {
         expiresAt,
         memberId: member.id,
         stripeCustomerId,
+        memberWelcomeEmail,
       },
     });
   });
@@ -2017,11 +2218,16 @@ async function createAndLinkFriendsFamilyStripeCustomer(client, member, input, e
 
 async function grantFriendsFamilyBoxPass(client, input, requestId, expiresAt) {
   const email = normalizeEmailAddresses(input.customer?.email, 1)[0] || "";
-  const displayName = sanitizeText(input.customer?.fullName || input.customer?.name, 160);
-  const actorId = "friends-family-page";
+  const displayName = sanitizeText(input.customer?.fullName || input.customer?.name || input.actor?.name, 160);
+  const actorId = sanitizeText(input.actor?.sub, 160);
+  if (!actorId) {
+    throw new Error("Friends & Family pass claim requires an authenticated Cognito actor.");
+  }
+
   const metadata = JSON.stringify({
     friendsFamilyBoxPass: {
       code: input.membershipOffer.code,
+      actorSub: actorId,
       source: input.membershipOffer.source,
       campaign: input.membershipOffer.campaign,
       landingPath: input.membershipOffer.landingPath,
@@ -2055,7 +2261,7 @@ async function grantFriendsFamilyBoxPass(client, input, requestId, expiresAt) {
     return mapMemberRow(updated.rows[0]);
   }
 
-  const syntheticSub = `friends-family:${hashActor(email)}`;
+  const cognitoSub = actorId;
   const inserted = await client.query(
     `
       insert into public.members (
@@ -2087,7 +2293,7 @@ async function grantFriendsFamilyBoxPass(client, input, requestId, expiresAt) {
           updated_at = now()
       returning id, cognito_sub, email, display_name, role, membership_tier, member_status, stripe_customer_id
     `,
-    [syntheticSub, email, nullable(displayName), metadata, actorId, requestId]
+    [cognitoSub, email, nullable(displayName), metadata, actorId, requestId]
   );
 
   if (!inserted.rows[0]) {
@@ -2182,6 +2388,29 @@ async function handleStripeWebhook(event, requestId) {
     const orderAlert = buildAdminNewOrderAlert(stripeEvent, action, processing);
     if (orderAlert) {
       await maybeDispatchAdminOperationalAlert(orderAlert, requestId);
+    }
+
+    if (shouldSendStripeMemberWelcomeEmail(stripeEvent, action, processing)) {
+      const memberWelcomeEmail = await maybeSendMemberWelcomeEmail(
+        {
+          email: processing.subscription.email,
+          membershipTier: processing.subscription.tierKey,
+          memberStatus: processing.subscription.status,
+          billingPeriod: processing.subscription.billingPeriod,
+          expiresAt: processing.subscription.currentPeriodEnd,
+          stripeCustomerId: processing.subscription.stripeCustomerId,
+          source: "stripe-subscription",
+          campaign: stripeEvent.type,
+        },
+        requestId
+      );
+      processing = {
+        ...processing,
+        subscription: {
+          ...processing.subscription,
+          memberWelcomeEmail,
+        },
+      };
     }
 
     return json(200, requestId, {
@@ -7628,7 +7857,12 @@ async function getCommerceRuntimeEnv() {
     return process.env;
   }
 
-  if (!commerceRuntimeSecretCache || commerceRuntimeSecretCache.secretId !== secretId) {
+  const nowMs = Date.now();
+  if (
+    !commerceRuntimeSecretCache ||
+    commerceRuntimeSecretCache.secretId !== secretId ||
+    commerceRuntimeSecretCache.expiresAtMs <= nowMs
+  ) {
     const parsed = await readJsonSecretFromSecretsManager(secretId, "Commerce provider");
     const values = normalizeCommerceProviderSecret(parsed);
     if (values.STRIPE_LAUNCH_CATALOG_S3_URI && !values.STRIPE_LAUNCH_CATALOG_JSON) {
@@ -7636,6 +7870,7 @@ async function getCommerceRuntimeEnv() {
     }
 
     commerceRuntimeSecretCache = {
+      expiresAtMs: nowMs + COMMERCE_RUNTIME_SECRET_CACHE_TTL_MS,
       secretId,
       values,
     };
@@ -8402,23 +8637,26 @@ async function persistPublicSupportContact(event, requestId, details) {
       subject: details.subject,
       toAddresses: details.toAddresses,
       topic: details.topic,
+      deliveryStatus: details.deliveryStatus,
     });
     const emailMessage = await insertInboundSupportEmailMessage(client, supportCase.id, requestId, {
       bodyText: details.bodyText,
       fromAddress: details.email,
       rawKey: null,
       receivedAt,
-      sesMessageId: details.sesMessageId,
-      source: "contact_form",
-      subject: details.subject,
-      toAddresses: details.toAddresses,
-    });
+        sesMessageId: details.sesMessageId,
+        source: "contact_form",
+        subject: details.subject,
+        toAddresses: details.toAddresses,
+        deliveryStatus: details.deliveryStatus,
+      });
 
     await insertAuditLog(client, event, {
-      action: "support.contact.sent",
+      action: details.deliveryStatus === "sent" ? "support.contact.sent" : "support.contact.received",
       actor,
       afterData: {
         caseNumber: supportCase.caseNumber,
+        deliveryStatus: details.deliveryStatus,
         email: details.email,
         emailMessageId: emailMessage.id,
         sesMessageId: details.sesMessageId,
@@ -9613,6 +9851,7 @@ async function insertInboundSupportCase(client, requestId, details) {
       details.subject,
       getSupportPriority(details.bodyText),
       JSON.stringify({
+        deliveryStatus: details.deliveryStatus || null,
         fromAddress: details.fromAddress,
         name: details.name || null,
         orderNumber: details.orderNumber || null,
@@ -9669,6 +9908,7 @@ async function insertInboundSupportEmailMessage(client, supportCaseId, requestId
       details.rawKey || null,
       details.receivedAt || new Date().toISOString(),
       JSON.stringify({
+        deliveryStatus: details.deliveryStatus || null,
         source: details.source || "ses",
       }),
       requestId,
@@ -10317,6 +10557,7 @@ async function processStripeWebhookEvent(event, requestId, stripeEvent, action, 
     );
 
     const actionResult = await applyStripeCommerceWebhookAction(client, stripeEvent, action, stripeClient);
+    const subscription = actionResult?.subscription || null;
     let order = actionResult?.order || (actionResult && actionResult.id ? actionResult : null);
 
     if (!order && (action === "record_checkout_completion" || action === "record_payment_failure")) {
@@ -10377,8 +10618,19 @@ async function processStripeWebhookEvent(event, requestId, stripeEvent, action, 
       eventStored: true,
       orderId: order ? order.id : null,
       processingStatus,
+      subscription,
     };
   });
+}
+
+function shouldSendStripeMemberWelcomeEmail(stripeEvent, action, processing) {
+  return Boolean(
+    stripeEvent?.type === "customer.subscription.created" &&
+      action === "record_subscription_update" &&
+      !processing?.duplicate &&
+      processing?.subscription?.status === "active" &&
+      processing.subscription.email
+  );
 }
 
 async function applyStripeCommerceWebhookAction(client, stripeEvent, action, stripeClient) {
@@ -10657,7 +10909,18 @@ async function upsertCommerceSubscriptionFromStripeEvent(client, stripeEvent, ac
   if (memberId && stripeCustomerId) {
     await linkMemberStripeCustomer(client, memberId, stripeCustomerId);
   }
-  return row ? { id: row.id, status: row.status || status } : null;
+  return row
+    ? {
+        id: row.id,
+        status: row.status || status,
+        email,
+        tierKey,
+        billingPeriod,
+        currentPeriodEnd: currentPeriodEndIso,
+        stripeCustomerId,
+        stripeSubscriptionId: subscriptionId,
+      }
+    : null;
 }
 
 async function linkMemberStripeCustomer(client, memberId, stripeCustomerId) {
@@ -16359,13 +16622,25 @@ function normalizeDateOnly(value) {
   return date.toISOString().slice(0, 10);
 }
 
-function parseJsonBody(event) {
+function parseJsonBody(event, options = {}) {
   if (!event.body) {
     return { value: {} };
   }
 
   try {
-    const raw = event.isBase64Encoded ? Buffer.from(event.body, "base64").toString("utf8") : event.body;
+    const maxBytes = Number.isFinite(options.maxBytes) && options.maxBytes > 0 ? options.maxBytes : MAX_DEFAULT_JSON_BODY_BYTES;
+    const rawBuffer = event.isBase64Encoded ? Buffer.from(String(event.body), "base64") : Buffer.from(String(event.body), "utf8");
+    if (rawBuffer.length > maxBytes) {
+      return {
+        error: json(413, getRequestId(event, {}), {
+          error: "request_body_too_large",
+          message: "The request body is too large.",
+          maxBytes,
+        }),
+      };
+    }
+
+    const raw = rawBuffer.toString("utf8");
     const parsed = JSON.parse(raw);
 
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
@@ -16829,7 +17104,22 @@ function getConfiguredCorsOrigins() {
     origins.push(...DEFAULT_CORS_ALLOW_ORIGINS);
   }
 
-  return [...new Set(origins)];
+  const uniqueOrigins = [...new Set(origins)];
+  if (!isProductionCorsRuntime()) {
+    return uniqueOrigins;
+  }
+
+  const productionOrigins = uniqueOrigins.filter((origin) => origin !== "*");
+  return productionOrigins.length > 0 ? productionOrigins : DEFAULT_CORS_ALLOW_ORIGINS;
+}
+
+function isProductionCorsRuntime() {
+  const nodeEnv = sanitizeText(process.env.NODE_ENV, 80).toLowerCase();
+  const publicSiteUrl = sanitizeText(process.env.PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_BASE_URL || process.env.BASE_URL, 240)
+    .toLowerCase()
+    .replace(/\/+$/g, "");
+
+  return nodeEnv === "production" || publicSiteUrl === "https://yuzucigarclub.com" || publicSiteUrl === "https://www.yuzucigarclub.com";
 }
 
 function canOpenTcpConnection(host, port, timeoutMs) {

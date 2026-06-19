@@ -36,6 +36,11 @@ const sections = [
       "We may send transactional account, support, order, membership, billing, security, and compliance communications related to your use of Yuzu Cigar Club. Marketing or newsletter emails require consent and may be unsubscribed from without affecting required transactional notices.",
   },
   {
+    title: "SMS Text Messaging Terms",
+    copy:
+      "Yuzu Cigar Club owner/admin SMS alerts are optional operational text messages for the company owner or an authorized admin who explicitly opts in. These messages may include account signup or admin operations alerts. Message frequency varies by site activity and is expected to be low volume. Message and data rates may apply. Reply STOP to opt out, reply HELP for help, or contact support@yuzucigarclub.com. Wireless carriers are not liable for delayed or undelivered messages. Our Privacy Policy explains how we handle mobile opt-in data.",
+  },
+  {
     title: "Responsible Use",
     copy:
       "You agree not to misuse the site, bypass age gates, submit false information, interfere with platform security, scrape content, abuse support systems, resell restricted benefits where prohibited, or use the service in a way that violates law, carrier rules, provider policies, or platform requirements.",

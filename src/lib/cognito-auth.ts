@@ -90,6 +90,11 @@ export type CognitoPasswordSignInResult =
       challengeSession: string | null;
     }
   | {
+      status: "confirmation_required";
+      message: string;
+      destination: string;
+    }
+  | {
       status: "error";
       message: string;
     };
@@ -113,6 +118,7 @@ export type CognitoConfirmSignUpResult =
   | {
       status: "confirmed";
       message: string;
+      alreadyConfirmed?: boolean;
     }
   | {
       status: "error";
@@ -329,6 +335,14 @@ export async function signInWithCognitoPassword(
     const payload = await readCognitoJson(response);
 
     if (!response.ok) {
+      if (isCognitoErrorType(payload, "UserNotConfirmedException")) {
+        return {
+          status: "confirmation_required",
+          message: "That Yuzu account still needs email confirmation. Send a new code, then enter it here.",
+          destination: "",
+        };
+      }
+
       return {
         status: "error",
         message: getCognitoErrorMessage(payload),
@@ -430,6 +444,14 @@ export async function confirmCognitoSignUp(
     const payload = await readCognitoJson(response);
 
     if (!response.ok) {
+      if (isAlreadyConfirmedAccountError(payload)) {
+        return {
+          status: "confirmed",
+          message: "Your Yuzu account is already confirmed. Sign in to claim the pass.",
+          alreadyConfirmed: true,
+        };
+      }
+
       return {
         status: "error",
         message: getCognitoErrorMessage(payload),
@@ -439,6 +461,7 @@ export async function confirmCognitoSignUp(
     return {
       status: "confirmed",
       message: "Your Yuzu account is confirmed. Signing you in now.",
+      alreadyConfirmed: false,
     };
   } catch {
     return {
@@ -466,6 +489,13 @@ export async function resendCognitoSignUpCode(
     const payload = await readCognitoJson(response);
 
     if (!response.ok) {
+      if (isAlreadyConfirmedAccountError(payload)) {
+        return {
+          status: "signed_up",
+          message: "Your Yuzu account is already confirmed. Sign in to claim the pass.",
+        };
+      }
+
       return {
         status: "error",
         message: getCognitoErrorMessage(payload),
@@ -773,7 +803,7 @@ export function getCognitoTokenResponse(value: unknown): CognitoTokenResponse | 
 }
 
 function getCognitoErrorMessage(payload: Record<string, unknown>) {
-  const type = stringClaim(payload.__type) || stringClaim(payload.code);
+  const type = getCognitoErrorType(payload);
   const message = stringClaim(payload.message) || stringClaim(payload.Message);
 
   if (message?.includes("USER_PASSWORD_AUTH flow not enabled")) {
@@ -781,7 +811,11 @@ function getCognitoErrorMessage(payload: Record<string, unknown>) {
   }
 
   if (type?.includes("UsernameExistsException")) {
-    return "That email already has a Yuzu account. Sign in instead.";
+    return "That email already has a Yuzu account. Sign in below. If it still needs email confirmation, Yuzu will open the code step.";
+  }
+
+  if (type?.includes("UserNotConfirmedException")) {
+    return "That Yuzu account still needs email confirmation. Send a new code, then enter it here.";
   }
 
   if (type?.includes("InvalidPasswordException")) {
@@ -801,6 +835,20 @@ function getCognitoErrorMessage(payload: Record<string, unknown>) {
   }
 
   return message || "Cognito could not sign you in. Check your email and password.";
+}
+
+function getCognitoErrorType(payload: Record<string, unknown>) {
+  return stringClaim(payload.__type) || stringClaim(payload.code);
+}
+
+function isCognitoErrorType(payload: Record<string, unknown>, expectedType: string) {
+  return Boolean(getCognitoErrorType(payload)?.includes(expectedType));
+}
+
+function isAlreadyConfirmedAccountError(payload: Record<string, unknown>) {
+  const message = stringClaim(payload.message) || stringClaim(payload.Message) || "";
+
+  return /already confirmed|current status is confirmed|cannot be confirmed/i.test(message);
 }
 
 function getCognitoChallengeMessage(challengeName: string) {

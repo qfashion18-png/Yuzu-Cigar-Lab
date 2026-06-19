@@ -20,38 +20,42 @@ const baseHealthEvent = {
   },
 };
 
+function setProcessEnvValue(key: string, value: string | undefined) {
+  const env = process.env as Record<string, string | undefined>;
+  if (value === undefined) {
+    delete env[key];
+  } else {
+    env[key] = value;
+  }
+}
+
 function withCorsEnv(
-  values: { CORS_ALLOW_ORIGIN?: string; CORS_ALLOW_ORIGINS?: string },
+  values: {
+    BASE_URL?: string;
+    CORS_ALLOW_ORIGIN?: string;
+    CORS_ALLOW_ORIGINS?: string;
+    NEXT_PUBLIC_BASE_URL?: string;
+    NODE_ENV?: string;
+    PUBLIC_SITE_URL?: string;
+  },
   fn: () => Promise<void>
 ) {
   const previous = {
+    BASE_URL: process.env.BASE_URL,
     CORS_ALLOW_ORIGIN: process.env.CORS_ALLOW_ORIGIN,
     CORS_ALLOW_ORIGINS: process.env.CORS_ALLOW_ORIGINS,
+    NEXT_PUBLIC_BASE_URL: process.env.NEXT_PUBLIC_BASE_URL,
+    NODE_ENV: process.env.NODE_ENV,
+    PUBLIC_SITE_URL: process.env.PUBLIC_SITE_URL,
   };
 
-  if (values.CORS_ALLOW_ORIGIN === undefined) {
-    delete process.env.CORS_ALLOW_ORIGIN;
-  } else {
-    process.env.CORS_ALLOW_ORIGIN = values.CORS_ALLOW_ORIGIN;
-  }
-
-  if (values.CORS_ALLOW_ORIGINS === undefined) {
-    delete process.env.CORS_ALLOW_ORIGINS;
-  } else {
-    process.env.CORS_ALLOW_ORIGINS = values.CORS_ALLOW_ORIGINS;
+  for (const key of Object.keys(previous) as Array<keyof typeof previous>) {
+    setProcessEnvValue(key, values[key]);
   }
 
   return fn().finally(() => {
-    if (previous.CORS_ALLOW_ORIGIN === undefined) {
-      delete process.env.CORS_ALLOW_ORIGIN;
-    } else {
-      process.env.CORS_ALLOW_ORIGIN = previous.CORS_ALLOW_ORIGIN;
-    }
-
-    if (previous.CORS_ALLOW_ORIGINS === undefined) {
-      delete process.env.CORS_ALLOW_ORIGINS;
-    } else {
-      process.env.CORS_ALLOW_ORIGINS = previous.CORS_ALLOW_ORIGINS;
+    for (const [key, value] of Object.entries(previous)) {
+      setProcessEnvValue(key, value);
     }
   });
 }
@@ -104,6 +108,26 @@ test("CORS supports wildcard origin configuration", async () => {
 
       assert.equal(response.statusCode, 200);
       assert.equal(response.headers["access-control-allow-origin"], "https://preview.example.com");
+    }
+  );
+});
+
+test("CORS ignores wildcard origin configuration in production runtime", async () => {
+  await withCorsEnv(
+    {
+      CORS_ALLOW_ORIGINS: "*",
+      PUBLIC_SITE_URL: "https://www.yuzucigarclub.com",
+    },
+    async () => {
+      const response = await handler({
+        ...baseHealthEvent,
+        headers: {
+          origin: "https://preview.example.com",
+        },
+      });
+
+      assert.equal(response.statusCode, 200);
+      assert.equal(response.headers["access-control-allow-origin"], "https://yuzucigarclub.com");
     }
   );
 });

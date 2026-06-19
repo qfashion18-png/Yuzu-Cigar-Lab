@@ -15,6 +15,7 @@ import {
   addCartItem,
   applyPromotionCode,
   calculateCartTotals,
+  createLineId,
   createEmptyShoppingCart,
   checkoutPaymentMethods,
   defaultDeliveryMethods,
@@ -58,7 +59,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       const storedCart = readJson<ShoppingCart>(cartStorageKey);
 
       if (storedCart) {
-        setCart(storedCart);
+        setCart(normalizeStoredShoppingCart(storedCart));
       }
 
       setHydrated(true);
@@ -208,4 +209,101 @@ function readJson<T>(key: string): T | null {
   } catch {
     return null;
   }
+}
+
+function normalizeStoredShoppingCart(value: unknown): ShoppingCart {
+  const now = Date.now();
+
+  if (!isRecord(value)) {
+    return createEmptyShoppingCart(now);
+  }
+
+  const items = Array.isArray(value.items)
+    ? value.items.flatMap((item) => {
+        const normalizedItem = normalizeStoredCartItem(item);
+        return normalizedItem ? [normalizedItem] : [];
+      })
+    : [];
+  const createdAt = normalizeStoredTimestamp(value.createdAt, now);
+  const updatedAt = normalizeStoredTimestamp(value.updatedAt, createdAt);
+  const promotionCode = typeof value.promotionCode === "string" && value.promotionCode.trim() ? value.promotionCode.trim().toUpperCase() : null;
+
+  return {
+    id: normalizeStoredString(value.id) || `local-cart-${now}`,
+    items,
+    promotionCode,
+    createdAt,
+    updatedAt: Math.max(createdAt, updatedAt),
+  };
+}
+
+function normalizeStoredCartItem(value: unknown): ShoppingCart["items"][number] | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const productId = normalizeStoredString(value.productId);
+  const variantId = normalizeStoredString(value.variantId);
+  const slug = normalizeStoredString(value.slug);
+  const name = normalizeStoredString(value.name);
+  const sku = normalizeStoredString(value.sku);
+  const image = normalizeStoredString(value.image);
+  const packageLabel = normalizeStoredString(value.packageLabel);
+  const category = normalizeStoredString(value.category);
+  const unitPrice = normalizeStoredCurrency(value.unitPrice);
+  const maxQuantity = normalizeStoredQuantity(value.maxQuantity, Number.MAX_SAFE_INTEGER);
+
+  if (!productId || !variantId || !slug || !name || !sku || !image || !packageLabel || !category || unitPrice === null) {
+    return null;
+  }
+
+  return {
+    productId,
+    variantId,
+    slug,
+    name,
+    sku,
+    image,
+    imagePosition: normalizeStoredString(value.imagePosition) || "center",
+    packageLabel,
+    category,
+    brand: normalizeOptionalStoredString(value.brand),
+    wrapper: normalizeOptionalStoredString(value.wrapper),
+    vitola: normalizeOptionalStoredString(value.vitola),
+    strength: normalizeOptionalStoredString(value.strength),
+    unitPrice,
+    maxQuantity,
+    memberOnly: value.memberOnly === true,
+    lineId: normalizeStoredString(value.lineId) || createLineId(variantId),
+    quantity: normalizeStoredQuantity(value.quantity, maxQuantity),
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeStoredString(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeOptionalStoredString(value: unknown) {
+  const normalized = normalizeStoredString(value);
+  return normalized || undefined;
+}
+
+function normalizeStoredCurrency(value: unknown) {
+  const amount = Number(value);
+  return Number.isFinite(amount) && amount >= 0 ? Math.round((amount + Number.EPSILON) * 100) / 100 : null;
+}
+
+function normalizeStoredQuantity(value: unknown, maxQuantity: number) {
+  const quantity = Math.floor(Number(value));
+  const safeMax = Math.max(1, Math.floor(maxQuantity || 1));
+  return Math.min(Math.max(Number.isFinite(quantity) ? quantity : 1, 1), safeMax);
+}
+
+function normalizeStoredTimestamp(value: unknown, fallback: number) {
+  const timestamp = Number(value);
+  return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : fallback;
 }

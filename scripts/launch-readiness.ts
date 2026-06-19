@@ -50,6 +50,8 @@ const requiredPushKeys = [
   "VAPID_SUBJECT",
 ];
 
+const ageCheckerPublicKeyAliases = ["NEXT_PUBLIC_AGECHECKER_API_KEY", "NEXT_PUBLIC_AGE_VERIFICATION_API_KEY"];
+
 const stripePriceKeys = [
   "STRIPE_PRICE_BOX_ACCESS_PASS_MONTHLY",
   "STRIPE_PRICE_BOX_ACCESS_PASS_QUARTERLY",
@@ -132,6 +134,7 @@ export function assessLaunchReadiness(env: EnvMap, options: LaunchReadinessOptio
     checks.push(requiredValueCheck(`${key.toLowerCase().replaceAll("_", "-")}-configured`, key, env[key], strictExternal));
   }
 
+  checks.push(ageCheckerPublicKeyCheck(env, strictExternal));
   checks.push(vapidPublicKeyMatchCheck(env, strictExternal));
 
   const adminAppUrl = resolveAdminAppUrl(env);
@@ -171,6 +174,41 @@ export function validateDeployZipEntries(entries: string[]): string[] {
   return entries.filter((entry) => disallowedZipEntryPatterns.some((pattern) => pattern.test(entry)));
 }
 
+export function assessDeployZipReadiness(zipPath: string | null, strictExternal: boolean): ReadinessCheck {
+  if (!zipPath) {
+    return {
+      id: "deploy-zip-shape",
+      status: strictExternal ? "fail" : "warn",
+      message: "No deploy zip was found. Create one with npm run amplify:package before go-live promotion.",
+    };
+  }
+
+  if (!existsSync(zipPath)) {
+    return {
+      id: "deploy-zip-shape",
+      status: "fail",
+      message: `Deploy zip does not exist: ${zipPath}`,
+    };
+  }
+
+  try {
+    const invalidEntries = validateDeployZipEntries(readZipEntryNames(zipPath));
+    return {
+      id: "deploy-zip-shape",
+      status: invalidEntries.length ? (strictExternal ? "fail" : "warn") : "pass",
+      message: invalidEntries.length
+        ? `${basename(zipPath)} has invalid entries: ${invalidEntries.slice(0, 5).join(", ")}`
+        : `${basename(zipPath)} uses static-export-safe entry paths.`,
+    };
+  } catch (error) {
+    return {
+      id: "deploy-zip-shape",
+      status: "fail",
+      message: error instanceof Error ? error.message : "Deploy zip could not be inspected.",
+    };
+  }
+}
+
 export function validateLambdaDeployZipEntries(entries: string[]): string[] {
   const entrySet = new Set(entries);
   const missingEntries = requiredLambdaZipEntries
@@ -204,6 +242,21 @@ function shippingProviderCheck(value: string | undefined, strictExternal: boolea
       provider === "USPS"
         ? "SHIPPING_PROVIDER is configured for USPS."
         : "SHIPPING_PROVIDER must be USPS for production fulfillment.",
+  };
+}
+
+function ageCheckerPublicKeyCheck(env: EnvMap, strictExternal: boolean): ReadinessCheck {
+  const configuredKey = ageCheckerPublicKeyAliases.find((key) => {
+    const value = env[key]?.trim();
+    return Boolean(value) && !isPlaceholderValue(value);
+  });
+
+  return {
+    id: "agechecker-public-key-configured",
+    status: configuredKey ? "pass" : strictExternal ? "fail" : "warn",
+    message: configuredKey
+      ? `${configuredKey} is configured for the checkout browser verifier.`
+      : `${ageCheckerPublicKeyAliases.join(" or ")} is required for the checkout browser verifier.`,
   };
 }
 
@@ -522,6 +575,16 @@ function formatChecks(checks: ReadinessCheck[]): string {
   return checks.map((check) => `${check.status.toUpperCase().padEnd(4)} ${check.id}: ${check.message}`).join("\n");
 }
 
+function getArgValue(name: string) {
+  const arg = process.argv.find((value) => value.startsWith(`${name}=`));
+  if (arg) {
+    return arg.slice(name.length + 1);
+  }
+
+  const index = process.argv.indexOf(name);
+  return index >= 0 ? process.argv[index + 1] : undefined;
+}
+
 function printCliReport(workspace: string, strictExternal: boolean) {
   const baseEnv = {
     ...loadEnvFile(join(workspace, ".env.local")),
@@ -534,18 +597,19 @@ function printCliReport(workspace: string, strictExternal: boolean) {
   const checks = assessLaunchReadiness(env, { strictExternal });
   const zipFiles = getRootZipFiles(workspace);
   const cleanupPlan = planGeneratedArtifactCleanup(zipFiles, existsSync(join(workspace, "output")) ? join(workspace, "output") : null);
-  const latestZip = cleanupPlan.keepZip;
+  const requestedZipPath = getArgValue("--zip");
+  const latestZip = requestedZipPath
+    ? {
+        name: basename(requestedZipPath),
+        fullName: resolve(workspace, requestedZipPath),
+        lastWriteTimeMs: existsSync(resolve(workspace, requestedZipPath)) ? statSync(resolve(workspace, requestedZipPath)).mtimeMs : 0,
+      }
+    : cleanupPlan.keepZip;
+  checks.push(assessDeployZipReadiness(latestZip?.fullName ?? null, strictExternal));
 
   console.log(`Yuzu launch readiness (${strictExternal ? "strict go-live" : "local ops"} mode)`);
   console.log("");
   console.log(formatChecks(checks));
-
-  if (latestZip) {
-    const invalidEntries = validateDeployZipEntries(readZipEntryNames(latestZip.fullName));
-    const status = invalidEntries.length ? "FAIL" : "PASS";
-    console.log("");
-    console.log(`${status.padEnd(4)} deploy-zip-shape: ${basename(latestZip.fullName)} ${invalidEntries.length ? `has invalid entries: ${invalidEntries.slice(0, 5).join(", ")}` : "uses static-export-safe entry paths."}`);
-  }
 
   if (cleanupPlan.removePaths.length) {
     console.log("");

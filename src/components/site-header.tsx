@@ -75,7 +75,7 @@ export function SiteHeader() {
         <BrandMark compact />
         <nav className="ml-auto hidden items-center gap-6 lg:flex">
           {navItems.map((item) => {
-            const isActive = pathname === item.href;
+            const isActive = isActiveNavPath(pathname, item.href);
 
             return (
               <Link
@@ -161,7 +161,7 @@ export function SiteHeader() {
                     onClick={closeMobileMenu}
                     className={cn(
                       "border border-yuzu-line/60 px-4 py-3 text-sm font-bold uppercase tracking-[0.18em] text-yuzu-cream",
-                      pathname === item.href && "border-yuzu-gold bg-yuzu-gold/10 text-yuzu-gold"
+                      isActiveNavPath(pathname, item.href) && "border-yuzu-gold bg-yuzu-gold/10 text-yuzu-gold"
                     )}
                   >
                     {item.label}
@@ -223,4 +223,20 @@ export function SiteHeader() {
       </Sheet>
     </motion.header>
   );
+}
+
+function isActiveNavPath(pathname: string | null, href: string) {
+  const currentPath = normalizeNavPath(pathname || "/");
+  const targetPath = normalizeNavPath(href);
+
+  if (targetPath === "/") {
+    return currentPath === "/";
+  }
+
+  return currentPath === targetPath || currentPath.startsWith(`${targetPath}/`);
+}
+
+function normalizeNavPath(path: string) {
+  const pathname = path.split(/[?#]/u)[0] || "/";
+  return pathname.length > 1 ? pathname.replace(/\/+$/u, "") : "/";
 }

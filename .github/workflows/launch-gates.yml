@@ -18,7 +18,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version-file: ".nvmrc"
           cache: npm
 
       - name: Install dependencies
@@ -28,13 +28,19 @@ jobs:
         run: npm run lint
 
       - name: Typecheck
-        run: npx tsc --noEmit
+        run: npx tsc --noEmit --pretty false
 
       - name: Test
         run: npm test
 
       - name: Build
         run: npm run build
+
+      - name: Runtime audit
+        run: npx tsx scripts/e2e-runtime-audit.ts
+
+      - name: Production dependency audit
+        run: npm audit --omit=dev
 
   go-live-readiness:
     name: Strict Go-Live Readiness
@@ -45,6 +51,7 @@ jobs:
       NEXT_PUBLIC_BASE_URL: ${{ secrets.NEXT_PUBLIC_BASE_URL }}
       BASE_URL: ${{ secrets.BASE_URL }}
       NEXT_PUBLIC_ADMIN_APP_URL: ${{ secrets.NEXT_PUBLIC_ADMIN_APP_URL }}
+      NEXT_PUBLIC_AGECHECKER_API_KEY: ${{ secrets.NEXT_PUBLIC_AGECHECKER_API_KEY }}
       NEXT_PUBLIC_YCC_API_BASE_URL: ${{ secrets.NEXT_PUBLIC_YCC_API_BASE_URL }}
       NEXT_PUBLIC_COGNITO_USER_POOL_ID: ${{ secrets.NEXT_PUBLIC_COGNITO_USER_POOL_ID }}
       NEXT_PUBLIC_COGNITO_USER_POOL_CLIENT_ID: ${{ secrets.NEXT_PUBLIC_COGNITO_USER_POOL_CLIENT_ID }}
@@ -54,6 +61,10 @@ jobs:
       NEXT_PUBLIC_COGNITO_LOGOUT_PATH: ${{ secrets.NEXT_PUBLIC_COGNITO_LOGOUT_PATH }}
       NEXT_PUBLIC_REQUIRE_LIVE_AUTH: ${{ secrets.NEXT_PUBLIC_REQUIRE_LIVE_AUTH }}
       NEXT_PUBLIC_ENABLE_BACKUP_ADMIN: ${{ secrets.NEXT_PUBLIC_ENABLE_BACKUP_ADMIN }}
+      NEXT_PUBLIC_VAPID_PUBLIC_KEY: ${{ secrets.NEXT_PUBLIC_VAPID_PUBLIC_KEY }}
+      VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
+      VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+      VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}
       STRIPE_TOBACCO_APPROVAL_CONFIRMED: ${{ secrets.STRIPE_TOBACCO_APPROVAL_CONFIRMED }}
       STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
       STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
@@ -73,6 +84,7 @@ jobs:
       STRIPE_TEST_MODE_E2E_CONFIRMED: ${{ secrets.STRIPE_TEST_MODE_E2E_CONFIRMED }}
       AGE_VERIFICATION_PROVIDER_CONFIRMED: ${{ secrets.AGE_VERIFICATION_PROVIDER_CONFIRMED }}
       TAX_PROVIDER_CONFIRMED: ${{ secrets.TAX_PROVIDER_CONFIRMED }}
+      SHIPPING_PROVIDER: ${{ secrets.SHIPPING_PROVIDER }}
       ADULT_SIGNATURE_CARRIER_APPROVED: ${{ secrets.ADULT_SIGNATURE_CARRIER_APPROVED }}
       AWS_RESTORE_DRILL_COMPLETED: ${{ secrets.AWS_RESTORE_DRILL_COMPLETED }}
       STAGING_BROWSER_QA_PASSED: ${{ secrets.STAGING_BROWSER_QA_PASSED }}
@@ -84,11 +96,19 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version-file: ".nvmrc"
           cache: npm
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
 
       - name: Install dependencies
         run: npm ci
 
+      - name: Package Amplify static export
+        run: npm run amplify:package -- --output-dir output/deploy-zips --name yuzu-cigar-club-ci-go-live.zip
+
       - name: Strict readiness gate
-        run: npm run launch:go-live-check
+        run: npm run launch:go-live-check -- --zip output/deploy-zips/yuzu-cigar-club-ci-go-live.zip

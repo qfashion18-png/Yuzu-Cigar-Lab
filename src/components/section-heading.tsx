@@ -1,6 +1,7 @@
 import { cn } from "@/lib/utils";
 
 type SectionHeadingProps = {
+  as?: "h1" | "h2";
   kicker?: string;
   title: string;
   copy?: string;
@@ -8,7 +9,9 @@ type SectionHeadingProps = {
   editableIds?: Partial<Record<"kicker" | "title" | "copy", string>>;
 };
 
-export function SectionHeading({ kicker, title, copy, className, editableIds }: SectionHeadingProps) {
+export function SectionHeading({ as = "h2", kicker, title, copy, className, editableIds }: SectionHeadingProps) {
+  const Heading = as;
+
   return (
     <div className={cn("flex min-w-0 max-w-3xl flex-col gap-3", className)}>
       {kicker && (
@@ -17,7 +20,7 @@ export function SectionHeading({ kicker, title, copy, className, editableIds }: 
           <span className="min-w-0 flex-1 whitespace-normal" data-yuzu-editable={editableIds?.kicker}>{kicker}</span>
         </p>
       )}
-      <h2 className="font-heading text-4xl leading-[1.05] text-yuzu-cream md:text-5xl" data-yuzu-editable={editableIds?.title}>{title}</h2>
+      <Heading className="font-heading text-4xl leading-[1.05] text-yuzu-cream md:text-5xl" data-yuzu-editable={editableIds?.title}>{title}</Heading>
       {copy && <p className="text-base leading-7 text-yuzu-muted" data-yuzu-editable={editableIds?.copy}>{copy}</p>}
     </div>
   );

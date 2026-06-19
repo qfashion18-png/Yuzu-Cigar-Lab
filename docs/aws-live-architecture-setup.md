@@ -10,13 +10,17 @@ The AWS account is now accessed by Codex through `CodexMcpYccOperatorRole`, not 
 
 Working pieces:
 
+- Root CLI access was retired on 2026-06-18 after the account security remediation pass. IAM account summary now reports `AccountAccessKeysPresent=0` and `AccountMFAEnabled=1`; root profiles such as `phantom-root` and `yuzu-amplify` no longer work from the CLI.
+- Account guardrails now include account-level S3 Block Public Access, multi-region CloudTrail `ycc-security-trail`, AWS Config recorder `default`, GuardDuty detector `9bf00e4ceaa941cc8f499eaa0a6d8e40`, Security Hub with FSBP and CIS v1.2 standards `READY`, Inspector v2 for EC2/ECR/Lambda/Lambda code, IAM Access Analyzer `ycc-account-external-access`, security/operations/billing alternate contacts, and monthly budget `YCC Monthly AWS Cost Guardrail`.
 - Amplify app `app7216_yuzucigarclub` serves the static storefront from branch `staging`.
-- Amplify app `d2yxcklt245wh0` is associated with AWS WAF web ACL `ycc-amplify-edge` (`ASSOCIATION_SUCCESS`) using managed common, known-bad-inputs, Amazon IP reputation, and per-IP rate-limit rules.
+- Amplify app `d2yxcklt245wh0` last received AWS blocker-remediation static deploy job `162` on 2026-06-18, using POSIX-path zip `yuzu-cigar-club-amplify-deploy-aws-blocker-remediation-20260618-2026-06-18-172936.zip`; the helper verified the live page and a referenced `_next/static` asset return HTTP `200`.
+- Amplify app `d2yxcklt245wh0` is associated with AWS WAF web ACL `ycc-amplify-edge` using managed common, known-bad-inputs, Amazon IP reputation, and per-IP rate-limit rules. The older Amplify `get-app` field may still read `wafWebAclArn=null`, but WAFv2 `get-web-acl-for-resource` confirms the association to the Amplify app ARN.
 - Route 53 public hosted zone `Z03644703S5ZEDRBYROZW` now hosts `yuzucigarclub.com`, with apex `A`/`AAAA` aliases to the Amplify CloudFront distribution `d1vtsjfasvs6ix.cloudfront.net` and `www` preserved as a CloudFront CNAME.
 - Cognito User Pool `YCCMembers` exists for member authentication and has optional SMS MFA configured.
 - Cognito app client `ycc-storefront` uses OAuth authorization code flow with no client secret.
+- Cognito signup verification email uses `COGNITO_DEFAULT`, `support@yuzucigarclub.com` as the verified source identity/reply-to, subject `Yuzu Cigar Club verification code`, and a branded HTML `CONFIRM_WITH_CODE` body linking to `https://yuzucigarclub.com/friends-family/?confirmation_code={####}`. A 2026-06-18 disposable signup E2E captured the raw email in `s3://classroom2/ycc/root-email/raw/`, verified the delivered six-digit link, deleted the temp user, and verified the production page prefilled the code and cleaned the URL.
 - Cognito groups exist for `admin`, `member`, `kisha`, `sensei`, `daimyo`, and `concierge_operator`.
-- API Gateway HTTP API `ycc-api` is live with a `$default` auto-deploy stage.
+- API Gateway HTTP API `ycc-api` is live with a `$default` auto-deploy stage and the default `execute-api` endpoint disabled. Use `https://api.yuzucigarclub.com`; the raw `https://13710cp67l.execute-api.us-east-1.amazonaws.com` endpoint should not be used by production clients.
 - API Gateway `$default` access logs write JSON request records to CloudWatch log group `/aws/apigateway/ycc-api-access` with 30-day retention; a live `GET /health?deep=1` request was observed in the log stream on 2026-05-12.
 - API Gateway JWT authorizer `ycc-cognito-jwt` validates tokens from the `YCCMembers` user pool.
 - API Gateway routes are wired to Lambda `ycyyy`:
@@ -30,7 +34,7 @@ Working pieces:
   - protected `POST /humidor/items`
   - protected `GET /account/me`
   - protected `PATCH /account/me`
-- Lambda `ycyyy` now runs the YCC API handler from `infra/lambda/ycc-api/index.js`; the live alias is pinned to version `10` for the 2026-05-28 all-updates deployment.
+- Lambda `ycyyy` now runs the YCC API handler from `infra/lambda/ycc-api/index.js`; the live alias is pinned to version `42` for the 2026-06-18 safer owner/admin SMS alert wording deployment.
 - Lambda `ycyyy` has runtime environment configured for Cognito, RDS Proxy, the RDS credential secret ARN, S3 bucket `classroom2`, EventBridge bus `ycc-events`, Bedrock Knowledge Base `48GFMCLSTG`, the six Bedrock Agent Runtime aliases, Amazon Lex router bot `SUYZYOVXAB` alias `AYKLRS7KYY`, and Phase 5 SES support-email settings.
 - Lambda role `ycyyy-1778040454500` has inline policy `YccApiPhase2RuntimePolicy` for the RDS secret, CloudWatch log writes, approved S3 prefixes, `ycc-events`, selected Bedrock model/agent invocation, tagged Lex router aliases, and SES sends only from approved future YCC sender identities.
 - Lambda `ycyyy` has a 60 second timeout and 512 MB memory allocation.
@@ -54,7 +58,7 @@ Working pieces:
 - Bedrock Agent Runtime interface VPC endpoint `vpce-0eaf893d65f8ec9f5` exists with private DNS enabled so VPC Lambda functions can invoke Bedrock Agents without NAT.
 - S3 gateway VPC endpoint `vpce-01c1d204d461fef24` exists on route tables `rtb-05b73feb08ff385ab`, `rtb-08b3fa8234dc0123b`, and `rtb-02d54b3fe674911f0` so VPC Lambda functions can read/write approved `classroom2` prefixes.
 - Dedicated private Lambda egress subnets `subnet-06116a5414f29c8bb` (`us-east-1a`, `172.31.96.0/24`) and `subnet-067af6ad21ff85cc2` (`us-east-1b`, `172.31.97.0/24`) route through NAT gateways `nat-0460beed74a121308` and `nat-06330ee4dd558e916`.
-- Lambda `ycyyy` now runs in the two dedicated private subnets with security group `sg-00c3d67ac62d92ae7`; deep health confirmed RDS Proxy, schema writes, Bedrock runtime, and the still-pending SES production state after the move.
+- Lambda `ycyyy` now runs in the two dedicated private subnets with security group `sg-00c3d67ac62d92ae7`; deep health confirmed RDS Proxy, schema writes, Bedrock runtime, and the guarded non-ready SES production state after the move.
 - Lambda function `ycyyy` exists in the same VPC and can be wired as the first backend handler.
 - Cognito Identity Pool `YCC` exists and has unauthenticated identities disabled.
 - S3 bucket `classroom2` exists and is connected to the S3 Files file system/access point.
@@ -70,13 +74,14 @@ Working pieces:
 
 Gaps:
 
-- Operator role permission gaps were fixed with `YccPhase2OperatorPermissionGapPolicy`, `YccPhase3NetworkPermissionGapPolicy`, `YccCognitoSmsOperatorPermissionGapPolicy`, `YccPhase5SesOperatorPermissionGapPolicy`, and scoped `YccRoute53OperatorPermissionPolicy` access to hosted zone `Z03644703S5ZEDRBYROZW`. Future use of root credentials should remain explicit and one-time only.
+- Operator role permission gaps were fixed with `YccPhase2OperatorPermissionGapPolicy`, `YccPhase3NetworkPermissionGapPolicy`, `YccCognitoSmsOperatorPermissionGapPolicy`, `YccPhase5SesOperatorPermissionGapPolicy`, scoped `YccRoute53OperatorPermissionPolicy` access to hosted zone `Z03644703S5ZEDRBYROZW`, and `YccLambdaAliasPromotionPolicy` for `lambda:GetAlias`, `lambda:ListAliases`, and `lambda:UpdateAlias` on `ycyyy`. Do not use root credentials for routine deployments.
 - RDS Proxy now requires TLS and Lambda verifies the RDS Proxy certificate with the bundled AWS RDS CA file.
 - RDS deletion protection is enabled and backup retention is set to 7 days.
 - The default RDS security group was removed; the narrow Lambda-to-proxy-to-DB security group path remains attached.
 - Cognito app client IaC includes `ALLOW_USER_PASSWORD_AUTH`, and the live `ycc-storefront` app client was verified on 2026-05-13 with `ALLOW_USER_PASSWORD_AUTH`, `ALLOW_USER_SRP_AUTH`, and `ALLOW_REFRESH_TOKEN_AUTH` while preserving OAuth code flow settings.
 - The database and Lambda remain in the default VPC, but Lambda has moved out of default public subnets into dedicated private egress subnets with NAT and endpoint routes. Lambda security group `sg-00c3d67ac62d92ae7` now allows TCP/443 egress through NAT for Stripe API calls. A named production VPC remains a future improvement rather than a launch blocker.
-- SES production access is denied under AWS case `177809591700724`, so live outbound customer support sends remain guarded by `FEATURE_SES=pending_production_access`. Recheck on 2026-05-20 confirmed the need is production access for low-volume transactional support mail only; `sesv2 put-account-details --production-access-enabled` returns `ConflictException`, so the next path is a Support Center appeal or case reopen.
+- SES production access is final-denied under AWS case `177809591700724`, so live outbound customer support, newsletter follow-up, and member welcome sends remain guarded by `FEATURE_SES=pending_production_access`. AWS Support's final response says the request cannot be granted, no specific denial details can be provided, and no further responses will be sent on the subject. Do not plan on another SES appeal for this account; migrate outbound transactional/support mail to a non-SES approved sender before setting any mail feature flag to ready. Do not use SES per-recipient identity verification as a customer signup or onboarding step; sandbox recipient verification sends AWS-branded email and is only acceptable as a temporary operator/test exception for known inboxes.
+- Twilio SendGrid is not currently a viable replacement sender for this project: ticket `27589567` closed on 2026-06-18 with account activation denied for unified account `unified_acct_UScdd6447b628befe0ef01375524876503` / `109536481`. Treat SendGrid as unavailable unless Twilio explicitly reverses that decision. Next outbound-email candidates should be providers with an explicit legal-tobacco vetting path, led by Brevo support pre-clearance and Mailgun sales/support pre-clearance.
 - The production root-domain mailbox route now terminates at SES. Root-domain mail is captured as raw S3 objects only; production support automation still uses the `support@ses-support.yuzucigarclub.com` receipt path until root-domain routing is intentionally wired into Lambda.
 - Direct operator CLI retrieval against the Knowledge Base is not currently allowed by the scoped operator role. The live agents can retrieve through their Bedrock runtime role.
 - Live Stripe API key, webhook signing secret, Customer Portal configuration, tobacco approval confirmation, membership Price IDs, age-verification settings, Stripe Tax registration/defaults, USPS Adult Signature readiness, and internal signing secrets are stored in Secrets Manager secret `ycc/commerce/prod` and exposed to Lambda through `COMMERCE_PROVIDER_SECRET_ARN`. The full 923-item published catalog is loaded into Stripe and the SKU-to-Price mapping is stored at `s3://classroom2/ycc/commerce/stripe-launch-catalog.json`. Stripe Support confirmed on 2026-05-25 that Company Q meets the Stripe Services Agreement; the secret records that approval. Direct live Stripe checks on 2026-05-26 show charges enabled, no currently due or past-due account requirements, the commerce webhook enabled, active products/prices present, no first-page disputes/subscriptions, no Stripe Customers to backfill, Stripe Tax active with Gilbert, AZ head office and active AZ registration `taxreg_1TbQiD0r0rWXiDV5IKP7bReS`, and Stripe payouts not enabled.
@@ -92,7 +97,7 @@ These items must be closed before production commerce launch. Owners are functio
 | Default RDS security group still attached | Infrastructure operator | Closed 2026-05-07 | Default DB security group was removed; the database keeps the validated Lambda-to-proxy-to-DB security group path. |
 | Cognito inline password auth flow missing on live app client | Identity operator | Closed 2026-05-13 | App client `2i2nvtt41l94n0mivc4tu4f9ms` now has `ALLOW_USER_PASSWORD_AUTH` with OAuth code flow, callback URLs, logout URLs, token validity, token revocation, and user-existence error settings preserved. |
 | Default public subnet Lambda egress | Infrastructure operator | Closed 2026-05-12 | Lambda `ycyyy` now runs in dedicated private egress subnets `subnet-06116a5414f29c8bb` and `subnet-067af6ad21ff85cc2` with NAT gateways `nat-0460beed74a121308` and `nat-06330ee4dd558e916`. A named production VPC remains a future hardening item. |
-| SES production access pending | Support/email operator | External blocked | SES production access remains denied in AWS case `177809591700724`; keep `FEATURE_SES=pending_production_access` until AWS approves sending, then smoke test and set `FEATURE_SES=ready`. |
+| SES production access | Support/email operator | Final denied 2026-06-18 | AWS case `177809591700724` is closed with a final denial. Keep `FEATURE_SES=pending_production_access` so SES outbound sends stay disabled; replace SES with an approved transactional sender before enabling production outbound mail. |
 | WAF/rate limiting missing from public edge/API | Security operator | Closed 2026-05-12 | Amplify is associated with CloudFront-scope WAF web ACL `ycc-amplify-edge`; API Gateway detailed metrics and route throttles remain enabled. |
 | CloudWatch alarms incomplete | Operations operator | Baseline closed 2026-05-07 | Baseline alarms now cover Lambda errors/throttles, API 4xx/5xx, RDS CPU/storage/connections, and RDS Proxy client connections. Add vendor-specific alarms after Stripe, age, and shipping integrations go live. |
 | Backup retention/restore drill not launch-approved | Infrastructure operator | Closed 2026-05-12 | Backup retention is set to 7 days; point-in-time restore drill `ycc-restore-drill-20260512-1640` reached `available` as encrypted PostgreSQL 18.3 and was deleted after verification. |
@@ -106,7 +111,7 @@ These items must be closed before production commerce launch. Owners are functio
 Use these values in the storefront/backend environment:
 
 ```env
-NEXT_PUBLIC_YCC_API_BASE_URL=https://13710cp67l.execute-api.us-east-1.amazonaws.com
+NEXT_PUBLIC_YCC_API_BASE_URL=https://api.yuzucigarclub.com
 NEXT_PUBLIC_COGNITO_USER_POOL_ID=us-east-1_63U9PflAX
 NEXT_PUBLIC_COGNITO_USER_POOL_CLIENT_ID=2i2nvtt41l94n0mivc4tu4f9ms
 NEXT_PUBLIC_COGNITO_ISSUER=https://cognito-idp.us-east-1.amazonaws.com/us-east-1_63U9PflAX
@@ -115,7 +120,8 @@ NEXT_PUBLIC_COGNITO_HOSTED_UI_BASE=https://ycc-members-374587466106.auth.us-east
 
 Verification:
 
-- `GET https://13710cp67l.execute-api.us-east-1.amazonaws.com/health` returns `200` from Lambda.
+- `GET https://api.yuzucigarclub.com/health?deep=1` returns `200` from Lambda.
+- `GET https://13710cp67l.execute-api.us-east-1.amazonaws.com/health?deep=1` no longer serves the health route after disabling the default execute-api endpoint.
 - Protected routes require a Cognito JWT through the `Authorization` header.
 - The `$default` API stage is tagged with `Project=YCC`, `ManagedBy=CodexMCP`, and `Environment=prod`.
 
@@ -146,6 +152,7 @@ FEATURE_LEX_ROUTER=ready
 LEX_ROUTER_BOT_ID=SUYZYOVXAB
 LEX_ROUTER_BOT_ALIAS_ID=AYKLRS7KYY
 LEX_ROUTER_LOCALE_ID=en_US
+# AWS SES case 177809591700724 final-denied; keep non-ready until outbound mail uses an approved sender.
 FEATURE_SES=pending_production_access
 SUPPORT_EMAIL_FROM=support@yuzucigarclub.com
 SUPPORT_EMAIL_RAW_BUCKET=classroom2
@@ -545,8 +552,10 @@ Current Phase 5 status:
 - SES domain identity `yuzucigarclub.com` is verified in `us-east-1`.
 - Route 53 hosted zone `Z03644703S5ZEDRBYROZW` hosts the SES Easy DKIM CNAME records for `yuzucigarclub.com`.
 - SES production-access request was submitted on 2026-05-06 and later denied under case `177809591700724`; `ProductionAccessEnabled=false` was rechecked on 2026-05-20.
-- API resubmission on 2026-05-20 returned `ConflictException`, so do not expect another CLI/API submission to flip the account while the denied review state remains. Use AWS Support Center to appeal or reopen the case.
-- Public trust pages `https://www.yuzucigarclub.com/privacy/` and `https://www.yuzucigarclub.com/terms/` return HTTP `200`, and both are included in the production sitemap for the next SES review.
+- AWS Support sent a final denial for case `177809591700724` on 2026-06-18 and stated there will be no additional responses on the subject. API resubmission on 2026-05-20 returned `ConflictException`, and the account should now be treated as unable to use SES for production outbound mail.
+- Lambda now has a branded member welcome email flow that runs only after membership activation: Friends & Family Box Pass entitlement grant or an active Stripe subscription webhook. Until the outbound sender is replaced, those activation paths report `memberWelcomeEmail.status=pending_ses` instead of sending live production email. The first signup email remains the branded Cognito verification email; SES sandbox recipient verification must not be triggered automatically for customers because it produces a separate AWS verification message.
+- Deployed Lambda package artifact `output/ycc-api-member-welcome-email-20260618.zip` to `ycyyy:live` version `41` with code hash `EMYU78bngAbT/8yowT+hslmMk+IlVtyl0fDr8aLQsig=`. This version was superseded by the owner/admin SMS wording deployment below.
+- Public trust pages `https://www.yuzucigarclub.com/privacy/` and `https://www.yuzucigarclub.com/terms/` return HTTP `200`, are included in the production sitemap, and now include mobile opt-in privacy language plus SMS terms for message frequency, message/data rates, STOP/HELP, customer care, carrier liability, and privacy-policy linkage.
 - Root MX for `yuzucigarclub.com` points to `10 inbound-smtp.us-east-1.amazonaws.com.` with TTL `300`.
 - SES root-domain receipt rule `ycc-root-domain-email-inbound` stores all `yuzucigarclub.com` inbound mail in `s3://classroom2/ycc/root-email/raw/`.
 - SES inbound subdomain `ses-support.yuzucigarclub.com` is configured with:
@@ -570,7 +579,7 @@ Current Phase 5 status:
 
 Remaining Phase 5 gates:
 
-- Wait for SES production access approval, then set `FEATURE_SES=ready`.
+- Replace SES outbound sending with an approved transactional email provider or another approved sender path, then smoke test support, newsletter, and member welcome email before setting a mail feature flag to ready. SendGrid account activation was denied on 2026-06-18, so use a provider with legal-tobacco pre-clearance instead. If signup email also needs full provider control, use Cognito's custom email sender trigger with the approved provider rather than SES recipient verification.
 - Decide whether root-domain support mail should remain raw-only, forward internally to `support@ses-support.yuzucigarclub.com`, or get its own Lambda receipt action.
 
 Phase 5 verification:
@@ -745,13 +754,13 @@ Make these changes before public launch:
 - RDS deletion protection, RDS Proxy TLS, 7-day backup retention, WAF, API access logs, API route throttles, dedicated private Lambda egress subnets, NAT gateways, and a documented restore drill are closed.
 - A named `ycc-prod-vpc` remains a future cleanup item; current launch posture uses dedicated private subnets inside the existing VPC with endpoint and NAT routes.
 - Add VPC endpoints for CloudWatch Logs and EventBridge/SQS later if NAT egress should be reduced further. The S3 gateway endpoint is already on the Lambda private route tables.
-- Baseline CloudWatch alarms cover the core AWS services; add vendor-specific alarms after Stripe, age, tax, shipping, and SES production sending are live.
+- Baseline CloudWatch alarms cover the core AWS services; add vendor-specific alarms after Stripe, age, tax, shipping, and the replacement outbound email provider are live.
 
 ## Immediate Recommendation
 
 Phase 1 through Phase 5 plus the Amazon Lex concierge router are now live for authenticated API, public newsletter signup intake, persistence, Lex intent routing and slot collection, Bedrock Agent Runtime concierge replies, Knowledge Base retrieval, Lambda action groups, guardrails, prepared Bedrock Agent aliases, SES-verified domain identity, non-disruptive SES inbound support-email plumbing, SES feedback notifications, WAF-protected Amplify hosting, API access logs, private Lambda egress, and verified RDS restore capability.
 
-The remaining launch gates are external/operator gates: AWS must approve SES production sending before `FEATURE_SES=ready`, root-domain support ingestion still needs an intentional Lambda/forwarding path, and Stripe payout/legal Dashboard status needs operator review. Stripe Tax registration and provider-backed backend Checkout smoke are complete.
+The remaining launch gates are external/operator gates: outbound support/newsletter/welcome email must move off SES after final denial of AWS case `177809591700724`, root-domain support ingestion still needs an intentional Lambda/forwarding path, and Stripe payout/legal Dashboard status needs operator review. Stripe Tax registration and provider-backed backend Checkout smoke are complete.
 
 Do not connect Bedrock or email directly to the frontend; keep agent actions behind the authenticated API boundary.
 
@@ -826,3 +835,44 @@ The live SMS MFA setup can be reapplied idempotently with the normal scoped prof
 ```powershell
 .\scripts\setup-ycc-cognito-sms-mfa.ps1 -Profile ycc-mcp -Region us-east-1
 ```
+
+## Owner/Admin SMS Signup Alerts
+
+Live owner/admin signup alert setup as of 2026-06-18:
+
+- Cognito user pool `YCCMembers` invokes Lambda alias `arn:aws:lambda:us-east-1:374587466106:function:ycyyy:live` on `PostConfirmation`.
+- Lambda alias `ycyyy:live` points to version `42` with code hash `mcpc3SHL7Kh96q9fkiVVZ+sltqMkPPjNjktQnZRRJdA=` and description `Live API safer owner/admin SMS alert wording 2026-06-18`.
+- Lambda package artifact: `output/ycc-api-sms-admin-alert-safe-20260618.zip`.
+- The SMS order-alert copy was narrowed from paid-order language to `Admin fulfillment review needed...` so SMS samples match the internal operational-alert use case.
+- AWS End User Messaging SMS toll-free registration `registration-8720a85d3f2c40d88dae52872699079a` currently has version `3` in `REVIEWING`.
+- Version `1` was denied for `SHAFT Violation - Tobacco Content`; version `3` was resubmitted with public trust-page SMS clauses, full date-of-birth 21+ age-gate evidence, a revised owner/admin opt-in image attachment, and signup/admin-fulfillment-review samples.
+- Toll-free originator ending `8058` remains `PENDING` while the registration is `REVIEWING`.
+- SNS SMS sandbox still lists the admin destination ending `7369` as `Pending`; attempting to resend the sandbox verification OTP returns `No origination entities available to send` until an originator becomes active.
+- Current `npm run sms-signup:e2e -- --live --json` is expected to fail only on sandbox destination readiness and US SMS origination readiness while the registration review is pending.
+
+## Notification E2E Checks
+
+Current repeatable checks:
+
+```powershell
+npm run sms-signup:e2e -- --live --json
+npm run ses:e2e -- --live --json
+npm run push:e2e -- --live --json
+npm run notifications:e2e -- --live --json
+```
+
+Use mutating sends only when intentionally testing delivery:
+
+```powershell
+npm run ses:e2e -- --live --send-simulator --json
+npm run push:e2e -- --live --dispatch --json
+npm run sms-signup:e2e -- --live --send-sms --json
+```
+
+2026-06-18 live read-only status:
+
+- SMS signup alert path is wired end to end through Cognito `PostConfirmation`, Lambda alias `ycyyy:live`, and the configured admin destination, but delivery is blocked by AWS state: SNS SMS sandbox destination ending `7369` is still `Pending`, and the US toll-free originator ending `8058` is `PENDING:REVIEWING`.
+- SES inbound/support plumbing is wired: identities `yuzucigarclub.com`, `ses-support.yuzucigarclub.com`, and `support@yuzucigarclub.com` are verified; active receipt rules write support and root-domain mail to S3; the support rule can invoke Lambda `ycyyy:live`; and SES feedback publishing is connected to SNS/SQS. Production outbound customer email is still blocked because SES account production access is `DENIED` under case `177809591700724`, so Lambda correctly keeps `FEATURE_SES=pending_production_access`.
+- `npm run ses:e2e -- --live --send-simulator --json` sent one SES mailbox simulator message successfully, proving the verified identity and SES API path still work for sandbox simulator testing. This does not make production customer outbound mail ready.
+- Push is wired for the current Web Push/VAPID architecture: deployed `/sw.js` has push and notification-click handlers, the live humidor route renders, Lambda has VAPID and dispatch-secret settings, API Gateway exposes the humidor alert routes, EventBridge rule `YccHumidorAlertDispatchDaily` is enabled, and the unauthenticated dispatch boundary returns `403 humidor_dispatch_forbidden` without the secret.
+- No SNS platform applications or AWS End User Messaging Push/Pinpoint apps currently exist. This is expected for the present browser Web Push path; native APNs/FCM push would require a separate app/channel setup with platform credentials.

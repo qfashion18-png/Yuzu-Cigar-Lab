@@ -58,7 +58,7 @@ export default function ShopPage() {
     <div className="mx-auto grid max-w-[1520px] gap-7 px-5 py-8 lg:grid-cols-[220px_minmax(0,1fr)] lg:px-10 2xl:grid-cols-[220px_minmax(0,1fr)_260px]">
       <aside className="hidden flex-col gap-7 lg:flex">
         <div>
-          <h1 className="border-b border-yuzu-line/70 pb-3 text-sm font-bold uppercase tracking-[0.16em] text-yuzu-gold">Shop Boxes</h1>
+          <p className="border-b border-yuzu-line/70 pb-3 text-sm font-bold uppercase tracking-[0.16em] text-yuzu-gold">Shop Boxes</p>
         </div>
         <div>
           <h2 className="border-b border-yuzu-line/70 pb-3 text-sm font-bold uppercase tracking-[0.16em] text-yuzu-gold">Categories</h2>
@@ -79,6 +79,7 @@ export default function ShopPage() {
         <section className="grid overflow-hidden border border-yuzu-line/80 bg-yuzu-panel lg:grid-cols-[1fr_0.9fr]">
           <div className="flex min-w-0 flex-col justify-center gap-6 p-8 lg:p-10">
             <SectionHeading
+              as="h1"
               kicker="Curated. Exclusive. Selected monthly."
               title="Exceptional cigars, chosen from the monthly list."
               copy="Join Yuzu Cigar Club to choose monthly cigars from a preselected premium list, unlock member pricing, and get early reminders for limited drops."
