@@ -43,7 +43,6 @@ const defaultLambdaAliasArn = "arn:aws:lambda:us-east-1:374587466106:function:yc
 const defaultApiBaseUrl = "https://api.yuzucigarclub.com";
 const defaultHumidorAgentId = "XLN9JKVRDA";
 const defaultHumidorAgentAliasId = "SOHCW5780U";
-const defaultHumidorAgentVersion = "7";
 const defaultHumidorActionGroupId = "5OHFAPSKIZ";
 const defaultKnowledgeBaseId = "48GFMCLSTG";
 const defaultGuardrailId = "xczjnv3f1wzs";
@@ -59,7 +58,7 @@ const apiBaseUrl = (getArgValue("--api-base-url") || process.env.NEXT_PUBLIC_YCC
 const humidorAgentId = getArgValue("--humidor-agent-id") || process.env.BEDROCK_AGENT_YCCHUMIDORAGENT_ID || defaultHumidorAgentId;
 const humidorAgentAliasId =
   getArgValue("--humidor-agent-alias-id") || process.env.BEDROCK_AGENT_YCCHUMIDORAGENT_ALIAS_ID || defaultHumidorAgentAliasId;
-const humidorAgentVersion = getArgValue("--humidor-agent-version") || process.env.YCC_HUMIDOR_IMAGE_E2E_AGENT_VERSION || defaultHumidorAgentVersion;
+const humidorAgentVersionOverride = getArgValue("--humidor-agent-version") || process.env.YCC_HUMIDOR_IMAGE_E2E_AGENT_VERSION || "";
 const humidorActionGroupId = getArgValue("--humidor-action-group-id") || process.env.YCC_HUMIDOR_IMAGE_E2E_ACTION_GROUP_ID || defaultHumidorActionGroupId;
 const knowledgeBaseId = getArgValue("--knowledge-base-id") || process.env.BEDROCK_KNOWLEDGE_BASE_ID || defaultKnowledgeBaseId;
 const imagePath = resolve(getArgValue("--image") || process.env.YCC_HUMIDOR_IMAGE_E2E_IMAGE || defaultImagePath);
@@ -237,7 +236,13 @@ function checkHumidorAgentTools(): CheckResult {
         guardrailConfiguration?: { guardrailIdentifier?: string; guardrailVersion?: string };
       };
     }>(["bedrock-agent", "get-agent", "--agent-id", humidorAgentId]);
-    const alias = awsJson<{ agentAlias?: { agentAliasStatus?: string; agentAliasName?: string } }>([
+    const alias = awsJson<{
+      agentAlias?: {
+        agentAliasStatus?: string;
+        agentAliasName?: string;
+        routingConfiguration?: Array<{ agentVersion?: string }>;
+      };
+    }>([
       "bedrock-agent",
       "get-agent-alias",
       "--agent-id",
@@ -245,6 +250,7 @@ function checkHumidorAgentTools(): CheckResult {
       "--agent-alias-id",
       humidorAgentAliasId,
     ]);
+    const routedVersion = humidorAgentVersionOverride || alias.agentAlias?.routingConfiguration?.[0]?.agentVersion || "";
     const actionGroup = awsJson<{
       agentActionGroup?: {
         actionGroupName?: string;
@@ -258,7 +264,7 @@ function checkHumidorAgentTools(): CheckResult {
       "--agent-id",
       humidorAgentId,
       "--agent-version",
-      humidorAgentVersion,
+      routedVersion,
       "--action-group-id",
       humidorActionGroupId,
     ]);
@@ -270,7 +276,7 @@ function checkHumidorAgentTools(): CheckResult {
       "--agent-id",
       humidorAgentId,
       "--agent-version",
-      humidorAgentVersion,
+      routedVersion,
     ]);
     const functions = actionGroup.agentActionGroup?.functionSchema?.functions || [];
     const addHumidorItem = functions.find((fn) => fn.name === "AddHumidorItem");
@@ -279,6 +285,7 @@ function checkHumidorAgentTools(): CheckResult {
     const ok =
       agent.agent?.agentStatus === "PREPARED" &&
       alias.agentAlias?.agentAliasStatus === "PREPARED" &&
+      Boolean(routedVersion) &&
       actionGroup.agentActionGroup?.actionGroupState === "ENABLED" &&
       actionGroup.agentActionGroup?.actionGroupExecutor?.lambda === lambdaAliasArn &&
       addHumidorItem?.requireConfirmation === "ENABLED" &&
@@ -288,7 +295,7 @@ function checkHumidorAgentTools(): CheckResult {
     return {
       ...checks[4],
       status: ok ? "pass" : "fail",
-      detail: `agent=${agent.agent?.agentName || humidorAgentId}:${agent.agent?.agentStatus || "missing"}; alias=${alias.agentAlias?.agentAliasName || humidorAgentAliasId}:${alias.agentAlias?.agentAliasStatus || "missing"}; model=${agent.agent?.foundationModel || "missing"}; actionGroup=${actionGroup.agentActionGroup?.actionGroupName || "missing"}:${actionGroup.agentActionGroup?.actionGroupState || "missing"}; executorLiveAlias=${actionGroup.agentActionGroup?.actionGroupExecutor?.lambda === lambdaAliasArn}; addHumidorConfirmation=${addHumidorItem?.requireConfirmation || "missing"}; memberProfileTool=${Boolean(memberProfile)}; kb=${kb?.knowledgeBaseState || "missing"}`,
+      detail: `agent=${agent.agent?.agentName || humidorAgentId}:${agent.agent?.agentStatus || "missing"}; alias=${alias.agentAlias?.agentAliasName || humidorAgentAliasId}:${alias.agentAlias?.agentAliasStatus || "missing"}; version=${routedVersion || "missing"}; model=${agent.agent?.foundationModel || "missing"}; actionGroup=${actionGroup.agentActionGroup?.actionGroupName || "missing"}:${actionGroup.agentActionGroup?.actionGroupState || "missing"}; executorLiveAlias=${actionGroup.agentActionGroup?.actionGroupExecutor?.lambda === lambdaAliasArn}; addHumidorConfirmation=${addHumidorItem?.requireConfirmation || "missing"}; memberProfileTool=${Boolean(memberProfile)}; kb=${kb?.knowledgeBaseState || "missing"}`,
     };
   } catch (error) {
     return fail(checks[4], error);

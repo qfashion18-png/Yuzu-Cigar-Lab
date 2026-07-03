@@ -1,9 +1,12 @@
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 
 type ExpectedAgent = {
   name: string;
   id: string;
   aliasId: string;
+  actionGroupId: string;
+  functions: string[];
 };
 
 type ReadOnlyCheck = {
@@ -17,6 +20,20 @@ type CheckResult = ReadOnlyCheck & {
   detail: string;
 };
 
+type ActionFunction = {
+  name: string;
+  description?: string;
+  requireConfirmation?: string;
+  parameters?: Record<string, { type?: string; description?: string; required?: boolean }>;
+};
+
+type ActionGroupConfig = {
+  actionGroupName: string;
+  lambdaExecutorArn: string;
+  functionSchemaCatalogPath: string;
+  agents: ExpectedAgent[];
+};
+
 const region = getArgValue("--region") || process.env.AWS_REGION || "us-east-1";
 const profile = getArgValue("--profile") || process.env.AWS_PROFILE || "ycc-mcp";
 const jsonOutput = hasArg("--json");
@@ -28,19 +45,19 @@ const lambdaFunction = "ycyyy:live";
 const guardrailId = "xczjnv3f1wzs";
 const guardrailVersion = "8";
 const knowledgeBaseId = "48GFMCLSTG";
-const expectedAgents: ExpectedAgent[] = [
-  { name: "YCCConcierge", id: "NDIEDXNZAV", aliasId: "XXAQKDKDC0" },
-  { name: "YCCCigarGuide", id: "EJI2VA7AVF", aliasId: "1JO8IAN4BL" },
-  { name: "YCCSupportAgent", id: "SJJ2DVNYES", aliasId: "LIFBQL76AE" },
-  { name: "YCCHumidorAgent", id: "XLN9JKVRDA", aliasId: "SOHCW5780U" },
-  { name: "YCCAdminAgent", id: "UQWB6AKMBT", aliasId: "IHCMS7T9PB" },
-  { name: "YCCNewsAgent", id: "TUVBTVKNXG", aliasId: "G25GBEUUMG" },
-];
+const actionGroupConfig = readJsonFile<ActionGroupConfig>("infra/bedrock/ycc-agent-action-group-config.json");
+const actionFunctionCatalog = readJsonFile<{ functions: ActionFunction[] }>(
+  actionGroupConfig.functionSchemaCatalogPath,
+);
+const actionFunctionsByName = new Map(actionFunctionCatalog.functions.map((fn) => [fn.name, fn]));
+const expectedAgents = actionGroupConfig.agents;
 
 const checks: ReadOnlyCheck[] = [
   { name: "confirm AWS caller account", service: "sts", mutating: false },
   { name: "list prepared YCC Bedrock agents", service: "bedrock-agent", mutating: false },
   { name: "verify prepared prod aliases", service: "bedrock-agent", mutating: false },
+  { name: "verify live Bedrock action group tools", service: "bedrock-agent", mutating: false },
+  { name: "verify live Bedrock agent knowledge-base attachments", service: "bedrock-agent", mutating: false },
   { name: "read live Lambda Bedrock environment", service: "lambda", mutating: false },
   { name: "read ready guardrail version", service: "bedrock", mutating: false },
   { name: "read active knowledge base", service: "bedrock-agent", mutating: false },
@@ -66,7 +83,9 @@ async function main() {
   results.push(checkAwsCaller());
   const agentSummaries = results[results.length - 1].status === "fail" ? [] : listAgentSummaries(results);
   verifyAgentSummaries(agentSummaries, results);
-  verifyAliases(results);
+  const aliasVersions = verifyAliases(results);
+  verifyActionGroupTools(results, aliasVersions);
+  verifyAgentKnowledgeBaseAttachments(results, aliasVersions);
   verifyLambdaEnvironment(results);
   verifyGuardrail(results);
   verifyKnowledgeBase(results);
@@ -177,19 +196,33 @@ function verifyAgentSummaries(
 }
 
 function verifyAliases(results: CheckResult[]) {
+  const aliasVersions = new Map<string, string>();
   const failures: string[] = [];
 
   for (const expected of expectedAgents) {
     try {
       const response = awsJson<{
-        agentAliasSummaries?: Array<{ agentAliasId?: string; agentAliasName?: string; agentAliasStatus?: string }>;
-      }>(["bedrock-agent", "list-agent-aliases", "--agent-id", expected.id]);
-      const alias = (response.agentAliasSummaries || []).find((candidate) => candidate.agentAliasId === expected.aliasId);
+        agentAlias?: {
+          agentAliasId?: string;
+          agentAliasName?: string;
+          agentAliasStatus?: string;
+          aliasInvocationState?: string;
+          routingConfiguration?: Array<{ agentVersion?: string }>;
+        };
+      }>(["bedrock-agent", "get-agent-alias", "--agent-id", expected.id, "--agent-alias-id", expected.aliasId]);
+      const alias = response.agentAlias;
+      const routedVersion = alias?.routingConfiguration?.[0]?.agentVersion || "";
 
       if (!alias) {
         failures.push(`${expected.name} missing prod alias ${expected.aliasId}`);
       } else if (alias.agentAliasName !== "prod" || alias.agentAliasStatus !== "PREPARED") {
         failures.push(`${expected.name} alias=${alias.agentAliasName || "unknown"} status=${alias.agentAliasStatus || "unknown"}`);
+      } else if (alias.aliasInvocationState && alias.aliasInvocationState !== "ACCEPT_INVOCATIONS") {
+        failures.push(`${expected.name} alias invocation=${alias.aliasInvocationState}`);
+      } else if (!routedVersion) {
+        failures.push(`${expected.name} alias missing routed version`);
+      } else {
+        aliasVersions.set(expected.id, routedVersion);
       }
     } catch (error) {
       failures.push(`${expected.name}: ${getErrorMessage(error)}`);
@@ -199,7 +232,108 @@ function verifyAliases(results: CheckResult[]) {
   results.push({
     ...checks[2],
     status: failures.length ? "fail" : "pass",
-    detail: failures.length ? failures.join("; ") : "all prod aliases are present and PREPARED",
+    detail: failures.length
+      ? failures.join("; ")
+      : `all prod aliases are present, PREPARED, and routed (${expectedAgents
+          .map((agent) => `${agent.name}=v${aliasVersions.get(agent.id) || "unknown"}`)
+          .join(", ")})`,
+  });
+
+  return aliasVersions;
+}
+
+function verifyActionGroupTools(results: CheckResult[], aliasVersions: Map<string, string>) {
+  const failures = getLocalActionContractFailures();
+
+  for (const expected of expectedAgents) {
+    const version = aliasVersions.get(expected.id);
+    if (!version) {
+      failures.push(`${expected.name} missing routed alias version`);
+      continue;
+    }
+
+    try {
+      const response = awsJson<{
+        agentActionGroup?: {
+          actionGroupName?: string;
+          actionGroupState?: string;
+          actionGroupExecutor?: { lambda?: string };
+          functionSchema?: { functions?: ActionFunction[] };
+        };
+      }>([
+        "bedrock-agent",
+        "get-agent-action-group",
+        "--agent-id",
+        expected.id,
+        "--agent-version",
+        version,
+        "--action-group-id",
+        expected.actionGroupId,
+      ]);
+      const actionGroup = response.agentActionGroup;
+
+      if (actionGroup?.actionGroupName !== actionGroupConfig.actionGroupName) {
+        failures.push(`${expected.name} actionGroup=${actionGroup?.actionGroupName || "missing"}`);
+      }
+
+      if (actionGroup?.actionGroupState !== "ENABLED") {
+        failures.push(`${expected.name} actionGroupState=${actionGroup?.actionGroupState || "missing"}`);
+      }
+
+      if (actionGroup?.actionGroupExecutor?.lambda !== actionGroupConfig.lambdaExecutorArn) {
+        failures.push(`${expected.name} executor=${actionGroup?.actionGroupExecutor?.lambda || "missing"}`);
+      }
+
+      failures.push(...compareActionFunctions(expected, actionGroup?.functionSchema?.functions || []));
+    } catch (error) {
+      failures.push(`${expected.name}: ${getErrorMessage(error)}`);
+    }
+  }
+
+  results.push({
+    ...checks[3],
+    status: failures.length ? "fail" : "pass",
+    detail: failures.length
+      ? failures.join("; ")
+      : `all ${expectedAgents.length} action groups match least-privilege function contracts`,
+  });
+}
+
+function verifyAgentKnowledgeBaseAttachments(results: CheckResult[], aliasVersions: Map<string, string>) {
+  const failures: string[] = [];
+
+  for (const expected of expectedAgents) {
+    const version = aliasVersions.get(expected.id);
+    if (!version) {
+      failures.push(`${expected.name} missing routed alias version`);
+      continue;
+    }
+
+    try {
+      const response = awsJson<{
+        agentKnowledgeBaseSummaries?: Array<{ knowledgeBaseId?: string; knowledgeBaseState?: string }>;
+      }>([
+        "bedrock-agent",
+        "list-agent-knowledge-bases",
+        "--agent-id",
+        expected.id,
+        "--agent-version",
+        version,
+      ]);
+      const kb = (response.agentKnowledgeBaseSummaries || []).find((candidate) => candidate.knowledgeBaseId === knowledgeBaseId);
+
+      if (kb?.knowledgeBaseState !== "ENABLED") {
+        failures.push(`${expected.name} kb=${kb?.knowledgeBaseState || "missing"}`);
+      }
+    } catch (error) {
+      failures.push(`${expected.name}: ${getErrorMessage(error)}`);
+    }
+  }
+
+  results.push({
+    ...checks[4],
+    status: failures.length ? "fail" : "pass",
+    detail: failures.length ? failures.join("; ") : `all ${expectedAgents.length} routed agent versions have KB ${knowledgeBaseId} enabled`,
   });
 }
 
@@ -227,13 +361,13 @@ function verifyLambdaEnvironment(results: CheckResult[]) {
     ].filter(Boolean);
 
     results.push({
-      ...checks[3],
+      ...checks[5],
       status: failures.length ? "fail" : "pass",
       detail: failures.length ? failures.join("; ") : `lambda ${lambdaFunction} version=${config.Version || "unknown"} lastModified=${config.LastModified || "unknown"}`,
     });
   } catch (error) {
     results.push({
-      ...checks[3],
+      ...checks[5],
       status: "fail",
       detail: getErrorMessage(error),
     });
@@ -252,13 +386,13 @@ function verifyGuardrail(results: CheckResult[]) {
     ]);
 
     results.push({
-      ...checks[4],
+      ...checks[6],
       status: guardrail.status === "READY" && guardrail.version === guardrailVersion ? "pass" : "fail",
       detail: `${guardrail.name || guardrailId} status=${guardrail.status || "unknown"} version=${guardrail.version || "unknown"}`,
     });
   } catch (error) {
     results.push({
-      ...checks[4],
+      ...checks[6],
       status: "fail",
       detail: getErrorMessage(error),
     });
@@ -279,14 +413,14 @@ function verifyKnowledgeBase(results: CheckResult[]) {
     const dataSource = (dataSources.dataSourceSummaries || [])[0];
 
     results.push({
-      ...checks[5],
+      ...checks[7],
       status: kb.knowledgeBase?.status === "ACTIVE" && dataSource?.status === "AVAILABLE" ? "pass" : "fail",
       detail: `kb=${kb.knowledgeBase?.name || knowledgeBaseId} status=${kb.knowledgeBase?.status || "unknown"}; dataSource=${dataSource?.name || "missing"} status=${dataSource?.status || "missing"}`,
     });
 
     if (!dataSource?.dataSourceId) {
       results.push({
-        ...checks[6],
+        ...checks[8],
         status: "fail",
         detail: "missing data source id",
       });
@@ -308,13 +442,13 @@ function verifyKnowledgeBase(results: CheckResult[]) {
     )[0];
 
     results.push({
-      ...checks[6],
+      ...checks[8],
       status: latestJob?.status === "COMPLETE" ? "pass" : "fail",
       detail: `latestIngestion=${latestJob?.ingestionJobId || "missing"} status=${latestJob?.status || "missing"} updatedAt=${latestJob?.updatedAt || "unknown"}`,
     });
   } catch (error) {
     results.push({
-      ...checks[5],
+      ...checks[7],
       status: "fail",
       detail: getErrorMessage(error),
     });
@@ -341,13 +475,13 @@ async function verifyApiHealth(results: CheckResult[]) {
       body.db?.proxyReachable === true;
 
     results.push({
-      ...checks[7],
+      ...checks[9],
       status: healthy ? "pass" : "fail",
       detail: `http=${response.status}; status=${body.status || "missing"}; bedrock=${bedrockStatus || "missing"}; databaseWrites=${databaseWriteStatus || "missing"}; proxyReachable=${String(body.db?.proxyReachable ?? "missing")}`,
     });
   } catch (error) {
     results.push({
-      ...checks[7],
+      ...checks[9],
       status: "fail",
       detail: getErrorMessage(error),
     });
@@ -365,17 +499,122 @@ async function verifyConciergeAuthBoundary(results: CheckResult[]) {
     const protectedBoundary = response.status === 401 || response.status === 403;
 
     results.push({
-      ...checks[8],
+      ...checks[10],
       status: protectedBoundary ? "pass" : "fail",
       detail: `http=${response.status}; bodyPrefix=${body.slice(0, 80).replace(/\s+/g, " ")}`,
     });
   } catch (error) {
     results.push({
-      ...checks[8],
+      ...checks[10],
       status: "fail",
       detail: getErrorMessage(error),
     });
   }
+}
+
+function getLocalActionContractFailures() {
+  const failures: string[] = [];
+  const agentIds = new Set<string>();
+  const actionGroupIds = new Set<string>();
+
+  for (const agent of expectedAgents) {
+    if (agentIds.has(agent.id)) {
+      failures.push(`${agent.name} duplicates agent id ${agent.id}`);
+    }
+    agentIds.add(agent.id);
+
+    if (actionGroupIds.has(agent.actionGroupId)) {
+      failures.push(`${agent.name} duplicates action group id ${agent.actionGroupId}`);
+    }
+    actionGroupIds.add(agent.actionGroupId);
+
+    const seenFunctions = new Set<string>();
+    for (const functionName of agent.functions) {
+      if (seenFunctions.has(functionName)) {
+        failures.push(`${agent.name} duplicates function ${functionName}`);
+      }
+      seenFunctions.add(functionName);
+
+      if (!actionFunctionsByName.has(functionName)) {
+        failures.push(`${agent.name} references unknown function ${functionName}`);
+      }
+    }
+  }
+
+  return failures;
+}
+
+function compareActionFunctions(expectedAgent: ExpectedAgent, actualFunctions: ActionFunction[]) {
+  const failures: string[] = [];
+  const actualByName = new Map(actualFunctions.map((fn) => [fn.name, fn]));
+  const actualNames = [...actualByName.keys()].sort();
+  const expectedNames = [...expectedAgent.functions].sort();
+
+  if (actualNames.join(",") !== expectedNames.join(",")) {
+    const missing = expectedNames.filter((name) => !actualByName.has(name));
+    const extra = actualNames.filter((name) => !expectedAgent.functions.includes(name));
+    failures.push(
+      `${expectedAgent.name} functions mismatch missing=[${missing.join(",") || "none"}] extra=[${extra.join(",") || "none"}]`,
+    );
+  }
+
+  for (const functionName of expectedAgent.functions) {
+    const expected = actionFunctionsByName.get(functionName);
+    const actual = actualByName.get(functionName);
+
+    if (!expected || !actual) {
+      continue;
+    }
+
+    if (actual.requireConfirmation !== expected.requireConfirmation) {
+      failures.push(
+        `${expectedAgent.name}.${functionName} confirmation=${actual.requireConfirmation || "missing"} expected=${expected.requireConfirmation || "missing"}`,
+      );
+    }
+
+    failures.push(...compareFunctionParameters(expectedAgent.name, expected, actual));
+  }
+
+  return failures;
+}
+
+function compareFunctionParameters(agentName: string, expected: ActionFunction, actual: ActionFunction) {
+  const failures: string[] = [];
+  const expectedParameters = expected.parameters || {};
+  const actualParameters = actual.parameters || {};
+  const expectedNames = Object.keys(expectedParameters).sort();
+  const actualNames = Object.keys(actualParameters).sort();
+
+  if (expectedNames.join(",") !== actualNames.join(",")) {
+    const missing = expectedNames.filter((name) => !(name in actualParameters));
+    const extra = actualNames.filter((name) => !(name in expectedParameters));
+    failures.push(
+      `${agentName}.${expected.name} parameters mismatch missing=[${missing.join(",") || "none"}] extra=[${extra.join(",") || "none"}]`,
+    );
+  }
+
+  for (const parameterName of expectedNames) {
+    const expectedParameter = expectedParameters[parameterName];
+    const actualParameter = actualParameters[parameterName];
+
+    if (!actualParameter) {
+      continue;
+    }
+
+    if (actualParameter.type !== expectedParameter.type) {
+      failures.push(
+        `${agentName}.${expected.name}.${parameterName} type=${actualParameter.type || "missing"} expected=${expectedParameter.type || "missing"}`,
+      );
+    }
+
+    if (Boolean(actualParameter.required) !== Boolean(expectedParameter.required)) {
+      failures.push(
+        `${agentName}.${expected.name}.${parameterName} required=${Boolean(actualParameter.required)} expected=${Boolean(expectedParameter.required)}`,
+      );
+    }
+  }
+
+  return failures;
 }
 
 function awsJson<T>(args: string[]): T {
@@ -385,6 +624,10 @@ function awsJson<T>(args: string[]): T {
   });
 
   return JSON.parse(output) as T;
+}
+
+function readJsonFile<T>(path: string) {
+  return JSON.parse(readFileSync(path, "utf8")) as T;
 }
 
 function hasArg(name: string) {

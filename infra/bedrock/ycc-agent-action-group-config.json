@@ -1,0 +1,55 @@
+{
+  "actionGroupName": "YCCOperations",
+  "lambdaExecutorArn": "arn:aws:lambda:us-east-1:374587466106:function:ycyyy:live",
+  "functionSchemaCatalogPath": "infra/bedrock/ycc-agent-action-group-functions.json",
+  "agents": [
+    {
+      "name": "YCCConcierge",
+      "id": "NDIEDXNZAV",
+      "aliasId": "XXAQKDKDC0",
+      "actionGroupId": "OJ55YKPRPN",
+      "functions": ["GetMemberProfile", "DraftSupportReply"]
+    },
+    {
+      "name": "YCCCigarGuide",
+      "id": "EJI2VA7AVF",
+      "aliasId": "1JO8IAN4BL",
+      "actionGroupId": "CMG2BD9LV2",
+      "functions": ["GetMemberProfile"]
+    },
+    {
+      "name": "YCCSupportAgent",
+      "id": "SJJ2DVNYES",
+      "aliasId": "LIFBQL76AE",
+      "actionGroupId": "XCNEG2HH2D",
+      "functions": ["GetMemberProfile", "DraftSupportReply"]
+    },
+    {
+      "name": "YCCHumidorAgent",
+      "id": "XLN9JKVRDA",
+      "aliasId": "SOHCW5780U",
+      "actionGroupId": "5OHFAPSKIZ",
+      "functions": ["GetMemberProfile", "AddHumidorItem"]
+    },
+    {
+      "name": "YCCAdminAgent",
+      "id": "UQWB6AKMBT",
+      "aliasId": "IHCMS7T9PB",
+      "actionGroupId": "LXAO8KDDKZ",
+      "functions": [
+        "GetMemberProfile",
+        "DraftSupportReply",
+        "GetAdminQueueSummary",
+        "UpdateAdminOrder",
+        "UpdateAdminMemberAccess"
+      ]
+    },
+    {
+      "name": "YCCNewsAgent",
+      "id": "TUVBTVKNXG",
+      "aliasId": "G25GBEUUMG",
+      "actionGroupId": "ZKQEGPSMFR",
+      "functions": ["DraftWeeklyNews"]
+    }
+  ]
+}

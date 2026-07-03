@@ -79,6 +79,60 @@
       }
     },
     {
+      "name": "UpdateAdminOrder",
+      "description": "Apply a confirmed admin order fix for authorized admin or concierge operator sessions by updating status, fulfillmentStatus, or complianceStatus and writing an audit row.",
+      "requireConfirmation": "ENABLED",
+      "parameters": {
+        "orderId": {
+          "type": "string",
+          "description": "UUID of the commerce order to update.",
+          "required": true
+        },
+        "status": {
+          "type": "string",
+          "description": "Optional order status such as pending, processing, paid, complete, refunded, failed, or canceled.",
+          "required": false
+        },
+        "fulfillmentStatus": {
+          "type": "string",
+          "description": "Optional fulfillment status such as not_started, packed, shipped, delivered, fulfilled, blocked, or cancelled.",
+          "required": false
+        },
+        "complianceStatus": {
+          "type": "string",
+          "description": "Optional compliance status such as pending, verified, review, hold, rejected, cleared, or blocked.",
+          "required": false
+        }
+      }
+    },
+    {
+      "name": "UpdateAdminMemberAccess",
+      "description": "Apply a confirmed admin-only user access fix by updating role, memberStatus, or membershipTier and writing an audit row.",
+      "requireConfirmation": "ENABLED",
+      "parameters": {
+        "memberId": {
+          "type": "string",
+          "description": "UUID of the member record to update.",
+          "required": true
+        },
+        "role": {
+          "type": "string",
+          "description": "Optional role: customer, operator, or admin.",
+          "required": false
+        },
+        "memberStatus": {
+          "type": "string",
+          "description": "Optional member status: non_member, active, paused, cancelled, or banned.",
+          "required": false
+        },
+        "membershipTier": {
+          "type": "string",
+          "description": "Optional membership tier: box_access_pass, kisha, sensei, or daimyo.",
+          "required": false
+        }
+      }
+    },
+    {
       "name": "DraftWeeklyNews",
       "description": "Create an operator-review-only weekly cigar education/news draft with newsletter copy, source-note placeholders, and compliance review reminders for adult members of legal tobacco age.",
       "requireConfirmation": "DISABLED",

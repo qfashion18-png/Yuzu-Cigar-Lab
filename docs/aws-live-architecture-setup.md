@@ -13,7 +13,7 @@ Working pieces:
 - Root CLI access was retired on 2026-06-18 after the account security remediation pass. IAM account summary now reports `AccountAccessKeysPresent=0` and `AccountMFAEnabled=1`; root profiles such as `phantom-root` and `yuzu-amplify` no longer work from the CLI.
 - Account guardrails now include account-level S3 Block Public Access, multi-region CloudTrail `ycc-security-trail`, AWS Config recorder `default`, GuardDuty detector `9bf00e4ceaa941cc8f499eaa0a6d8e40`, Security Hub with FSBP and CIS v1.2 standards `READY`, Inspector v2 for EC2/ECR/Lambda/Lambda code, IAM Access Analyzer `ycc-account-external-access`, security/operations/billing alternate contacts, and monthly budget `YCC Monthly AWS Cost Guardrail`.
 - Amplify app `app7216_yuzucigarclub` serves the static storefront from branch `staging`.
-- Amplify app `d2yxcklt245wh0` last received AWS blocker-remediation static deploy job `162` on 2026-06-18, using POSIX-path zip `yuzu-cigar-club-amplify-deploy-aws-blocker-remediation-20260618-2026-06-18-172936.zip`; the helper verified the live page and a referenced `_next/static` asset return HTTP `200`.
+- Amplify app `d2yxcklt245wh0` last received all-updates static deploy job `166` on 2026-07-03, using POSIX-path zip `yuzu-cigar-club-amplify-deploy-deploy-all-updates-20260703-2026-07-03-111256.zip`; the helper verified the live page and a referenced `_next/static` asset return HTTP `200`.
 - Amplify app `d2yxcklt245wh0` is associated with AWS WAF web ACL `ycc-amplify-edge` using managed common, known-bad-inputs, Amazon IP reputation, and per-IP rate-limit rules. The older Amplify `get-app` field may still read `wafWebAclArn=null`, but WAFv2 `get-web-acl-for-resource` confirms the association to the Amplify app ARN.
 - Route 53 public hosted zone `Z03644703S5ZEDRBYROZW` now hosts `yuzucigarclub.com`, with apex `A`/`AAAA` aliases to the Amplify CloudFront distribution `d1vtsjfasvs6ix.cloudfront.net` and `www` preserved as a CloudFront CNAME.
 - Cognito User Pool `YCCMembers` exists for member authentication and has optional SMS MFA configured.
@@ -34,20 +34,20 @@ Working pieces:
   - protected `POST /humidor/items`
   - protected `GET /account/me`
   - protected `PATCH /account/me`
-- Lambda `ycyyy` now runs the YCC API handler from `infra/lambda/ycc-api/index.js`; the live alias is pinned to version `47` for the 2026-07-02 safer owner/admin SMS alert copy and registration-resubmission deployment.
-- Lambda `ycyyy` has runtime environment configured for Cognito, RDS Proxy, the RDS credential secret ARN, S3 bucket `classroom2`, EventBridge bus `ycc-events`, Bedrock Knowledge Base `48GFMCLSTG`, the six Bedrock Agent Runtime aliases, Amazon Lex router bot `SUYZYOVXAB` alias `AYKLRS7KYY`, and Phase 5 SES support-email settings.
-- Lambda role `ycyyy-1778040454500` has inline policy `YccApiPhase2RuntimePolicy` for the RDS secret, CloudWatch log writes, approved S3 prefixes, `ycc-events`, selected Bedrock model/agent invocation, tagged Lex router aliases, and guarded SES compatibility from verified YCC sender identities.
+- Lambda `ycyyy` now runs the YCC API handler from `infra/lambda/ycc-api/index.js`; the live alias is pinned to version `54` for the 2026-07-03 all-updates checkpoint. This includes version `53` Quon GoDaddy/Microsoft 365 SMTP sender activation, version `52` staged SMTP config, version `51` Bedrock agent least-privilege action tools, version `50` admin test member cleanup, version `49` Cognito signup member/Stripe persistence and admin roster Stripe ID deployment, version `48` signup persistence, and version `47` safer owner/admin SMS alert copy.
+- Lambda `ycyyy` has runtime environment configured for Cognito, RDS Proxy, the RDS credential secret ARN, S3 bucket `classroom2`, EventBridge bus `ycc-events`, Bedrock Knowledge Base `48GFMCLSTG`, the six Bedrock Agent Runtime aliases, Amazon Lex router bot `SUYZYOVXAB` alias `AYKLRS7KYY`, Phase 5 SES inbound/support-email settings, and the GoDaddy/Microsoft 365 provider-neutral outbound email settings.
+- Lambda role `ycyyy-1778040454500` has inline policy `YccApiPhase2RuntimePolicy` for the RDS secret, email-provider secret `ycc/email/godaddy-m365-smtp/prod`, CloudWatch log writes, approved S3 prefixes, `ycc-events`, selected Bedrock model/agent invocation, tagged Lex router aliases, and guarded SES compatibility from verified YCC sender identities.
 - Lambda `ycyyy` has a 60 second timeout and 512 MB memory allocation.
 - EventBridge bus `ycc-events` exists and is tagged for YCC.
 - RDS PostgreSQL instance `database-1ycc` is available, private, encrypted, and attached to RDS Proxy.
 - RDS Proxy `proxy-1778040454500-database-1ycc` is available and its target health is `AVAILABLE`.
 - PostgreSQL database `postgresycc` has the Phase 3 app schema applied, including `newsletter_subscribers` and `site_page_content`.
 - Protected API routes persist authenticated member, concierge, support draft, live page content, and humidor writes into the Phase 3 tables when `FEATURE_DB_WRITES=schema_ready`; the public newsletter route stores opt-ins and monthly membership interest.
-- Repo-local Phase 3-12 commerce work now adds `0002_commerce_schema.sql`, `0005_member_stripe_customer_link.sql`, Lambda commerce routes, Stripe helper modules, compliance validation, frontend Stripe Checkout clients, DB member-to-Stripe Customer linking, live Stripe secret/catalog wiring, active Stripe Tax registration/defaults, and USPS Adult Signature readiness.
+- Repo-local Phase 3-12 commerce work now adds `0002_commerce_schema.sql`, `0005_member_stripe_customer_link.sql`, Lambda commerce routes, Stripe helper modules, compliance validation, frontend Stripe Checkout clients, DB member-to-Stripe Customer linking, live Stripe secret/catalog wiring, active Stripe Tax registration/defaults, and USPS Adult Signature readiness. As of Lambda version `49`, Cognito `PostConfirmation` also upserts confirmed signups into `public.members`, creates/links Stripe Customers for regular signups, and grants/links Friends & Family Box Access Pass signups using the confirmation metadata.
 - Phase 4.5 Bedrock Agent Runtime is enabled for `POST /concierge/chat` through Lambda with YCC persona routing, Knowledge Base retrieval, Lambda action groups, guardrail version `8` for direct Runtime and all prepared agents, and fallback behavior if agent invocation is unavailable.
 - Amazon Lex V2 bot `YCCConciergeRouter` (`SUYZYOVXAB`) is live through alias `prod` (`AYKLRS7KYY`) with `en_US` enabled, and acts as the first concierge conversation router and slot collector before Bedrock Agent Runtime.
 - Bedrock Guardrail `YCCConciergeGuardrail` is versioned and associated with the Lambda runtime path and Bedrock Agents.
-- Bedrock Agents exist and have prepared `prod` aliases for `YCCConcierge`, `YCCCigarGuide`, `YCCSupportAgent`, `YCCHumidorAgent`, `YCCAdminAgent`, and `YCCNewsAgent`; all six use guardrail version `8`, invoke the Lambda `live` alias executor, and route to version `7`.
+- Bedrock Agents exist and have prepared `prod` aliases for `YCCConcierge`, `YCCCigarGuide`, `YCCSupportAgent`, `YCCHumidorAgent`, `YCCAdminAgent`, and `YCCNewsAgent`; all six use guardrail version `8`, invoke the Lambda `live` alias executor, and route to version `8`.
 - SES domain identity `yuzucigarclub.com` is verified in `us-east-1` with Easy DKIM DNS records imported into Route 53.
 - Root-domain inbound mail for `yuzucigarclub.com` now routes to AWS SES `inbound-smtp.us-east-1.amazonaws.com` and stores raw messages in `s3://classroom2/ycc/root-email/raw/`.
 - SES inbound support-email subdomain `ses-support.yuzucigarclub.com` also has MX pointed to `inbound-smtp.us-east-1.amazonaws.com`.
@@ -58,7 +58,7 @@ Working pieces:
 - Bedrock Agent Runtime interface VPC endpoint `vpce-0eaf893d65f8ec9f5` exists with private DNS enabled so VPC Lambda functions can invoke Bedrock Agents without NAT.
 - S3 gateway VPC endpoint `vpce-01c1d204d461fef24` exists on route tables `rtb-05b73feb08ff385ab`, `rtb-08b3fa8234dc0123b`, and `rtb-02d54b3fe674911f0` so VPC Lambda functions can read/write approved `classroom2` prefixes.
 - Dedicated private Lambda egress subnets `subnet-06116a5414f29c8bb` (`us-east-1a`, `172.31.96.0/24`) and `subnet-067af6ad21ff85cc2` (`us-east-1b`, `172.31.97.0/24`) route through NAT gateways `nat-0460beed74a121308` and `nat-06330ee4dd558e916`.
-- Lambda `ycyyy` now runs in the two dedicated private subnets with security group `sg-00c3d67ac62d92ae7`; deep health confirmed RDS Proxy, schema writes, Bedrock runtime, and the guarded non-ready SES production state after the move.
+- Lambda `ycyyy` now runs in the two dedicated private subnets with security group `sg-00c3d67ac62d92ae7`; deep health confirms RDS Proxy, schema writes, Bedrock runtime, and GoDaddy/Microsoft 365 SMTP outbound readiness.
 - Lambda function `ycyyy` exists in the same VPC and can be wired as the first backend handler.
 - Cognito Identity Pool `YCC` exists and has unauthenticated identities disabled.
 - S3 bucket `classroom2` exists and is connected to the S3 Files file system/access point.
@@ -71,6 +71,7 @@ Working pieces:
   - Lambda SG `lambda-rdsproxy-1` -> VPC endpoint SG `ycc-bedrock-runtime-vpce`
   - Lambda SG `lambda-rdsproxy-1` -> VPC endpoint SG `ycc-bedrock-agent-runtime-vpce`
   - Lambda SG `lambda-rdsproxy-1` -> S3 managed prefix list `pl-63a5400a` over port 443.
+  - Lambda SG `sg-00c3d67ac62d92ae7` -> Internet via NAT on TCP/587 for GoDaddy/Microsoft 365 SMTP STARTTLS.
 
 Gaps:
 
@@ -79,8 +80,8 @@ Gaps:
 - RDS deletion protection is enabled and backup retention is set to 7 days.
 - The default RDS security group was removed; the narrow Lambda-to-proxy-to-DB security group path remains attached.
 - Cognito app client IaC includes `ALLOW_USER_PASSWORD_AUTH`, and the live `ycc-storefront` app client was verified on 2026-05-13 with `ALLOW_USER_PASSWORD_AUTH`, `ALLOW_USER_SRP_AUTH`, and `ALLOW_REFRESH_TOKEN_AUTH` while preserving OAuth code flow settings.
-- The database and Lambda remain in the default VPC, but Lambda has moved out of default public subnets into dedicated private egress subnets with NAT and endpoint routes. Lambda security group `sg-00c3d67ac62d92ae7` now allows TCP/443 egress through NAT for Stripe API calls. A named production VPC remains a future improvement rather than a launch blocker.
-- SES production access is final-denied under AWS case `177809591700724`, so live outbound customer support, newsletter follow-up, and member welcome sends remain guarded by `FEATURE_SES=pending_production_access`. AWS Support's final response says the request cannot be granted, no specific denial details can be provided, and no further responses will be sent on the subject. Do not plan on another SES appeal for this account; use the guarded existing GoDaddy/Microsoft 365 SMTP mailbox path for low-volume app mail only after SMTP AUTH, a secure credential, and internal smoke sends are verified. Do not use SES per-recipient identity verification as a customer signup or onboarding step; sandbox recipient verification sends AWS-branded email and is only acceptable as a temporary operator/test exception for known inboxes.
+- The database and Lambda remain in the default VPC, but Lambda has moved out of default public subnets into dedicated private egress subnets with NAT and endpoint routes. Lambda security group `sg-00c3d67ac62d92ae7` now allows TCP/443 egress through NAT for Stripe API calls and TCP/587 egress for STARTTLS SMTP to the GoDaddy/Microsoft 365 mailbox provider. A named production VPC remains a future improvement rather than a launch blocker.
+- SES production access is final-denied under AWS case `177809591700724`, so live outbound customer support, newsletter follow-up, member welcome, and order-confirmation sends must remain off SES. AWS Support's final response says the request cannot be granted, no specific denial details can be provided, and no further responses will be sent on the subject. Do not plan on another SES appeal for this account. As of Lambda version `53`, `quon@yuzucigarclub.com` is configured through Secrets Manager secret `ycc/email/godaddy-m365-smtp/prod` as the GoDaddy/Microsoft 365 SMTP username/from/contact recipient with `EMAIL_PROVIDER=godaddy_m365_smtp`, `FEATURE_EMAIL_PROVIDER=ready`, and live health `emailProvider=godaddy_m365_smtp_ready`. Use this mailbox path only for low-volume transactional/support/welcome/order app mail, not bulk campaigns. Do not use SES per-recipient identity verification as a customer signup or onboarding step; sandbox recipient verification sends AWS-branded email and is only acceptable as a temporary operator/test exception for known inboxes.
 - Twilio SendGrid is not currently a viable replacement sender for this project: ticket `27589567` closed on 2026-06-18 with account activation denied for unified account `unified_acct_UScdd6447b628befe0ef01375524876503` / `109536481`. Treat SendGrid as unavailable unless Twilio explicitly reverses that decision. Brevo, Mailgun, Postmark, and SendGrid code paths remain optional fallback integrations, but they are not required for the no-new-spend GoDaddy/Microsoft 365 SMTP path.
 - The production root-domain mailbox route now terminates at SES. Root-domain mail is captured as raw S3 objects only; production support automation still uses the `support@ses-support.yuzucigarclub.com` receipt path until root-domain routing is intentionally wired into Lambda.
 - Direct operator CLI retrieval against the Knowledge Base is not currently allowed by the scoped operator role. The live agents can retrieve through their Bedrock runtime role.
@@ -97,7 +98,7 @@ These items must be closed before production commerce launch. Owners are functio
 | Default RDS security group still attached | Infrastructure operator | Closed 2026-05-07 | Default DB security group was removed; the database keeps the validated Lambda-to-proxy-to-DB security group path. |
 | Cognito inline password auth flow missing on live app client | Identity operator | Closed 2026-05-13 | App client `2i2nvtt41l94n0mivc4tu4f9ms` now has `ALLOW_USER_PASSWORD_AUTH` with OAuth code flow, callback URLs, logout URLs, token validity, token revocation, and user-existence error settings preserved. |
 | Default public subnet Lambda egress | Infrastructure operator | Closed 2026-05-12 | Lambda `ycyyy` now runs in dedicated private egress subnets `subnet-06116a5414f29c8bb` and `subnet-067af6ad21ff85cc2` with NAT gateways `nat-0460beed74a121308` and `nat-06330ee4dd558e916`. A named production VPC remains a future hardening item. |
-| SES production access | Support/email operator | Final denied 2026-06-18 | AWS case `177809591700724` is closed with a final denial. Keep `FEATURE_SES=pending_production_access` so SES outbound sends stay disabled; enable the guarded GoDaddy/Microsoft 365 SMTP provider only after the mailbox credential and internal smoke tests are complete. |
+| SES production access | Support/email operator | Final denied 2026-06-18; mailbox SMTP active 2026-07-03 | AWS case `177809591700724` is closed with a final denial. Keep `FEATURE_SES=pending_production_access` so SES outbound sends stay disabled; low-volume app mail now uses the guarded GoDaddy/Microsoft 365 SMTP provider through `quon@yuzucigarclub.com` after credential storage, IAM, egress, and smoke-test verification. |
 | WAF/rate limiting missing from public edge/API | Security operator | Closed 2026-05-12 | Amplify is associated with CloudFront-scope WAF web ACL `ycc-amplify-edge`; API Gateway detailed metrics and route throttles remain enabled. |
 | CloudWatch alarms incomplete | Operations operator | Baseline closed 2026-05-07 | Baseline alarms now cover Lambda errors/throttles, API 4xx/5xx, RDS CPU/storage/connections, and RDS Proxy client connections. Add vendor-specific alarms after Stripe, age, and shipping integrations go live. |
 | Backup retention/restore drill not launch-approved | Infrastructure operator | Closed 2026-05-12 | Backup retention is set to 7 days; point-in-time restore drill `ycc-restore-drill-20260512-1640` reached `available` as encrypted PostgreSQL 18.3 and was deleted after verification. |
@@ -327,12 +328,12 @@ Prepared agent aliases:
 
 | Agent | Agent ID | Alias | Alias ID | Version |
 | --- | --- | --- | --- | --- |
-| `YCCConcierge` | `NDIEDXNZAV` | `prod` | `XXAQKDKDC0` | `7` |
-| `YCCCigarGuide` | `EJI2VA7AVF` | `prod` | `1JO8IAN4BL` | `7` |
-| `YCCSupportAgent` | `SJJ2DVNYES` | `prod` | `LIFBQL76AE` | `7` |
-| `YCCHumidorAgent` | `XLN9JKVRDA` | `prod` | `SOHCW5780U` | `7` |
-| `YCCAdminAgent` | `UQWB6AKMBT` | `prod` | `IHCMS7T9PB` | `7` |
-| `YCCNewsAgent` | `TUVBTVKNXG` | `prod` | `G25GBEUUMG` | `7` |
+| `YCCConcierge` | `NDIEDXNZAV` | `prod` | `XXAQKDKDC0` | `8` |
+| `YCCCigarGuide` | `EJI2VA7AVF` | `prod` | `1JO8IAN4BL` | `8` |
+| `YCCSupportAgent` | `SJJ2DVNYES` | `prod` | `LIFBQL76AE` | `8` |
+| `YCCHumidorAgent` | `XLN9JKVRDA` | `prod` | `SOHCW5780U` | `8` |
+| `YCCAdminAgent` | `UQWB6AKMBT` | `prod` | `IHCMS7T9PB` | `8` |
+| `YCCNewsAgent` | `TUVBTVKNXG` | `prod` | `G25GBEUUMG` | `8` |
 
 ## Phase 4.5 Live Outputs
 
@@ -351,8 +352,16 @@ Bedrock action group:
 
 - Action group name: `YCCOperations`
 - Lambda executor: `arn:aws:lambda:us-east-1:374587466106:function:ycyyy:live`
-- Function schema: `infra/bedrock/ycc-agent-action-group-functions.json`
-- Functions: `GetMemberProfile`, `DraftSupportReply`, `AddHumidorItem`, `GetAdminQueueSummary`, `DraftWeeklyNews`
+- Function schema catalog: `infra/bedrock/ycc-agent-action-group-functions.json`
+- Per-agent action-group contract: `infra/bedrock/ycc-agent-action-group-config.json`
+- Confirmed admin fixes: `YCCAdminAgent` exposes `UpdateAdminOrder` for order status, fulfillment, and compliance updates and `UpdateAdminMemberAccess` for role, member status, and membership tier updates. Both require Bedrock confirmation and write durable audit rows. `UpdateAdminOrder` allows `admin` and `concierge_operator` sessions; `UpdateAdminMemberAccess` is admin-only.
+- Live least-privilege tool matrix:
+  - `YCCConcierge`: `GetMemberProfile`, `DraftSupportReply`
+  - `YCCCigarGuide`: `GetMemberProfile`
+  - `YCCSupportAgent`: `GetMemberProfile`, `DraftSupportReply`
+  - `YCCHumidorAgent`: `GetMemberProfile`, `AddHumidorItem`
+  - `YCCAdminAgent`: `GetMemberProfile`, `DraftSupportReply`, `GetAdminQueueSummary`, `UpdateAdminOrder`, `UpdateAdminMemberAccess`
+  - `YCCNewsAgent`: `DraftWeeklyNews`
 - Action group IDs:
   - `YCCConcierge`: `OJ55YKPRPN`
   - `YCCCigarGuide`: `CMG2BD9LV2`
@@ -369,8 +378,11 @@ Phase 4 verification:
 - Direct Lambda invoke of `POST /concierge/chat` with admin/concierge Cognito-like claims and `agent=weekly_news` returns `ai.status=bedrock_agent_runtime` and a draft with source-note placeholders for `YCCNewsAgent` `TUVBTVKNXG/G25GBEUUMG`.
 - Direct Lambda action-group invoke for `DraftSupportReply` stores a support case and draft email.
 - Direct Lambda action-group invoke for `GetAdminQueueSummary` returns `REPROMPT` and `admin_agent_forbidden` for a non-admin session.
+- Direct Lambda action-group invoke for `UpdateAdminOrder` updates a persisted order and writes `commerce_audit_log`; `UpdateAdminMemberAccess` rejects concierge-only sessions and requires an `admin` group before updating a member and writing `audit_log`.
+- Direct Lambda action-group invoke for `UpdateAdminOrder` through the wrong agent surface returns `REPROMPT` and `wrong_agent_tool`, so a stale/misconfigured action group cannot enter an admin write path.
 - Direct Lambda action-group invoke for `DraftWeeklyNews` requires an admin/concierge operator and returns a review-ready draft package.
-- `npm test` passes with Bedrock Agent Runtime alias routing for specialist agents, direct Bedrock Runtime for the cigar guide, action-group persistence, admin/news-agent access control, and conversation agent constraint checks.
+- `npm run ai-agents:ops-check -- --live --json` passes and confirms all six aliases route to version `8`, all six action groups match the least-privilege function contracts, all six routed versions have Knowledge Base `48GFMCLSTG` enabled, Lambda `ycyyy:live` is version `54`, and API deep health/auth boundary checks pass.
+- `npm test` passes with Bedrock Agent Runtime alias routing for specialist agents, direct Bedrock Runtime for the cigar guide, action-group persistence, admin/news-agent access control, wrong-agent tool refusal, and conversation agent constraint checks.
 
 ## Target Architecture
 
@@ -534,7 +546,7 @@ Current Phase 4 status:
 - Bedrock Runtime private endpoint is available.
 - Bedrock Agent Runtime private endpoint is available.
 - Lambda `POST /concierge/chat` invokes the selected Bedrock Agent Runtime alias first, then falls back to direct Bedrock Runtime if needed.
-- Six Bedrock Agents and `prod` aliases are prepared, including `YCCNewsAgent` version `7` for the weekly education/newsletter workflow.
+- Six Bedrock Agents and `prod` aliases are prepared, including `YCCNewsAgent` version `8` for the weekly education/newsletter workflow.
 - Knowledge Base and Lambda action groups are attached to all six prepared agents.
 
 ### Phase 5: Email Support
@@ -553,7 +565,8 @@ Current Phase 5 status:
 - Route 53 hosted zone `Z03644703S5ZEDRBYROZW` hosts the SES Easy DKIM CNAME records for `yuzucigarclub.com`.
 - SES production-access request was submitted on 2026-05-06 and later denied under case `177809591700724`; `ProductionAccessEnabled=false` was rechecked on 2026-05-20.
 - AWS Support sent a final denial for case `177809591700724` on 2026-06-18 and stated there will be no additional responses on the subject. API resubmission on 2026-05-20 returned `ConflictException`, and the account should now be treated as unable to use SES for production outbound mail.
-- Lambda now has a branded member welcome email flow that runs only after membership activation: Friends & Family Box Pass entitlement grant or an active Stripe subscription webhook. The Lambda code also supports provider-neutral support/contact, newsletter follow-up, member welcome, and Stripe order-confirmation sends through `EMAIL_PROVIDER` plus `FEATURE_EMAIL_PROVIDER=ready`, including the no-new-spend `godaddy_m365_smtp` provider. The live alias must keep outbound app mail disabled until the existing mailbox has SMTP AUTH enabled, a secure credential configured, and internal smoke sends pass. The first signup email remains the branded Cognito verification email; SES sandbox recipient verification must not be triggered automatically for customers because it produces a separate AWS verification message.
+- Lambda now has a branded member welcome email flow that runs only after membership activation: Friends & Family Box Pass entitlement grant or an active Stripe subscription webhook. The Lambda code also supports provider-neutral support/contact, newsletter follow-up, member welcome, and Stripe order-confirmation sends through `EMAIL_PROVIDER` plus `FEATURE_EMAIL_PROVIDER=ready`, including the no-new-spend `godaddy_m365_smtp` provider. The first signup email remains the branded Cognito verification email; SES sandbox recipient verification must not be triggered automatically for customers because it produces a separate AWS verification message.
+- Lambda version `53` enables the GoDaddy/Microsoft 365 SMTP path with `EMAIL_PROVIDER=godaddy_m365_smtp`, `FEATURE_EMAIL_PROVIDER=ready`, `EMAIL_PROVIDER_SECRET_ARN` pointing at Secrets Manager secret `ycc/email/godaddy-m365-smtp/prod`, `M365_SMTP_USERNAME=quon@yuzucigarclub.com`, `SUPPORT_EMAIL_FROM=quon@yuzucigarclub.com`, `SUPPORT_CONTACT_EMAIL_TO=quon@yuzucigarclub.com`, host `smtp.office365.com`, and port `587`. The Lambda role can read the secret, and security group `sg-00c3d67ac62d92ae7` allows TCP/587 egress for STARTTLS SMTP.
 - Deployed Lambda package artifact `C:\Users\qfash\Documents\Yuzu Deploy Artifacts\ycc-api-current-tools-m365-smtp-20260702.zip` to `ycyyy:live` version `46` with code hash `/MrlmX7H+o5TiToLVYHK2bK1Hlz9Z/XLLAFAJkn9ToM=`. This version adds the GoDaddy/Microsoft 365 SMTP current-tools path and keeps live sending guarded by the existing `FEATURE_SES=pending_production_access` environment while no GoDaddy/Microsoft 365 SMTP credential is configured.
 - Deployed Lambda package artifact `output/ycc-api-member-welcome-email-20260618.zip` to `ycyyy:live` version `41` with code hash `EMYU78bngAbT/8yowT+hslmMk+IlVtyl0fDr8aLQsig=`. This version was superseded by the owner/admin SMS wording deployment below.
 - Public trust pages `https://www.yuzucigarclub.com/privacy/` and `https://www.yuzucigarclub.com/terms/` return HTTP `200`, are included in the production sitemap, and now include mobile opt-in privacy language plus SMS terms for message frequency, message/data rates, STOP/HELP, customer care, carrier liability, and privacy-policy linkage.
@@ -580,7 +593,7 @@ Current Phase 5 status:
 
 Remaining Phase 5 gates:
 
-- Enable SMTP AUTH for the existing GoDaddy/Microsoft 365 support mailbox, store the mailbox SMTP credential in Lambda env or an existing approved secret, set `EMAIL_PROVIDER=godaddy_m365_smtp`, then smoke test support/contact, member welcome, and Stripe order-confirmation email before setting `FEATURE_EMAIL_PROVIDER=ready` for live app sends. If signup email also needs full provider control later, use Cognito's custom email sender trigger with the selected provider rather than SES recipient verification.
+- Keep the GoDaddy/Microsoft 365 SMTP path limited to low-volume transactional/support/welcome/order app mail. Run a Stripe order-confirmation smoke on the next order-flow verification pass before relying on it for paid-order customer mail. If signup email also needs full provider control later, use Cognito's custom email sender trigger with the selected provider rather than SES recipient verification.
 - Decide whether root-domain support mail should remain raw-only, forward internally to `support@ses-support.yuzucigarclub.com`, or get its own Lambda receipt action.
 
 Phase 5 verification:
@@ -588,7 +601,9 @@ Phase 5 verification:
 - DNS resolves SES DKIM CNAMEs for `yuzucigarclub.com`.
 - DNS resolves root MX for `yuzucigarclub.com` to `inbound-smtp.us-east-1.amazonaws.com`.
 - DNS resolves `ses-support.yuzucigarclub.com` MX to `inbound-smtp.us-east-1.amazonaws.com`.
-- API deep health on 2026-07-02 returned HTTP 200 with `capabilities.emailProvider=pending_production_access`, confirming version `46` is live and outbound app email remains disabled until the selected provider is configured and smoke-tested.
+- API deep health on 2026-07-03 returned HTTP 200 with `capabilities.emailProvider=godaddy_m365_smtp_ready`, confirming version `54` is live and retains the Quon GoDaddy/Microsoft 365 SMTP provider readiness.
+- Local SMTP smoke with the parsed mailbox credential succeeded through `smtp.office365.com:587`; the credential itself was not printed or committed. Direct Lambda `POST /support/email-send` smoke to `quon@yuzucigarclub.com` then returned `status=sent`, `provider=godaddy_m365_smtp`, and a provider message id after IAM secret-read and TCP/587 egress were fixed.
+- Replayed Dan Davis's Cognito `PostConfirmation_ConfirmSignUp` event through `ycyyy:live` version `53` with Friends & Family metadata. Lambda logs show `cognito_post_confirmation_account_persisted`, `stripeCustomerLinked=true`, `membershipClaimed=true`, followed by `request_completed` status `200`; no `member_welcome_email_failed` events were logged in the verification window.
 - `POST /support/contact` with an empty JSON body returned HTTP 400 `missing_contact_name` after the version `46` deploy, confirming the public support route still reaches Lambda validation without sending mail.
 - `npm run ses:e2e -- --live --json` on 2026-07-02 passed account identity, verified identities, Lambda guard on version `46`, inbound receipt rules, Lambda receipt permission, raw S3 capture, and feedback SNS/SQS checks; it failed only the expected SES production-access check because case `177809591700724` remains denied.
 - SES identities `yuzucigarclub.com` and `ses-support.yuzucigarclub.com` are verified with DKIM `SUCCESS`.
@@ -842,10 +857,11 @@ The live SMS MFA setup can be reapplied idempotently with the normal scoped prof
 
 ## Owner/Admin SMS Signup Alerts
 
-Live owner/admin signup alert setup as of 2026-07-02:
+Live owner/admin signup alert setup as of 2026-07-03:
 
 - Cognito user pool `YCCMembers` invokes Lambda alias `arn:aws:lambda:us-east-1:374587466106:function:ycyyy:live` on `PostConfirmation`.
-- Lambda alias `ycyyy:live` points to version `47` with code hash `BgGtAJxAh2FtcOJqmwWVd8saJrgvlXUDU7uxmghotI8=` and description `Live API safer SMS registration copy 2026-07-02`.
+- Lambda alias `ycyyy:live` points to version `54` with code hash `m1HUJQu1TJMNM3FoiNOkZ/pCnLH2r+cr+dtghU8lECY=` and description `Live API deployed all local updates 2026-07-03`. Version `54` includes version `53` Quon GoDaddy/Microsoft 365 SMTP sender readiness, version `52` staged SMTP config, version `51` Bedrock agent least-privilege action tools, version `50` admin test member cleanup, version `49` admin roster Stripe ID deployment, version `48` Cognito signup member/Stripe persistence, and version `47` safer SMS copy.
+- Lambda package artifacts moved to `C:\Users\qfash\Documents\Yuzu Deploy Artifacts\ycc-api-cognito-signup-persistence-20260703.zip` and `C:\Users\qfash\Documents\Yuzu Deploy Artifacts\ycc-api-admin-member-stripe-roster-20260703.zip`.
 - Lambda package artifact moved to `C:\Users\qfash\Documents\Yuzu Deploy Artifacts\ycc-api-sms-requires-updates-safe-copy-20260702.zip`.
 - The live SMS copy now uses `Company Quon LLC admin alert`, removes the public cigar-facing brand/domain link, and describes internal account-confirmation and fulfillment-review tasks only. Push/admin UI text remains Yuzu-branded.
 - AWS End User Messaging SMS toll-free registration `registration-8720a85d3f2c40d88dae52872699079a` is now `REVIEWING`; current version `5` was submitted on 2026-07-02 at 16:48:03 America/Phoenix, and latest denied version is `4`.

@@ -131,6 +131,7 @@ const ADMIN_ROUTES = new Set([
   "GET /admin/commerce/webhook-events",
   "GET /admin/commerce/compliance-holds",
   "GET /admin/members",
+  "DELETE /admin/members/{id}",
   "PATCH /admin/members/{id}/access",
   "POST /content/pages",
   "POST /news/story-drafts",
@@ -191,6 +192,15 @@ const BEDROCK_AGENT_NAMES = new Set([
   "YCCHumidorAgent",
   "YCCAdminAgent",
   "YCCNewsAgent",
+]);
+const ACTION_GROUP_FUNCTION_AGENT_NAMES = new Map([
+  ["GetMemberProfile", new Set(["YCCConcierge", "YCCCigarGuide", "YCCSupportAgent", "YCCHumidorAgent", "YCCAdminAgent"])],
+  ["DraftSupportReply", new Set(["YCCConcierge", "YCCSupportAgent", "YCCAdminAgent"])],
+  ["AddHumidorItem", new Set(["YCCHumidorAgent"])],
+  ["GetAdminQueueSummary", new Set(["YCCAdminAgent"])],
+  ["UpdateAdminOrder", new Set(["YCCAdminAgent"])],
+  ["UpdateAdminMemberAccess", new Set(["YCCAdminAgent"])],
+  ["DraftWeeklyNews", new Set(["YCCNewsAgent"])],
 ]);
 const DIRECT_BEDROCK_RUNTIME_AGENTS = new Set(["YCCCigarGuide"]);
 const CIGAR_WRAPPER_TERMS = [
@@ -457,6 +467,8 @@ exports.handler = async function handler(event = {}, context = {}) {
         response = await handleAdminComplianceHolds(event, actor, requestId);
       } else if (routeKey === "GET /admin/members") {
         response = await handleAdminMembers(event, actor, requestId);
+      } else if (isAdminMemberDeleteRoute(routeKey)) {
+        response = await handleAdminMemberDelete(event, actor, requestId);
       } else if (isAdminMemberAccessMutationRoute(routeKey)) {
         response = await handleAdminMemberAccessUpdate(event, actor, requestId);
       } else if (routeKey === "POST /content/pages") {
@@ -3315,6 +3327,80 @@ async function handleAdminMemberAccessUpdate(event, actor, requestId) {
   });
 }
 
+async function handleAdminMemberDelete(event, actor, requestId) {
+  if (!canAdministerMemberAccess(actor)) {
+    return json(403, requestId, {
+      error: "admin_forbidden",
+      message: "User cleanup requires an admin group.",
+    });
+  }
+
+  const memberId = getPathId(event, "id");
+  if (!memberId || !isUuid(memberId)) {
+    return json(400, requestId, {
+      error: "missing_member_id",
+      message: "A valid member id is required in the admin member cleanup path.",
+    });
+  }
+
+  if (!shouldPersistDatabaseWrites()) {
+    return json(409, requestId, {
+      error: "database_writes_not_ready",
+      message: "Admin member cleanup requires the member database schema.",
+      persistence: getDatabasePersistenceStatus(),
+    });
+  }
+
+  return withDatabaseTransaction("ycc-api-admin-member-delete", async (client) => {
+    const candidate = await loadAdminMemberDeleteCandidate(client, memberId);
+    if (!candidate) {
+      return json(404, requestId, {
+        error: "member_not_found",
+        message: "The requested member was not found.",
+      });
+    }
+
+    const blockers = {
+      orderCount: candidate.orderCount,
+      subscriptionCount: candidate.subscriptionCount,
+    };
+    if (blockers.orderCount > 0 || blockers.subscriptionCount > 0) {
+      return json(409, requestId, {
+        error: "member_delete_blocked",
+        message: "Members with commerce orders or subscription records cannot be removed by the cleanup route.",
+        member: candidate.member,
+        blockers,
+      });
+    }
+
+    await insertAuditLog(client, event, {
+      actor,
+      requestId,
+      memberId,
+      action: "admin.member.delete",
+      resourceType: "member",
+      resourceId: memberId,
+      afterData: {
+        deleted: true,
+        member: candidate.member,
+        cleanupScope: "member_owned_data",
+      },
+    });
+
+    await deleteAdminMemberRow(client, memberId);
+
+    return json(200, requestId, {
+      deleted: true,
+      member: candidate.member,
+      blockers,
+      persistence: {
+        status: "stored",
+        table: "members",
+      },
+    });
+  });
+}
+
 async function handleAdminStripeSyncProducts(event, actor, requestId) {
   if (!canUseAdminAgent(actor)) {
     return json(403, requestId, {
@@ -3690,6 +3776,7 @@ async function loadAdminMemberRows(client, filters = {}) {
         m.role,
         m.membership_tier,
         m.member_status,
+        m.stripe_customer_id,
         m.last_seen_at,
         m.created_at,
         m.updated_at,
@@ -3761,6 +3848,7 @@ async function updateAdminMemberAccessRow(client, details) {
         role,
         membership_tier,
         member_status,
+        stripe_customer_id,
         last_seen_at,
         created_at,
         updated_at
@@ -3773,6 +3861,67 @@ async function updateAdminMemberAccessRow(client, details) {
   return result.rows[0] ? mapAdminMemberRow(result.rows[0]) : null;
 }
 
+async function loadAdminMemberDeleteCandidate(client, memberId) {
+  const result = await client.query(
+    `
+      with target as (
+        select
+          id,
+          cognito_sub,
+          email,
+          email_verified,
+          display_name,
+          role,
+          membership_tier,
+          member_status,
+          stripe_customer_id,
+          last_seen_at,
+          created_at,
+          updated_at
+        from public.members
+        where id = $1
+        for update
+      )
+      select /* admin_member_delete_candidate */
+        target.*,
+        (
+          select count(*)::integer
+          from public.commerce_orders o
+          where o.member_id = target.id or lower(o.email) = lower(target.email)
+        ) as order_count,
+        (
+          select count(*)::integer
+          from public.member_subscriptions s
+          where s.member_id = target.id or lower(s.email) = lower(target.email)
+        ) as subscription_count
+      from target
+      limit 1
+    `,
+    [memberId]
+  );
+  const row = result.rows[0];
+  if (!row) {
+    return null;
+  }
+
+  return {
+    member: mapAdminMemberRow(row),
+    orderCount: Number(row.order_count || 0),
+    subscriptionCount: Number(row.subscription_count || 0),
+  };
+}
+
+async function deleteAdminMemberRow(client, memberId) {
+  await client.query(
+    `
+      delete /* admin_member_delete_execute */
+      from public.members
+      where id = $1
+    `,
+    [memberId]
+  );
+}
+
 function mapAdminMemberRow(row) {
   return {
     id: row.id,
@@ -3783,6 +3932,7 @@ function mapAdminMemberRow(row) {
     role: row.role,
     membershipTier: row.membership_tier || null,
     memberStatus: row.member_status,
+    stripeCustomerId: row.stripe_customer_id || null,
     lastSeenAt: row.last_seen_at ? toIsoString(row.last_seen_at) : null,
     createdAt: row.created_at ? toIsoString(row.created_at) : null,
     updatedAt: row.updated_at ? toIsoString(row.updated_at) : null,
@@ -5455,6 +5605,11 @@ async function handleBedrockActionGroup(event, requestId) {
     }, "REPROMPT");
   }
 
+  const wrongAgentToolResponse = validateActionAgentSurface(event, actionName);
+  if (wrongAgentToolResponse) {
+    return wrongAgentToolResponse;
+  }
+
   if (actionName === "GetMemberProfile") {
     return bedrockFunctionResponse(event, {
       account: actor
@@ -5627,6 +5782,182 @@ async function handleBedrockActionGroup(event, requestId) {
       persistence: {
         status: persistedItem ? "stored" : getDatabasePersistenceStatus(),
       },
+    });
+  }
+
+  if (actionName === "UpdateAdminOrder") {
+    if (!actor || !canUseAdminAgent(actor)) {
+      return bedrockFunctionResponse(event, {
+        error: "admin_agent_forbidden",
+        message: "Admin order fixes require an admin or concierge operator session group.",
+      }, "REPROMPT");
+    }
+
+    const orderId = getUuidOrNull(params.orderId || params.order_id || params.id);
+    if (!orderId) {
+      return bedrockFunctionResponse(event, {
+        error: "missing_order_id",
+        message: "Ask for a valid order id before updating order status, fulfillment, or compliance.",
+      }, "REPROMPT");
+    }
+
+    const status = normalizeOptionalStatus(params.status, ADMIN_ORDER_STATUSES);
+    const fulfillmentStatus = normalizeOptionalStatus(params.fulfillmentStatus || params.fulfillment_status, ADMIN_FULFILLMENT_STATUSES);
+    const complianceStatus = normalizeOptionalStatus(params.complianceStatus || params.compliance_status, ADMIN_COMPLIANCE_STATUSES);
+
+    if (status.error || fulfillmentStatus.error || complianceStatus.error) {
+      return bedrockFunctionResponse(event, {
+        error: "invalid_admin_order_update",
+        message: status.error || fulfillmentStatus.error || complianceStatus.error,
+      }, "REPROMPT");
+    }
+
+    if (!status.supplied && !fulfillmentStatus.supplied && !complianceStatus.supplied) {
+      return bedrockFunctionResponse(event, {
+        error: "empty_admin_order_update",
+        message: "Provide status, fulfillmentStatus, or complianceStatus before applying an admin order fix.",
+      }, "REPROMPT");
+    }
+
+    if (!shouldPersistDatabaseWrites()) {
+      return bedrockFunctionResponse(event, {
+        error: "database_writes_not_ready",
+        message: "Admin order fixes require schema-backed database writes.",
+        persistence: getDatabasePersistenceStatus(),
+      }, "REPROMPT");
+    }
+
+    return withDatabaseClient("ycc-api-admin-agent-order-update", async (client) => {
+      const order = await updateAdminOrderRow(client, {
+        orderId,
+        status: status.value,
+        fulfillmentStatus: fulfillmentStatus.value,
+        complianceStatus: complianceStatus.value,
+        actor,
+        requestId,
+      });
+
+      if (!order) {
+        return bedrockFunctionResponse(event, {
+          error: "order_not_found",
+          message: "The requested customer order was not found.",
+        }, "REPROMPT");
+      }
+
+      await insertCommerceAuditLog(client, {
+        actor,
+        requestId,
+        action: "admin.agent.order.update",
+        targetType: "commerce_order",
+        targetId: order.id,
+        orderId: order.id,
+        payload: {
+          status: status.value,
+          fulfillmentStatus: fulfillmentStatus.value,
+          complianceStatus: complianceStatus.value,
+          source: "bedrock_action_group",
+        },
+      });
+
+      return bedrockFunctionResponse(event, {
+        action: "admin_order_update",
+        order,
+        persistence: {
+          status: "stored",
+          table: "commerce_orders",
+        },
+        destructiveActionsAllowed: false,
+        operatorReviewRequired: false,
+        nextActions: ["refresh_admin_console", "review_order_audit_trail", "notify_fulfillment_if_needed"],
+      });
+    });
+  }
+
+  if (actionName === "UpdateAdminMemberAccess") {
+    if (!actor || !canAdministerMemberAccess(actor)) {
+      return bedrockFunctionResponse(event, {
+        error: "admin_forbidden",
+        message: "User access fixes require an admin session group.",
+      }, "REPROMPT");
+    }
+
+    const memberId = getUuidOrNull(params.memberId || params.member_id || params.id);
+    if (!memberId) {
+      return bedrockFunctionResponse(event, {
+        error: "missing_member_id",
+        message: "Ask for a valid member id before updating user access.",
+      }, "REPROMPT");
+    }
+
+    const role = normalizeOptionalStatus(params.role, ADMIN_MEMBER_ROLES);
+    const memberStatus = normalizeOptionalStatus(params.memberStatus || params.member_status, ADMIN_MEMBER_STATUSES);
+    const membershipTier = normalizeOptionalNullableStatus(params.membershipTier || params.membership_tier, ADMIN_MEMBERSHIP_TIERS);
+
+    if (role.error || memberStatus.error || membershipTier.error) {
+      return bedrockFunctionResponse(event, {
+        error: "invalid_admin_member_access_update",
+        message: role.error || memberStatus.error || membershipTier.error,
+      }, "REPROMPT");
+    }
+
+    if (!role.supplied && !memberStatus.supplied && !membershipTier.supplied) {
+      return bedrockFunctionResponse(event, {
+        error: "empty_admin_member_access_update",
+        message: "Provide role, memberStatus, or membershipTier before applying a user access fix.",
+      }, "REPROMPT");
+    }
+
+    if (!shouldPersistDatabaseWrites()) {
+      return bedrockFunctionResponse(event, {
+        error: "database_writes_not_ready",
+        message: "Admin member access fixes require schema-backed database writes.",
+        persistence: getDatabasePersistenceStatus(),
+      }, "REPROMPT");
+    }
+
+    return withDatabaseClient("ycc-api-admin-agent-member-access-update", async (client) => {
+      const member = await updateAdminMemberAccessRow(client, {
+        memberId,
+        role: role.value,
+        memberStatus: memberStatus.value,
+        membershipTier: membershipTier.value,
+        actor,
+        requestId,
+      });
+
+      if (!member) {
+        return bedrockFunctionResponse(event, {
+          error: "member_not_found",
+          message: "The requested member was not found.",
+        }, "REPROMPT");
+      }
+
+      await insertAuditLog(client, event, {
+        actor,
+        requestId,
+        memberId,
+        action: "admin.agent.member_access.update",
+        resourceType: "member",
+        resourceId: memberId,
+        afterData: {
+          role: role.value,
+          memberStatus: memberStatus.value,
+          membershipTier: membershipTier.value,
+          source: "bedrock_action_group",
+        },
+      });
+
+      return bedrockFunctionResponse(event, {
+        action: "admin_member_access_update",
+        member,
+        persistence: {
+          status: "stored",
+          table: "members",
+        },
+        destructiveActionsAllowed: false,
+        operatorReviewRequired: false,
+        nextActions: ["refresh_admin_console", "review_user_access_audit_trail", "confirm_member_entitlements"],
+      });
     });
   }
 
@@ -14586,7 +14917,7 @@ function buildAgentSystemPrompt(agent, actor, retrievedContext = "") {
     YCCHumidorAgent:
       "You are YCCHumidorAgent, a humidor inventory and care specialist. Help with storage conditions, aging plans, inventory organization, reorder reminders, and tasting logs.",
     YCCAdminAgent:
-      "You are YCCAdminAgent, an internal operations assistant for authorized admins and concierge operators. Discuss workflows, audits, support queues, catalog operations, and safe administrative next steps.",
+      "You are YCCAdminAgent, an internal operations assistant for authorized admins and concierge operators. Discuss workflows, audits, support queues, catalog operations, and safe administrative next steps. Use confirmed action-group tools for specific order fixes and admin-only user access fixes when an operator supplies the target id and requested status changes.",
     YCCNewsAgent:
       "You are YCCNewsAgent, an internal editorial agent for authorized Yuzu admins and concierge operators. Treat phrases such as adult members, adult-only, and legal tobacco age as tobacco-compliance language, not sexual content. Draft operator-review-only cigar education and industry-news copy, provide source-note placeholders when live source retrieval is unavailable, avoid health, cessation, medical, or safety claims, refuse underage tobacco or age-check bypass requests, refuse explicit off-domain sexual content, and never publish without human approval.",
   };
@@ -14629,7 +14960,7 @@ function buildConciergeReply(agent, actor) {
   if (agent === "YCCAdminAgent") {
     return (
       `Hi ${name}. The admin agent can help authorized operators reason through support queues, audit trails, catalog tasks, and member operations. ` +
-      "Administrative actions stay behind Cognito group checks and durable audit logging."
+      "Confirmed order and user-access fixes stay behind Cognito group checks and durable audit logging."
     );
   }
 
@@ -17775,6 +18106,30 @@ function getActionActor(event) {
   };
 }
 
+function validateActionAgentSurface(event, actionName) {
+  const allowedAgents = ACTION_GROUP_FUNCTION_AGENT_NAMES.get(actionName);
+  if (!allowedAgents) {
+    return null;
+  }
+
+  const agentName = sanitizeText(event.agent?.name || event.agentName, 120);
+  if (!agentName) {
+    return null;
+  }
+
+  if (BEDROCK_AGENT_NAMES.has(agentName) && allowedAgents.has(agentName)) {
+    return null;
+  }
+
+  return bedrockFunctionResponse(event, {
+    error: "wrong_agent_tool",
+    message: `${actionName} is not available to ${agentName}. Route this request to the correct YCC specialist agent.`,
+    action: actionName,
+    agent: agentName,
+    allowedAgents: [...allowedAgents],
+  }, "REPROMPT");
+}
+
 function bedrockFunctionResponse(event, body, responseState) {
   const functionResponse = {
     responseBody: {
@@ -17858,8 +18213,12 @@ function isAdminMemberAccessMutationRoute(routeKey) {
   return routeKey === "PATCH /admin/members/{id}/access" || /^PATCH \/admin\/members\/[^/]+\/access$/.test(routeKey);
 }
 
+function isAdminMemberDeleteRoute(routeKey) {
+  return routeKey === "DELETE /admin/members/{id}" || /^DELETE \/admin\/members\/[^/]+$/.test(routeKey);
+}
+
 function isAdminRoute(routeKey) {
-  return ADMIN_ROUTES.has(routeKey) || isAdminCommerceOrderMutationRoute(routeKey) || isAdminMemberAccessMutationRoute(routeKey);
+  return ADMIN_ROUTES.has(routeKey) || isAdminCommerceOrderMutationRoute(routeKey) || isAdminMemberAccessMutationRoute(routeKey) || isAdminMemberDeleteRoute(routeKey);
 }
 
 function isHumidorRoute(routeKey) {

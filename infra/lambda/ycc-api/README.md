@@ -26,6 +26,9 @@ Stripe owns payment processing, hosted Checkout, Billing/subscriptions, Products
 - `GET /news/stories`
 - `POST /news/story-drafts`
 - `POST /news/stories`
+- `GET /admin/members`
+- `PATCH /admin/members/{id}/access`
+- `DELETE /admin/members/{id}`
 - `GET /humidor/items`
 - `POST /humidor/items`
 - `POST /humidor/identify-cigar`
@@ -34,6 +37,8 @@ Stripe owns payment processing, hosted Checkout, Billing/subscriptions, Products
 - `POST /humidor/alerts/dispatch`
 
 `GET /health`, `GET /content/pages`, `GET /news/stories`, `POST /newsletter/subscribe`, and `POST /support/contact` are public. All other routes expect API Gateway to provide Cognito JWT claims at `requestContext.authorizer.jwt.claims`; the handler also checks this defensively. `POST /content/pages`, `POST /news/story-drafts`, and `POST /news/stories` additionally require an `admin` or `concierge_operator` group.
+
+`DELETE /admin/members/{id}` is admin-only, writes an audit row, and refuses members with commerce orders or subscription records.
 
 ## Commerce Routes
 
@@ -170,6 +175,7 @@ When `FEATURE_DB_WRITES=schema_ready`, protected routes write through RDS Proxy 
 
 - `GET /account/me` upserts the Cognito member row and reads the saved member profile.
 - `PATCH /account/me` persists the Cognito member display name, phone, shipping profile, and audit row.
+- Cognito `PostConfirmation_ConfirmSignUp` upserts the confirmed user into `public.members`; when Stripe is configured it creates and links the canonical Stripe Customer immediately. Friends & Family confirmation metadata grants the 1-year Box Access Pass and links the Friends & Family Stripe Customer without depending on a later browser claim call.
 - `POST /concierge/chat` stores the member, conversation, user message, assistant reply, and audit row.
 - `POST /support/contact` sends the public contact form to the configured YCC support recipient only when the outbound mail provider is ready, stores an inbound support case/email row when DB writes are enabled, and uses the visitor email as Reply-To.
 - `POST /support/email-draft` stores the member, support case, outbound draft email, and audit row.
@@ -252,7 +258,7 @@ When `FEATURE_BEDROCK=runtime_ready`, `POST /concierge/chat` invokes Bedrock for
 - `YCCAdminAgent` for internal admin/operator reasoning.
 - `YCCNewsAgent` for authorized cigar-news drafts based on official brand, company, distributor, event, regulator, or wire sources. The website newsroom workflow keeps generated stories in draft review until a Cognito admin or concierge operator approves publication.
 
-The live agents share Knowledge Base `48GFMCLSTG` and action group `YCCOperations`. Agent aliases are rebuilt on guardrail version `8`; direct Runtime guardrails are enabled when the serving Lambda version has `BEDROCK_ENABLE_GUARDRAILS=1`. `YCCAdminAgent` and `YCCNewsAgent` require a Cognito `admin` or `concierge_operator` group claim.
+The live agents share Knowledge Base `48GFMCLSTG` and the `YCCOperations` action-group executor, but each agent has a least-privilege function schema from `infra/bedrock/ycc-agent-action-group-config.json`. Agent aliases are rebuilt on guardrail version `8`; direct Runtime guardrails are enabled when the serving Lambda version has `BEDROCK_ENABLE_GUARDRAILS=1`. `YCCAdminAgent` and `YCCNewsAgent` require a Cognito `admin` or `concierge_operator` group claim.
 
 If Agent Runtime fails, the route logs the fallback and tries direct Bedrock Runtime `Converse` with `BEDROCK_MODEL_ID`. If that also fails, it returns the scaffolded assistant contract rather than failing the member request.
 
@@ -283,10 +289,25 @@ Dormant API-provider compatibility remains available with `EMAIL_PROVIDER=brevo`
 
 Bedrock invokes this same Lambda directly for `YCCOperations` events. Those events bypass API Gateway JWT parsing but use Bedrock session attributes to rebuild the actor context.
 
-Supported functions:
+Supported function catalog:
 
 - `GetMemberProfile`
 - `DraftSupportReply`
 - `AddHumidorItem`
 - `GetAdminQueueSummary`
+- `UpdateAdminOrder`
+- `UpdateAdminMemberAccess`
 - `DraftWeeklyNews`
+
+Live per-agent schemas:
+
+| Agent | Functions |
+| --- | --- |
+| `YCCConcierge` | `GetMemberProfile`, `DraftSupportReply` |
+| `YCCCigarGuide` | `GetMemberProfile` |
+| `YCCSupportAgent` | `GetMemberProfile`, `DraftSupportReply` |
+| `YCCHumidorAgent` | `GetMemberProfile`, `AddHumidorItem` |
+| `YCCAdminAgent` | `GetMemberProfile`, `DraftSupportReply`, `GetAdminQueueSummary`, `UpdateAdminOrder`, `UpdateAdminMemberAccess` |
+| `YCCNewsAgent` | `DraftWeeklyNews` |
+
+`UpdateAdminOrder`, `UpdateAdminMemberAccess`, and `AddHumidorItem` are confirmation-gated in the Bedrock function schema. Admin functions also validate the calling agent surface inside Lambda; if a stale or misconfigured action group asks a non-admin specialist to run an admin function, Lambda returns `wrong_agent_tool` before reaching any database write path. Admin order fixes allow `admin` and `concierge_operator`; member-access fixes require `admin`.

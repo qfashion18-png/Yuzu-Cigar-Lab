@@ -511,6 +511,7 @@ function installPersistenceMocks(
               role: "customer",
               membership_tier: "sensei",
               member_status: "active",
+              stripe_customer_id: "cus_member_123",
               last_seen_at: "2026-05-12T09:00:00.000Z",
               created_at: "2026-05-06T09:00:00.000Z",
               updated_at: "2026-05-12T09:10:00.000Z",
@@ -538,11 +539,43 @@ function installPersistenceMocks(
               role: params[1] || "customer",
               membership_tier: params[2],
               member_status: params[4] || "active",
+              stripe_customer_id: "cus_member_123",
               last_seen_at: "2026-05-12T09:00:00.000Z",
               created_at: "2026-05-06T09:00:00.000Z",
               updated_at: "2026-05-12T10:15:00.000Z",
             },
           ],
+          rowCount: 1,
+        };
+      }
+
+      if (normalized.includes("admin_member_delete_candidate")) {
+        return {
+          rows: [
+            {
+              id: params[0],
+              cognito_sub: "member-123",
+              email: "member@example.com",
+              email_verified: true,
+              display_name: "Yuzu Member",
+              role: "customer",
+              membership_tier: "sensei",
+              member_status: "active",
+              stripe_customer_id: "cus_member_123",
+              last_seen_at: "2026-05-12T09:00:00.000Z",
+              created_at: "2026-05-06T09:00:00.000Z",
+              updated_at: "2026-05-12T09:10:00.000Z",
+              order_count: options.adminMemberRows?.[0]?.order_count ?? 0,
+              subscription_count: options.memberSubscriptionRows?.length ?? 0,
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+
+      if (normalized.includes("admin_member_delete_execute")) {
+        return {
+          rows: [],
           rowCount: 1,
         };
       }
@@ -4407,6 +4440,7 @@ test("admin member access backend routes list and update users", async () => {
     const listBody = JSON.parse(listResponse.body);
     assert.equal(listBody.summary.members, 1);
     assert.equal(listBody.members[0].email, "member@example.com");
+    assert.equal(listBody.members[0].stripeCustomerId, "cus_member_123");
     assert.equal(listBody.members[0].orderCount, 1);
     assert.equal(listBody.members[0].humidorItemCount, 3);
 
@@ -4431,6 +4465,7 @@ test("admin member access backend routes list and update users", async () => {
     const updateBody = JSON.parse(updateResponse.body);
     assert.equal(updateBody.member.role, "operator");
     assert.equal(updateBody.member.membershipTier, "daimyo");
+    assert.equal(updateBody.member.stripeCustomerId, "cus_member_123");
     assert.equal(updateBody.persistence.table, "members");
 
     const queries = mock.clients.flatMap((client) => client.queries);
@@ -4479,6 +4514,73 @@ test("admin member access update rejects concierge operator only claims", async 
     );
   } finally {
     mock.restore();
+  }
+});
+
+test("admin member cleanup route deletes zero-commerce test members and blocks commercial history", async () => {
+  const conciergeClaims = {
+    ...actorClaims,
+    sub: "concierge-123",
+    email: "concierge@yuzucigarclub.example",
+    name: "Yuzu Concierge",
+    "cognito:groups": "concierge_operator",
+  };
+  const forbiddenResponse = await handler({
+    ...createAuthenticatedEvent("DELETE /admin/members/{id}", undefined, conciergeClaims),
+    rawPath: "/admin/members/11111111-1111-4111-8111-111111111111",
+    pathParameters: {
+      id: "11111111-1111-4111-8111-111111111111",
+    },
+  });
+  assert.equal(forbiddenResponse.statusCode, 403);
+  assert.equal(JSON.parse(forbiddenResponse.body).error, "admin_forbidden");
+
+  const blockedMock = installPersistenceMocks({
+    adminMemberRows: [
+      {
+        order_count: 1,
+      },
+    ],
+  });
+  try {
+    const blockedResponse = await handler({
+      ...createAuthenticatedEvent("DELETE /admin/members/{id}", undefined, adminClaims),
+      rawPath: "/admin/members/11111111-1111-4111-8111-111111111111",
+      pathParameters: {
+        id: "11111111-1111-4111-8111-111111111111",
+      },
+    });
+    assert.equal(blockedResponse.statusCode, 409);
+    const body = JSON.parse(blockedResponse.body);
+    assert.equal(body.error, "member_delete_blocked");
+    assert.equal(body.blockers.orderCount, 1);
+  } finally {
+    blockedMock.restore();
+  }
+
+  const cleanupMock = installPersistenceMocks();
+  try {
+    const cleanupResponse = await handler({
+      ...createAuthenticatedEvent("DELETE /admin/members/{id}", undefined, adminClaims),
+      rawPath: "/admin/members/11111111-1111-4111-8111-111111111111",
+      pathParameters: {
+        id: "11111111-1111-4111-8111-111111111111",
+      },
+    });
+    assert.equal(cleanupResponse.statusCode, 200);
+    const body = JSON.parse(cleanupResponse.body);
+    assert.equal(body.deleted, true);
+    assert.equal(body.member.id, "11111111-1111-4111-8111-111111111111");
+    assert.equal(body.member.email, "member@example.com");
+    assert.equal(body.member.cognitoSub, "member-123");
+    assert.equal(body.persistence.table, "members");
+
+    const queries = cleanupMock.clients.flatMap((client) => client.queries);
+    assert.ok(queries.some((query) => query.sql.includes("admin_member_delete_candidate")), "cleanup should inspect member blockers first");
+    assert.ok(queries.some((query) => query.sql.includes("insert into public.audit_log")), "cleanup should write an audit row");
+    assert.ok(queries.some((query) => query.sql.includes("admin_member_delete_execute")), "cleanup should delete the member row");
+  } finally {
+    cleanupMock.restore();
   }
 });
 
@@ -5994,6 +6096,156 @@ test("Bedrock action group admin summary requires admin or concierge operator se
   assert.equal(body.error, "admin_agent_forbidden");
 });
 
+test("Bedrock action group admin order fix updates a persisted order with audit logging", async () => {
+  const mock = installPersistenceMocks();
+
+  try {
+    const response = (await handler({
+      messageVersion: "1.0",
+      actionGroup: "YCCOperations",
+      function: "UpdateAdminOrder",
+      inputText: "Mark the compliance hold verified and move the order to packed.",
+      sessionId: "session-admin-order-fix",
+      agent: { name: "YCCAdminAgent", id: "UQWB6AKMBT", alias: "prod", version: "1" },
+      parameters: [
+        { name: "orderId", type: "string", value: "88888888-8888-4888-8888-888888888888" },
+        { name: "fulfillmentStatus", type: "string", value: "packed" },
+        { name: "complianceStatus", type: "string", value: "verified" },
+      ],
+      sessionAttributes: {
+        memberSub: adminClaims.sub,
+        memberEmail: adminClaims.email,
+        memberName: adminClaims.name,
+        cognitoGroups: "admin,concierge_operator",
+        membershipTier: "sensei",
+        memberStatus: "active",
+      },
+      promptSessionAttributes: {},
+    })) as unknown as BedrockActionGroupResponse;
+
+    assert.equal(response.messageVersion, "1.0");
+    assert.equal(response.response.functionResponse.responseState, undefined);
+    const body = JSON.parse(response.response.functionResponse.responseBody.TEXT.body);
+    assert.equal(body.action, "admin_order_update");
+    assert.equal(body.order.id, "88888888-8888-4888-8888-888888888888");
+    assert.equal(body.order.fulfillmentStatus, "packed");
+    assert.equal(body.order.complianceStatus, "verified");
+    assert.equal(body.persistence.status, "stored");
+    assert.equal(body.operatorReviewRequired, false);
+    assert.equal(body.destructiveActionsAllowed, false);
+
+    const queries = mock.clients.flatMap((client) => client.queries);
+    assert.ok(queries.some((query) => query.sql.includes("admin_order_update")), "order update query should be executed");
+    assert.ok(queries.some((query) => query.sql.includes("insert into public.commerce_audit_log")), "commerce audit row should be inserted");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("Bedrock action group admin order fix refuses non-admin agent surfaces", async () => {
+  const response = (await handler({
+    messageVersion: "1.0",
+    actionGroup: "YCCOperations",
+    function: "UpdateAdminOrder",
+    inputText: "Mark this order packed.",
+    sessionId: "session-admin-order-wrong-agent",
+    agent: { name: "YCCCigarGuide", id: "EJI2VA7AVF", alias: "prod", version: "1" },
+    parameters: [
+      { name: "orderId", type: "string", value: "88888888-8888-4888-8888-888888888888" },
+      { name: "fulfillmentStatus", type: "string", value: "packed" },
+    ],
+    sessionAttributes: {
+      memberSub: adminClaims.sub,
+      memberEmail: adminClaims.email,
+      memberName: adminClaims.name,
+      cognitoGroups: "admin,concierge_operator",
+      membershipTier: "sensei",
+      memberStatus: "active",
+    },
+    promptSessionAttributes: {},
+  })) as unknown as BedrockActionGroupResponse;
+
+  assert.equal(response.response.functionResponse.responseState, "REPROMPT");
+  const body = JSON.parse(response.response.functionResponse.responseBody.TEXT.body);
+  assert.equal(body.error, "wrong_agent_tool");
+  assert.equal(body.agent, "YCCCigarGuide");
+});
+
+test("Bedrock action group admin member access fix requires admin group and updates access with audit logging", async () => {
+  const conciergeResponse = (await handler({
+    messageVersion: "1.0",
+    actionGroup: "YCCOperations",
+    function: "UpdateAdminMemberAccess",
+    inputText: "Activate this member.",
+    sessionId: "session-admin-member-fix-denied",
+    agent: { name: "YCCAdminAgent", id: "UQWB6AKMBT", alias: "prod", version: "1" },
+    parameters: [
+      { name: "memberId", type: "string", value: "11111111-1111-4111-8111-111111111111" },
+      { name: "memberStatus", type: "string", value: "active" },
+    ],
+    sessionAttributes: {
+      memberSub: "concierge-123",
+      memberEmail: "concierge@yuzucigarclub.example",
+      memberName: "Concierge Operator",
+      cognitoGroups: "concierge_operator",
+      membershipTier: "sensei",
+      memberStatus: "active",
+    },
+    promptSessionAttributes: {},
+  })) as unknown as BedrockActionGroupResponse;
+
+  assert.equal(conciergeResponse.response.functionResponse.responseState, "REPROMPT");
+  assert.equal(
+    JSON.parse(conciergeResponse.response.functionResponse.responseBody.TEXT.body).error,
+    "admin_forbidden"
+  );
+
+  const mock = installPersistenceMocks();
+
+  try {
+    const adminResponse = (await handler({
+      messageVersion: "1.0",
+      actionGroup: "YCCOperations",
+      function: "UpdateAdminMemberAccess",
+      inputText: "Activate this member and make them an operator.",
+      sessionId: "session-admin-member-fix",
+      agent: { name: "YCCAdminAgent", id: "UQWB6AKMBT", alias: "prod", version: "1" },
+      parameters: [
+        { name: "memberId", type: "string", value: "11111111-1111-4111-8111-111111111111" },
+        { name: "role", type: "string", value: "operator" },
+        { name: "membershipTier", type: "string", value: "daimyo" },
+        { name: "memberStatus", type: "string", value: "active" },
+      ],
+      sessionAttributes: {
+        memberSub: adminClaims.sub,
+        memberEmail: adminClaims.email,
+        memberName: adminClaims.name,
+        cognitoGroups: "admin",
+        membershipTier: "sensei",
+        memberStatus: "active",
+      },
+      promptSessionAttributes: {},
+    })) as unknown as BedrockActionGroupResponse;
+
+    assert.equal(adminResponse.response.functionResponse.responseState, undefined);
+    const body = JSON.parse(adminResponse.response.functionResponse.responseBody.TEXT.body);
+    assert.equal(body.action, "admin_member_access_update");
+    assert.equal(body.member.id, "11111111-1111-4111-8111-111111111111");
+    assert.equal(body.member.role, "operator");
+    assert.equal(body.member.membershipTier, "daimyo");
+    assert.equal(body.member.memberStatus, "active");
+    assert.equal(body.persistence.status, "stored");
+    assert.equal(body.operatorReviewRequired, false);
+    assert.equal(body.destructiveActionsAllowed, false);
+
+    const queries = mock.clients.flatMap((client) => client.queries);
+    assert.ok(queries.some((query) => query.sql.includes("admin_member_access_update")), "member access update query should be executed");
+    assert.ok(queries.some((query) => query.sql.includes("insert into public.audit_log")), "member audit row should be inserted");
+  } finally {
+    mock.restore();
+  }
+});
+
 test("Bedrock action group weekly news draft requires an operator and returns review-ready copy", async () => {
   const memberResponse = (await handler({
     messageVersion: "1.0",
@@ -6051,6 +6303,32 @@ test("Bedrock action group weekly news draft requires an operator and returns re
   assert.match(body.educationArticle.title, /weekly cigar industry news/i);
   assert.ok(body.sourceNotes.length >= 2);
   assert.ok(body.complianceReview.prohibitedClaims.includes("health"));
+});
+
+test("Bedrock action group weekly news draft refuses non-news agent surfaces", async () => {
+  const response = (await handler({
+    messageVersion: "1.0",
+    actionGroup: "YCCOperations",
+    function: "DraftWeeklyNews",
+    inputText: "Draft this week's cigar news newsletter",
+    sessionId: "session-news-action-wrong-agent",
+    agent: { name: "YCCAdminAgent", id: "UQWB6AKMBT", alias: "prod", version: "1" },
+    parameters: [{ name: "topic", type: "string", value: "weekly cigar industry news" }],
+    sessionAttributes: {
+      memberSub: adminClaims.sub,
+      memberEmail: adminClaims.email,
+      memberName: adminClaims.name,
+      cognitoGroups: "admin,concierge_operator",
+      membershipTier: "sensei",
+      memberStatus: "active",
+    },
+    promptSessionAttributes: {},
+  })) as unknown as BedrockActionGroupResponse;
+
+  assert.equal(response.response.functionResponse.responseState, "REPROMPT");
+  const body = JSON.parse(response.response.functionResponse.responseBody.TEXT.body);
+  assert.equal(body.error, "wrong_agent_tool");
+  assert.equal(body.agent, "YCCAdminAgent");
 });
 
 test("news story draft route requires an operator and returns structured source-safe copy", async () => {

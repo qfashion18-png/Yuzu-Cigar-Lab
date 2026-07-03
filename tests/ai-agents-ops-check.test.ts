@@ -24,8 +24,64 @@ test("AI agents ops check is wired as a safe dry-run script", async () => {
   assert.ok(result.checks.length >= 8);
   assert.ok(result.checks.every((check) => check.mutating === false), "ops check should be read-only");
   assert.ok(result.checks.some((check) => check.service === "bedrock-agent" && check.name.includes("agents")));
+  assert.ok(result.checks.some((check) => check.service === "bedrock-agent" && check.name.includes("action group tools")));
   assert.ok(result.checks.some((check) => check.service === "lambda" && check.name.includes("live")));
   assert.ok(result.checks.some((check) => check.service === "bedrock" && check.name.includes("guardrail")));
+});
+
+test("AI agents ops check has a least-privilege action-group contract for each YCC agent", () => {
+  const catalog = JSON.parse(
+    readFileSync(new URL("../infra/bedrock/ycc-agent-action-group-functions.json", import.meta.url), "utf8"),
+  ) as {
+    functions: Array<{ name: string; requireConfirmation?: string }>;
+  };
+  const config = JSON.parse(
+    readFileSync(new URL("../infra/bedrock/ycc-agent-action-group-config.json", import.meta.url), "utf8"),
+  ) as {
+    actionGroupName: string;
+    lambdaExecutorArn: string;
+    agents: Array<{
+      name: string;
+      id: string;
+      aliasId: string;
+      actionGroupId: string;
+      functions: string[];
+    }>;
+  };
+  const catalogByName = new Map(catalog.functions.map((fn) => [fn.name, fn]));
+
+  assert.equal(config.actionGroupName, "YCCOperations");
+  assert.match(config.lambdaExecutorArn, /:function:ycyyy:live$/);
+  assert.equal(config.agents.length, 6);
+
+  for (const agent of config.agents) {
+    assert.equal(new Set(agent.functions).size, agent.functions.length, `${agent.name} should not duplicate functions`);
+    for (const functionName of agent.functions) {
+      assert.ok(catalogByName.has(functionName), `${agent.name} references unknown function ${functionName}`);
+    }
+  }
+
+  const admin = config.agents.find((agent) => agent.name === "YCCAdminAgent");
+  const news = config.agents.find((agent) => agent.name === "YCCNewsAgent");
+  const humidor = config.agents.find((agent) => agent.name === "YCCHumidorAgent");
+  const cigarGuide = config.agents.find((agent) => agent.name === "YCCCigarGuide");
+
+  assert.deepEqual(
+    admin?.functions,
+    ["GetMemberProfile", "DraftSupportReply", "GetAdminQueueSummary", "UpdateAdminOrder", "UpdateAdminMemberAccess"],
+  );
+  assert.deepEqual(news?.functions, ["DraftWeeklyNews"]);
+  assert.deepEqual(humidor?.functions, ["GetMemberProfile", "AddHumidorItem"]);
+  assert.deepEqual(cigarGuide?.functions, ["GetMemberProfile"]);
+
+  assert.equal(catalogByName.get("AddHumidorItem")?.requireConfirmation, "ENABLED");
+  assert.equal(catalogByName.get("UpdateAdminOrder")?.requireConfirmation, "ENABLED");
+  assert.equal(catalogByName.get("UpdateAdminMemberAccess")?.requireConfirmation, "ENABLED");
+
+  for (const agent of config.agents.filter((candidate) => candidate.name !== "YCCAdminAgent")) {
+    assert.ok(!agent.functions.includes("UpdateAdminOrder"), `${agent.name} must not expose admin order updates`);
+    assert.ok(!agent.functions.includes("UpdateAdminMemberAccess"), `${agent.name} must not expose member access updates`);
+  }
 });
 
 function runScript(args: string[]) {

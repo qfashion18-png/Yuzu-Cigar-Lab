@@ -6,6 +6,210 @@ Purpose: track the dirty worktree I encounter while expanding and verifying the 
 
 Project memory: `AGENTS.md` now requires Codex to use this file as the persistent worktree ledger. Every meaningful update, fix, audit, verification pass, or newly discovered dirty/untracked area should be recorded here in the same turn.
 
+### 2026-07-03 Deploy All Updates And Worktree Cleanup
+
+- User asked to deploy all updates and clean the worktree.
+- Starting state:
+  - Branch `codex/production-launch-phase-0-2` was ahead of origin by 2 commits and had dirty backend/Bedrock/docs/test changes plus untracked `infra/bedrock/ycc-agent-action-group-config.json`.
+  - Dirty changes covered the admin member cleanup route, admin-agent confirmed fix tools, Bedrock least-privilege action-group contract/checks, humidor live alias resolution, Dan Davis SMTP/welcome completion docs, and related tests.
+- Verification before deployment:
+  - `npm test` passed `612/612`.
+  - `npx tsc --noEmit --pretty false` passed.
+  - `npm run lint` exited `0`; it reported only two existing warnings in `scripts/render-yuzu-strength-heygen-avatar-lead-composite.mjs`, outside this change set.
+  - Secret scan of the dirty files found placeholders/test values and documentation references only; the provided SMTP password was not written to repo files.
+- Backend deployment:
+  - Ran `npm run lambda:package -- deploy-all-updates-20260703`; package hash was `m1HUJQu1TJMNM3FoiNOkZ/pCnLH2r+cr+dtghU8lECY=`.
+  - Updated Lambda `ycyyy`, published immutable version `54`, and promoted alias `ycyyy:live` from version `53` to version `54` with description `Live API deployed all local updates 2026-07-03`.
+  - Moved Lambda artifact to `C:\Users\qfash\Documents\Yuzu Deploy Artifacts\deploy-all-updates-20260703.zip`.
+- Live backend/agent verification:
+  - `npm run ai-agents:ops-check -- --live --json` passed with `failed=0`; it confirmed all six Bedrock aliases route to version `8`, all action groups match the least-privilege function contracts, all routed versions have Knowledge Base `48GFMCLSTG` enabled, Lambda `ycyyy:live` is version `54`, API deep health is healthy, and unauthenticated concierge returns 401.
+  - `npm run humidor-agent:image-e2e -- --live --json` passed with `failed=0`; it confirmed live Lambda version `54`, Humidor agent alias version `8`, enabled `AddHumidorItem` confirmation, IAM readiness, API auth boundary, and a successful non-mutating image identification.
+  - Direct live readback returned alias version `54`, code hash `m1HUJQu1TJMNM3FoiNOkZ/pCnLH2r+cr+dtghU8lECY=`, `EMAIL_PROVIDER=godaddy_m365_smtp`, `FEATURE_EMAIL_PROVIDER=ready`, health `status=ok`, `emailProvider=godaddy_m365_smtp_ready`, `databaseWrites=schema_ready`, and `bedrock=runtime_ready`.
+- Static storefront deployment:
+  - The Amplify helper's Python subprocess still could not locate `npm`, so `npm run build` was run directly first. Build passed on Next.js `16.2.9` and generated `1,022` static pages.
+  - Reran the Amplify helper with `--skip-build --label deploy-all-updates-20260703`; it created a POSIX-path zip with `9,479` entries and deployed Amplify app `d2yxcklt245wh0`, branch `staging`, job `166`.
+  - Amplify job `166` reached `SUCCEED`; live smoke returned `homeStatus=200`, asset `/_next/static/chunks/2gvbee7pkfg8e.css` returned `assetStatus=200`.
+  - Moved static artifact to `C:\Users\qfash\Documents\Yuzu Deploy Artifacts\yuzu-cigar-club-amplify-deploy-deploy-all-updates-20260703-2026-07-03-111256.zip`.
+
+### 2026-07-03 Dan Davis Welcome Email Send Attempt And Completion
+
+- User asked to send Dan Davis a welcome email after the signup/member/Stripe repair.
+- Live checks with `AWS_PROFILE=ycc-mcp`, region `us-east-1`:
+  - Caller was `CodexMcpYccOperatorRole` in account `374587466106`.
+  - Lambda `ycyyy:live` currently reads back version `51`; outbound customer email env remains `FEATURE_SES=pending_production_access` and no `EMAIL_PROVIDER` / `FEATURE_EMAIL_PROVIDER` replacement path is configured.
+  - SESv2 `get-account` returns `ProductionAccessEnabled=false`, `SendingEnabled=true`, `EnforcementStatus=HEALTHY`; this means the account is still sandboxed and not approved for production customer email.
+  - Secrets Manager has no named email/SMTP/M365/GoDaddy/Mailgun/Brevo/Postmark/SendGrid credential secret.
+  - Local process env has no `EMAIL_PROVIDER`, `FEATURE_EMAIL_PROVIDER`, `EMAIL_PROVIDER_SECRET_ARN`, `EMAIL_PROVIDER_SECRET_ID`, `EMAIL_PROVIDER_API_KEY`, `M365_SMTP_USERNAME`, `M365_SMTP_PASSWORD`, `M365_SMTP_HOST`, or `M365_SMTP_PORT`.
+- Result:
+  - Welcome email was not sent. The existing member welcome helper correctly returns a pending provider status until an approved transactional provider is configured and smoke-tested.
+  - Safe next step remains: configure the existing GoDaddy/Microsoft 365 SMTP mailbox or another approved provider, set `EMAIL_PROVIDER` and `FEATURE_EMAIL_PROVIDER=ready`, smoke test internally, then replay Dan's member welcome.
+- Follow-up after the user said `quon@yuzucigarclub.com` has SMTP Authentication enabled:
+  - Staged the non-secret live Lambda config to use the GoDaddy/Microsoft 365 SMTP provider with `quon@yuzucigarclub.com` as `SUPPORT_EMAIL_FROM`, `SUPPORT_CONTACT_EMAIL_TO`, and `M365_SMTP_USERNAME`; SMTP host is `smtp.office365.com`, port `587`.
+  - Kept `FEATURE_EMAIL_PROVIDER=pending_smtp_password` because no SMTP password/app password or email-provider secret is present yet.
+  - Published Lambda version `52` and promoted `ycyyy:live` with description `Live API staged Quon M365 SMTP sender pending password 2026-07-03`.
+  - Live deep health now returns `emailProvider=pending_smtp_password`.
+  - Dan's welcome email still has not been sent; store/provide the mailbox SMTP password securely, then smoke test and replay the member welcome.
+- Completion after the user provided `C:\Users\qfash\Downloads\emailaccess.txt`:
+  - Parsed the mailbox credential from the provided file without printing or committing the password. The first whole-file SMTP attempt failed, then the parsed password candidate succeeded in a local STARTTLS smoke from `quon@yuzucigarclub.com` to `quon@yuzucigarclub.com` through `smtp.office365.com:587`.
+  - Created Secrets Manager secret `ycc/email/godaddy-m365-smtp/prod` for the GoDaddy/Microsoft 365 SMTP provider and updated Lambda env to `EMAIL_PROVIDER=godaddy_m365_smtp`, `FEATURE_EMAIL_PROVIDER=ready`, `EMAIL_PROVIDER_SECRET_ARN` set, `M365_SMTP_USERNAME=quon@yuzucigarclub.com`, `SUPPORT_EMAIL_FROM=quon@yuzucigarclub.com`, and SMTP host/port `smtp.office365.com:587`.
+  - Published Lambda version `53` and promoted `ycyyy:live` with description `Live API Quon M365 SMTP sender ready 2026-07-03`.
+  - Initial Lambda support-email smoke failed because the role could not read the new secret; added `secretsmanager:DescribeSecret` and `secretsmanager:GetSecretValue` for `arn:aws:secretsmanager:us-east-1:374587466106:secret:ycc/email/godaddy-m365-smtp/prod-*` to inline policy `YccApiPhase2RuntimePolicy`.
+  - Second Lambda support-email smoke failed because the Lambda security group lacked SMTP egress; added TCP/587 egress on `sg-00c3d67ac62d92ae7` to `0.0.0.0/0` with description `Allow YCC Lambda SMTP STARTTLS egress to GoDaddy Microsoft 365`.
+  - Direct Lambda `POST /support/email-send` smoke to `quon@yuzucigarclub.com` then returned HTTP `200`, `SendStatus=sent`, `Provider=godaddy_m365_smtp`, and a provider message id.
+  - Replayed Dan Davis's Cognito `PostConfirmation_ConfirmSignUp` event through `ycyyy:live` version `53` with Friends & Family metadata, which exercised the official member welcome path instead of a hand-written support email.
+  - Dan replay response returned `StatusCode=200`, `FunctionError=null`, `ExecutedVersion=53`, `TriggerSource=PostConfirmation_ConfirmSignUp`, `Name=Daniel S Davis`, and masked email hash `HIutjMUbvEFwUkkq`.
+  - CloudWatch logs show `cognito_post_confirmation_account_persisted` for member `9f08ecd6-d92b-407a-9388-64aeb50065d1` with `stripeCustomerLinked=true` and `membershipClaimed=true`, followed by `request_completed` status `200` for `COGNITO PostConfirmation_ConfirmSignUp`.
+  - Recent log verification found zero `member_welcome_email_failed` and zero `email_provider_send_failed` events after the send. The only recent `support_email_send_failed` entries were the earlier expected smoke failures before IAM secret-read and TCP/587 egress were fixed.
+  - Public deep health now returns `status=ok`, `capabilities.databaseWrites=schema_ready`, `capabilities.bedrock=runtime_ready`, and `capabilities.emailProvider=godaddy_m365_smtp_ready`.
+  - No mailbox password or secret value was written to repo files. The provided password file remains in `C:\Users\qfash\Downloads\emailaccess.txt` and should be deleted or secured by the operator now that the credential is in Secrets Manager.
+
+### 2026-07-03 Cigar Flow Facebook Social Run
+
+- Automation `cigar-flow-facebook-social-run` ran for the current America/Phoenix date `2026-07-03`.
+- Command used the requested live social settings without `--force`: `AWS_PROFILE=ycc-mcp`, `AWS_SDK_LOAD_CONFIG=1`, `YCC_FACEBOOK_SECRET_ID=ycc/social/facebook/prod`, and `npm run cigar-flow:facebook -- --date=2026-07-03 --publish-page`.
+- Result: skipped/no story. The script exited with `[cigar-flow-facebook-run] No published story matched date 2026-07-03.` before creating a manifest, Page post, or group post kit.
+- Verification:
+  - Live `https://api.yuzucigarclub.com/news/stories?limit=12` returned HTTP `200`.
+  - The newest published Cigar Flow story in that response was `daily-cigar-flow-2026-06-25-source-watch`, published `2026-06-25T22:40:51.980Z`.
+  - No `output/social/*cigar-flow-facebook*` run folder was present after the skipped run, so there was no Facebook Page permalink to verify and no group kit to verify.
+- No Meta access token or secret value was written to files.
+
+### 2026-07-03 Bedrock Agent Tool Audit And AgentCore Research
+
+- User asked to research Bedrock, make sure all agents have the correct tools/features to do their jobs, and handle anything that could break.
+- Research notes:
+  - AWS announced Bedrock Agents are now Bedrock Agents Classic and are entering maintenance; new customer access stops after 2026-07-30, existing users continue, and AWS recommends AgentCore for new agentic development.
+  - AgentCore adds active services relevant to future YCC migration planning: Runtime, Gateway, Identity, Browser, Code Interpreter, Observability, Web Search, Evaluations, and policy-level Guardrails.
+  - Bedrock action-group functions can require user confirmation; YCC mutating tools should keep confirmation enabled.
+  - Bedrock action-group Lambda events include `sessionAttributes`, `promptSessionAttributes`, action/function names, and agent metadata; YCC uses session attributes to rebuild authenticated actor context.
+- Live audit before fix:
+  - `npm run ai-agents:ops-check -- --live --json` passed the old high-level checks but did not inspect action-group functions.
+  - Direct readback of all six version `7` action groups found stale/broad tools:
+    - Customer-facing agents still exposed `AddHumidorItem` and `GetAdminQueueSummary`.
+    - `YCCAdminAgent` was missing `UpdateAdminOrder` and `UpdateAdminMemberAccess`.
+    - `YCCNewsAgent` exposed old support/humidor/admin summary tools in addition to `DraftWeeklyNews`.
+  - Draft action groups were stale too, so this was not only an alias routing issue.
+- Local fixes:
+  - Added `infra/bedrock/ycc-agent-action-group-config.json` as the per-agent least-privilege action-group contract.
+  - Updated `scripts/ai-agents-ops-check.ts` to dynamically read the prod alias routed version, verify each live action group against the configured functions and parameter/confirmation contract, and verify Knowledge Base attachment on every routed version.
+  - Updated `scripts/humidor-agent-image-e2e-check.ts` to resolve the Humidor agent version from the prod alias instead of hard-coding version `7`.
+  - Added Lambda wrong-agent action-group defense so a stale/misconfigured Bedrock schema returns `wrong_agent_tool` before admin/editorial/humidor-only tools can reach their write handlers.
+  - Updated `docs/aws-live-architecture-setup.md` and `infra/lambda/ycc-api/README.md` with the version `8` alias state and per-agent tool matrix.
+- Live deployment:
+  - Packaged `output/ycc-api-bedrock-agent-tools-2026-07-03.zip`; code hash `URiABF4K9Z0O2zRgzZCZi8teo6VKJQpbC5oAuhi1PjA=`.
+  - Published Lambda version `51` and promoted `ycyyy:live` to version `51` with description `Live Bedrock agent least-privilege action tools 2026-07-03`.
+  - Updated all six `DRAFT` Bedrock action groups from `infra/bedrock/ycc-agent-action-group-config.json`, prepared each agent, and updated each `prod` alias without explicit routing so Bedrock created/routed version `8`.
+  - Live `prod` alias versions after publish: all six (`YCCConcierge`, `YCCCigarGuide`, `YCCSupportAgent`, `YCCHumidorAgent`, `YCCAdminAgent`, `YCCNewsAgent`) route to version `8`.
+- Live verification:
+  - `npm run ai-agents:ops-check -- --live --json` passed with `failed=0`.
+  - The live check confirmed all six action groups match least-privilege function contracts, all six version `8` agents have Knowledge Base `48GFMCLSTG` enabled, guardrail `xczjnv3f1wzs` version `8` is ready, Lambda `ycyyy:live` is version `51`, API deep health is healthy, and the unauthenticated concierge boundary returns 401.
+  - Direct live Lambda action-group probe for `UpdateAdminOrder` through `YCCCigarGuide` returned `REPROMPT`, `wrong_agent_tool`, `agent=YCCCigarGuide`, and `action=UpdateAdminOrder`, proving the deployed guard exits before writes.
+- Local verification so far:
+  - Red runs were observed for the missing ops action-tool check/config and wrong-agent Lambda guard.
+  - After implementation:
+    - `node --import tsx --test tests\ai-agents-ops-check.test.ts` passed.
+    - `node --import tsx --test tests\lambda-ycc-api.test.ts --test-name-pattern "Bedrock action group (admin order fix refuses|weekly news draft refuses)"` passed; Node's runner executed the full Lambda test file and reported 163/163 passing.
+    - `node --import tsx --test tests\humidor-agent-image-e2e-check.test.ts` passed.
+    - `npx eslint infra\lambda\ycc-api\index.js scripts\ai-agents-ops-check.ts scripts\humidor-agent-image-e2e-check.ts tests\ai-agents-ops-check.test.ts tests\lambda-ycc-api.test.ts` passed.
+    - `npx tsc --noEmit --pretty false` passed.
+    - JSON parse check for `infra/bedrock/ycc-agent-action-group-functions.json` and `infra/bedrock/ycc-agent-action-group-config.json` passed.
+    - `npm run humidor-agent:image-e2e -- --live --json` passed with `failed=0`, confirming `YCCHumidorAgent` alias version `8`, action group `YCCOperations`, `AddHumidorItem` confirmation, KB attachment, live Lambda version `51`, and non-mutating image identification.
+    - `npm test` passed 612/612.
+
+### 2026-07-03 Test Member Account Cleanup
+
+- User pasted the admin user list and asked to clean up the listed test accounts.
+- Read local/project guidance and used the `aws` and `test-driven-development` skills for the live AWS/Lambda cleanup.
+- Existing dirty/parallel areas were observed and left intact where unrelated, including `docs/aws-live-architecture-setup.md`, `infra/bedrock/ycc-agent-action-group-functions.json`, `scripts/ai-agents-ops-check.ts`, `scripts/humidor-agent-image-e2e-check.ts`, `tests/ai-agents-ops-check.test.ts`, and untracked `infra/bedrock/ycc-agent-action-group-config.json`.
+- Added a guarded backend cleanup route:
+  - `DELETE /admin/members/{id}` in `infra/lambda/ycc-api/index.js`.
+  - Requires the Cognito `admin` group.
+  - Runs in a database transaction.
+  - Refuses to delete members with any matching commerce orders or subscription records.
+  - Writes an `audit_log` row before deleting the member row.
+  - Deleting `public.members` cascades member-owned profile/humidor/smoke-log data through existing schema constraints.
+  - Documented the route in `infra/lambda/ycc-api/README.md`.
+- Verification before live cleanup:
+  - Red run for `node --import tsx --test tests\lambda-ycc-api.test.ts --test-name-pattern "admin member cleanup route"` failed because the route was missing.
+  - After implementation, the same command passed; Node's runner executed the full Lambda test file and reported 161/161 passing.
+  - `npx eslint infra\lambda\ycc-api\index.js tests\lambda-ycc-api.test.ts` passed.
+  - `npx tsc --noEmit --pretty false` passed.
+- Deployment:
+  - Packaged `output/ycc-api-lambda-2026-07-03T1633.zip`; code hash `UXMwO9vSnYUo/XaUBIeDBIWBPY5EKiGxfUaZgCWS8UI=`.
+  - Published Lambda version `50` and promoted `ycyyy:live` from version `49` to `50` with description `Live API admin test member cleanup 2026-07-03`.
+  - A later parallel/concurrent pass promoted `ycyyy:live` to version `51` with description `Live Bedrock agent least-privilege action tools 2026-07-03`; downloaded the current live bundle and confirmed version `51` still contains `handleAdminMemberDelete`, `admin_member_delete_candidate`, `UpdateAdminOrder`, and `stripe_customer_id` roster support.
+  - Live `https://api.yuzucigarclub.com/health?deep=1` returned HTTP `200`, `status=ok`, and `db.proxyReachable=true`.
+- Cleanup performed:
+  - Direct Lambda dry-run inventory found 26 matching RDS member rows: the 25 explicit emails from the user's list plus `codex-live-member@yuzucigarclub.example`, which matched the trailing `Codex Live Member` display name.
+  - All 26 matched rows showed `orderCount=0` and no active subscription in the admin list; the delete route also checked hidden order/subscription blockers.
+  - Direct Lambda cleanup deleted all 26 RDS member rows with `blocked=0`, `failed=0`, and per-row blockers `orderCount=0`, `subscriptionCount=0`.
+  - Cognito full-pool scan found and deleted 7 exact target-email users in pool `us-east-1_63U9PflAX`; the remaining target emails were database-only or already absent from Cognito.
+- Final verification:
+  - Direct Lambda re-query for every target email and listed display name returned `remainingMemberCount=0`.
+  - Cognito full-pool scan returned `remainingCognitoCount=0` for exact target emails.
+  - Current live alias readback is version `51`, and the downloaded live bundle still includes the cleanup route.
+  - Fresh completion verification after the parallel version `51` promotion: `node --import tsx --test tests\lambda-ycc-api.test.ts --test-name-pattern "admin member cleanup route"` passed 163/163, `npx eslint infra\lambda\ycc-api\index.js tests\lambda-ycc-api.test.ts` passed, `npx tsc --noEmit --pretty false` passed, and the live target check returned `remainingMemberCount=0`, `remainingCognitoCount=0`, `liveAlias=51`.
+
+### 2026-07-03 Cognito Signup Persistence And Dan Davis Repair
+
+- User reported that Dan Davis was not visible in the admin backend or Stripe Customers and asked to make new-user signup reliable.
+- Starting live state:
+  - The previous Friends & Family frontend loop fix was deployed to Amplify job `165`, but the live API alias was still `ycyyy:live` version `47`.
+  - Daniel S Davis existed in Cognito pool `us-east-1_63U9PflAX` as `CONFIRMED`, enabled, and email verified, created `2026-07-02T19:44:46-07:00`; the email was masked in command output.
+- Root causes:
+  - Cognito `PostConfirmation_ConfirmSignUp` sent admin alerts and deferred welcome email, but did not upsert `public.members`.
+  - Friends & Family Stripe Customer creation depended on the browser completing a later pass-claim call after confirmation, so a confirmed Cognito user could be stranded before admin/Stripe persistence.
+  - The admin members query did not select `members.stripe_customer_id`, so linked Stripe IDs were hidden from the admin roster response.
+- Fix:
+  - `handleCognitoPostConfirmationSignUp` now upserts a member row for confirmed Cognito users.
+  - Friends & Family confirmation metadata now grants the `box_access_pass`, creates an idempotent live Stripe Customer, links it to `members.stripe_customer_id`, and sends the member welcome only after activation if the outbound provider is ready.
+  - Regular confirmed signups now create and link an idempotent Stripe Customer with `customer_source=cognito_post_confirmation` metadata when Stripe is configured.
+  - Admin member list/update responses now include `stripeCustomerId`.
+- Deployment and live repair:
+  - Packaged and deployed `C:\Users\qfash\Documents\Yuzu Deploy Artifacts\ycc-api-cognito-signup-persistence-20260703.zip`; published Lambda version `48` with code hash `5TOPG9E1NAR2hqPDK81V7tVrWsdzPLDGKUojaPZbtAM=`.
+  - Replayed Dan's Cognito post-confirmation event through `ycyyy:live` version `48` with the Friends & Family metadata. Lambda logs showed `stripeCustomerLinked=true` and `membershipClaimed=true` for member `9f08ecd6-d92b-407a-9388-64aeb50065d1`.
+  - Packaged and deployed `C:\Users\qfash\Documents\Yuzu Deploy Artifacts\ycc-api-admin-member-stripe-roster-20260703.zip`; published/promoted Lambda version `49` with code hash `4zAZZvEYaZLxQYO1kQGFrMqseMM4+CXAXcbjU0gXl9g=`.
+- Live verification:
+  - `https://api.yuzucigarclub.com/health?deep=1` returned HTTP `200`, `status=ok`, `environment=prod`, `databaseWrites=schema_ready`, `emailProvider=pending_production_access`.
+  - Direct `GET /admin/members` invoke against `ycyyy:live` executed version `49` and returned one Daniel S Davis member row with `membershipTier=box_access_pass`, `memberStatus=active`, and `stripeCustomerId=cus_UonO2jeRkNNplt`.
+  - Live Stripe Customer lookup for the masked Dan email returned exactly one customer, `cus_UonO2jeRkNNplt`, with Friends & Family metadata `membership_path=friends_family_box_pass`, `tier_key=box_access_pass`, `member_status=active`, and `membership_offer_code=friends-family-box-pass`.
+- Local verification:
+  - Red tests were added before implementation for Cognito roster upsert, regular signup Stripe linking, and Friends & Family post-confirmation linking.
+  - `node --import tsx --test tests\lambda-ycc-api.test.ts --test-name-pattern "admin member access|Cognito post-confirmation|Friends and Family Cognito"` passed 160/160.
+  - `npx eslint infra\lambda\ycc-api\index.js tests\lambda-ycc-api.test.ts` passed.
+  - `npx tsc --noEmit --pretty false` passed.
+  - `npm test` passed 608/608.
+  - `npm run build` passed on Next.js `16.2.9`, generating 1,022 static pages.
+
+### 2026-07-03 Admin Agent Confirmed Fix Tools
+
+- User reported the admin agent needed more power to fix issues because it currently could not do anything.
+- Repo state at start of pass was clean via `git status --short`.
+- Read applicable local guidance before editing:
+  - `node_modules/next/dist/docs/01-app/03-api-reference/01-directives/use-client.md`
+  - `node_modules/next/dist/docs/01-app/02-guides/static-exports.md`
+  - Local skills: `creating-agents-in-medusa`, `building-admin-dashboard-customizations`, `systematic-debugging`, and `test-driven-development`.
+- Root cause:
+  - The YCC admin console already had authenticated manual mutation buttons for orders and member access.
+  - The `YCCAdminAgent` Bedrock action group only exposed read/summarize tools (`GetAdminQueueSummary`) and draft tools; it had no confirmed function for applying the existing admin fixes.
+- Fix:
+  - Added confirmation-gated Bedrock action schema entries:
+    - `UpdateAdminOrder` for order `status`, `fulfillmentStatus`, and `complianceStatus` updates.
+    - `UpdateAdminMemberAccess` for `role`, `memberStatus`, and `membershipTier` updates.
+  - Implemented both in `infra/lambda/ycc-api/index.js`, reusing existing validation sets, database update helpers, Cognito group checks, and audit logging.
+  - `UpdateAdminOrder` allows `admin` and `concierge_operator` sessions and writes `commerce_audit_log`.
+  - `UpdateAdminMemberAccess` requires the `admin` group and writes `audit_log`.
+  - Updated admin-agent fallback/system wording and action-group docs.
+- Verification:
+  - Red test run before implementation failed because the new functions returned unsupported/reprompt action responses.
+  - `node --import tsx --test tests\lambda-ycc-api.test.ts --test-name-pattern "Bedrock action group admin (order fix|member access fix)"` passed; Node's runner executed the full Lambda file and reported 160/160 passing.
+  - `node -e "JSON.parse(require('node:fs').readFileSync('infra/bedrock/ycc-agent-action-group-functions.json','utf8'))"` passed.
+  - `npx eslint infra\lambda\ycc-api\index.js tests\lambda-ycc-api.test.ts` passed.
+  - `npx tsc --noEmit --pretty false` passed.
+  - `npm test` passed 608/608.
+- Deployment note:
+  - Live enablement requires deploying the Lambda change and updating/preparing the Bedrock `YCCOperations` action group from `infra/bedrock/ycc-agent-action-group-functions.json`; otherwise the live Admin Agent may still only know the old summary/draft tools.
+
 ### 2026-07-03 Friends & Family Signup Loop Fix
 
 - User reported Dan Davis got stuck in a signup loop.
