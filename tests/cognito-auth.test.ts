@@ -172,6 +172,29 @@ test("Cognito signup returns an in-page confirmation step", async () => {
   assert.equal(result.message, "Check your email for the Yuzu confirmation code.");
 });
 
+test("Cognito signup identifies existing accounts so invite users can sign in", async () => {
+  const result = await signUpWithCognitoPassword(
+    config,
+    {
+      email: "friend@example.com",
+      fullName: "Family Friend",
+      password: "Secret123!Pass",
+    },
+    async () => ({
+      ok: false,
+      async json() {
+        return {
+          __type: "UsernameExistsException",
+          message: "User already exists",
+        };
+      },
+    })
+  );
+
+  assert.equal(result.status, "account_exists");
+  assert.equal(result.message, "That email already has a Yuzu account. Sign in below to claim the pass.");
+});
+
 test("Cognito confirmation uses ConfirmSignUp without hosted Cognito", async () => {
   const request = buildCognitoConfirmSignUpRequest(config, {
     email: " Friend@Example.com ",

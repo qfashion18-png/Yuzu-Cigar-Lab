@@ -30,6 +30,11 @@ test("friends and family page is unlinked and claims the yearly Box Access Pass 
   assert.ok(claimSource.includes('if (!password)'), "recovered confirmations without a password should not stay stuck on the code form");
   assert.ok(claimSource.includes('setAuthMode("signin")'), "recovered confirmations should move confirmed users back to sign-in");
   assert.ok(claimSource.includes('Your Yuzu account is confirmed. Sign in below to claim the pass.'), "confirmed recovery should give clear sign-in guidance");
+  assert.match(
+    claimSource,
+    /result\.status === "account_exists"[\s\S]*setAuthMode\("signin"\)/,
+    "existing-account signup attempts should move the invite UI to the sign-in form instead of looping on create-account"
+  );
   assert.ok(claimSource.includes('Yuzu Cigar Club verification code'), "confirmation help should point users to the branded code email");
   assert.ok(claimSource.includes('"confirmation_code"'), "email return links should be able to prefill the confirmation code");
   assert.ok(claimSource.includes("window.localStorage.setItem(pendingConfirmationEmailStorageKey"), "same-browser confirmation links should remember the pending signup email");

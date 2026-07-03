@@ -191,6 +191,26 @@ function buildFriendsFamilyCustomerParams(input = {}) {
   };
 }
 
+function buildCognitoSignupCustomerParams(input = {}) {
+  const customerEmail = toMetadataString(input.customer?.email, 160).toLowerCase();
+  const customerName = toMetadataString(input.customer?.fullName || input.customer?.name, 160);
+  const cognitoSub = toMetadataString(input.cognitoSub, 160);
+  const tierKey = toMetadataString(input.membershipTier || input.tierKey, 80);
+  const memberStatus = toMetadataString(input.memberStatus, 80) || "non_member";
+
+  return {
+    email: customerEmail,
+    ...(customerName ? { name: customerName } : {}),
+    metadata: {
+      customer_source: "cognito_post_confirmation",
+      cognito_sub: cognitoSub,
+      customer_email: customerEmail,
+      tier_key: tierKey,
+      member_status: memberStatus,
+    },
+  };
+}
+
 function buildCustomerPortalSessionParams(input = {}, env = process.env) {
   const siteUrl = getSiteUrl(env);
   const params = {
@@ -241,6 +261,10 @@ async function createMembershipCheckoutSession(stripe, input, env = process.env)
 
 async function createFriendsFamilyCustomer(stripe, input, requestOptions = {}) {
   return stripe.customers.create(buildFriendsFamilyCustomerParams(input), requestOptions);
+}
+
+async function createCognitoSignupCustomer(stripe, input, requestOptions = {}) {
+  return stripe.customers.create(buildCognitoSignupCustomerParams(input), requestOptions);
 }
 
 async function createCustomerPortalSession(stripe, input, env = process.env) {
@@ -299,10 +323,12 @@ function toNonNegativeInteger(value) {
 
 module.exports = {
   DEFAULT_STRIPE_API_VERSION,
+  buildCognitoSignupCustomerParams,
   buildCheckoutSessionParams,
   buildCustomerPortalSessionParams,
   buildFriendsFamilyCustomerParams,
   buildMembershipSessionParams,
+  createCognitoSignupCustomer,
   createCommerceCheckoutSession,
   createCustomerPortalSession,
   createFriendsFamilyCustomer,

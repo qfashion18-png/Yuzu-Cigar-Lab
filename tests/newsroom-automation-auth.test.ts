@@ -72,6 +72,33 @@ test("newsroom automation auth falls back to a configured bearer token", async (
   });
 });
 
+test("newsroom automation auth uses bearer fallback when Cognito sign-in fails", async () => {
+  const auth = await resolveNewsroomAutomationAuth(
+    {
+      ...cognitoEnv,
+      YCC_NEWSROOM_COGNITO_USERNAME: "codex-newsroom-operator@yuzucigarclub.com",
+      YCC_NEWSROOM_COGNITO_PASSWORD: "expired-password",
+      YCC_NEWSROOM_BEARER_TOKEN: "fresh-bearer-token",
+    },
+    async () => ({
+      ok: false,
+      async json() {
+        return {
+          __type: "NotAuthorizedException",
+          message: "Incorrect username or password.",
+        };
+      },
+    }),
+  );
+
+  assert.deepEqual(auth, {
+    authorizationHeader: "Bearer fresh-bearer-token",
+    source: "bearer_env",
+    expiresAt: null,
+    username: null,
+  });
+});
+
 test("newsroom automation auth requires both Cognito username and password", async () => {
   await assert.rejects(
     () =>

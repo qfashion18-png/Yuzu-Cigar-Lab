@@ -105,6 +105,10 @@ export type CognitoPasswordSignUpResult =
       message: string;
     }
   | {
+      status: "account_exists";
+      message: string;
+    }
+  | {
       status: "confirmation_required";
       message: string;
       destination: string;
@@ -400,6 +404,13 @@ export async function signUpWithCognitoPassword(
     const payload = await readCognitoJson(response);
 
     if (!response.ok) {
+      if (isCognitoErrorType(payload, "UsernameExistsException")) {
+        return {
+          status: "account_exists",
+          message: "That email already has a Yuzu account. Sign in below to claim the pass.",
+        };
+      }
+
       return {
         status: "error",
         message: getCognitoErrorMessage(payload),
@@ -811,7 +822,7 @@ function getCognitoErrorMessage(payload: Record<string, unknown>) {
   }
 
   if (type?.includes("UsernameExistsException")) {
-    return "That email already has a Yuzu account. Sign in below. If it still needs email confirmation, Yuzu will open the code step.";
+    return "That email already has a Yuzu account. Sign in below to claim the pass.";
   }
 
   if (type?.includes("UserNotConfirmedException")) {

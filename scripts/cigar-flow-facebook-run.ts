@@ -292,8 +292,10 @@ export async function runCigarFlowFacebookSocial(options: Partial<CigarFlowFaceb
 }
 
 function normalizeOptions(options: Partial<CigarFlowFacebookOptions>): CigarFlowFacebookOptions {
-  const targetDate = options.targetDate ?? readArgValue("--date") ?? process.env.YCC_CIGAR_FLOW_SOCIAL_DATE;
-  const storySlug = options.storySlug ?? readArgValue("--story-slug") ?? process.env.YCC_CIGAR_FLOW_SOCIAL_STORY_SLUG;
+  const storySlug = firstNonEmpty(options.storySlug, readArgValue("--story-slug"), process.env.YCC_CIGAR_FLOW_SOCIAL_STORY_SLUG);
+  const explicitTargetDate = firstNonEmpty(options.targetDate, readArgValue("--date"), process.env.YCC_CIGAR_FLOW_SOCIAL_DATE);
+  const useLatestStory = hasArg("--latest") || process.env.YCC_CIGAR_FLOW_SOCIAL_LATEST === "true";
+  const targetDate = explicitTargetDate || (storySlug || useLatestStory ? undefined : getPhoenixDate());
   const outputDir = resolve(
     process.cwd(),
     options.outputDir ?? readArgValue("--output-dir") ?? process.env.YCC_CIGAR_FLOW_SOCIAL_OUTPUT_DIR ?? defaultOutputRoot,
@@ -368,32 +370,67 @@ function storyMatchesDate(story: NewsStory, targetDate: string) {
     return true;
   }
 
-  return story.slug.includes(targetDate) || normalizedDateTitle(story.title).includes(targetDate);
+  const normalizedSlug = (story.slug || "").toLowerCase();
+  if (normalizedSlug.includes(targetDate) || normalizedSlug.includes(targetDate.replace(/-/g, ""))) {
+    return true;
+  }
+
+  const monthSlug = monthDaySlugForDate(targetDate);
+  if (monthSlug && normalizedSlug.includes(monthSlug)) {
+    return true;
+  }
+
+  return normalizedDateTitle(story.title, targetDate.slice(0, 4)).includes(targetDate);
 }
 
-function normalizedDateTitle(title: string) {
+function normalizedDateTitle(title: string, year: string) {
   const months: Record<string, string> = {
+    jan: "01",
     january: "01",
+    feb: "02",
     february: "02",
+    mar: "03",
     march: "03",
+    apr: "04",
     april: "04",
     may: "05",
+    jun: "06",
     june: "06",
+    jul: "07",
     july: "07",
+    aug: "08",
     august: "08",
+    sep: "09",
+    sept: "09",
     september: "09",
+    oct: "10",
     october: "10",
+    nov: "11",
     november: "11",
+    dec: "12",
     december: "12",
   };
-  const match = title.toLowerCase().match(/\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})\b/);
+  const match = title
+    .toLowerCase()
+    .match(/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+(\d{1,2})\b/);
   if (!match) {
     return title.toLowerCase();
   }
 
   const month = months[match[1]];
   const day = match[2].padStart(2, "0");
-  return `2026-${month}-${day}`;
+  return `${year || getPhoenixDate().slice(0, 4)}-${month}-${day}`;
+}
+
+function monthDaySlugForDate(targetDate: string) {
+  const date = new Date(`${targetDate}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  const month = new Intl.DateTimeFormat("en-US", { month: "long", timeZone: "UTC" }).format(date).toLowerCase();
+  const day = String(date.getUTCDate());
+  return `${month}-${day}`;
 }
 
 function resolveOutputDir(rootDir: string, story: NewsStory, targetDate?: string) {
@@ -1511,6 +1548,22 @@ function stringFromSecret(secret: Record<string, unknown>, keys: readonly string
     }
   }
   return undefined;
+}
+
+function firstNonEmpty(...values: Array<string | undefined>) {
+  return values.find((value) => typeof value === "string" && value.trim())?.trim();
+}
+
+function getPhoenixDate(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    day: "2-digit",
+    month: "2-digit",
+    timeZone: "America/Phoenix",
+    year: "numeric",
+  }).formatToParts(date);
+  const part = (type: string) => parts.find((item) => item.type === type)?.value || "";
+
+  return `${part("year")}-${part("month")}-${part("day")}`;
 }
 
 function readInt(name: string, defaultValue: number, min: number, max: number) {

@@ -1,7 +1,7 @@
 import { request as httpRequest, type OutgoingHttpHeaders } from "node:http";
 import { request as httpsRequest } from "node:https";
 
-import { cigarFlowItems, cigarPressReleaseSearchSources } from "../src/lib/cigar-flow";
+import { cigarFlowItems, cigarFlowSources, cigarPressReleaseSearchSources } from "../src/lib/cigar-flow";
 import { resolveNewsroomAutomationAuth } from "../src/lib/newsroom-automation-auth";
 import {
   isPlaceholderNewsBodyMarkdown,
@@ -31,11 +31,31 @@ type NewsStoryPublishResponse = {
   persistence: { status: string; table: string };
 };
 
+type PublishedNewsStoriesResponse = {
+  stories: Array<{
+    slug?: string;
+    title?: string;
+    publishedAt?: string | null;
+  }>;
+};
+
 type OfficialCigarNewsSource = (typeof officialCigarNewsSources)[number];
 
 type DailyCigarFlowSourceBatch = {
   sourceNames: string[];
   sourceUrls: string[];
+};
+
+type DailyCigarFlowRssFeed = {
+  name: string;
+  feedUrl: string;
+};
+
+type DailyCigarFlowRssLead = {
+  sourceName: string;
+  title: string;
+  link: string;
+  publishedAt: string | null;
 };
 
 const defaultRenderableStoryImageHosts = [
@@ -49,12 +69,15 @@ const defaultRenderableStoryImageHosts = [
 
 const storyImageProbeTimeoutMs = 4_000;
 const defaultStoryImagePosition = "50% 50%";
+const rssLeadFetchTimeoutMs = 7_000;
 
 async function runDailyCigarFlow() {
   const baseUrl = resolveRequiredEnv("NEXT_PUBLIC_YCC_API_BASE_URL");
   const auth = await resolveNewsroomAutomationAuth(process.env);
   const insecureApiTls = readBoolean("YCC_NEWSROOM_API_TLS_INSECURE", false);
   const autoPublish = readBoolean("YCC_DAILY_NEWSROOM_AUTO_PUBLISH", false);
+  const runDate = getPhoenixDate();
+  const rssLeads = await collectDailyCigarFlowRssLeads();
   const sourceLimit = readInt("YCC_DAILY_NEWSROOM_SOURCE_LIMIT", 3, 1, officialCigarNewsSources.length);
   const maxDraftAttempts = readInt(
     "YCC_DAILY_NEWSROOM_MAX_ATTEMPTS",
@@ -62,12 +85,17 @@ async function runDailyCigarFlow() {
     1,
     Math.max(1, Math.ceil(officialCigarNewsSources.length / sourceLimit)),
   );
-  const sourceBatches = buildDailyCigarFlowSourceBatches(sourceLimit, maxDraftAttempts);
+  const sourceBatches = buildDailyCigarFlowSourceBatches(sourceLimit, maxDraftAttempts, rssLeads);
 
   console.log(
     `Auth ready: ${auth.source === "cognito_password" ? `fresh Cognito token for ${auth.username}` : "bearer token from env"}${
       auth.expiresAt ? ` (expires ${auth.expiresAt})` : ""
     }`,
+  );
+  console.log(
+    rssLeads.length
+      ? `Fresh RSS leads pulled: ${rssLeads.length} (${rssLeads.map((lead) => lead.sourceName).join(", ")})`
+      : "Fresh RSS leads pulled: 0; continuing with official source rotation.",
   );
 
   const draftUrl = `${baseUrl}/news/story-drafts`;
@@ -78,7 +106,7 @@ async function runDailyCigarFlow() {
 
   for (const [index, sourceBatch] of sourceBatches.entries()) {
     const storyImages = buildDailyCigarFlowStoryImages(sourceBatch.sourceUrls);
-    const draftInput = buildDailyCigarFlowDraftInput(sourceBatch, storyImages);
+    const draftInput = buildDailyCigarFlowDraftInput(sourceBatch, storyImages, rssLeads, runDate);
     console.log(`Draft attempt ${index + 1}/${sourceBatches.length}: ${sourceBatch.sourceNames.join(", ")}`);
 
     try {
@@ -116,6 +144,7 @@ async function runDailyCigarFlow() {
 
   const publishPayload = {
     ...draftResult.draft,
+    slug: buildDailyCigarFlowPublishSlug(draftResult.draft.title, runDate),
     images: publishImages,
     sourceNotes: publishSourceNotes,
     operatorApproved: true,
@@ -126,19 +155,29 @@ async function runDailyCigarFlow() {
   const publishResult = await postJson<NewsStoryPublishResponse>(`${baseUrl}/news/stories`, publishPayload, auth.authorizationHeader, insecureApiTls);
   console.log(`Published: ${publishResult.story.title} (${publishResult.story.slug})`);
   console.log(`Persistence: ${publishResult.persistence.status}/${publishResult.persistence.table}`);
+
+  if (readBoolean("YCC_DAILY_NEWSROOM_VERIFY_PUBLISHED", true)) {
+    await verifyDailyCigarFlowRuntimeFreshness(baseUrl, publishResult.story.slug, runDate, insecureApiTls);
+  }
 }
 
-function buildDailyCigarFlowDraftInput(sourceBatch: DailyCigarFlowSourceBatch, storyImages: NewsStoryImage[]) {
+function buildDailyCigarFlowDraftInput(
+  sourceBatch: DailyCigarFlowSourceBatch,
+  storyImages: NewsStoryImage[],
+  rssLeads: readonly DailyCigarFlowRssLead[],
+  runDate: string,
+) {
   const sourceUrls = uniqueStrings([...sourceBatch.sourceUrls, ...cigarPressReleaseSearchSources.map((source) => source.url)]);
   const searchSourceNames = cigarPressReleaseSearchSources.map((source) => source.publisher).join(", ");
   const searchQueries = cigarPressReleaseSearchSources.map((source) => `"${source.searchQuery}"`).join(", ");
+  const rssLeadNotes = rssLeads.slice(0, 8).map(formatRssLeadNote);
 
   return {
     angle: `Daily cigar flow press releases update - ${new Intl.DateTimeFormat("en-US", {
       month: "short",
       day: "numeric",
-      timeZone: "America/Phoenix",
-    }).format(new Date())}`,
+      timeZone: "UTC",
+    }).format(new Date(`${runDate}T00:00:00.000Z`))}`,
     timeframe: "today",
     audience: "Adult Yuzu Cigar Club members of legal tobacco age",
     sourceUrls,
@@ -147,13 +186,18 @@ function buildDailyCigarFlowDraftInput(sourceBatch: DailyCigarFlowSourceBatch, s
       `Daily cigar press-release search: search ${searchSourceNames} for ${searchQueries} to find source-safe leads to write stories on. Treat search pages as discovery surfaces and draft only from primary release, wire, or official maker pages.`,
       "Cigar Flow editorial format: write sectioned markdown with ## headings for the split hero/inline-image layout, and return 3-6 real source-aligned story images for hero and inline placement.",
       "image web/source-page search: use accepted source pages or primary release pages to find actual image URLs; each image must include label, image, imagePosition, alt, and sourceUrl. Do not invent image URLs.",
+      ...rssLeadNotes,
     ],
     ...(storyImages.length ? { storyImages } : {}),
   };
 }
 
-function buildDailyCigarFlowSourceBatches(sourceLimit: number, maxAttempts: number): DailyCigarFlowSourceBatch[] {
-  const rankedSources = rankDailyCigarFlowSources(officialCigarNewsSources);
+function buildDailyCigarFlowSourceBatches(
+  sourceLimit: number,
+  maxAttempts: number,
+  rssLeads: readonly DailyCigarFlowRssLead[] = [],
+): DailyCigarFlowSourceBatch[] {
+  const rankedSources = rankDailyCigarFlowSources(officialCigarNewsSources, rssLeads);
   const batches: DailyCigarFlowSourceBatch[] = [];
 
   for (let start = 0; start < rankedSources.length && batches.length < maxAttempts; start += sourceLimit) {
@@ -171,19 +215,28 @@ function buildDailyCigarFlowSourceBatches(sourceLimit: number, maxAttempts: numb
   return batches;
 }
 
-function rankDailyCigarFlowSources(sources: readonly OfficialCigarNewsSource[]) {
-  return [...sources].sort((left, right) => getDailySourceScore(right) - getDailySourceScore(left));
+function rankDailyCigarFlowSources(
+  sources: readonly OfficialCigarNewsSource[],
+  rssLeads: readonly DailyCigarFlowRssLead[] = [],
+) {
+  return [...sources].sort((left, right) => {
+    const scoreDifference = getDailySourceScore(right, rssLeads) - getDailySourceScore(left, rssLeads);
+    return scoreDifference || left.name.localeCompare(right.name);
+  });
 }
 
-function getDailySourceScore(source: OfficialCigarNewsSource) {
+function getDailySourceScore(source: OfficialCigarNewsSource, rssLeads: readonly DailyCigarFlowRssLead[] = []) {
   const url = source.url.toLowerCase();
+  const matchingLeadIndex = rssLeads.findIndex((lead) => sourceMatchesRssLead(source, lead));
+  const rssScore = matchingLeadIndex >= 0 ? 100 - matchingLeadIndex : 0;
+
   if (/\/(news|press|fratello-news|categoria-news)(\/|$)|prnewswire\.com/.test(url)) {
-    return 2;
+    return rssScore + 2;
   }
   if (/news|press|release/.test(url)) {
-    return 1;
+    return rssScore + 1;
   }
-  return 0;
+  return rssScore;
 }
 
 function buildDailyCigarFlowStoryImages(sourceUrls: readonly string[], limit = 3): NewsStoryImage[] {
@@ -358,6 +411,212 @@ function buildDailyCigarFlowPublishSourceNotes(
   return uniqueNewsSourceNotes([...normalizeDailyPublishSourceNotes(draftNotes), ...sourceBatchNotes]);
 }
 
+async function collectDailyCigarFlowRssLeads(): Promise<DailyCigarFlowRssLead[]> {
+  const leadLimit = readInt("YCC_DAILY_NEWSROOM_RSS_LEAD_LIMIT", 8, 0, 20);
+  if (leadLimit <= 0) {
+    return [];
+  }
+
+  const feeds = getDailyCigarFlowRssFeeds();
+  const results = await Promise.allSettled(
+    feeds.map(async (feed) => {
+      const xml = await fetchTextWithTimeout(feed.feedUrl, rssLeadFetchTimeoutMs);
+      return parseDailyCigarFlowRssLeads(xml, feed);
+    }),
+  );
+  const leads = results.flatMap((result, index) => {
+    if (result.status === "fulfilled") {
+      return result.value;
+    }
+
+    console.warn(`Skipping Cigar Flow RSS feed "${feeds[index]?.name ?? "unknown"}": ${result.reason instanceof Error ? result.reason.message : String(result.reason)}.`);
+    return [];
+  });
+
+  return uniqueRssLeads(leads)
+    .sort((left, right) => rssLeadTimestamp(right) - rssLeadTimestamp(left))
+    .slice(0, leadLimit);
+}
+
+function getDailyCigarFlowRssFeeds(): DailyCigarFlowRssFeed[] {
+  const configuredFeeds = (process.env.YCC_DAILY_NEWSROOM_RSS_FEEDS || "")
+    .split(",")
+    .map((feedUrl) => feedUrl.trim())
+    .filter(Boolean);
+
+  if (configuredFeeds.length) {
+    return configuredFeeds.map((feedUrl) => ({
+      name: getHostname(feedUrl) || "Configured RSS feed",
+      feedUrl,
+    }));
+  }
+
+  return cigarFlowSources
+    .filter((source) => isHttpUrl(source.feedUrl))
+    .map((source) => ({
+      name: source.publisher,
+      feedUrl: source.feedUrl,
+    }));
+}
+
+async function fetchTextWithTimeout(url: string, timeoutMs: number) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      headers: {
+        accept: "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, */*;q=0.8",
+        "user-agent": "Yuzu Cigar Flow newsroom lead scanner/1.0",
+      },
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    return response.text();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function parseDailyCigarFlowRssLeads(xml: string, feed: DailyCigarFlowRssFeed): DailyCigarFlowRssLead[] {
+  return [...xml.matchAll(/<(item|entry)\b[\s\S]*?<\/\1>/gi)]
+    .map((match) => {
+      const entry = match[0];
+      const title = cleanDailySourceNoteText(getXmlTagText(entry, "title"), 220);
+      const link = normalizeRssLink(getXmlTagText(entry, "link") || getAtomLinkHref(entry), feed.feedUrl);
+      const publishedAt = normalizeRssDate(
+        getXmlTagText(entry, "pubDate") || getXmlTagText(entry, "published") || getXmlTagText(entry, "updated"),
+      );
+
+      return title && link
+        ? {
+            sourceName: feed.name,
+            title,
+            link,
+            publishedAt,
+          }
+        : null;
+    })
+    .filter((lead): lead is DailyCigarFlowRssLead => Boolean(lead));
+}
+
+function getXmlTagText(xml: string, tagName: string) {
+  const match = xml.match(new RegExp(`<${tagName}\\b[^>]*>([\\s\\S]*?)<\\/${tagName}>`, "i"));
+  return decodeXmlText(match?.[1] || "");
+}
+
+function getAtomLinkHref(xml: string) {
+  const alternateLink = [...xml.matchAll(/<link\b[^>]*>/gi)]
+    .map((match) => match[0])
+    .find((tag) => !/\brel\s*=\s*["'](?:self|hub)["']/i.test(tag));
+  const href = alternateLink?.match(/\bhref\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s"'>]+))/i);
+  return decodeXmlText(href?.[1] || href?.[2] || href?.[3] || "");
+}
+
+function normalizeRssLink(value: string, feedUrl: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  try {
+    return new URL(trimmed, feedUrl).toString();
+  } catch {
+    return "";
+  }
+}
+
+function normalizeRssDate(value: string) {
+  const time = Date.parse(value);
+  return Number.isFinite(time) ? new Date(time).toISOString() : null;
+}
+
+function decodeXmlText(value: string) {
+  return value
+    .replace(/<!\[CDATA\[([\s\S]*?)]]>/gi, "$1")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#039;|&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function uniqueRssLeads(leads: readonly DailyCigarFlowRssLead[]) {
+  const seen = new Set<string>();
+
+  return leads.filter((lead) => {
+    const key = (lead.link || lead.title).toLowerCase();
+    if (seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
+}
+
+function rssLeadTimestamp(lead: DailyCigarFlowRssLead) {
+  return lead.publishedAt ? Date.parse(lead.publishedAt) || 0 : 0;
+}
+
+function sourceMatchesRssLead(source: OfficialCigarNewsSource, lead: DailyCigarFlowRssLead) {
+  const text = `${lead.title} ${lead.link}`.toLowerCase();
+  return sourceMatchTokens(source).some((token) => text.includes(token));
+}
+
+function sourceMatchTokens(source: OfficialCigarNewsSource) {
+  const domainToken = source.domain.split(".")[0]?.replace(/cigars?$/i, "") || "";
+  const nameTokens = source.name
+    .toLowerCase()
+    .replace(/&/g, " ")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((token) => token.length >= 4 && !["cigar", "cigars", "company", "brand", "leaf"].includes(token));
+
+  return uniqueStrings([source.name.toLowerCase(), domainToken.toLowerCase(), ...nameTokens].filter(Boolean));
+}
+
+function formatRssLeadNote(lead: DailyCigarFlowRssLead) {
+  const date = lead.publishedAt ? lead.publishedAt.slice(0, 10) : "undated";
+  return `Current RSS lead from ${lead.sourceName} (${date}): ${lead.title} - ${lead.link}. Treat this as discovery context only; verify against primary official, company, event, regulator, or wire sources before drafting.`;
+}
+
+function buildDailyCigarFlowPublishSlug(title: string, runDate: string) {
+  const titleSlug = slugifyDailyStoryTitle(title)
+    .replace(/^daily-cigar-flow-update-?/, "")
+    .replace(/^daily-cigar-flow-?/, "")
+    .replace(new RegExp(`^${runDate.replace(/-/g, "-")}-?`), "");
+  const slug = ["daily-cigar-flow", runDate, titleSlug].filter(Boolean).join("-");
+  return slug.replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 180);
+}
+
+function slugifyDailyStoryTitle(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/['"]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function getPhoenixDate(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    day: "2-digit",
+    month: "2-digit",
+    timeZone: "America/Phoenix",
+    year: "numeric",
+  }).formatToParts(date);
+  const part = (type: string) => parts.find((item) => item.type === type)?.value || "";
+
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
 function normalizeDailyPublishSourceNotes(value: unknown): NewsSourceNote[] {
   if (!Array.isArray(value)) {
     return [];
@@ -435,7 +694,29 @@ async function postJson<TResponse>(url: string, body: unknown, token: string, in
   return payload as TResponse;
 }
 
+async function getJson<TResponse>(url: string, insecureTls: boolean): Promise<TResponse> {
+  const init = {
+    method: "GET",
+    headers: {
+      accept: "application/json",
+    },
+  } satisfies RequestInit;
+
+  const response = insecureTls ? await requestJsonWithInsecureTls(url, init) : await fetch(url, init);
+  const payload = (await response.json().catch(() => ({}))) as Record<string, unknown> | null;
+
+  if (!response.ok) {
+    throw new JsonHttpError(response.status, payload);
+  }
+
+  return payload as TResponse;
+}
+
 async function postJsonWithInsecureTls(url: string, init: RequestInit) {
+  return requestJsonWithInsecureTls(url, init);
+}
+
+async function requestJsonWithInsecureTls(url: string, init: RequestInit) {
   const target = new URL(url);
   const requestImpl = target.protocol === "https:" ? httpsRequest : httpRequest;
   const headers: OutgoingHttpHeaders | undefined = init.headers ? Object.fromEntries(new Headers(init.headers)) : undefined;
@@ -478,6 +759,32 @@ async function postJsonWithInsecureTls(url: string, init: RequestInit) {
 
     request.end();
   });
+}
+
+async function verifyDailyCigarFlowRuntimeFreshness(
+  baseUrl: string,
+  publishedSlug: string,
+  runDate: string,
+  insecureTls: boolean,
+) {
+  if (!publishedSlug.includes(`daily-cigar-flow-${runDate}`)) {
+    throw new Error(`Published Cigar Flow slug "${publishedSlug}" does not include today's date ${runDate}.`);
+  }
+
+  const response = await getJson<PublishedNewsStoriesResponse>(`${baseUrl}/news/stories?limit=3`, insecureTls);
+  const topStory = response.stories?.[0];
+
+  if (!topStory) {
+    throw new Error("Runtime freshness check failed: /news/stories returned no published stories after publish.");
+  }
+
+  if (topStory.slug !== publishedSlug) {
+    throw new Error(
+      `Runtime freshness check failed: live feed top story is "${topStory.slug || "unknown"}" instead of newly published "${publishedSlug}".`,
+    );
+  }
+
+  console.log(`Runtime freshness verified: ${topStory.title || publishedSlug} is the top live Cigar Flow story.`);
 }
 
 class JsonHttpError extends Error {

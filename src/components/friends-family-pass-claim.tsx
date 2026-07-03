@@ -230,6 +230,12 @@ export function FriendsFamilyPassClaim() {
         forgetPendingConfirmationEmail();
         setStatusMessage(result.message);
         setAuthMode("signin");
+      } else if (result.status === "account_exists") {
+        forgetPendingConfirmationEmail();
+        setConfirmationCode("");
+        setNeedsConfirmation(false);
+        setAuthMode("signin");
+        setStatusMessage(result.message);
       } else {
         setStatusMessage(result.message);
       }

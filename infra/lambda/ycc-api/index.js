@@ -9,6 +9,7 @@ const tls = require("node:tls");
 const webPush = require("web-push");
 const { invalidAgeVerificationTokens, validateCheckoutReadiness } = require("./commerce-rules");
 const {
+  createCognitoSignupCustomer,
   buildCustomerPortalSessionParams,
   createCommerceCheckoutSession,
   createFriendsFamilyCustomer,
@@ -34,6 +35,25 @@ const MAX_CHECKOUT_JSON_BODY_BYTES = 64 * 1024;
 const MAX_DEFAULT_JSON_BODY_BYTES = 9 * 1024 * 1024;
 const DEFAULT_SUPPORT_EMAIL_FROM = "support@yuzucigarclub.com";
 const DEFAULT_SUPPORT_EMAIL_RAW_PREFIX = "ycc/support-email/raw/";
+const TRANSACTIONAL_EMAIL_PROVIDERS = new Set([
+  "ses",
+  "brevo",
+  "godaddy_m365_smtp",
+  "m365_smtp",
+  "mailgun",
+  "office365_smtp",
+  "postmark",
+  "sendgrid",
+]);
+const MICROSOFT_365_SMTP_PROVIDERS = new Set(["godaddy_m365_smtp", "m365_smtp", "office365_smtp"]);
+
+class EmailProviderConfigurationError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "EmailProviderConfigurationError";
+  }
+}
+
 const DEFAULT_BEDROCK_MODEL_ID = "amazon.nova-lite-v1:0";
 const DEFAULT_CONCIERGE_POLLY_VOICE_ID = "Joanna";
 const DEFAULT_CONCIERGE_VOICE_PREFIX = "ycc/concierge-voice/";
@@ -98,6 +118,7 @@ const HUMIDOR_ALERT_DISPATCH_NOTIFICATION_TAG = "digital-humidor-alert";
 const HUMIDOR_DISPATCH_ACTOR_SUB = "system.humidor-dispatch";
 const ADMIN_OPERATIONAL_ALERT_NOTIFICATION_TAG = "admin-operational-alert";
 const ADMIN_OPERATIONAL_ALERT_URL = "/admin/console";
+const ADMIN_OPERATIONAL_SMS_BRAND = "Company Quon LLC";
 const ADMIN_OPERATIONAL_SMS_OPT_OUT_TEXT = "Reply STOP to opt out.";
 const HUMIDOR_IOT_TELEMETRY_SOURCE = "ycc.humidor.iot.telemetry";
 const HUMIDOR_IOT_TELEMETRY_TOPIC_PREFIX = "ycc/humidor/";
@@ -552,6 +573,7 @@ async function handleHealth(event, requestId) {
       databaseWrites: process.env.FEATURE_DB_WRITES || "pending_schema",
       bedrock: process.env.FEATURE_BEDROCK || "pending_agent",
       ses: process.env.FEATURE_SES || "pending_identity",
+      emailProvider: getOutboundEmailStatus(),
       newsletterSubscribe: true,
       publicSupportContact: true,
     },
@@ -560,9 +582,219 @@ async function handleHealth(event, requestId) {
 
 async function handleCognitoPostConfirmationSignUp(event, requestId) {
   const details = getCognitoWelcomeEmailDetails(event);
-  await maybeSendCognitoWelcomeEmail(event, requestId, details);
-  await maybeDispatchAdminOperationalAlert(buildAdminNewUserAlert(details), requestId);
+  const persistence = await maybePersistCognitoPostConfirmationAccount(event, requestId);
+  const effectiveDetails = applyCognitoPostConfirmationPersistenceToDetails(details, persistence);
+  if (!persistence?.membershipClaim) {
+    await maybeSendCognitoWelcomeEmail(event, requestId, effectiveDetails);
+  }
+  await maybeDispatchAdminOperationalAlert(buildAdminNewUserAlert(effectiveDetails), requestId);
   return event;
+}
+
+async function maybePersistCognitoPostConfirmationAccount(event, requestId) {
+  if (!shouldPersistDatabaseWrites()) {
+    return {
+      member: null,
+      membershipClaim: null,
+      stripeCustomerId: null,
+    };
+  }
+
+  const actor = getCognitoPostConfirmationActor(event);
+  if (!actor) {
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        event: "cognito_post_confirmation_missing_actor",
+        requestId,
+        userPoolId: sanitizeText(event.userPoolId, 120),
+      })
+    );
+    return {
+      member: null,
+      membershipClaim: null,
+      stripeCustomerId: null,
+    };
+  }
+
+  return withDatabaseClient("ycc-api-cognito-post-confirmation", async (client) => {
+    let member = await upsertMember(client, actor, requestId);
+    const membershipOffer = resolveCognitoPostConfirmationMembershipOffer(event);
+    let membershipClaim = null;
+    let stripeCustomerId = member.stripeCustomerId;
+
+    if (membershipOffer) {
+      const expiresAt = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
+      member = await grantFriendsFamilyBoxPass(
+        client,
+        {
+          actor,
+          customer: {
+            email: actor.email,
+            fullName: actor.name,
+          },
+          membershipOffer,
+        },
+        requestId,
+        expiresAt
+      );
+      stripeCustomerId =
+        member.stripeCustomerId ||
+        (await createAndLinkFriendsFamilyStripeCustomer(
+          client,
+          member,
+          {
+            customer: {
+              email: actor.email,
+              fullName: actor.name,
+            },
+            membershipOffer,
+          },
+          expiresAt
+        ));
+      member = {
+        ...member,
+        stripeCustomerId,
+      };
+
+      const memberWelcomeEmail = await maybeSendMemberWelcomeEmail(
+        {
+          email: member.email,
+          displayName: member.displayName || actor.name,
+          membershipTier: "box_access_pass",
+          memberStatus: "active",
+          source: membershipOffer.source,
+          campaign: membershipOffer.campaign,
+          expiresAt,
+          stripeCustomerId,
+        },
+        requestId
+      );
+
+      membershipClaim = {
+        tierKey: "box_access_pass",
+        memberStatus: "active",
+        expiresAt,
+        stripeCustomerId,
+        memberWelcomeEmail,
+      };
+    } else if (!stripeCustomerId) {
+      stripeCustomerId = await createAndLinkCognitoSignupStripeCustomer(client, member, actor);
+      member = {
+        ...member,
+        stripeCustomerId,
+      };
+    }
+
+    console.info(
+      JSON.stringify({
+        level: "info",
+        event: "cognito_post_confirmation_account_persisted",
+        requestId,
+        memberId: member.id,
+        actorHash: hashActor(actor.sub),
+        stripeCustomerLinked: Boolean(stripeCustomerId),
+        membershipClaimed: Boolean(membershipClaim),
+      })
+    );
+
+    return {
+      member,
+      membershipClaim,
+      stripeCustomerId,
+    };
+  });
+}
+
+function getCognitoPostConfirmationActor(event) {
+  const attrs = event.request?.userAttributes && typeof event.request.userAttributes === "object" ? event.request.userAttributes : {};
+  const email = normalizeEmailAddresses(attrs.email || event.userName, 1)[0] || "";
+  const sub = sanitizeText(attrs.sub || event.userName, 160);
+  if (!sub) {
+    return null;
+  }
+
+  return {
+    sub,
+    email,
+    emailVerified: Boolean(email) && (attrs.email_verified === true || attrs.email_verified === "true" || event.triggerSource === "PostConfirmation_ConfirmSignUp"),
+    name: sanitizeText(attrs.name || [attrs.given_name, attrs.family_name].filter(Boolean).join(" ") || attrs.nickname || "", 160),
+    username: sanitizeText(event.userName, 160),
+    groups: parseGroups(attrs["cognito:groups"] || attrs.groups || attrs["custom:groups"]),
+    membershipTier: optionalString(attrs["custom:membership_tier"] || attrs.membership_tier),
+    memberStatus: optionalString(attrs["custom:member_status"] || attrs.member_status),
+    stripeCustomerId: optionalString(attrs["custom:stripe_customer_id"] || attrs.stripe_customer_id),
+  };
+}
+
+function resolveCognitoPostConfirmationMembershipOffer(event) {
+  const attrs = event.request?.userAttributes && typeof event.request.userAttributes === "object" ? event.request.userAttributes : {};
+  const metadata = event.request?.clientMetadata && typeof event.request.clientMetadata === "object" ? event.request.clientMetadata : {};
+  const code = sanitizeText(metadata.ycc_invite_code || metadata.membership_offer_code || attrs["custom:ycc_invite_code"] || attrs.ycc_invite_code, 80).toLowerCase();
+  const access = sanitizeText(metadata.ycc_offer_access || metadata.membership_offer_access || attrs["custom:ycc_offer_access"] || attrs.ycc_offer_access, 80).toLowerCase();
+
+  if (code !== "friends-family-box-pass" || (access && access !== "box_access_pass_1_year")) {
+    return null;
+  }
+
+  return {
+    code,
+    source: sanitizeText(metadata.ycc_offer_source || metadata.membership_offer_source, 80) || "friends-family-page",
+    campaign: sanitizeText(metadata.ycc_offer_campaign || metadata.membership_offer_campaign, 80) || "friends-family-1-year-box-pass",
+    landingPath: sanitizeText(metadata.ycc_landing_path || metadata.membership_offer_landing_path, 120) || "/friends-family",
+    access: access || "box_access_pass_1_year",
+    trialPeriodDays: 365,
+  };
+}
+
+async function createAndLinkCognitoSignupStripeCustomer(client, member, actor) {
+  const commerceEnv = await getCommerceRuntimeEnv();
+  if (!commerceEnv.STRIPE_SECRET_KEY) {
+    return null;
+  }
+
+  const stripe = createStripeClient(commerceEnv);
+  const customer = await createCognitoSignupCustomer(
+    stripe,
+    {
+      customer: {
+        email: member.email,
+        fullName: member.displayName || actor.name,
+      },
+      cognitoSub: member.cognitoSub || actor.sub,
+      membershipTier: member.membershipTier,
+      memberStatus: member.memberStatus,
+    },
+    {
+      idempotencyKey: `ycc-cognito-signup-${hashActor(member.cognitoSub || actor.sub || member.email)}`,
+    }
+  );
+
+  const stripeCustomerId = sanitizeText(customer?.id, 160);
+  if (!stripeCustomerId) {
+    throw new Error("Stripe did not return a Customer ID for the Cognito signup.");
+  }
+
+  const linkedMember = await linkMemberStripeCustomer(client, member.id, stripeCustomerId);
+  if (!linkedMember) {
+    throw new Error("Cognito signup Stripe Customer could not be linked to the member row.");
+  }
+
+  return sanitizeText(linkedMember.stripe_customer_id, 160) || stripeCustomerId;
+}
+
+function applyCognitoPostConfirmationPersistenceToDetails(details, persistence) {
+  const member = persistence?.member;
+  if (!member) {
+    return details;
+  }
+
+  return {
+    ...details,
+    displayName: member.displayName || details.displayName,
+    memberStatus: member.memberStatus ? formatWelcomeAccountLabel(member.memberStatus) : details.memberStatus,
+    membershipTier: member.membershipTier ? formatWelcomeAccountLabel(member.membershipTier) : details.membershipTier,
+  };
 }
 
 async function maybeSendCognitoWelcomeEmail(event, requestId, details = getCognitoWelcomeEmailDetails(event)) {
@@ -612,13 +844,14 @@ function buildAdminNewUserAlert(details) {
 
   const displayName = sanitizeText(details.displayName, 160);
   const memberLabel = displayName ? `${displayName} (${details.email})` : details.email;
+  const smsMemberLabel = sanitizeText(details.email, 160);
   const statusLabel = details.membershipTier || details.memberStatus || "new account";
 
   return {
     type: "new_user",
     title: "New Yuzu user",
     body: `${memberLabel} confirmed a Yuzu account. Status: ${statusLabel}.`,
-    smsMessage: `Yuzu alert: New user ${memberLabel}. Status: ${statusLabel}. Admin: ${resolveNewsletterEmailUrl(ADMIN_OPERATIONAL_ALERT_URL)}. ${ADMIN_OPERATIONAL_SMS_OPT_OUT_TEXT}`,
+    smsMessage: `${ADMIN_OPERATIONAL_SMS_BRAND} admin alert: Account confirmed for ${smsMemberLabel}. Status: ${statusLabel}. Open the private admin console. ${ADMIN_OPERATIONAL_SMS_OPT_OUT_TEXT}`,
     url: ADMIN_OPERATIONAL_ALERT_URL,
   };
 }
@@ -650,7 +883,7 @@ function buildAdminNewOrderAlert(stripeEvent, action, processing) {
     type: "new_order",
     title: "New Yuzu order",
     body: `${total} paid order from ${email}. Fulfillment review is ready in admin.`,
-    smsMessage: `Yuzu alert: Admin fulfillment review needed for checkout${checkoutSessionId ? ` ${checkoutSessionId}` : ""} from ${email}. Admin: ${resolveNewsletterEmailUrl(ADMIN_OPERATIONAL_ALERT_URL)}. ${ADMIN_OPERATIONAL_SMS_OPT_OUT_TEXT}`,
+    smsMessage: `${ADMIN_OPERATIONAL_SMS_BRAND} admin alert: Fulfillment review task${checkoutSessionId ? ` ${checkoutSessionId}` : ""} for ${email}. Open the private admin console. ${ADMIN_OPERATIONAL_SMS_OPT_OUT_TEXT}`,
     url: ADMIN_OPERATIONAL_ALERT_URL,
   };
 }
@@ -953,20 +1186,21 @@ async function maybeSendMemberWelcomeEmail(details, requestId) {
     };
   }
 
-  if (process.env.FEATURE_SES !== "ready") {
+  if (!isOutboundEmailReady()) {
     console.info(
       JSON.stringify({
         level: "info",
         event: "member_welcome_email_pending_sender",
         requestId,
+        emailProvider: getOutboundEmailStatus(),
         featureSes: process.env.FEATURE_SES || "pending_identity",
       })
     );
-    return {
+    return addOutboundEmailProviderFields({
       kind: "member_welcome",
-      status: "pending_ses",
+      status: getOutboundEmailPendingStatus(),
       sesMessageId: null,
-    };
+    });
   }
 
   try {
@@ -984,11 +1218,11 @@ async function maybeSendMemberWelcomeEmail(details, requestId) {
       toAddresses: [email],
     });
 
-    return {
+    return addOutboundEmailProviderFields({
       kind: "member_welcome",
       status: "sent",
       sesMessageId,
-    };
+    }, sesMessageId);
   } catch (error) {
     console.error(
       JSON.stringify({
@@ -1000,11 +1234,11 @@ async function maybeSendMemberWelcomeEmail(details, requestId) {
       })
     );
 
-    return {
+    return addOutboundEmailProviderFields({
       kind: "member_welcome",
       status: "failed",
       sesMessageId: null,
-    };
+    });
   }
 }
 
@@ -1306,11 +1540,11 @@ async function handleNewsletterSubscribe(event, requestId) {
 }
 
 async function maybeSendNewsletterBrandPreferenceEmail(signup, requestId) {
-  if (process.env.FEATURE_SES !== "ready") {
-    return {
-      status: "pending_ses",
+  if (!isOutboundEmailReady()) {
+    return addOutboundEmailProviderFields({
+      status: getOutboundEmailPendingStatus(),
       sesMessageId: null,
-    };
+    });
   }
 
   try {
@@ -1324,11 +1558,11 @@ async function maybeSendNewsletterBrandPreferenceEmail(signup, requestId) {
       toAddresses: [signup.email],
     });
 
-    return {
+    return addOutboundEmailProviderFields({
       kind: emailContent.kind,
       status: "sent",
       sesMessageId,
-    };
+    }, sesMessageId);
   } catch (error) {
     console.error(
       JSON.stringify({
@@ -1340,10 +1574,10 @@ async function maybeSendNewsletterBrandPreferenceEmail(signup, requestId) {
       })
     );
 
-    return {
+    return addOutboundEmailProviderFields({
       status: "failed",
       sesMessageId: null,
-    };
+    });
   }
 }
 
@@ -1743,9 +1977,9 @@ async function handlePublicSupportContact(event, requestId) {
     requestId,
     topic,
   });
-  let deliveryStatus = "pending_ses";
+  let deliveryStatus = getOutboundEmailPendingStatus();
   let sesMessageId = null;
-  if (process.env.FEATURE_SES === "ready") {
+  if (isOutboundEmailReady()) {
     try {
       sesMessageId = await sendSupportEmail({
         bodyText,
@@ -1796,6 +2030,7 @@ async function handlePublicSupportContact(event, requestId) {
       caseNumber: persistedCase?.caseNumber || null,
       messageId: persistedCase?.emailMessageId || null,
       sesMessageId,
+      ...getOutboundEmailProviderResponseFields(sesMessageId),
     },
     nextActions:
       deliveryStatus === "sent"
@@ -2388,6 +2623,14 @@ async function handleStripeWebhook(event, requestId) {
     const orderAlert = buildAdminNewOrderAlert(stripeEvent, action, processing);
     if (orderAlert) {
       await maybeDispatchAdminOperationalAlert(orderAlert, requestId);
+    }
+
+    if (shouldSendStripeOrderConfirmationEmail(stripeEvent, action, processing)) {
+      const orderEmail = await maybeSendStripeOrderConfirmationEmail(stripeEvent, processing, requestId);
+      processing = {
+        ...processing,
+        orderEmail,
+      };
     }
 
     if (shouldSendStripeMemberWelcomeEmail(stripeEvent, action, processing)) {
@@ -4947,10 +5190,11 @@ async function handleSupportEmailSend(event, actor, requestId) {
     });
   }
 
-  if (process.env.FEATURE_SES !== "ready") {
+  if (!isOutboundEmailReady()) {
     return json(409, requestId, {
-      error: "ses_not_ready",
-      message: "SES sending is disabled until YCC sender identities are verified and production access is ready.",
+      error: "email_provider_not_ready",
+      message: "Outbound email sending is disabled until the selected YCC email provider is configured and smoke-tested.",
+      emailProvider: getOutboundEmailStatus(),
     });
   }
 
@@ -4978,12 +5222,39 @@ async function handleSupportEmailSend(event, actor, requestId) {
 
   const caseId = sanitizeText(body.value.caseId, 120) || `case_${crypto.randomUUID()}`;
   const fromAddress = getSupportEmailFrom();
-  const sesMessageId = await sendSupportEmail({
-    bodyText,
-    fromAddress,
-    subject,
-    toAddresses,
-  });
+  let sesMessageId;
+  try {
+    sesMessageId = await sendSupportEmail({
+      bodyText,
+      fromAddress,
+      subject,
+      toAddresses,
+    });
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        level: "warn",
+        event: "support_email_send_failed",
+        requestId,
+        emailProvider: getOutboundEmailStatus(),
+        name: error instanceof Error ? error.name : null,
+        message: error instanceof Error ? error.message : String(error),
+      })
+    );
+    if (error instanceof EmailProviderConfigurationError) {
+      return json(409, requestId, {
+        error: "email_provider_not_configured",
+        message: "The selected YCC email provider is marked ready but is missing its SMTP/API credential configuration.",
+        emailProvider: getOutboundEmailStatus(),
+      });
+    }
+
+    return json(502, requestId, {
+      error: "email_provider_send_failed",
+      message: "The selected YCC email provider rejected or failed the send attempt.",
+      emailProvider: getOutboundEmailStatus(),
+    });
+  }
 
   let persistedCase = null;
   if (shouldPersistDatabaseWrites()) {
@@ -5008,6 +5279,7 @@ async function handleSupportEmailSend(event, actor, requestId) {
     send: {
       status: "sent",
       sesMessageId,
+      ...getOutboundEmailProviderResponseFields(sesMessageId),
       from: fromAddress,
       to: toAddresses,
       persisted: Boolean(persistedCase),
@@ -9752,7 +10024,7 @@ async function upsertNewsStory(client, memberId, actor, requestId, story) {
           official_sources = excluded.official_sources,
           status = excluded.status,
           created_by_member_id = excluded.created_by_member_id,
-          published_at = case when excluded.status = 'published' then coalesce(public.news_stories.published_at, now()) else null end,
+          published_at = case when excluded.status = 'published' then now() else null end,
           metadata = public.news_stories.metadata || excluded.metadata,
           actor_id = excluded.actor_id,
           request_id = excluded.request_id,
@@ -10633,6 +10905,207 @@ function shouldSendStripeMemberWelcomeEmail(stripeEvent, action, processing) {
   );
 }
 
+function shouldSendStripeOrderConfirmationEmail(stripeEvent, action, processing) {
+  const session = stripeEvent?.data?.object;
+  const email =
+    normalizeEmailAddresses(session?.customer_details?.email, 1)[0] ||
+    normalizeEmailAddresses(session?.customer_email, 1)[0] ||
+    normalizeEmailAddresses(session?.metadata?.customer_email, 1)[0] ||
+    "";
+
+  return Boolean(
+    stripeEvent?.type === "checkout.session.completed" &&
+      action === "record_checkout_completion" &&
+      !processing?.duplicate &&
+      processing?.orderId &&
+      sanitizeText(session?.payment_status, 40).toLowerCase() === "paid" &&
+      email
+  );
+}
+
+async function maybeSendStripeOrderConfirmationEmail(stripeEvent, processing, requestId) {
+  const details = normalizeStripeOrderConfirmationEmailDetails(stripeEvent, processing);
+  if (!details.email) {
+    return addOutboundEmailProviderFields({
+      kind: "order_confirmation",
+      status: "skipped",
+      sesMessageId: null,
+      orderId: processing?.orderId || null,
+    });
+  }
+
+  if (!isOutboundEmailReady()) {
+    console.info(
+      JSON.stringify({
+        level: "info",
+        event: "order_confirmation_email_pending_sender",
+        requestId,
+        orderId: processing?.orderId || null,
+        checkoutSessionId: details.checkoutSessionId,
+        emailProvider: getOutboundEmailStatus(),
+      })
+    );
+    return addOutboundEmailProviderFields({
+      kind: "order_confirmation",
+      status: getOutboundEmailPendingStatus(),
+      sesMessageId: null,
+      orderId: processing?.orderId || null,
+      checkoutSessionId: details.checkoutSessionId,
+    });
+  }
+
+  try {
+    const emailContent = buildOrderConfirmationEmailContent(details, requestId);
+    const sesMessageId = await sendSupportEmail({
+      bodyHtml: emailContent.bodyHtml,
+      bodyText: emailContent.bodyText,
+      fromAddress: getSupportEmailFrom(),
+      replyToAddresses: [getSupportInboundReplyToAddress()],
+      subject: emailContent.subject,
+      toAddresses: [details.email],
+    });
+
+    return addOutboundEmailProviderFields({
+      kind: "order_confirmation",
+      status: "sent",
+      sesMessageId,
+      orderId: processing?.orderId || null,
+      checkoutSessionId: details.checkoutSessionId,
+    }, sesMessageId);
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        level: "warn",
+        event: "order_confirmation_email_failed",
+        requestId,
+        orderId: processing?.orderId || null,
+        checkoutSessionId: details.checkoutSessionId,
+        name: error instanceof Error ? error.name : null,
+        message: error instanceof Error ? error.message : String(error),
+      })
+    );
+
+    return addOutboundEmailProviderFields({
+      kind: "order_confirmation",
+      status: "failed",
+      sesMessageId: null,
+      orderId: processing?.orderId || null,
+      checkoutSessionId: details.checkoutSessionId,
+    });
+  }
+}
+
+function normalizeStripeOrderConfirmationEmailDetails(stripeEvent, processing) {
+  const session = stripeEvent?.data?.object || {};
+  const metadata = session.metadata && typeof session.metadata === "object" ? session.metadata : {};
+  const customerDetails = session.customer_details && typeof session.customer_details === "object" ? session.customer_details : {};
+  const email =
+    normalizeEmailAddresses(customerDetails.email, 1)[0] ||
+    normalizeEmailAddresses(session.customer_email, 1)[0] ||
+    normalizeEmailAddresses(metadata.customer_email, 1)[0] ||
+    "";
+  const checkoutSessionId = sanitizeText(session.id, 200);
+  const shippingMethod = sanitizeText(metadata.shipping_method_id || metadata.shipping_method || "adult-signature fulfillment", 160)
+    .replace(/[_-]+/g, " ");
+
+  return {
+    email,
+    checkoutSessionId,
+    orderId: sanitizeText(processing?.orderId, 120),
+    customerName: sanitizeText(customerDetails.name || session.customer_name || "", 160),
+    total: formatCurrencyCents(session.amount_total, session.currency),
+    subtotal: formatCurrencyCents(session.amount_subtotal, session.currency),
+    tax: formatCurrencyCents(session.total_details?.amount_tax, session.currency),
+    shipping: formatCurrencyCents(session.total_details?.amount_shipping, session.currency),
+    shippingMethod,
+    accountUrl: resolveNewsletterEmailUrl("/account/"),
+    contactUrl: resolveNewsletterEmailUrl("/contact/"),
+  };
+}
+
+function buildOrderConfirmationEmailContent(details, requestId) {
+  return {
+    kind: "order_confirmation",
+    subject: `Yuzu order confirmed: ${details.checkoutSessionId || details.orderId || "fulfillment review"}`,
+    bodyText: buildOrderConfirmationEmailText(details, requestId),
+    bodyHtml: buildOrderConfirmationEmailHtml(details, requestId),
+  };
+}
+
+function buildOrderConfirmationEmailText(details, requestId) {
+  return [
+    `Yuzu order confirmed${details.customerName ? ` for ${details.customerName}` : ""}.`,
+    "",
+    `Order: ${details.checkoutSessionId || details.orderId || "pending"}`,
+    `Total: ${details.total}`,
+    `Subtotal: ${details.subtotal}`,
+    `Tax: ${details.tax}`,
+    `Shipping: ${details.shipping}`,
+    `Fulfillment: adult-signature review is queued for ${details.shippingMethod || "the selected carrier service"}.`,
+    "",
+    "Stripe sends the payment receipt separately. This Yuzu note confirms the club has the paid order in fulfillment review.",
+    `Account: ${details.accountUrl}`,
+    `Need help? ${details.contactUrl}`,
+    `Reference: ${requestId}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function buildOrderConfirmationEmailHtml(details, requestId) {
+  const html = `
+    <!doctype html>
+    <html>
+      <body style="margin:0;background:#030504;color:#f8edd7;font-family:Arial,Helvetica,sans-serif;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#030504;padding:28px 12px;">
+          <tr>
+            <td align="center">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:660px;border:1px solid #6f5323;background:#101812;">
+                <tr>
+                  <td style="padding:28px;border-bottom:1px solid #6f5323;background:#07110d;">
+                    <p style="margin:0 0 10px;color:#dca93a;font-size:12px;font-weight:800;letter-spacing:0.16em;text-transform:uppercase;">Yuzu Cigar Club</p>
+                    <h1 style="margin:0;color:#f8edd7;font-size:28px;line-height:1.2;">Yuzu order confirmed</h1>
+                    <p style="margin:14px 0 0;color:#cdbf9f;font-size:15px;line-height:1.6;">Your paid order is now in fulfillment review for adult-signature handling.</p>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:24px 28px;color:#f8edd7;font-size:15px;line-height:1.7;">
+                    <p style="margin:0 0 14px;">${escapeHtml(details.customerName ? `Hi ${details.customerName},` : "Hi,")}</p>
+                    <p style="margin:0 0 18px;">Stripe sends the payment receipt separately. This Yuzu confirmation means the club has your paid order and is preparing the compliance and fulfillment review.</p>
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:0 0 18px;border:1px solid #6f5323;background:#030504;">
+                      ${renderEmailSummaryRow("Order", details.checkoutSessionId || details.orderId || "pending")}
+                      ${renderEmailSummaryRow("Total", details.total)}
+                      ${renderEmailSummaryRow("Tax", details.tax)}
+                      ${renderEmailSummaryRow("Shipping", details.shipping)}
+                      ${renderEmailSummaryRow("Fulfillment", `Adult-signature review: ${details.shippingMethod}`)}
+                    </table>
+                    <p style="margin:0 0 18px;">Track your account or contact support if anything looks off.</p>
+                    <p style="margin:0;"><a href="${escapeHtmlAttribute(details.accountUrl)}" style="color:#dca93a;">Open account</a> &nbsp; <a href="${escapeHtmlAttribute(details.contactUrl)}" style="color:#dca93a;">Contact support</a></p>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:18px 28px;border-top:1px solid #6f5323;color:#8f826a;font-size:12px;line-height:1.5;">Reference: ${escapeHtml(requestId)}</td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </body>
+    </html>
+  `;
+
+  return sanitizeEmailHtml(html);
+}
+
+function renderEmailSummaryRow(label, value) {
+  return `
+    <tr>
+      <td style="padding:10px 12px;border-bottom:1px solid #302817;color:#cdbf9f;font-size:13px;">${escapeHtml(label)}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #302817;color:#f8edd7;font-size:13px;font-weight:700;text-align:right;">${escapeHtml(value || "pending")}</td>
+    </tr>
+  `;
+}
+
 async function applyStripeCommerceWebhookAction(client, stripeEvent, action, stripeClient) {
   if (!stripeEvent || typeof stripeEvent !== "object") {
     return null;
@@ -11278,6 +11751,63 @@ function getSupportEmailRawBucket() {
 function getSupportEmailRawPrefix() {
   const prefix = process.env.SUPPORT_EMAIL_RAW_PREFIX || DEFAULT_SUPPORT_EMAIL_RAW_PREFIX;
   return prefix.endsWith("/") ? prefix : `${prefix}/`;
+}
+
+function getOutboundEmailProviderName() {
+  const rawProvider = sanitizeText(process.env.EMAIL_PROVIDER || process.env.TRANSACTIONAL_EMAIL_PROVIDER || "", 40)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return rawProvider || "ses";
+}
+
+function isOutboundEmailReady() {
+  const provider = getOutboundEmailProviderName();
+  if (provider === "ses") {
+    return process.env.FEATURE_SES === "ready";
+  }
+
+  return TRANSACTIONAL_EMAIL_PROVIDERS.has(provider) && process.env.FEATURE_EMAIL_PROVIDER === "ready";
+}
+
+function getOutboundEmailStatus() {
+  const provider = getOutboundEmailProviderName();
+  if (!TRANSACTIONAL_EMAIL_PROVIDERS.has(provider)) {
+    return `invalid_provider:${provider || "unset"}`;
+  }
+
+  if (isOutboundEmailReady()) {
+    return `${provider}_ready`;
+  }
+
+  if (provider === "ses") {
+    return process.env.FEATURE_SES || "pending_production_access";
+  }
+
+  return process.env.FEATURE_EMAIL_PROVIDER || `${provider}_pending_approval`;
+}
+
+function getOutboundEmailPendingStatus() {
+  return getOutboundEmailProviderName() === "ses" ? "pending_ses" : "pending_email_provider";
+}
+
+function addOutboundEmailProviderFields(result, providerMessageId = null) {
+  return {
+    ...result,
+    ...getOutboundEmailProviderResponseFields(providerMessageId),
+  };
+}
+
+function getOutboundEmailProviderResponseFields(providerMessageId = null) {
+  const provider = getOutboundEmailProviderName();
+  if (provider === "ses") {
+    return {};
+  }
+
+  return {
+    provider,
+    providerMessageId: providerMessageId || null,
+  };
 }
 
 function getMembershipSnapshot(actor, member) {
@@ -13107,6 +13637,11 @@ async function maybeBuildNewsDraftRuntimeReply(actor, prompt) {
 }
 
 async function sendSupportEmail(details) {
+  const provider = getOutboundEmailProviderName();
+  if (provider !== "ses") {
+    return sendTransactionalProviderEmail(provider, details);
+  }
+
   const { SESv2Client, SendEmailCommand } = require("@aws-sdk/client-sesv2");
   const client = new SESv2Client({ region: process.env.AWS_REGION || "us-east-1" });
   const body = {
@@ -13143,6 +13678,470 @@ async function sendSupportEmail(details) {
   );
 
   return response.MessageId || `ses_${crypto.randomUUID()}`;
+}
+
+async function sendTransactionalProviderEmail(provider, details) {
+  const config = await getTransactionalEmailProviderConfig(provider);
+  if (!config.ready) {
+    throw new EmailProviderConfigurationError(config.message || `Transactional email provider ${provider} is not configured.`);
+  }
+
+  if (provider === "sendgrid") {
+    return sendSendGridEmail(config, details);
+  }
+
+  if (provider === "brevo") {
+    return sendBrevoEmail(config, details);
+  }
+
+  if (provider === "mailgun") {
+    return sendMailgunEmail(config, details);
+  }
+
+  if (provider === "postmark") {
+    return sendPostmarkEmail(config, details);
+  }
+
+  if (MICROSOFT_365_SMTP_PROVIDERS.has(provider)) {
+    return sendMicrosoft365SmtpEmail(config, details);
+  }
+
+  throw new Error(`Unsupported transactional email provider: ${provider}`);
+}
+
+async function getTransactionalEmailProviderConfig(provider) {
+  const secretId = sanitizeText(process.env.EMAIL_PROVIDER_SECRET_ARN || process.env.EMAIL_PROVIDER_SECRET_ID || "", 240);
+  let secret = {};
+  if (secretId) {
+    secret = await readJsonSecretFromSecretsManager(secretId, "Email provider");
+  }
+
+  const providerSecret = secret?.[provider] && typeof secret[provider] === "object" ? secret[provider] : {};
+  const rootSecret = secret && typeof secret === "object" ? secret : {};
+  const smtpPort = toPositiveInteger(providerSecret.port || rootSecret.port || process.env.M365_SMTP_PORT || process.env.SMTP_PORT, 587);
+  const config = {
+    apiKey: sanitizeText(
+      providerSecret.apiKey ||
+        rootSecret.apiKey ||
+        process.env[`${provider.toUpperCase()}_API_KEY`] ||
+        process.env.EMAIL_PROVIDER_API_KEY ||
+        "",
+      500
+    ),
+    domain: sanitizeText(providerSecret.domain || rootSecret.domain || process.env.MAILGUN_DOMAIN || process.env.EMAIL_PROVIDER_DOMAIN || "", 200),
+    serverToken: sanitizeText(
+      providerSecret.serverToken || rootSecret.serverToken || process.env.POSTMARK_SERVER_TOKEN || process.env.EMAIL_PROVIDER_API_KEY || "",
+      500
+    ),
+    host: sanitizeText(providerSecret.host || rootSecret.host || process.env.M365_SMTP_HOST || process.env.SMTP_HOST || "smtp.office365.com", 200),
+    password: sanitizeSecretText(
+      providerSecret.password ||
+        rootSecret.password ||
+        process.env.M365_SMTP_PASSWORD ||
+        process.env.GODADDY_M365_SMTP_PASSWORD ||
+        process.env.SMTP_PASSWORD ||
+        process.env.EMAIL_PROVIDER_API_KEY ||
+        "",
+      1000
+    ),
+    port: smtpPort,
+    username: sanitizeText(
+      providerSecret.username ||
+        rootSecret.username ||
+        process.env.M365_SMTP_USERNAME ||
+        process.env.GODADDY_M365_SMTP_USERNAME ||
+        process.env.SMTP_USERNAME ||
+        "",
+      240
+    ),
+  };
+
+  if (MICROSOFT_365_SMTP_PROVIDERS.has(provider)) {
+    return {
+      ...config,
+      ready: Boolean(config.host && config.port && config.username && config.password),
+      message: "M365_SMTP_USERNAME and M365_SMTP_PASSWORD, or matching email provider secret values, are required.",
+    };
+  }
+
+  if (provider === "postmark") {
+    return {
+      ...config,
+      ready: Boolean(config.serverToken),
+      message: "POSTMARK_SERVER_TOKEN or email provider secret serverToken is required.",
+    };
+  }
+
+  if (provider === "mailgun") {
+    return {
+      ...config,
+      ready: Boolean(config.apiKey && config.domain),
+      message: "MAILGUN_API_KEY and MAILGUN_DOMAIN, or matching email provider secret values, are required.",
+    };
+  }
+
+  return {
+    ...config,
+    ready: Boolean(config.apiKey),
+    message: `${provider.toUpperCase()}_API_KEY or an email provider secret apiKey is required.`,
+  };
+}
+
+async function sendSendGridEmail(config, details) {
+  const response = await fetch("https://api.sendgrid.com/v3/mail/send", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${config.apiKey}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      from: { email: details.fromAddress },
+      personalizations: [
+        {
+          to: normalizeEmailAddresses(details.toAddresses, 50).map((email) => ({ email })),
+        },
+      ],
+      reply_to: { email: normalizeEmailAddresses(details.replyToAddresses || details.fromAddress, 1)[0] || details.fromAddress },
+      subject: details.subject,
+      content: buildProviderEmailContent(details),
+    }),
+  });
+  await assertProviderEmailAccepted(response, "SendGrid");
+  return response.headers?.get?.("x-message-id") || `sendgrid_${crypto.randomUUID()}`;
+}
+
+async function sendBrevoEmail(config, details) {
+  const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+    method: "POST",
+    headers: {
+      "api-key": config.apiKey,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      sender: { email: details.fromAddress },
+      to: normalizeEmailAddresses(details.toAddresses, 50).map((email) => ({ email })),
+      replyTo: { email: normalizeEmailAddresses(details.replyToAddresses || details.fromAddress, 1)[0] || details.fromAddress },
+      subject: details.subject,
+      textContent: details.bodyText,
+      ...(details.bodyHtml ? { htmlContent: details.bodyHtml } : {}),
+    }),
+  });
+  const payload = await readProviderJsonResponse(response, "Brevo");
+  return sanitizeText(payload.messageId || payload.message_id, 240) || `brevo_${crypto.randomUUID()}`;
+}
+
+async function sendMailgunEmail(config, details) {
+  const form = new URLSearchParams();
+  form.set("from", details.fromAddress);
+  for (const address of normalizeEmailAddresses(details.toAddresses, 50)) {
+    form.append("to", address);
+  }
+  form.set("subject", details.subject);
+  form.set("text", details.bodyText || "");
+  if (details.bodyHtml) {
+    form.set("html", details.bodyHtml);
+  }
+  const replyTo = normalizeEmailAddresses(details.replyToAddresses || details.fromAddress, 1)[0] || details.fromAddress;
+  form.set("h:Reply-To", replyTo);
+
+  const response = await fetch(`https://api.mailgun.net/v3/${encodeURIComponent(config.domain)}/messages`, {
+    method: "POST",
+    headers: {
+      authorization: `Basic ${Buffer.from(`api:${config.apiKey}`, "utf8").toString("base64")}`,
+      "content-type": "application/x-www-form-urlencoded",
+    },
+    body: form.toString(),
+  });
+  const payload = await readProviderJsonResponse(response, "Mailgun");
+  return sanitizeText(payload.id || payload.messageId, 240) || `mailgun_${crypto.randomUUID()}`;
+}
+
+async function sendPostmarkEmail(config, details) {
+  const response = await fetch("https://api.postmarkapp.com/email", {
+    method: "POST",
+    headers: {
+      "x-postmark-server-token": config.serverToken,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      From: details.fromAddress,
+      To: normalizeEmailAddresses(details.toAddresses, 50).join(","),
+      ReplyTo: normalizeEmailAddresses(details.replyToAddresses || details.fromAddress, 1)[0] || details.fromAddress,
+      Subject: details.subject,
+      TextBody: details.bodyText,
+      ...(details.bodyHtml ? { HtmlBody: details.bodyHtml } : {}),
+    }),
+  });
+  const payload = await readProviderJsonResponse(response, "Postmark");
+  return sanitizeText(payload.MessageID || payload.MessageId || payload.messageId, 240) || `postmark_${crypto.randomUUID()}`;
+}
+
+async function sendMicrosoft365SmtpEmail(config, details) {
+  if (typeof globalThis.__YCC_TEST_SMTP_SEND__ === "function") {
+    return globalThis.__YCC_TEST_SMTP_SEND__(config, details);
+  }
+
+  const message = buildSmtpMimeMessage(details);
+  const toAddresses = normalizeEmailAddresses(details.toAddresses, 50);
+  await sendSmtpMessage({
+    fromAddress: details.fromAddress,
+    host: config.host,
+    password: config.password,
+    port: config.port,
+    toAddresses,
+    username: config.username,
+    message,
+  });
+  return `m365_smtp_${crypto.randomUUID()}`;
+}
+
+async function sendSmtpMessage(options) {
+  let socket = await connectSmtpSocket(options.host, options.port);
+  let session = createSmtpSession(socket);
+  await session.expect([220]);
+  await session.command(`EHLO ${getSmtpHeloName()}`, [250]);
+  await session.command("STARTTLS", [220]);
+
+  socket = await upgradeSmtpSocketToTls(socket, options.host);
+  session = createSmtpSession(socket);
+  await session.command(`EHLO ${getSmtpHeloName()}`, [250]);
+  await session.command("AUTH LOGIN", [334]);
+  await session.command(Buffer.from(options.username, "utf8").toString("base64"), [334]);
+  await session.command(Buffer.from(options.password, "utf8").toString("base64"), [235]);
+  await session.command(`MAIL FROM:<${options.fromAddress}>`, [250]);
+  for (const address of options.toAddresses) {
+    await session.command(`RCPT TO:<${address}>`, [250, 251]);
+  }
+  await session.command("DATA", [354]);
+  await session.command(`${dotStuffSmtpMessage(options.message)}\r\n.`, [250]);
+  await session.command("QUIT", [221]);
+  socket.end();
+}
+
+function connectSmtpSocket(host, port) {
+  return new Promise((resolve, reject) => {
+    const socket = net.connect({ host, port });
+    socket.setEncoding("utf8");
+    socket.setTimeout(15000);
+    socket.once("connect", () => resolve(socket));
+    socket.once("timeout", () => {
+      socket.destroy();
+      reject(new Error(`SMTP connection timed out for ${host}:${port}`));
+    });
+    socket.once("error", reject);
+  });
+}
+
+function upgradeSmtpSocketToTls(socket, host) {
+  return new Promise((resolve, reject) => {
+    socket.removeAllListeners("data");
+    socket.removeAllListeners("error");
+    socket.removeAllListeners("timeout");
+    const secureSocket = tls.connect({ socket, servername: host });
+    secureSocket.setEncoding("utf8");
+    secureSocket.setTimeout(15000);
+    secureSocket.once("secureConnect", () => resolve(secureSocket));
+    secureSocket.once("timeout", () => {
+      secureSocket.destroy();
+      reject(new Error(`SMTP TLS handshake timed out for ${host}`));
+    });
+    secureSocket.once("error", reject);
+  });
+}
+
+function createSmtpSession(socket) {
+  let buffer = "";
+  const pending = [];
+  let closed = false;
+
+  socket.on("data", (chunk) => {
+    buffer += String(chunk);
+    flushSmtpResponses();
+  });
+  socket.once("close", () => {
+    closed = true;
+    while (pending.length) {
+      pending.shift().reject(new Error("SMTP connection closed before a complete response was received."));
+    }
+  });
+
+  function flushSmtpResponses() {
+    while (pending.length) {
+      const response = readCompleteSmtpResponse();
+      if (!response) {
+        return;
+      }
+      pending.shift().resolve(response);
+    }
+  }
+
+  function readCompleteSmtpResponse() {
+    const lineEnd = buffer.indexOf("\n");
+    if (lineEnd === -1) {
+      return null;
+    }
+
+    const lines = [];
+    let consumed = 0;
+    while (true) {
+      const nextLineEnd = buffer.indexOf("\n", consumed);
+      if (nextLineEnd === -1) {
+        return null;
+      }
+      const rawLine = buffer.slice(consumed, nextLineEnd + 1);
+      const line = rawLine.replace(/\r?\n$/, "");
+      lines.push(line);
+      consumed = nextLineEnd + 1;
+      if (/^\d{3} /.test(line)) {
+        buffer = buffer.slice(consumed);
+        return {
+          code: Number(line.slice(0, 3)),
+          lines,
+        };
+      }
+    }
+  }
+
+  function readResponse() {
+    const response = readCompleteSmtpResponse();
+    if (response) {
+      return Promise.resolve(response);
+    }
+    if (closed) {
+      return Promise.reject(new Error("SMTP connection closed."));
+    }
+    return new Promise((resolve, reject) => {
+      pending.push({ resolve, reject });
+    });
+  }
+
+  async function expect(expectedCodes) {
+    const response = await readResponse();
+    if (!expectedCodes.includes(response.code)) {
+      throw new Error(`SMTP expected ${expectedCodes.join("/")} but received ${response.code}: ${response.lines.join(" | ")}`);
+    }
+    return response;
+  }
+
+  async function command(commandText, expectedCodes) {
+    socket.write(`${commandText}\r\n`);
+    return expect(expectedCodes);
+  }
+
+  return { command, expect };
+}
+
+function buildSmtpMimeMessage(details) {
+  const toAddresses = normalizeEmailAddresses(details.toAddresses, 50);
+  const replyTo = normalizeEmailAddresses(details.replyToAddresses || details.fromAddress, 1)[0] || details.fromAddress;
+  const headers = [
+    `From: ${details.fromAddress}`,
+    `To: ${toAddresses.join(", ")}`,
+    `Reply-To: ${replyTo}`,
+    `Subject: ${encodeMimeHeader(details.subject)}`,
+    `Date: ${new Date().toUTCString()}`,
+    `Message-ID: <${crypto.randomUUID()}@yuzucigarclub.com>`,
+    "MIME-Version: 1.0",
+  ];
+
+  if (details.bodyHtml) {
+    const boundary = `ycc-${crypto.randomUUID()}`;
+    return [
+      ...headers,
+      `Content-Type: multipart/alternative; boundary="${boundary}"`,
+      "",
+      `--${boundary}`,
+      "Content-Type: text/plain; charset=UTF-8",
+      "Content-Transfer-Encoding: 8bit",
+      "",
+      details.bodyText || "",
+      `--${boundary}`,
+      "Content-Type: text/html; charset=UTF-8",
+      "Content-Transfer-Encoding: 8bit",
+      "",
+      details.bodyHtml,
+      `--${boundary}--`,
+      "",
+    ].join("\r\n");
+  }
+
+  return [
+    ...headers,
+    "Content-Type: text/plain; charset=UTF-8",
+    "Content-Transfer-Encoding: 8bit",
+    "",
+    details.bodyText || "",
+    "",
+  ].join("\r\n");
+}
+
+function dotStuffSmtpMessage(message) {
+  return String(message || "")
+    .replace(/\r?\n/g, "\r\n")
+    .split("\r\n")
+    .map((line) => (line.startsWith(".") ? `.${line}` : line))
+    .join("\r\n");
+}
+
+function encodeMimeHeader(value) {
+  const text = sanitizeText(value, 240).replace(/[\r\n]+/g, " ");
+  return /^[\x20-\x7e]*$/.test(text) ? text : `=?UTF-8?B?${Buffer.from(text, "utf8").toString("base64")}?=`;
+}
+
+function getSmtpHeloName() {
+  return sanitizeText(process.env.M365_SMTP_HELO || process.env.SMTP_HELO || "api.yuzucigarclub.com", 120) || "api.yuzucigarclub.com";
+}
+
+function buildProviderEmailContent(details) {
+  const content = [
+    {
+      type: "text/plain",
+      value: details.bodyText || "",
+    },
+  ];
+
+  if (details.bodyHtml) {
+    content.push({
+      type: "text/html",
+      value: details.bodyHtml,
+    });
+  }
+
+  return content;
+}
+
+async function assertProviderEmailAccepted(response, providerLabel) {
+  if (response.ok) {
+    return;
+  }
+
+  const body = await safeProviderResponseText(response);
+  throw new Error(`${providerLabel} email send failed with HTTP ${response.status}${body ? `: ${body}` : ""}`);
+}
+
+async function readProviderJsonResponse(response, providerLabel) {
+  const text = await safeProviderResponseText(response);
+  if (!response.ok) {
+    throw new Error(`${providerLabel} email send failed with HTTP ${response.status}${text ? `: ${text}` : ""}`);
+  }
+
+  if (!text) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return {};
+  }
+}
+
+async function safeProviderResponseText(response) {
+  try {
+    return sanitizeMultilineText(await response.text(), 1000);
+  } catch {
+    return "";
+  }
 }
 
 async function getRawEmailFromS3(bucket, key) {
@@ -16895,6 +17894,19 @@ function sanitizeText(value, maxLength) {
   }
 
   return value.replace(/\s+/g, " ").trim().slice(0, maxLength);
+}
+
+function sanitizeSecretText(value, maxLength) {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  return value.trim().slice(0, maxLength);
+}
+
+function toPositiveInteger(value, fallback) {
+  const number = Number.parseInt(String(value || ""), 10);
+  return Number.isFinite(number) && number > 0 ? number : fallback;
 }
 
 function slugify(value) {

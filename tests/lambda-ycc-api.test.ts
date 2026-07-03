@@ -563,12 +563,14 @@ function installPersistenceMocks(
           rows: [
             {
               id: "11111111-1111-4111-8111-111111111111",
-              cognito_sub: actorClaims.sub,
-              email: actorClaims.email,
-              display_name: actorClaims.name,
-              role: "customer",
-              membership_tier: "sensei",
-              member_status: "active",
+              cognito_sub: params[0],
+              email: params[1],
+              email_verified: params[2],
+              display_name: params[3],
+              role: params[4] || "customer",
+              membership_tier: params[5],
+              member_status: params[6],
+              stripe_customer_id: params[7] || null,
             },
           ],
           rowCount: 1,
@@ -1569,6 +1571,27 @@ function installPersistenceMocks(
     REKOGNITION_MIN_LABEL_CONFIDENCE: process.env.REKOGNITION_MIN_LABEL_CONFIDENCE,
     FEATURE_CONCIERGE_VOICE: process.env.FEATURE_CONCIERGE_VOICE,
     FEATURE_SES: process.env.FEATURE_SES,
+    FEATURE_EMAIL_PROVIDER: process.env.FEATURE_EMAIL_PROVIDER,
+    EMAIL_PROVIDER: process.env.EMAIL_PROVIDER,
+    EMAIL_PROVIDER_SECRET_ARN: process.env.EMAIL_PROVIDER_SECRET_ARN,
+    EMAIL_PROVIDER_SECRET_ID: process.env.EMAIL_PROVIDER_SECRET_ID,
+    M365_SMTP_USERNAME: process.env.M365_SMTP_USERNAME,
+    M365_SMTP_PASSWORD: process.env.M365_SMTP_PASSWORD,
+    M365_SMTP_HOST: process.env.M365_SMTP_HOST,
+    M365_SMTP_HELO: process.env.M365_SMTP_HELO,
+    M365_SMTP_PORT: process.env.M365_SMTP_PORT,
+    GODADDY_M365_SMTP_USERNAME: process.env.GODADDY_M365_SMTP_USERNAME,
+    GODADDY_M365_SMTP_PASSWORD: process.env.GODADDY_M365_SMTP_PASSWORD,
+    SMTP_USERNAME: process.env.SMTP_USERNAME,
+    SMTP_PASSWORD: process.env.SMTP_PASSWORD,
+    SMTP_HOST: process.env.SMTP_HOST,
+    SMTP_HELO: process.env.SMTP_HELO,
+    SMTP_PORT: process.env.SMTP_PORT,
+    SENDGRID_API_KEY: process.env.SENDGRID_API_KEY,
+    BREVO_API_KEY: process.env.BREVO_API_KEY,
+    MAILGUN_API_KEY: process.env.MAILGUN_API_KEY,
+    MAILGUN_DOMAIN: process.env.MAILGUN_DOMAIN,
+    POSTMARK_SERVER_TOKEN: process.env.POSTMARK_SERVER_TOKEN,
     SUPPORT_CONTACT_EMAIL_TO: process.env.SUPPORT_CONTACT_EMAIL_TO,
     SUPPORT_EMAIL_FROM: process.env.SUPPORT_EMAIL_FROM,
     SUPPORT_EMAIL_INBOUND_RECIPIENT: process.env.SUPPORT_EMAIL_INBOUND_RECIPIENT,
@@ -3005,6 +3028,91 @@ test("friends and family membership checkout creates a Stripe Customer without C
   }
 });
 
+test("friends and family membership welcome uses approved transactional provider while SES is denied", async () => {
+  const persistenceMock = installPersistenceMocks();
+  const stripeMock = installStripeMock();
+  const previousFetch = globalThis.fetch;
+  const fetchCalls: Array<{ url: string; init: RequestInit; body: Record<string, unknown> }> = [];
+
+  globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body || "{}")) as Record<string, unknown>;
+    fetchCalls.push({ url: String(url), init: init || {}, body });
+    return {
+      ok: true,
+      status: 202,
+      headers: {
+        get(name: string) {
+          return name.toLowerCase() === "x-message-id" ? "sendgrid-welcome-123" : null;
+        },
+      },
+      text: async () => "",
+    } as Response;
+  }) as typeof fetch;
+
+  try {
+    process.env.FEATURE_DB_WRITES = "schema_ready";
+    process.env.STRIPE_SECRET_KEY = "sk_test_123";
+    process.env.FEATURE_SES = "pending_production_access";
+    process.env.FEATURE_EMAIL_PROVIDER = "ready";
+    process.env.EMAIL_PROVIDER = "sendgrid";
+    process.env.SENDGRID_API_KEY = "SG.test-key";
+
+    const response = await handler({
+      routeKey: "POST /commerce/membership-session",
+      rawPath: "/commerce/membership-session",
+      body: JSON.stringify({
+        tierName: "Box Access Pass",
+        billingPeriod: "yearly",
+        customer: { email: "friend@example.com", fullName: "Family Friend" },
+        membershipOffer: {
+          code: "friends-family-box-pass",
+          source: "friends-family-page",
+          campaign: "friends-family-1-year-box-pass",
+          landingPath: "/friends-family",
+          access: "box_access_pass_1_year",
+          trialPeriodDays: 365,
+        },
+      }),
+      requestContext: {
+        requestId: "req-membership-welcome-sendgrid",
+        http: { method: "POST" },
+        authorizer: {
+          jwt: {
+            claims: {
+              ...actorClaims,
+              sub: "friends-family-cognito-sub",
+              email: "friend@example.com",
+              email_verified: "true",
+              name: "Family Friend",
+            },
+          },
+        },
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.membershipClaim.memberWelcomeEmail.status, "sent");
+    assert.equal(body.membershipClaim.memberWelcomeEmail.provider, "sendgrid");
+    assert.equal(body.membershipClaim.memberWelcomeEmail.providerMessageId, "sendgrid-welcome-123");
+    assert.equal(body.membershipClaim.memberWelcomeEmail.sesMessageId, "sendgrid-welcome-123");
+    assert.equal(persistenceMock.sesInvocations.length, 0);
+    assert.equal(fetchCalls.length, 1);
+    assert.equal(fetchCalls[0].url, "https://api.sendgrid.com/v3/mail/send");
+    const headers = fetchCalls[0].init.headers as Record<string, string>;
+    assert.match(headers.authorization, /^Bearer SG\.test-key$/i);
+
+    const personalizations = fetchCalls[0].body.personalizations as Array<{ to: Array<{ email: string }> }>;
+    assert.equal(personalizations[0].to[0].email, "friend@example.com");
+    assert.match(JSON.stringify(fetchCalls[0].body), /Your Box Access Pass is active/i);
+    assert.match(JSON.stringify(fetchCalls[0].body), /Welcome inside, Family/i);
+  } finally {
+    globalThis.fetch = previousFetch;
+    stripeMock.restore();
+    persistenceMock.restore();
+  }
+});
+
 test("customer portal sessions are bound to the authenticated member customer id", async () => {
   const mock = installStripeMock();
   try {
@@ -3295,6 +3403,105 @@ test("Stripe webhook persists signed checkout events into commerce order records
   }
 });
 
+test("Stripe checkout completion sends Yuzu order confirmation through approved transactional provider", async () => {
+  const persistenceMock = installPersistenceMocks();
+  const stripeMock = installStripeMock({
+    webhookEvent: {
+      id: "evt_checkout_completed_email",
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          id: "cs_webhook_email",
+          customer: "cus_member_email",
+          customer_details: {
+            email: "member@example.com",
+            name: "Yuzu Member",
+            phone: "+14805550123",
+            address: {
+              line1: "123 Yuzu Way",
+              city: "Chandler",
+              state: "AZ",
+              postal_code: "85225",
+              country: "US",
+            },
+          },
+          payment_intent: "pi_webhook_email",
+          payment_status: "paid",
+          status: "complete",
+          currency: "usd",
+          amount_subtotal: 12000,
+          amount_total: 12792,
+          total_details: {
+            amount_tax: 792,
+            amount_shipping: 0,
+          },
+          metadata: {
+            age_verification_id: "age_txn_12345678",
+            shipping_method_id: "usps-adult-signature-ground",
+          },
+        },
+      },
+    },
+  });
+  const previousFetch = globalThis.fetch;
+  const fetchCalls: Array<{ url: string; init: RequestInit; body: Record<string, unknown> }> = [];
+
+  globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body || "{}")) as Record<string, unknown>;
+    fetchCalls.push({ url: String(url), init: init || {}, body });
+    return {
+      ok: true,
+      status: 202,
+      headers: {
+        get(name: string) {
+          return name.toLowerCase() === "x-message-id" ? "sendgrid-order-123" : null;
+        },
+      },
+      text: async () => "",
+    } as Response;
+  }) as typeof fetch;
+
+  try {
+    process.env.STRIPE_SECRET_KEY = "sk_test_123";
+    process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_123";
+    process.env.FEATURE_DB_WRITES = "schema_ready";
+    process.env.FEATURE_SES = "pending_production_access";
+    process.env.FEATURE_EMAIL_PROVIDER = "ready";
+    process.env.EMAIL_PROVIDER = "sendgrid";
+    process.env.SENDGRID_API_KEY = "SG.test-key";
+
+    const response = await handler({
+      routeKey: "POST /commerce/webhook/stripe",
+      rawPath: "/commerce/webhook/stripe",
+      body: JSON.stringify({ id: "evt_checkout_completed_email" }),
+      headers: {
+        "stripe-signature": "t=123,v1=sig",
+      },
+      requestContext: { requestId: "req-commerce-webhook-order-email", http: { method: "POST" } },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.processing.orderId, "88888888-8888-4888-8888-888888888888");
+    assert.equal(body.processing.orderEmail.status, "sent");
+    assert.equal(body.processing.orderEmail.kind, "order_confirmation");
+    assert.equal(body.processing.orderEmail.provider, "sendgrid");
+    assert.equal(body.processing.orderEmail.providerMessageId, "sendgrid-order-123");
+    assert.equal(persistenceMock.sesInvocations.length, 0);
+    assert.equal(fetchCalls.length, 1);
+    const personalizations = fetchCalls[0].body.personalizations as Array<{ to: Array<{ email: string }> }>;
+    assert.equal(personalizations[0].to[0].email, "member@example.com");
+    assert.match(JSON.stringify(fetchCalls[0].body), /Yuzu order confirmed/i);
+    assert.match(JSON.stringify(fetchCalls[0].body), /cs_webhook_email/i);
+    assert.match(JSON.stringify(fetchCalls[0].body), /\$127\.92/i);
+    assert.match(JSON.stringify(fetchCalls[0].body), /adult-signature/i);
+  } finally {
+    globalThis.fetch = previousFetch;
+    stripeMock.restore();
+    persistenceMock.restore();
+  }
+});
+
 test("Stripe checkout completion sends owner SMS and admin mobile push for new paid orders", async () => {
   const persistenceMock = installPersistenceMocks({
     adminAlertRecipientRows: [
@@ -3380,9 +3587,11 @@ test("Stripe checkout completion sends owner SMS and admin mobile push for new p
 
     assert.equal(persistenceMock.snsInvocations.length, 1);
     assert.equal(persistenceMock.snsInvocations[0].PhoneNumber, "+14805550101");
-    assert.match(String(persistenceMock.snsInvocations[0].Message || ""), /Admin fulfillment review needed/);
+    assert.match(String(persistenceMock.snsInvocations[0].Message || ""), /Company Quon LLC admin alert/);
+    assert.match(String(persistenceMock.snsInvocations[0].Message || ""), /Fulfillment review task/);
     assert.match(String(persistenceMock.snsInvocations[0].Message || ""), /cs_webhook_alert/);
     assert.match(String(persistenceMock.snsInvocations[0].Message || ""), /member@example\.com/);
+    assert.doesNotMatch(String(persistenceMock.snsInvocations[0].Message || ""), /Yuzu|cigar|order/i);
     assert.match(String(persistenceMock.snsInvocations[0].Message || ""), /Reply STOP to opt out\./);
     assert.deepEqual(persistenceMock.snsInvocations[0].MessageAttributes, {
       "AWS.SNS.SMS.SMSType": {
@@ -3717,6 +3926,147 @@ test("Cognito post-confirmation defers customer welcome email until membership i
   }
 });
 
+test("Cognito post-confirmation upserts confirmed users into the admin member roster", async () => {
+  const mock = installPersistenceMocks();
+  try {
+    const response = await (handler as unknown as (event: Record<string, unknown>) => Promise<Record<string, unknown>>)( {
+      version: "1",
+      region: "us-east-1",
+      userPoolId: "us-east-1_TESTPOOL",
+      userName: "reader@example.com",
+      triggerSource: "PostConfirmation_ConfirmSignUp",
+      request: {
+        userAttributes: {
+          sub: "cognito-user-123",
+          email: "Reader@Example.com",
+          email_verified: "true",
+          name: "Yuzu Reader",
+          "custom:member_status": "non_member",
+          "custom:membership_tier": "",
+        },
+      },
+      response: {},
+    });
+
+    assert.equal(response.triggerSource, "PostConfirmation_ConfirmSignUp");
+    const queries = mock.clients.flatMap((client) => client.queries);
+    const memberUpsert = queries.find((query) => query.sql.includes("insert into public.members"));
+    assert.ok(memberUpsert, "confirmed Cognito signup should be persisted into public.members for admin visibility");
+    assert.equal(memberUpsert.params[0], "cognito-user-123");
+    assert.equal(memberUpsert.params[1], "reader@example.com");
+    assert.equal(memberUpsert.params[2], true);
+    assert.equal(memberUpsert.params[4], "customer");
+    assert.equal(memberUpsert.params[6], "non_member");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("Cognito post-confirmation creates and links a Stripe Customer for regular signups when Stripe is ready", async () => {
+  const mock = installPersistenceMocks();
+  const stripeMock = installStripeMock({ createCustomer: { id: "cus_regular_signup" } });
+  try {
+    process.env.STRIPE_SECRET_KEY = "sk_test_123";
+
+    const response = await (handler as unknown as (event: Record<string, unknown>) => Promise<Record<string, unknown>>)( {
+      version: "1",
+      region: "us-east-1",
+      userPoolId: "us-east-1_TESTPOOL",
+      userName: "reader@example.com",
+      triggerSource: "PostConfirmation_ConfirmSignUp",
+      request: {
+        userAttributes: {
+          sub: "cognito-user-123",
+          email: "Reader@Example.com",
+          email_verified: "true",
+          name: "Yuzu Reader",
+          "custom:member_status": "non_member",
+          "custom:membership_tier": "",
+        },
+      },
+      response: {},
+    });
+
+    assert.equal(response.triggerSource, "PostConfirmation_ConfirmSignUp");
+    assert.equal(stripeMock.customersCreated.length, 1);
+    const customerCreate = stripeMock.customersCreated[0];
+    assert.equal(customerCreate.params.email, "reader@example.com");
+    assert.equal(customerCreate.params.name, "Yuzu Reader");
+    assert.equal((customerCreate.params.metadata as Record<string, string>).customer_source, "cognito_post_confirmation");
+    assert.equal((customerCreate.params.metadata as Record<string, string>).cognito_sub, "cognito-user-123");
+    assert.match(String(customerCreate.requestOptions?.idempotencyKey || ""), /^ycc-cognito-signup-[A-Za-z0-9_-]+$/);
+
+    const queries = mock.clients.flatMap((client) => client.queries.map((query) => query.sql));
+    assert.ok(
+      queries.some((sql) => sql.includes("update public.members") && sql.includes("stripe_customer_id = coalesce")),
+      "regular Cognito signup should link the Stripe Customer to the member row"
+    );
+  } finally {
+    stripeMock.restore();
+    mock.restore();
+  }
+});
+
+test("Friends and Family Cognito post-confirmation grants the pass and links a Stripe Customer", async () => {
+  const mock = installPersistenceMocks();
+  const stripeMock = installStripeMock({ createCustomer: { id: "cus_dan_davis" } });
+  try {
+    process.env.STRIPE_SECRET_KEY = "sk_test_123";
+
+    const response = await (handler as unknown as (event: Record<string, unknown>) => Promise<Record<string, unknown>>)( {
+      version: "1",
+      region: "us-east-1",
+      userPoolId: "us-east-1_TESTPOOL",
+      userName: "dan@example.com",
+      triggerSource: "PostConfirmation_ConfirmSignUp",
+      request: {
+        clientMetadata: {
+          ycc_invite_code: "friends-family-box-pass",
+          ycc_offer_source: "friends-family-page",
+          ycc_offer_campaign: "friends-family-1-year-box-pass",
+          ycc_offer_access: "box_access_pass_1_year",
+          ycc_landing_path: "/friends-family",
+        },
+        userAttributes: {
+          sub: "dan-davis-cognito-sub",
+          email: "Dan@Example.com",
+          email_verified: "true",
+          name: "Dan Davis",
+          "custom:member_status": "non_member",
+          "custom:membership_tier": "",
+        },
+      },
+      response: {},
+    });
+
+    assert.equal(response.triggerSource, "PostConfirmation_ConfirmSignUp");
+    assert.equal(stripeMock.customersCreated.length, 1);
+    const customerCreate = stripeMock.customersCreated[0];
+    assert.equal(customerCreate.params.email, "dan@example.com");
+    assert.equal(customerCreate.params.name, "Dan Davis");
+    assert.equal((customerCreate.params.metadata as Record<string, string>).membership_path, "friends_family_box_pass");
+    assert.equal((customerCreate.params.metadata as Record<string, string>).membership_offer_code, "friends-family-box-pass");
+    assert.match(String(customerCreate.requestOptions?.idempotencyKey || ""), /^ycc-ff-box-pass-[A-Za-z0-9_-]+$/);
+
+    const queries = mock.clients.flatMap((client) => client.queries.map((query) => query.sql));
+    assert.ok(
+      queries.some((sql) => sql.includes("insert into public.members")),
+      "Friends & Family confirmation should create the admin member row"
+    );
+    assert.ok(
+      queries.some((sql) => sql.includes("update public.members") && sql.includes("membership_tier = 'box_access_pass'")),
+      "Friends & Family confirmation should activate Box Access Pass"
+    );
+    assert.ok(
+      queries.some((sql) => sql.includes("update public.members") && sql.includes("stripe_customer_id = coalesce")),
+      "Friends & Family confirmation should link the Stripe Customer to the member row"
+    );
+  } finally {
+    stripeMock.restore();
+    mock.restore();
+  }
+});
+
 test("Cognito post-confirmation sends owner SMS and admin mobile push for new users", async () => {
   const mock = installPersistenceMocks({
     adminAlertRecipientRows: [
@@ -3782,8 +4132,10 @@ test("Cognito post-confirmation sends owner SMS and admin mobile push for new us
 
     assert.equal(mock.snsInvocations.length, 1);
     assert.equal(mock.snsInvocations[0].PhoneNumber, "+14805550101");
+    assert.match(String(mock.snsInvocations[0].Message || ""), /Company Quon LLC admin alert/);
+    assert.match(String(mock.snsInvocations[0].Message || ""), /Account confirmed/);
     assert.match(String(mock.snsInvocations[0].Message || ""), /reader@example\.com/);
-    assert.match(String(mock.snsInvocations[0].Message || ""), /Yuzu Reader/);
+    assert.doesNotMatch(String(mock.snsInvocations[0].Message || ""), /Yuzu|cigar/i);
     assert.match(String(mock.snsInvocations[0].Message || ""), /Reply STOP to opt out\./);
     assert.deepEqual(mock.snsInvocations[0].MessageAttributes, {
       "AWS.SNS.SMS.SMSType": {
@@ -5882,6 +6234,10 @@ test("news story publish route stores approved story and audit row", async () =>
 
     const queries = mock.clients.flatMap((client) => client.queries.map((query) => query.sql));
     assert.ok(queries.some((sql) => sql.includes("insert into public.news_stories")), "news story should be inserted");
+    assert.ok(
+      queries.some((sql) => sql.replace(/\s+/g, " ").includes("published_at = case when excluded.status = 'published' then now() else null end")),
+      "republishing a repeated news slug should refresh published_at so Cigar Flow date matching stays fresh",
+    );
     assert.ok(queries.some((sql) => sql.includes("insert into public.audit_log")), "audit row should be inserted");
   } finally {
     mock.restore();
@@ -6186,6 +6542,132 @@ test("public support contact stores the case without sending when SES is not rea
   }
 });
 
+test("public support contact sends through approved transactional provider when SES is not ready", async () => {
+  const mock = installPersistenceMocks();
+  const previousFetch = globalThis.fetch;
+  const fetchCalls: Array<{ url: string; init: RequestInit; body: Record<string, unknown> }> = [];
+
+  globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body || "{}")) as Record<string, unknown>;
+    fetchCalls.push({ url: String(url), init: init || {}, body });
+    return {
+      ok: true,
+      status: 202,
+      headers: {
+        get(name: string) {
+          return name.toLowerCase() === "x-message-id" ? "sendgrid-support-123" : null;
+        },
+      },
+      text: async () => "",
+    } as Response;
+  }) as typeof fetch;
+
+  try {
+    process.env.FEATURE_SES = "pending_production_access";
+    process.env.FEATURE_EMAIL_PROVIDER = "ready";
+    process.env.EMAIL_PROVIDER = "sendgrid";
+    process.env.SENDGRID_API_KEY = "SG.test-key";
+
+    const response = await handler({
+      routeKey: "POST /support/contact",
+      rawPath: "/support/contact",
+      body: JSON.stringify({
+        name: "Visitor Name",
+        email: "visitor@example.com",
+        topic: "Order support",
+        orderNumber: "YCC-1042",
+        message: "Please help me find the tracking update for my monthly box.",
+        pagePath: "/contact/",
+      }),
+      headers: {
+        "user-agent": "node-test",
+      },
+      requestContext: {
+        requestId: "req-public-support-contact-provider",
+        http: { method: "POST", sourceIp: "198.51.100.77" },
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.contact.status, "sent");
+    assert.equal(body.contact.provider, "sendgrid");
+    assert.equal(body.contact.providerMessageId, "sendgrid-support-123");
+    assert.equal(body.contact.sesMessageId, "sendgrid-support-123");
+    assert.equal(mock.sesInvocations.length, 0);
+    assert.equal(fetchCalls.length, 1);
+    const personalizations = fetchCalls[0].body.personalizations as Array<{ to: Array<{ email: string }> }>;
+    assert.equal(personalizations[0].to[0].email, "support@yuzucigarclub.com");
+    assert.match(JSON.stringify(fetchCalls[0].body), /Yuzu Contact - Order support - YCC-1042/i);
+    assert.match(JSON.stringify(fetchCalls[0].body), /tracking update/i);
+  } finally {
+    globalThis.fetch = previousFetch;
+    mock.restore();
+  }
+});
+
+test("public support contact can use existing GoDaddy Microsoft 365 SMTP when SES is denied", async () => {
+  const mock = installPersistenceMocks();
+  const previousSmtpTransport = (globalThis as typeof globalThis & {
+    __YCC_TEST_SMTP_SEND__?: unknown;
+  }).__YCC_TEST_SMTP_SEND__;
+  const smtpCalls: Array<Record<string, unknown>> = [];
+
+  (globalThis as typeof globalThis & {
+    __YCC_TEST_SMTP_SEND__?: (config: Record<string, unknown>, message: Record<string, unknown>) => Promise<string>;
+  }).__YCC_TEST_SMTP_SEND__ = async (config, message) => {
+    smtpCalls.push({ config, message });
+    return "m365-smtp-support-123";
+  };
+
+  try {
+    process.env.FEATURE_SES = "pending_production_access";
+    process.env.FEATURE_EMAIL_PROVIDER = "ready";
+    process.env.EMAIL_PROVIDER = "godaddy_m365_smtp";
+    process.env.M365_SMTP_USERNAME = "support@yuzucigarclub.com";
+    process.env.M365_SMTP_PASSWORD = "app-password";
+
+    const response = await handler({
+      routeKey: "POST /support/contact",
+      rawPath: "/support/contact",
+      body: JSON.stringify({
+        name: "Visitor Name",
+        email: "visitor@example.com",
+        topic: "Order support",
+        orderNumber: "YCC-2042",
+        message: "Please help me confirm the adult-signature delivery window.",
+        pagePath: "/contact/",
+      }),
+      headers: {
+        "user-agent": "node-test",
+      },
+      requestContext: {
+        requestId: "req-public-support-contact-m365",
+        http: { method: "POST", sourceIp: "198.51.100.77" },
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.contact.status, "sent");
+    assert.equal(body.contact.provider, "godaddy_m365_smtp");
+    assert.equal(body.contact.providerMessageId, "m365-smtp-support-123");
+    assert.equal(body.contact.sesMessageId, "m365-smtp-support-123");
+    assert.equal(mock.sesInvocations.length, 0);
+    assert.equal(smtpCalls.length, 1);
+    assert.equal(smtpCalls[0].config && (smtpCalls[0].config as Record<string, unknown>).host, "smtp.office365.com");
+    assert.equal(smtpCalls[0].message && (smtpCalls[0].message as Record<string, unknown>).fromAddress, "support@yuzucigarclub.com");
+    assert.match(JSON.stringify(smtpCalls[0].message), /adult-signature delivery window/i);
+  } finally {
+    if (previousSmtpTransport === undefined) {
+      delete (globalThis as typeof globalThis & { __YCC_TEST_SMTP_SEND__?: unknown }).__YCC_TEST_SMTP_SEND__;
+    } else {
+      (globalThis as typeof globalThis & { __YCC_TEST_SMTP_SEND__?: unknown }).__YCC_TEST_SMTP_SEND__ = previousSmtpTransport;
+    }
+    mock.restore();
+  }
+});
+
 test("public support contact validates required fields before sending", async () => {
   const response = await handler({
     routeKey: "POST /support/contact",
@@ -6249,6 +6731,42 @@ test("support email send uses SES and persists the sent email", async () => {
       ),
       "sent support email should be persisted with the SES message id"
     );
+  } finally {
+    mock.restore();
+  }
+});
+
+test("support email send reports missing GoDaddy Microsoft 365 SMTP credentials", async () => {
+  const mock = installPersistenceMocks();
+  try {
+    process.env.FEATURE_SES = "pending_production_access";
+    process.env.FEATURE_EMAIL_PROVIDER = "ready";
+    process.env.EMAIL_PROVIDER = "godaddy_m365_smtp";
+    process.env.M365_SMTP_USERNAME = "support@yuzucigarclub.com";
+    delete process.env.M365_SMTP_PASSWORD;
+    delete process.env.GODADDY_M365_SMTP_PASSWORD;
+    delete process.env.SMTP_PASSWORD;
+    delete process.env.EMAIL_PROVIDER_API_KEY;
+    delete process.env.EMAIL_PROVIDER_SECRET_ARN;
+    delete process.env.EMAIL_PROVIDER_SECRET_ID;
+
+    const response = await handler(
+      createAuthenticatedEvent(
+        "POST /support/email-send",
+        {
+          to: "member@example.com",
+          subject: "Membership renewal charge",
+          body: "We reviewed the renewal charge and can help from here.",
+        },
+        adminClaims
+      )
+    );
+
+    assert.equal(response.statusCode, 409);
+    const body = JSON.parse(response.body);
+    assert.equal(body.error, "email_provider_not_configured");
+    assert.equal(body.emailProvider, "godaddy_m365_smtp_ready");
+    assert.equal(mock.sesInvocations.length, 0);
   } finally {
     mock.restore();
   }

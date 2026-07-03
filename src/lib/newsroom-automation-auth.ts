@@ -30,19 +30,35 @@ export async function resolveNewsroomAutomationAuth(
 ): Promise<NewsroomAutomationAuth> {
   const username = readEnv(env, "YCC_NEWSROOM_COGNITO_USERNAME");
   const password = readEnv(env, "YCC_NEWSROOM_COGNITO_PASSWORD");
+  const bearerToken = readEnv(env, "YCC_NEWSROOM_BEARER_TOKEN");
 
   if (username || password) {
     if (!username || !password) {
+      if (bearerToken) {
+        console.warn("Newsroom Cognito auth is partially configured; falling back to YCC_NEWSROOM_BEARER_TOKEN.");
+        return buildBearerAuth(bearerToken);
+      }
+
       throw new Error("Set both YCC_NEWSROOM_COGNITO_USERNAME and YCC_NEWSROOM_COGNITO_PASSWORD for newsroom automation.");
     }
 
     const config = resolveCognitoConfig(env as CognitoPublicEnv);
     if (!config) {
+      if (bearerToken) {
+        console.warn("Cognito public environment is not configured for newsroom automation sign-in; falling back to YCC_NEWSROOM_BEARER_TOKEN.");
+        return buildBearerAuth(bearerToken);
+      }
+
       throw new Error("Cognito public environment is not configured for newsroom automation sign-in.");
     }
 
     const result = await signInWithCognitoPassword(config, { username, password }, fetchImpl ?? buildCognitoFetch(env));
     if (result.status !== "signed_in") {
+      if (bearerToken) {
+        console.warn(`Cognito newsroom sign-in failed: ${result.message}. Falling back to YCC_NEWSROOM_BEARER_TOKEN.`);
+        return buildBearerAuth(bearerToken);
+      }
+
       throw new Error(`Cognito newsroom sign-in failed: ${result.message}`);
     }
 
@@ -54,19 +70,22 @@ export async function resolveNewsroomAutomationAuth(
     };
   }
 
-  const bearerToken = readEnv(env, "YCC_NEWSROOM_BEARER_TOKEN");
   if (bearerToken) {
-    return {
-      authorizationHeader: bearerToken.startsWith("Bearer ") ? bearerToken : `Bearer ${bearerToken}`,
-      source: "bearer_env",
-      expiresAt: null,
-      username: null,
-    };
+    return buildBearerAuth(bearerToken);
   }
 
   throw new Error(
     "Missing newsroom auth. Set YCC_NEWSROOM_COGNITO_USERNAME and YCC_NEWSROOM_COGNITO_PASSWORD, or provide YCC_NEWSROOM_BEARER_TOKEN.",
   );
+}
+
+function buildBearerAuth(bearerToken: string): NewsroomAutomationAuth {
+  return {
+    authorizationHeader: bearerToken.startsWith("Bearer ") ? bearerToken : `Bearer ${bearerToken}`,
+    source: "bearer_env",
+    expiresAt: null,
+    username: null,
+  };
 }
 
 function readEnv(env: NewsroomAutomationEnv, name: string) {

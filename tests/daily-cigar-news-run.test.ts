@@ -13,6 +13,7 @@ type DraftCall = {
 };
 
 type PublishCall = {
+  slug?: string;
   images?: Array<{ image?: string; imagePosition?: string; sourceUrl?: string }>;
   sourceNotes?: Array<{ label?: string; url?: string; note?: string }>;
 };
@@ -270,6 +271,90 @@ test("daily cigar flow writer includes press-release search sources in draft req
   }
 });
 
+test("daily cigar flow writer pulls fresh RSS leads and prioritizes matching official sources", async () => {
+  const draftCalls: DraftCall[] = [];
+  const server = createServer(async (request, response) => {
+    if (request.method === "GET" && request.url === "/rss.xml") {
+      response.writeHead(200, { "content-type": "application/rss+xml" });
+      response.end(`
+        <rss version="2.0">
+          <channel>
+            <title>Test cigar feed</title>
+            <item>
+              <title>Rocky Patel announces a fresh Cigar Flow signal</title>
+              <link>https://halfwheel.example/rocky-patel-fresh-signal</link>
+              <pubDate>Thu, 25 Jun 2026 15:00:00 GMT</pubDate>
+            </item>
+          </channel>
+        </rss>
+      `);
+      return;
+    }
+
+    if (request.method === "POST" && request.url === "/news/story-drafts") {
+      const payload = JSON.parse(await readRequestBody(request)) as DraftCall;
+      draftCalls.push(payload);
+
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          draft: {
+            title: "Fresh Rocky Patel Cigar Flow Update",
+            dek: "A source-safe daily update for adult Yuzu readers.",
+            category: "Industry News",
+            bodyMarkdown: "## Release desk\nAn RSS lead moved the matching official source to the front of the daily review queue.",
+            sections: [
+              {
+                heading: "Release desk",
+                body: "An RSS lead moved the matching official source to the front of the daily review queue.",
+              },
+            ],
+            sourceNotes: [
+              {
+                label: "Rocky Patel",
+                url: payload.sourceUrls[0],
+                note: "Accepted official source.",
+              },
+            ],
+          },
+          prompt: {
+            acceptedSourceCount: payload.sourceUrls.length,
+          },
+        }),
+      );
+      return;
+    }
+
+    response.writeHead(404, { "content-type": "application/json" });
+    response.end(JSON.stringify({ error: "not_found" }));
+  });
+
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+
+    const result = await runDailyWriter({
+      NEXT_PUBLIC_YCC_API_BASE_URL: `http://127.0.0.1:${address.port}`,
+      YCC_NEWSROOM_BEARER_TOKEN: "test-token",
+      YCC_DAILY_NEWSROOM_SOURCE_LIMIT: "1",
+      YCC_DAILY_NEWSROOM_MAX_ATTEMPTS: "1",
+      YCC_DAILY_NEWSROOM_RSS_FEEDS: `http://127.0.0.1:${address.port}/rss.xml`,
+      YCC_DAILY_NEWSROOM_RSS_LEAD_LIMIT: "2",
+    });
+
+    assert.equal(result.code, 0, result.stderr || result.stdout);
+    assert.equal(draftCalls.length, 1);
+    assert.equal(draftCalls[0].sourceUrls[0], "https://www.rockypatel.com/cigar-news/");
+    assert.ok(draftCalls[0].sourceNotes?.some((note) => /Current RSS lead from 127\.0\.0\.1/i.test(note)));
+    assert.ok(draftCalls[0].sourceNotes?.some((note) => /Rocky Patel announces a fresh Cigar Flow signal/i.test(note)));
+  } finally {
+    server.close();
+    await once(server, "close").catch(() => undefined);
+  }
+});
+
 test("daily cigar flow writer carries primary source notes into publish when draft omits them", async () => {
   const draftCalls: DraftCall[] = [];
   const publishCalls: PublishCall[] = [];
@@ -354,10 +439,210 @@ test("daily cigar flow writer carries primary source notes into publish when dra
     assert.equal(result.code, 0, result.stderr || result.stdout);
     assert.equal(draftCalls.length, 1);
     assert.equal(publishCalls.length, 1);
+    assert.match(publishCalls[0].slug ?? "", /^daily-cigar-flow-\d{4}-\d{2}-\d{2}-/);
     assert.ok(
       publishCalls[0].sourceNotes?.some((note) => draftCalls[0].sourceUrls.includes(note.url ?? "")),
       "publish should retain at least one source URL from the draft request",
     );
+  } finally {
+    server.close();
+    await once(server, "close").catch(() => undefined);
+  }
+});
+
+test("daily cigar flow writer verifies the published story is first in the live runtime feed", async () => {
+  let publishedSlug = "";
+  const server = createServer(async (request, response) => {
+    if (request.method === "POST" && request.url === "/news/story-drafts") {
+      const payload = JSON.parse(await readRequestBody(request)) as DraftCall;
+
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          draft: {
+            title: "Fresh Cigar Flow Runtime Guard",
+            dek: "A source-safe daily update for adult Yuzu readers.",
+            category: "Cigar Flow Update",
+            bodyMarkdown: "## Release desk\nA fresh story should become the top live Cigar Flow record after publishing.",
+            sections: [
+              {
+                heading: "Release desk",
+                body: "A fresh story should become the top live Cigar Flow record after publishing.",
+              },
+            ],
+            sourceNotes: [
+              {
+                label: "Official source",
+                url: payload.sourceUrls[0],
+                note: "Accepted official source.",
+              },
+            ],
+          },
+          prompt: {
+            acceptedSourceCount: payload.sourceUrls.length,
+          },
+        }),
+      );
+      return;
+    }
+
+    if (request.method === "POST" && request.url === "/news/stories") {
+      const payload = JSON.parse(await readRequestBody(request)) as PublishCall;
+      publishedSlug = payload.slug || "";
+
+      response.writeHead(201, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          story: {
+            title: "Fresh Cigar Flow Runtime Guard",
+            slug: publishedSlug,
+            status: "published",
+          },
+          persistence: {
+            status: "stored",
+            table: "news_stories",
+          },
+        }),
+      );
+      return;
+    }
+
+    if (request.method === "GET" && request.url === "/news/stories?limit=3") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          stories: [
+            {
+              slug: publishedSlug,
+              title: "Fresh Cigar Flow Runtime Guard",
+              publishedAt: new Date().toISOString(),
+            },
+          ],
+        }),
+      );
+      return;
+    }
+
+    response.writeHead(404, { "content-type": "application/json" });
+    response.end(JSON.stringify({ error: "not_found" }));
+  });
+
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+
+    const result = await runDailyWriter({
+      NEXT_PUBLIC_YCC_API_BASE_URL: `http://127.0.0.1:${address.port}`,
+      YCC_NEWSROOM_BEARER_TOKEN: "test-token",
+      YCC_DAILY_NEWSROOM_AUTO_PUBLISH: "true",
+      YCC_DAILY_NEWSROOM_SOURCE_LIMIT: "3",
+      YCC_DAILY_NEWSROOM_MAX_ATTEMPTS: "1",
+      YCC_DAILY_NEWSROOM_VERIFY_PUBLISHED: "true",
+    });
+
+    assert.equal(result.code, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /Runtime freshness verified:/);
+    assert.ok(publishedSlug.startsWith("daily-cigar-flow-"));
+  } finally {
+    server.close();
+    await once(server, "close").catch(() => undefined);
+  }
+});
+
+test("daily cigar flow writer fails when the live runtime feed remains stale after publish", async () => {
+  const server = createServer(async (request, response) => {
+    if (request.method === "POST" && request.url === "/news/story-drafts") {
+      const payload = JSON.parse(await readRequestBody(request)) as DraftCall;
+
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          draft: {
+            title: "Fresh Cigar Flow Stale Runtime Guard",
+            dek: "A source-safe daily update for adult Yuzu readers.",
+            category: "Cigar Flow Update",
+            bodyMarkdown: "## Release desk\nThe runtime checker should fail if this story is not visible first.",
+            sections: [
+              {
+                heading: "Release desk",
+                body: "The runtime checker should fail if this story is not visible first.",
+              },
+            ],
+            sourceNotes: [
+              {
+                label: "Official source",
+                url: payload.sourceUrls[0],
+                note: "Accepted official source.",
+              },
+            ],
+          },
+          prompt: {
+            acceptedSourceCount: payload.sourceUrls.length,
+          },
+        }),
+      );
+      return;
+    }
+
+    if (request.method === "POST" && request.url === "/news/stories") {
+      const payload = JSON.parse(await readRequestBody(request)) as PublishCall;
+
+      response.writeHead(201, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          story: {
+            title: "Fresh Cigar Flow Stale Runtime Guard",
+            slug: payload.slug,
+            status: "published",
+          },
+          persistence: {
+            status: "stored",
+            table: "news_stories",
+          },
+        }),
+      );
+      return;
+    }
+
+    if (request.method === "GET" && request.url === "/news/stories?limit=3") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          stories: [
+            {
+              slug: "daily-cigar-flow-2026-06-18-stale-story",
+              title: "Stale Cigar Flow Story",
+              publishedAt: "2026-06-18T16:10:23.440Z",
+            },
+          ],
+        }),
+      );
+      return;
+    }
+
+    response.writeHead(404, { "content-type": "application/json" });
+    response.end(JSON.stringify({ error: "not_found" }));
+  });
+
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+
+    const result = await runDailyWriter({
+      NEXT_PUBLIC_YCC_API_BASE_URL: `http://127.0.0.1:${address.port}`,
+      YCC_NEWSROOM_BEARER_TOKEN: "test-token",
+      YCC_DAILY_NEWSROOM_AUTO_PUBLISH: "true",
+      YCC_DAILY_NEWSROOM_SOURCE_LIMIT: "3",
+      YCC_DAILY_NEWSROOM_MAX_ATTEMPTS: "1",
+      YCC_DAILY_NEWSROOM_VERIFY_PUBLISHED: "true",
+    });
+
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /Runtime freshness check failed: live feed top story is "daily-cigar-flow-2026-06-18-stale-story"/);
   } finally {
     server.close();
     await once(server, "close").catch(() => undefined);
@@ -514,6 +799,8 @@ function runDailyWriter(env: Record<string, string>) {
       ...process.env,
       YCC_NEWSROOM_COGNITO_USERNAME: "",
       YCC_NEWSROOM_COGNITO_PASSWORD: "",
+      YCC_DAILY_NEWSROOM_RSS_LEAD_LIMIT: "0",
+      YCC_DAILY_NEWSROOM_VERIFY_PUBLISHED: "false",
       ...env,
     },
     stdio: "pipe",

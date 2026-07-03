@@ -91,6 +91,82 @@ test("cigar flow Facebook runner finds a related source-page image and creates a
   }
 });
 
+test("cigar flow Facebook runner defaults to today's story instead of reposting stale latest", async () => {
+  const outputRoot = await mkdtemp(join(tmpdir(), "ycc-cigar-flow-facebook-today-"));
+  const today = phoenixDate();
+  const imageBytes = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(15_000, 7)]);
+  const server = createServer(async (request, response) => {
+    if (request.method === "GET" && request.url === "/news/stories?limit=12") {
+      return sendJson(response, {
+        stories: [
+          {
+            id: "story-old",
+            slug: "daily-cigar-flow-2026-06-10-old-update",
+            title: "Old Cigar Flow Update",
+            dek: "An older source-backed update.",
+            category: "Cigar Industry News",
+            bodyMarkdown: "## Old Brand\nAn older source-backed note.",
+            images: [],
+            sourceNotes: [{ label: "Old Brand", url: serverUrl(server, "/old-brand"), sourceType: "official" }],
+            officialSources: [serverUrl(server, "/old-brand")],
+            status: "published",
+            publishedAt: "2026-06-10T16:17:21.403Z",
+          },
+          {
+            id: "story-today",
+            slug: `daily-cigar-flow-${today}-fresh-update`,
+            title: "Fresh Cigar Flow Update",
+            dek: "Today's source-backed update for adult cigar readers.",
+            category: "Cigar Industry News",
+            bodyMarkdown: "## Fresh Brand\nA fresh source-backed note for adult readers.",
+            images: [],
+            sourceNotes: [{ label: "Fresh Brand", url: serverUrl(server, "/fresh-brand"), sourceType: "official" }],
+            officialSources: [serverUrl(server, "/fresh-brand")],
+            status: "published",
+            publishedAt: `${today}T16:17:21.403Z`,
+          },
+        ],
+      });
+    }
+
+    if (request.method === "GET" && request.url === "/fresh-brand") {
+      response.writeHead(200, { "content-type": "text/html" });
+      response.end(`<html><head><meta property="og:image" content="${serverUrl(server, "/images/fresh-brand-cigar.jpg")}"></head></html>`);
+      return;
+    }
+
+    if (request.method === "GET" && request.url === "/images/fresh-brand-cigar.jpg") {
+      response.writeHead(200, { "content-type": "image/jpeg" });
+      response.end(imageBytes);
+      return;
+    }
+
+    response.writeHead(404);
+    response.end();
+  });
+
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+
+    const result = await runCigarFlowFacebookSocial({
+      apiBaseUrl: serverUrl(server, ""),
+      outputDir: outputRoot,
+      publishPage: false,
+      dryRun: true,
+      imageLimit: 1,
+    });
+
+    assert.equal(result.story.slug, `daily-cigar-flow-${today}-fresh-update`);
+    assert.match(result.outputDir, new RegExp(`cigar-flow-facebook-${today}`));
+    assert.equal(result.pagePost?.status, "dry_run");
+  } finally {
+    server.close();
+    await once(server, "close").catch(() => undefined);
+    await rm(outputRoot, { recursive: true, force: true });
+  }
+});
+
 test("fresh Cigar Flow image search does not use cached research images by default", async () => {
   const outputRoot = await mkdtemp(join(tmpdir(), "ycc-cigar-flow-fresh-images-"));
   const imageBytes = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(15_000, 3)]);
@@ -398,4 +474,16 @@ async function readBody(request: IncomingMessage) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
   return Buffer.concat(chunks).toString("utf8");
+}
+
+function phoenixDate(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    day: "2-digit",
+    month: "2-digit",
+    timeZone: "America/Phoenix",
+    year: "numeric",
+  }).formatToParts(date);
+  const part = (type: string) => parts.find((item) => item.type === type)?.value || "";
+
+  return `${part("year")}-${part("month")}-${part("day")}`;
 }
