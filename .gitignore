@@ -20,6 +20,7 @@
 # generated deploy artifacts
 /output/
 /*.zip
+/deploy-zips/
 
 # production
 /build

@@ -6,7 +6,8 @@ const serviceWorker = readFileSync("public/sw.js", "utf8");
 const pwaRegister = readFileSync("src/components/pwa-register.tsx", "utf8");
 
 test("service worker uses a fresh cache version for the deployment", () => {
-  assert.match(serviceWorker, /CACHE_NAME = "yuzu-cigar-club-v3"/);
+  assert.match(serviceWorker, /CACHE_NAME = "yuzu-cigar-club-v4"/);
+  assert.ok(!serviceWorker.includes('  "/",'), "install-time app shell should not pre-cache HTML pages");
 });
 
 test("service worker checks the network before cached navigation pages", () => {
