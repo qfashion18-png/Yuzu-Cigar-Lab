@@ -100,6 +100,39 @@
       ]
     },
     {
+      "Sid": "InvokeNova2LiteUsInferenceProfile",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream"
+      ],
+      "Resource": "arn:aws:bedrock:us-east-1:374587466106:inference-profile/us.amazon.nova-2-lite-v1:0"
+    },
+    {
+      "Sid": "InvokeNova2LiteUsDestinationModels",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-2-lite-v1:0",
+        "arn:aws:bedrock:us-east-2::foundation-model/amazon.nova-2-lite-v1:0",
+        "arn:aws:bedrock:us-west-2::foundation-model/amazon.nova-2-lite-v1:0"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "bedrock:InferenceProfileArn": "arn:aws:bedrock:us-east-1:374587466106:inference-profile/us.amazon.nova-2-lite-v1:0"
+        }
+      }
+    },
+    {
+      "Sid": "InvokeNovaWebGroundingForCigarGuide",
+      "Effect": "Allow",
+      "Action": "bedrock:InvokeTool",
+      "Resource": "arn:aws:bedrock::374587466106:system-tool/amazon.nova_grounding"
+    },
+    {
       "Sid": "AnalyzeAiCigarAdderImagesWithRekognition",
       "Effect": "Allow",
       "Action": [
@@ -122,6 +155,18 @@
         "bedrock:RetrieveAndGenerate"
       ],
       "Resource": "arn:aws:bedrock:us-east-1:374587466106:knowledge-base/48GFMCLSTG"
+    },
+    {
+      "Sid": "RetrieveFromTaggedYccCigarKnowledgeBases",
+      "Effect": "Allow",
+      "Action": "bedrock:Retrieve",
+      "Resource": "arn:aws:bedrock:us-east-1:374587466106:knowledge-base/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/Project": "YCC",
+          "aws:ResourceTag/DataClass": "CigarCatalog"
+        }
+      }
     },
     {
       "Sid": "InvokeTaggedYccBedrockAgentAliases",
@@ -162,6 +207,15 @@
           ]
         }
       }
+    },
+    {
+      "Sid": "ReadYccEmailProviderSecret",
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:GetSecretValue"
+      ],
+      "Resource": "arn:aws:secretsmanager:us-east-1:374587466106:secret:ycc/email/godaddy-m365-smtp/prod-*"
     }
   ]
 }

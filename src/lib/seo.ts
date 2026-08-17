@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import type { CatalogProduct, CatalogProductDetails } from "@/lib/catalog";
 import type { EventExperience } from "@/lib/data";
+import { buildProductPageCopy } from "@/lib/product-page-content";
 import { siteUrl } from "@/lib/site";
 
 export const siteName = "Yuzu Cigar Club";
@@ -297,12 +298,13 @@ export function buildCollectionPageJsonLd(input: CollectionPageJsonLdInput): Jso
 
 export function buildProductJsonLd(product: CatalogProduct, details: CatalogProductDetails): JsonLdValue {
   const productUrl = absoluteUrl(`/shop/${product.slug}/`);
+  const description = buildProductPageCopy(details.summary, product.sku).narrative;
 
   return withSchemaContext({
     "@type": "Product",
     "@id": `${productUrl}#product`,
     name: product.name,
-    description: details.summary,
+    description,
     image: [absoluteUrl(product.image)],
     sku: product.sku,
     mpn: product.sku,

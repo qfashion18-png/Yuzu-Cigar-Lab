@@ -23,6 +23,8 @@
     "db:check": "tsx scripts/check-rds-connection.ts",
     "ai-agents:ops-check": "tsx scripts/ai-agents-ops-check.ts",
     "humidor-agent:image-e2e": "tsx scripts/humidor-agent-image-e2e-check.ts",
+    "ai:cigar-benchmark": "tsx scripts/ai-cigar-real-photo-benchmark.ts",
+    "ai:cigar-corpus": "tsx scripts/build-cigar-intelligence-corpus.ts",
     "sms-signup:e2e": "tsx scripts/sms-signup-e2e-check.ts",
     "cognito-email:e2e": "tsx scripts/cognito-email-e2e-check.ts",
     "ses:e2e": "tsx scripts/ses-e2e-check.ts",
@@ -78,6 +80,6 @@
   },
   "overrides": {
     "hono": "4.12.25",
-    "postcss": "8.5.10"
+    "postcss": "8.5.23"
   }
 }

@@ -294,6 +294,51 @@ const catalogImageOverrides: Record<string, string> = {
   "2648": "/assets/inventory/acid-toast-open-box.jpg",
 };
 
+const catalogIdentityOverrides: Record<string, { name: string; brand: string }> = {
+  "11279": {
+    name: "J.C. Newman Sesenta Sampler",
+    brand: "J.C. Newman",
+  },
+};
+
+const catalogDescriptionOverrides: Record<string, string> = {
+  "572745":
+    "Liga Privada H99 Papas Fritas brings the celebrated H99 blend to a compact 4.5 x 44 format. Its Connecticut Corojo wrapper supports concentrated notes of cedar, pepper, earth, and subtle sweetness. This 10-count box is ideal for Liga Privada fans who want premium character in a shorter smoking session.",
+  "777299":
+    "The Tabernacle Broadleaf Toro extends Foundation's CT Broadleaf expression into a longer format with more time for its rich character to develop. Full-bodied notes of earth, dark cocoa, cedar, and pepper unfold through the measured 6 x 52 smoke. The 24-count box is a refined choice for fans of bold Broadleaf cigars.",
+  "777300":
+    "The Tabernacle CT-142 Robusto showcases Foundation's Havana Seed CT No. 142 wrapper in a classic 5 x 50 format. Its medium-bodied profile balances cedar, earth, cocoa, and warm spice in a shorter, concentrated smoke. The 24-count box suits smokers who want the Tabernacle character in an approachable robusto.",
+  "777301":
+    "The Tabernacle CT-142 Toro presents Foundation's Havana Seed CT No. 142 expression in a 6 x 52 format. The longer smoke develops medium-bodied notes of cedar, earth, cocoa, and warm spice with the line's polished construction. This 24-count box is made for smokers who prefer the Tabernacle profile in a classic toro.",
+};
+
+const catalogDetailOverrides: Record<string, Partial<CatalogProductEnrichment>> = {
+  "11279": {
+    origin: "Varies by selection",
+    wrapper: "Varies by selection",
+    binder: "Varies by selection",
+    filler: "Varies by selection",
+    vitola: "Assorted",
+    length: "Various lengths",
+    gauge: "60",
+    strength: "Varies by selection",
+  },
+};
+
+const catalogAssortmentOverrides: Record<string, CatalogProductAssortment> = {
+  "11279": {
+    sourceName: "Best Cigar Prices",
+    sourceUrl:
+      "https://www.bestcigarprices.com/cigar-directory/j.c-newman-cigars/j.c.-newman-6x60-sesenta-4-pack-sampler-221712/",
+    items: [
+      { name: "Brick House Mighty Mighty", variant: "Natural", size: '6¼" × 60' },
+      { name: "Brick House Mighty Mighty", variant: "Maduro", size: '6¼" × 60' },
+      { name: "Perla del Mar Double Toro", variant: "Connecticut Shade", size: '6" × 60' },
+      { name: "Perla del Mar Double Toro", variant: "Maduro", size: '6" × 60' },
+    ],
+  },
+};
+
 const brandPrefixes: Array<[prefix: string, label: string]> = [
   ["AJ FERNANDEZ", "AJ Fernandez"],
   ["ARTURO FUENTE", "Arturo Fuente"],
@@ -367,7 +412,18 @@ export type CatalogProduct = {
   binder?: string;
   expertReview?: CatalogExpertReview;
   reviewProfile?: CatalogReviewProfile;
+  assortment?: CatalogProductAssortment;
   reviewSearchUrl: string;
+};
+
+export type CatalogProductAssortment = {
+  sourceName: string;
+  sourceUrl: string;
+  items: Array<{
+    name: string;
+    variant: string;
+    size: string;
+  }>;
 };
 
 export type CatalogExpertReview = {
@@ -8369,8 +8425,10 @@ function getResearchedLineEnrichment(item: ImportedInventoryItem) {
 function toCatalogProduct(item: ImportedInventoryItem): CatalogProduct {
   const availability = getAvailability(item);
   const inferredPackage = inferPackage(item.product);
-  const description = importedProductDescriptions[item.slug] ?? "";
-  const parsedDetails = parseImportedProductDetails(item.product, description);
+  const identity = catalogIdentityOverrides[item.sku];
+  const importedDescription = importedProductDescriptions[item.slug] ?? "";
+  const description = catalogDescriptionOverrides[item.sku] ?? importedDescription;
+  const parsedDetails = parseImportedProductDetails(item.product, importedDescription);
   const category = getCatalogCategory(item);
   const lineResearchDetails = getResearchedLineEnrichment(item);
   const researchedDetails = getResearchedCatalogEnrichment(item.slug);
@@ -8390,8 +8448,8 @@ function toCatalogProduct(item: ImportedInventoryItem): CatalogProduct {
     id: `sku-${item.sku}-${item.slug}`,
     sku: item.sku,
     slug: item.slug,
-    name: item.product,
-    brand: inferBrand(item.product),
+    name: identity?.name ?? item.product,
+    brand: identity?.brand ?? inferBrand(item.product),
     category,
     price: item.price,
     marketPrice: pricing.marketPrice,
@@ -8416,8 +8474,9 @@ function toCatalogProduct(item: ImportedInventoryItem): CatalogProduct {
     stripeProductId: null,
     stripePriceId: null,
     storeHref: `/shop/${item.slug}/`,
+    assortment: catalogAssortmentOverrides[item.sku],
     reviewSearchUrl: getReviewSearchUrl(item.product),
-  }, { ...parsedDetails, ...lineResearchDetails, ...finalCoverageDetails, ...researchedDetails });
+  }, { ...parsedDetails, ...lineResearchDetails, ...finalCoverageDetails, ...researchedDetails, ...catalogDetailOverrides[item.sku] });
 }
 
 export const publishedImportedInventory = getPublishedImportedInventory(importedInventory);
@@ -8581,6 +8640,28 @@ export function getCatalogProductDescription(product: CatalogProduct) {
   const priceText = product.nonMemberPrice > 0 ? ` Current public catalog price is ${formatCatalogPrice(product.nonMemberPrice)}.` : "";
 
   return `${productName} is part of the ${product.category} collection from ${product.brand} and is available as ${packageDescription}. ${availabilityText}${priceText}`;
+}
+
+export function getCatalogProductDisplayName(productName: string) {
+  return stripPackageFromName(productName);
+}
+
+function getCatalogProductSeoBaseName(product: Pick<CatalogProduct, "name" | "packageLabel">) {
+  const displayName = getCatalogProductDisplayName(product.name);
+
+  return product.packageLabel === "Catalog item" ? displayName : `${displayName} — ${product.packageLabel}`;
+}
+
+const catalogProductSeoNameCounts = storefrontProducts.reduce((counts, product) => {
+  const name = getCatalogProductSeoBaseName(product);
+  counts.set(name, (counts.get(name) ?? 0) + 1);
+  return counts;
+}, new Map<string, number>());
+
+export function getCatalogProductSeoName(product: Pick<CatalogProduct, "name" | "packageLabel" | "sku">) {
+  const baseName = getCatalogProductSeoBaseName(product);
+
+  return (catalogProductSeoNameCounts.get(baseName) ?? 0) > 1 ? `${baseName} — SKU ${product.sku}` : baseName;
 }
 
 function stripPackageFromName(productName: string) {

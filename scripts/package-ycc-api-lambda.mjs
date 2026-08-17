@@ -13,9 +13,11 @@ const zipPath = `${stageDir}.zip`;
 
 const lambdaFiles = [
   ["infra/lambda/ycc-api/index.js", "index.js"],
+  ["infra/lambda/ycc-api/event-sync.js", "event-sync.js"],
   ["infra/lambda/ycc-api/commerce-rules.js", "commerce-rules.js"],
   ["infra/lambda/ycc-api/stripe-commerce.js", "stripe-commerce.js"],
   ["global-bundle.pem", "global-bundle.pem"],
+  ["config/cigar-news-sources.json", "cigar-news-sources.json"],
 ];
 
 const migrationFiles = [
@@ -24,6 +26,8 @@ const migrationFiles = [
   "0003_site_content_schema.sql",
   "0004_newsroom_schema.sql",
   "0005_member_stripe_customer_link.sql",
+  "0006_events_schema.sql",
+  "0007_newsroom_dedup.sql",
 ];
 
 const lambdaDependencies = [
@@ -119,9 +123,11 @@ function stageProductionDependencies() {
 function validateStage() {
   const requiredEntries = [
     "index.js",
+    "event-sync.js",
     "commerce-rules.js",
     "stripe-commerce.js",
     "global-bundle.pem",
+    "cigar-news-sources.json",
     ...migrationFiles.map((file) => `migrations/${file}`),
     "node_modules/pg/package.json",
     "node_modules/stripe/package.json",

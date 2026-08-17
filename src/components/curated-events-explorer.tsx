@@ -7,7 +7,15 @@ import { Button } from "@/components/ui/button";
 import { searchCuratedArea } from "@/lib/curated-event-search";
 import { curatedCigarMarkets } from "@/lib/data";
 
-type LocationStatus = "idle" | "locating" | "located" | "blocked" | "unsupported";
+type LocationStatus =
+  | "idle"
+  | "locating"
+  | "located"
+  | "permission-denied"
+  | "position-unavailable"
+  | "timed-out"
+  | "error"
+  | "unsupported";
 
 export function CuratedEventsExplorer() {
   const [selectedMarketId, setSelectedMarketId] = useState(curatedCigarMarkets[0]?.id ?? "");
@@ -37,7 +45,7 @@ export function CuratedEventsExplorer() {
         setAreaQuery("");
         setLocationStatus("located");
       },
-      () => setLocationStatus("blocked"),
+      (error) => setLocationStatus(getGeolocationErrorStatus(error)),
       {
         enableHighAccuracy: false,
         maximumAge: 30 * 60 * 1000,
@@ -282,8 +290,20 @@ function getLocationStatusText(status: LocationStatus, marketLabel: string) {
     return `Showing the closest Yuzu-curated market: ${marketLabel}.`;
   }
 
-  if (status === "blocked") {
-    return `Location access was not shared, so we are showing ${marketLabel}.`;
+  if (status === "permission-denied") {
+    return `Location access is blocked. Allow location for this site in your browser settings, then try again. Showing ${marketLabel}.`;
+  }
+
+  if (status === "position-unavailable") {
+    return `Your device could not determine its location. Check location services or search by city or ZIP instead. Showing ${marketLabel}.`;
+  }
+
+  if (status === "timed-out") {
+    return `Finding your location took too long. Check your signal and try again, or search by city or ZIP. Showing ${marketLabel}.`;
+  }
+
+  if (status === "error") {
+    return `We could not use your location. Try again or search by city or ZIP. Showing ${marketLabel}.`;
   }
 
   if (status === "unsupported") {
@@ -291,6 +311,19 @@ function getLocationStatusText(status: LocationStatus, marketLabel: string) {
   }
 
   return `Showing ${marketLabel}.`;
+}
+
+function getGeolocationErrorStatus(error: GeolocationPositionError): LocationStatus {
+  switch (error.code) {
+    case error.PERMISSION_DENIED:
+      return "permission-denied";
+    case error.POSITION_UNAVAILABLE:
+      return "position-unavailable";
+    case error.TIMEOUT:
+      return "timed-out";
+    default:
+      return "error";
+  }
 }
 
 function findNearestMarket(latitude: number, longitude: number) {

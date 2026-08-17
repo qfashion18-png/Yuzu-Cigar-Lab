@@ -225,6 +225,41 @@ test("AI cigar adder identifies an uploaded or captured image before saving a co
   assert.ok(source.includes("formatCigarDetailsForNotes"), "AI details should be loaded into notes before confirmation");
 });
 
+test("AI cigar adder uses labeled multi-view evidence and blocks unsafe identification saves", () => {
+  const source = readFileSync(new URL("../src/components/humidor-dashboard.tsx", import.meta.url), "utf8");
+  const toolsSection = getFunctionBlock(source, "renderTools", "renderCigars");
+  const aiSubmit = source.slice(source.indexOf("async function handleAiAdderSubmit"), source.indexOf("function handleSelectAiCandidate"));
+  const aiConfirm = source.slice(source.indexOf("async function handleConfirmAiCigar"), source.indexOf("async function handleAddItem"));
+  const candidateMerge = source.slice(
+    source.indexOf("function mergeCigarCandidateIntoSuggestion"),
+    source.indexOf("function isUnidentifiedCigarName"),
+  );
+
+  assert.ok(source.includes("const maxAiCigarImages = 4"), "multi-view capture should enforce the four-image API limit");
+  assert.ok(source.includes("maxAiCigarImageBytes = Math.floor(3.75 * 1024 * 1024)"), "each view should respect the Bedrock image limit");
+  assert.ok(source.includes("maxAiCigarImagesTotalBytes = 4 * 1024 * 1024"), "decoded views should fit the Lambda synchronous payload limit");
+  assert.ok(toolsSection.includes("multiple"), "the image picker should accept more than one evidence view");
+  assert.ok(toolsSection.includes("Photo ${index + 1} evidence type"), "each evidence view should have an accessible role selector");
+  assert.ok(aiSubmit.includes("images: aiImages.map"), "identification requests should send the labeled image collection");
+  assert.ok(aiSubmit.includes("contractVersion: 2"), "identification requests should opt into the ranked-review contract");
+  assert.ok(!aiSubmit.includes("...aiImagePayload"), "multi-view requests must not duplicate the first image in legacy fields");
+  assert.ok(source.includes("aiIdentificationRequestRef"), "evidence changes should invalidate stale in-flight results");
+  assert.ok(source.includes("getRankedCigarCandidates"), "review should consume ranked candidate matches");
+  assert.ok(toolsSection.includes("Ranked matches"), "ambiguous responses should expose candidate selection");
+  assert.ok(aiConfirm.includes('aiIdentificationStatus === "insufficient_evidence"'), "insufficient evidence must not be saved as an identified cigar");
+  assert.ok(aiConfirm.includes('aiIdentificationStatus === "ambiguous" && selectedAiCandidateIndex === null'), "ambiguous results should require an explicit candidate selection");
+  assert.ok(source.includes("isUnidentifiedCigarName(aiIdentifiedForm.name)"), "sentinel unidentified names should be rejected before persistence");
+  assert.ok(toolsSection.includes("Reference sources"), "grounded identification sources should be visible during review");
+  assert.ok(candidateMerge.includes("estimatedValue: null"), "choosing an alternate identity should clear the prior candidate value");
+  assert.ok(candidateMerge.includes('estimatedValueSource: ""'), "alternate candidates should not inherit prior value provenance");
+  assert.ok(candidateMerge.includes('strength: ""'), "alternate candidates should not inherit identity-dependent strength");
+  assert.ok(candidateMerge.includes('tastingNotes: ""'), "alternate candidates should not inherit identity-dependent tasting notes");
+  assert.ok(candidateMerge.includes('binder: ""'), "alternate candidates should not inherit identity-dependent binder details");
+  assert.ok(candidateMerge.includes('filler: ""'), "alternate candidates should not inherit identity-dependent filler details");
+  assert.ok(candidateMerge.includes('blend: ""'), "alternate candidates should not inherit identity-dependent blend details");
+  assert.ok(candidateMerge.includes('msrp: ""'), "alternate candidates should not inherit identity-dependent MSRP details");
+});
+
 test("humidor dashboard shows collection value and saves uploaded cigar photos with confirmed items", () => {
   const source = readFileSync(new URL("../src/components/humidor-dashboard.tsx", import.meta.url), "utf8");
   const toolsSection = getFunctionBlock(source, "renderTools", "renderCigars");

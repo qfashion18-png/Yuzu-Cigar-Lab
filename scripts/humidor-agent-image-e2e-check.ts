@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 type CheckStatus = "pass" | "fail" | "warn";
@@ -48,7 +48,9 @@ const defaultKnowledgeBaseId = "48GFMCLSTG";
 const defaultGuardrailId = "xczjnv3f1wzs";
 const defaultGuardrailVersion = "8";
 const defaultImagePath = "public/assets/product-padron.png";
-const imageCapableModelPattern = /^(amazon\.nova-(?:lite|pro|premier)(?:-[a-z0-9]+)?|anthropic\.claude-3|us\.anthropic\.claude-3)/i;
+const defaultExpectedBrand = "Padron";
+const defaultExpectedName = "1964 Anniversary";
+const imageCapableModelPattern = /^(?:(?:us|global|eu|apac)\.)?amazon\.nova-(?:2-)?(?:lite|pro|premier)(?:-[a-z0-9]+)?|^(?:us\.)?anthropic\.claude-3/i;
 
 const region = getArgValue("--region") || process.env.AWS_REGION || defaultRegion;
 const profile = getArgValue("--profile") || process.env.AWS_PROFILE || defaultProfile;
@@ -61,7 +63,16 @@ const humidorAgentAliasId =
 const humidorAgentVersionOverride = getArgValue("--humidor-agent-version") || process.env.YCC_HUMIDOR_IMAGE_E2E_AGENT_VERSION || "";
 const humidorActionGroupId = getArgValue("--humidor-action-group-id") || process.env.YCC_HUMIDOR_IMAGE_E2E_ACTION_GROUP_ID || defaultHumidorActionGroupId;
 const knowledgeBaseId = getArgValue("--knowledge-base-id") || process.env.BEDROCK_KNOWLEDGE_BASE_ID || defaultKnowledgeBaseId;
-const imagePath = resolve(getArgValue("--image") || process.env.YCC_HUMIDOR_IMAGE_E2E_IMAGE || defaultImagePath);
+const imageOverride = getArgValue("--image") || process.env.YCC_HUMIDOR_IMAGE_E2E_IMAGE || "";
+const imagePath = resolve(imageOverride || defaultImagePath);
+const expectedBrand =
+  getArgValue("--expected-brand") ||
+  process.env.YCC_HUMIDOR_IMAGE_E2E_EXPECTED_BRAND ||
+  (imageOverride ? "" : defaultExpectedBrand);
+const expectedName =
+  getArgValue("--expected-name") ||
+  process.env.YCC_HUMIDOR_IMAGE_E2E_EXPECTED_NAME ||
+  (imageOverride ? "" : defaultExpectedName);
 const jsonOutput = hasArg("--json");
 const live = hasArg("--live");
 const dryRun = hasArg("--dry-run") || !live;
@@ -85,6 +96,8 @@ async function main() {
       lambdaFunction,
       apiBaseUrl,
       imagePath,
+      imageMimeType: detectImageMimeType(imagePath),
+      expectedIdentity: { brand: expectedBrand, name: expectedName },
       checks,
       command: "npm run humidor-agent:image-e2e -- --live --json",
     });
@@ -108,6 +121,8 @@ async function main() {
     lambdaFunction,
     apiBaseUrl,
     imagePath,
+    imageMimeType: detectImageMimeType(imagePath),
+    expectedIdentity: { brand: expectedBrand, name: expectedName },
     failed: failed.length,
     results,
   });
@@ -139,8 +154,10 @@ function checkLocalHumidorImageWiring(): CheckResult {
     const dashboardSource = readFileSync("src/components/humidor-dashboard.tsx", "utf8");
     const actionSchema = readFileSync("infra/bedrock/ycc-agent-action-group-functions.json", "utf8");
     const imageExists = existsSync(imagePath);
+    const imageMimeType = detectImageMimeType(imagePath);
     const ok =
       imageExists &&
+      Boolean(imageMimeType) &&
       lambdaSource.includes("POST /humidor/identify-cigar") &&
       lambdaSource.includes("ConverseCommand") &&
       lambdaSource.includes("DetectTextCommand") &&
@@ -154,7 +171,7 @@ function checkLocalHumidorImageWiring(): CheckResult {
     return {
       ...checks[1],
       status: ok ? "pass" : "fail",
-      detail: `imageFixture=${imageExists ? basename(imagePath) : "missing"}; route=${lambdaSource.includes("POST /humidor/identify-cigar")}; converse=${lambdaSource.includes("ConverseCommand")}; rekognitionText=${lambdaSource.includes("DetectTextCommand")}; rekognitionLabels=${lambdaSource.includes("DetectLabelsCommand")}; clientHelper=${liveApiSource.includes("identifyCigarFromImage")}; cameraCapture=${dashboardSource.includes('capture="environment"')}; addHumidorConfirmation=${actionSchema.includes('"requireConfirmation": "ENABLED"')}`,
+      detail: `imageFixture=${imageExists ? basename(imagePath) : "missing"}; imageMimeType=${imageMimeType || "unsupported"}; route=${lambdaSource.includes("POST /humidor/identify-cigar")}; converse=${lambdaSource.includes("ConverseCommand")}; rekognitionText=${lambdaSource.includes("DetectTextCommand")}; rekognitionLabels=${lambdaSource.includes("DetectLabelsCommand")}; clientHelper=${liveApiSource.includes("identifyCigarFromImage")}; cameraCapture=${dashboardSource.includes('capture="environment"')}; addHumidorConfirmation=${actionSchema.includes('"requireConfirmation": "ENABLED"')}`,
     };
   } catch (error) {
     return fail(checks[1], error);
@@ -204,10 +221,28 @@ function checkLambdaToolIam(): CheckResult {
       "YccApiPhase2RuntimePolicy",
     ]);
     const statements = response.PolicyDocument?.Statement || [];
+    const nova2ProfileNeedle = "inference-profile/us.amazon.nova-2-lite-v1:0";
+    const nova2DestinationNeedles = [
+      "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-2-lite-v1:0",
+      "arn:aws:bedrock:us-east-2::foundation-model/amazon.nova-2-lite-v1:0",
+      "arn:aws:bedrock:us-west-2::foundation-model/amazon.nova-2-lite-v1:0",
+    ];
+    const nova2ProfileReady = hasActionOnResource(statements, "bedrock:InvokeModel", nova2ProfileNeedle);
+    const nova2DestinationsReady = nova2DestinationNeedles.every((resource) =>
+      hasActionOnResource(statements, "bedrock:InvokeModel", resource),
+    );
+    const nova2DestinationConditionReady = statements.some(
+      (statement) =>
+        actionsFor(statement).includes("bedrock:InvokeModel") &&
+        nova2DestinationNeedles.every((resource) => resourcesFor(statement).includes(resource)) &&
+        JSON.stringify(statement.Condition || {}).includes("us.amazon.nova-2-lite-v1:0"),
+    );
     const requirements = [
       hasAction(statements, "rekognition:DetectText"),
       hasAction(statements, "rekognition:DetectLabels"),
-      hasActionOnResource(statements, "bedrock:InvokeModel", "foundation-model/amazon.nova-lite-v1:0"),
+      nova2ProfileReady,
+      nova2DestinationsReady,
+      nova2DestinationConditionReady,
       hasAction(statements, "bedrock:ApplyGuardrail"),
       hasActionOnResource(statements, "bedrock:Retrieve", `knowledge-base/${knowledgeBaseId}`),
       hasAction(statements, "bedrock:InvokeAgent"),
@@ -219,7 +254,7 @@ function checkLambdaToolIam(): CheckResult {
     return {
       ...checks[3],
       status: ok ? "pass" : "fail",
-      detail: `detectText=${requirements[0]}; detectLabels=${requirements[1]}; novaLiteInvoke=${requirements[2]}; guardrail=${requirements[3]}; kbRetrieve=${requirements[4]}; invokeAgent=${requirements[5]}; s3GetYcc=${requirements[6]}; s3PutYcc=${requirements[7]}`,
+      detail: `detectText=${requirements[0]}; detectLabels=${requirements[1]}; nova2Profile=${requirements[2]}; nova2Destinations=${requirements[3]}; nova2ProfileCondition=${requirements[4]}; guardrail=${requirements[5]}; kbRetrieve=${requirements[6]}; invokeAgent=${requirements[7]}; s3GetYcc=${requirements[8]}; s3PutYcc=${requirements[9]}`,
     };
   } catch (error) {
     return fail(checks[3], error);
@@ -336,14 +371,37 @@ function invokeLiveHumidorImageIdentification(): CheckResult {
     }
 
     const imageBytes = readFileSync(imagePath);
+    const imageMimeType = detectImageMimeType(imagePath, imageBytes);
+    if (!imageMimeType) {
+      return {
+        ...checks[6],
+        status: "fail",
+        detail: `image fixture has an unsupported type: ${imagePath}`,
+      };
+    }
+
+    if (!expectedBrand && !expectedName) {
+      return {
+        ...checks[6],
+        status: "fail",
+        detail: "custom image fixtures require --expected-brand and/or --expected-name",
+      };
+    }
+
     const payload = invokeLambda({
       routeKey: "POST /humidor/identify-cigar",
       rawPath: "/humidor/identify-cigar",
       body: JSON.stringify({
-        imageBase64: imageBytes.toString("base64"),
-        mimeType: "image/png",
-        fileName: basename(imagePath),
-        notes: "Identify the visible cigar from the uploaded image. Do not save it to the humidor.",
+        contractVersion: 2,
+        images: [
+          {
+            imageBase64: imageBytes.toString("base64"),
+            mimeType: imageMimeType,
+            fileName: basename(imagePath),
+            role: "band_front",
+          },
+        ],
+        notes: "Automated non-persisting identification benchmark sample.",
       }),
       headers: {
         "content-type": "application/json",
@@ -376,7 +434,8 @@ function invokeLiveHumidorImageIdentification(): CheckResult {
     const name = getString(suggestion, "name");
     const brand = getString(suggestion, "brand");
     const confidence = getString(suggestion, "confidence");
-    const detectedPadron = /padr[oó]n/i.test(`${name} ${brand}`);
+    const expectedBrandMatched = matchesExpectedIdentity(`${brand} ${name}`, expectedBrand);
+    const expectedNameMatched = matchesExpectedIdentity(`${name} ${brand}`, expectedName);
     const rekognitionHealthy =
       ["detected_text", "no_text"].includes(getString(rekognition, "status")) &&
       ["detected_labels", "no_labels"].includes(getString(rekognition, "labelStatus"));
@@ -384,14 +443,16 @@ function invokeLiveHumidorImageIdentification(): CheckResult {
       payload.statusCode === 200 &&
       getString(ai, "status") === "bedrock_runtime" &&
       getBoolean(input, "accepted") &&
-      detectedPadron &&
+      getString(input, "imageType") === imageMimeType &&
+      expectedBrandMatched &&
+      expectedNameMatched &&
       rekognitionHealthy &&
       nextActions.includes("confirm_add_to_humidor");
 
     return {
       ...checks[6],
       status: ok ? "pass" : "fail",
-      detail: `statusCode=${payload.statusCode || "missing"}; ai=${getString(ai, "status") || "missing"}; name=${name || "missing"}; brand=${brand || "missing"}; confidence=${confidence || "missing"}; rekognitionText=${getString(rekognition, "status") || "missing"}:${formatUnknown(rekognition?.textCount)}; rekognitionLabels=${getString(rekognition, "labelStatus") || "missing"}:${formatUnknown(rekognition?.labelCount)}; imageBytes=${formatUnknown(input?.imageBytes)}; nextConfirm=${nextActions.includes("confirm_add_to_humidor")}; persisted=false`,
+      detail: `statusCode=${payload.statusCode || "missing"}; ai=${getString(ai, "status") || "missing"}; name=${name || "missing"}; brand=${brand || "missing"}; expectedBrand=${expectedBrand || "not-set"}:${expectedBrandMatched}; expectedName=${expectedName || "not-set"}:${expectedNameMatched}; confidence=${confidence || "missing"}; imageType=${getString(input, "imageType") || "missing"}; rekognitionText=${getString(rekognition, "status") || "missing"}:${formatUnknown(rekognition?.textCount)}; rekognitionLabels=${getString(rekognition, "labelStatus") || "missing"}:${formatUnknown(rekognition?.labelCount)}; imageBytes=${formatUnknown(input?.imageBytes)}; nextConfirm=${nextActions.includes("confirm_add_to_humidor")}; persisted=false`,
     };
   } catch (error) {
     return fail(checks[6], error);
@@ -472,6 +533,60 @@ function getBoolean(record: Record<string, unknown> | null | undefined, key: str
   return value === true;
 }
 
+function detectImageMimeType(imageFilePath: string, bytes?: Buffer) {
+  const imageBytes = bytes || (existsSync(imageFilePath) ? readFileSync(imageFilePath) : null);
+  if (imageBytes) {
+    if (
+      imageBytes.length >= 8 &&
+      imageBytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+    ) {
+      return "image/png";
+    }
+    if (imageBytes.length >= 3 && imageBytes[0] === 0xff && imageBytes[1] === 0xd8 && imageBytes[2] === 0xff) {
+      return "image/jpeg";
+    }
+    if (imageBytes.length >= 6 && ["GIF87a", "GIF89a"].includes(imageBytes.subarray(0, 6).toString("ascii"))) {
+      return "image/gif";
+    }
+    if (
+      imageBytes.length >= 12 &&
+      imageBytes.subarray(0, 4).toString("ascii") === "RIFF" &&
+      imageBytes.subarray(8, 12).toString("ascii") === "WEBP"
+    ) {
+      return "image/webp";
+    }
+  }
+
+  return (
+    new Map([
+      [".png", "image/png"],
+      [".jpg", "image/jpeg"],
+      [".jpeg", "image/jpeg"],
+      [".gif", "image/gif"],
+      [".webp", "image/webp"],
+    ]).get(extname(imageFilePath).toLowerCase()) || ""
+  );
+}
+
+function matchesExpectedIdentity(actual: string, expected: string) {
+  if (!expected) {
+    return true;
+  }
+
+  const normalizedActual = normalizeIdentityText(actual);
+  const normalizedExpected = normalizeIdentityText(expected);
+  return Boolean(normalizedExpected && normalizedActual.includes(normalizedExpected));
+}
+
+function normalizeIdentityText(value: string) {
+  return value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
 function formatUnknown(value: unknown) {
   if (typeof value === "number" || typeof value === "boolean" || typeof value === "string") {
     return String(value);
@@ -481,10 +596,28 @@ function formatUnknown(value: unknown) {
 }
 
 function awsJson<T>(args: string[]): T {
-  const output = execFileSync("aws", [...args, "--profile", profile, "--region", region, "--output", "json"], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  }).trim();
+  const output = execFileSync(
+    "aws",
+    [
+      "--cli-connect-timeout",
+      "10",
+      "--cli-read-timeout",
+      "75",
+      ...args,
+      "--profile",
+      profile,
+      "--region",
+      region,
+      "--output",
+      "json",
+    ],
+    {
+      encoding: "utf8",
+      maxBuffer: 4 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 90_000,
+    },
+  ).trim();
 
   return (output ? JSON.parse(output) : {}) as T;
 }

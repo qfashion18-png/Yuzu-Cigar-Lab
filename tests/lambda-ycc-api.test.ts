@@ -46,11 +46,15 @@ function createAuthenticatedEvent(
   claims: Record<string, unknown> = actorClaims
 ) {
   const [method, rawPath] = routeKey.split(" ");
+  const normalizedBody =
+    routeKey === "POST /humidor/identify-cigar" && body && !("contractVersion" in body)
+      ? { contractVersion: 2, ...body }
+      : body;
 
   return {
     routeKey,
     rawPath,
-    body: body ? JSON.stringify(body) : undefined,
+    body: normalizedBody ? JSON.stringify(normalizedBody) : undefined,
     headers: {
       "user-agent": "node-test",
     },
@@ -180,6 +184,8 @@ function installPersistenceMocks(
   options: {
     agentReply?: string;
     agentRuntimeError?: boolean;
+    bedrockContent?: Array<Record<string, unknown>>;
+    bedrockDelayMs?: number;
     bedrockReply?: string;
     rekognitionError?: boolean;
     rekognitionLabelDetections?: Array<Record<string, unknown>>;
@@ -193,6 +199,8 @@ function installPersistenceMocks(
     lexError?: boolean;
     pollyAudio?: string;
     retrieveText?: string;
+    knowledgeBaseRetrievalResults?: Array<Record<string, unknown>>;
+    conversationHistoryRows?: Array<Record<string, unknown>>;
     transcribeTranscript?: string;
     dispatchRows?: Array<Record<string, unknown>>;
     climateRows?: Array<Record<string, unknown>>;
@@ -202,6 +210,10 @@ function installPersistenceMocks(
     smokeLogRows?: Array<Record<string, unknown>>;
     adminOrderRows?: Array<Record<string, unknown>>;
     adminMemberRows?: Array<Record<string, unknown>>;
+    eventRows?: Array<Record<string, unknown>>;
+    newsIdentityRows?: Array<Record<string, unknown>>;
+    newsStoryRows?: Array<Record<string, unknown>>;
+    newsroomMigrationChecksum?: string;
     memberStripeCustomerId?: string | null;
     memberSubscriptionRows?: Array<Record<string, unknown>>;
     memberUpsertEmailConflict?: boolean;
@@ -218,6 +230,57 @@ function installPersistenceMocks(
   }> = [];
   const rekognitionInvocations: Record<string, unknown>[] = [];
   let memberUpsertAttempts = 0;
+  const defaultEventRow = {
+    id: "abababab-abab-4bab-8bab-abababababab",
+    slug: "yuzu-sunday-social",
+    source_id: null,
+    source_type: "operator_import",
+    provider: "facebook",
+    external_id: null,
+    external_occurrence_id: null,
+    provider_event_id: null,
+    provider_occurrence_id: null,
+    idempotency_key: null,
+    recurrence_rule: null,
+    recurrence_parent_external_id: null,
+    title: "Yuzu Sunday Social",
+    summary: "A Yuzu-hosted gathering.",
+    description: "Join the club for an evening gathering.",
+    host: "Yuzu Cigar Club",
+    status: "published",
+    visibility: "public",
+    verification_status: "verified",
+    starts_at: "2026-09-20T23:00:00.000Z",
+    ends_at: "2026-09-21T02:00:00.000Z",
+    start_date: null,
+    end_date: null,
+    timezone: "America/Phoenix",
+    all_day: false,
+    venue_name: "Yuzu Clubhouse",
+    address_line_1: "",
+    address_line_2: "",
+    city: "Gilbert",
+    state: "AZ",
+    postal_code: "",
+    country: "US",
+    latitude: "33.3528",
+    longitude: "-111.7890",
+    source_url: "https://www.facebook.com/events/123",
+    ticket_url: null,
+    image_url: null,
+    access_level: "public",
+    capacity: 40,
+    includes: ["Cigar education"],
+    agenda: ["Doors open"],
+    good_for: ["Members"],
+    metadata: {},
+    published_at: "2026-08-16T20:00:00.000Z",
+    canceled_at: null,
+    archived_at: null,
+    created_at: "2026-08-16T20:00:00.000Z",
+    updated_at: "2026-08-16T20:00:00.000Z",
+    external_source_id: null,
+  };
 
   class RecordingPgClient {
     queries: Array<{ sql: string; params: unknown[] }> = [];
@@ -250,20 +313,61 @@ function installPersistenceMocks(
       }
 
       if (normalized.includes("from information_schema.tables")) {
-        const requestedTables = Array.isArray(params[0]) ? params[0] : ["site_page_content"];
+        const requestedTables = Array.isArray(params[0])
+          ? params[0]
+          : normalized.includes("table_name = 'news_stories'")
+            ? ["news_stories"]
+            : ["site_page_content"];
         return {
           rows: requestedTables.map((table) => ({ table_name: table })),
           rowCount: requestedTables.length,
         };
       }
 
+      if (normalized.includes("from information_schema.columns")) {
+        const requestedColumns = Array.isArray(params[0])
+          ? params[0]
+          : normalized.includes("column_name = 'stripe_customer_id'")
+            ? ["stripe_customer_id"]
+            : [];
+        return {
+          rows: requestedColumns.map((column) => ({ column_name: column })),
+          rowCount: requestedColumns.length,
+        };
+      }
+
       if (normalized.includes("from public.schema_migrations")) {
-        const version = normalized.includes("'0003'") ? "0003" : normalized.includes("'0002'") ? "0002" : "0001";
+        const version = normalized.includes("'0007'")
+          ? "0007"
+          : normalized.includes("'0006'")
+            ? "0006"
+            : normalized.includes("'0005'")
+              ? "0005"
+              : normalized.includes("'0003'")
+                ? "0003"
+                : normalized.includes("'0002'")
+                  ? "0002"
+                  : "0001";
         return {
           rows: [
             {
               version,
-              name: version === "0003" ? "site_content_schema" : version === "0002" ? "commerce_schema" : "phase3_app_schema",
+              name:
+                version === "0007"
+                  ? "newsroom_dedup"
+                  : version === "0006"
+                  ? "events_schema"
+                  : version === "0005"
+                    ? "member_stripe_customer_link"
+                  : version === "0003"
+                    ? "site_content_schema"
+                    : version === "0002"
+                      ? "commerce_schema"
+                      : "phase3_app_schema",
+              checksum:
+                version === "0007"
+                  ? options.newsroomMigrationChecksum ?? "managed-by-ycc-newsroom-dedup-0007"
+                  : "test-checksum",
               applied_at: "2026-05-08T10:00:00.000Z",
             },
           ],
@@ -272,6 +376,14 @@ function installPersistenceMocks(
       }
 
       if (normalized.includes("from pg_indexes")) {
+        if (normalized.includes("select indexname")) {
+          const requestedIndexes = Array.isArray(params[0]) ? params[0] : [];
+          return {
+            rows: requestedIndexes.map((index) => ({ indexname: index })),
+            rowCount: requestedIndexes.length,
+          };
+        }
+
         return {
           rows: [{ index_count: 42 }],
           rowCount: 1,
@@ -747,6 +859,11 @@ function installPersistenceMocks(
         };
       }
 
+      if (normalized.includes("from public.conversation_messages cm")) {
+        const rows = options.conversationHistoryRows || [];
+        return { rows, rowCount: rows.length };
+      }
+
       if (normalized.includes("insert into public.support_cases")) {
         return {
           rows: [{ id: "33333333-3333-4333-8333-333333333333", case_number: "YCC-TESTCASE" }],
@@ -776,7 +893,79 @@ function installPersistenceMocks(
         };
       }
 
+      if (normalized.includes("public_events_feed") || normalized.includes("admin_events_list")) {
+        const rows = options.eventRows || [defaultEventRow];
+        return { rows, rowCount: rows.length };
+      }
+
+      if (normalized.includes("admin_event_by_id")) {
+        const rows = options.eventRows || [defaultEventRow];
+        return { rows: rows.slice(0, 1), rowCount: rows.length ? 1 : 0 };
+      }
+
+      if (normalized.includes("select max(last_success_at)") && normalized.includes("from public.event_sources")) {
+        return { rows: [{ last_success_at: "2026-08-16T19:55:00.000Z" }], rowCount: 1 };
+      }
+
+      if (normalized.includes("insert into public.events")) {
+        const row = options.eventRows?.[0] || {
+          ...defaultEventRow,
+          slug: params[0],
+          source_type: params[1],
+          provider: params[2],
+          external_id: params[3],
+          external_occurrence_id: params[4],
+          provider_event_id: params[5],
+          provider_occurrence_id: params[6],
+          title: params[10],
+          summary: params[11],
+          description: params[12],
+          host: params[13],
+          status: params[14],
+          visibility: params[15],
+          verification_status: params[16],
+          starts_at: params[17],
+          ends_at: params[18],
+          timezone: params[21],
+          all_day: params[22],
+          venue_name: params[23],
+          source_url: params[32],
+          access_level: params[35],
+          capacity: params[36],
+          includes: JSON.parse(String(params[37] || "[]")),
+          agenda: JSON.parse(String(params[38] || "[]")),
+          good_for: JSON.parse(String(params[39] || "[]")),
+          metadata: JSON.parse(String(params[40] || "{}")),
+        };
+        return { rows: [row], rowCount: 1 };
+      }
+
+      if (normalized.includes("update public.events") && normalized.includes("returning *")) {
+        const row = options.eventRows?.[0] || defaultEventRow;
+        const status = normalized.includes("set status = $2") ? params[1] : params[14];
+        return { rows: [{ ...row, status }], rowCount: 1 };
+      }
+
+      if (normalized.includes("news_story_identity_lock")) {
+        return { rows: [{ pg_advisory_xact_lock: null }], rowCount: 1 };
+      }
+
+      if (normalized.includes("news_story_identity_lookup")) {
+        return { rows: options.newsIdentityRows || [], rowCount: options.newsIdentityRows?.length || 0 };
+      }
+
+      if (normalized.includes("news_story_processed_leads_reserve")) {
+        const canonicalUrls = Array.isArray(params[0]) ? params[0] : [];
+        return {
+          rows: canonicalUrls.map((canonicalUrl) => ({ canonical_url: canonicalUrl })),
+          rowCount: canonicalUrls.length,
+        };
+      }
+
       if (normalized.includes("select") && normalized.includes("from public.news_stories")) {
+        if (options.newsStoryRows) {
+          return { rows: options.newsStoryRows, rowCount: options.newsStoryRows.length };
+        }
         return {
           rows: [
             {
@@ -827,9 +1016,13 @@ function installPersistenceMocks(
               body_markdown: params[4],
               source_notes: JSON.parse(String(params[5] || "[]")),
               official_sources: JSON.parse(String(params[6] || "[]")),
-              metadata: JSON.parse(String(params[9] || "{}")),
-              status: params[7],
-              published_at: "2026-05-11T19:00:00.000Z",
+              dedupe_key: params[7],
+              content_fingerprint: params[8],
+              source_fingerprint: params[9],
+              metadata: JSON.parse(String(params[12] || "{}")),
+              status: params[10],
+              revision: 1,
+              published_at: params[10] === "published" ? "2026-05-11T19:00:00.000Z" : null,
               updated_at: "2026-05-11T19:00:00.000Z",
             },
           ],
@@ -1112,7 +1305,7 @@ function installPersistenceMocks(
       if (command instanceof RetrieveCommand) {
         knowledgeBaseRetrievals.push(command.input);
         return {
-          retrievalResults: [
+          retrievalResults: options.knowledgeBaseRetrievalResults ?? [
             {
               content: {
                 text: options.retrieveText || "Published YCC catalog context says Connecticut shade wrappers pair well with morning coffee.",
@@ -1153,10 +1346,15 @@ function installPersistenceMocks(
   class BedrockRuntimeClient {
     async send(command: ConverseCommand) {
       bedrockInvocations.push(command.input);
+      if (options.bedrockDelayMs) {
+        await new Promise((resolve) => setTimeout(resolve, options.bedrockDelayMs));
+      }
       return {
         output: {
           message: {
-            content: [{ text: options.bedrockReply || "Bedrock says the wrapper pairing should stay balanced and age-gated." }],
+            content:
+              options.bedrockContent ??
+              [{ text: options.bedrockReply ?? "Bedrock says the wrapper pairing should stay balanced and age-gated." }],
           },
         },
         usage: {
@@ -1638,6 +1836,8 @@ function installPersistenceMocks(
     CONCIERGE_VOICE_PREFIX: process.env.CONCIERGE_VOICE_PREFIX,
     CONCIERGE_VOICE_TRANSCRIBE_MAX_WAIT_MS: process.env.CONCIERGE_VOICE_TRANSCRIBE_MAX_WAIT_MS,
     BEDROCK_MODEL_ID: process.env.BEDROCK_MODEL_ID,
+    CIGAR_IDENTIFICATION_TIMEOUT_MS: process.env.CIGAR_IDENTIFICATION_TIMEOUT_MS,
+    BEDROCK_CIGAR_GUIDE_WEB_GROUNDING: process.env.BEDROCK_CIGAR_GUIDE_WEB_GROUNDING,
     BEDROCK_ENABLE_GUARDRAILS: process.env.BEDROCK_ENABLE_GUARDRAILS,
     BEDROCK_GUARDRAIL_ID: process.env.BEDROCK_GUARDRAIL_ID,
     BEDROCK_GUARDRAIL_VERSION: process.env.BEDROCK_GUARDRAIL_VERSION,
@@ -1705,6 +1905,8 @@ function installPersistenceMocks(
   process.env.CONCIERGE_VOICE_PREFIX = "ycc/concierge-voice/";
   process.env.CONCIERGE_VOICE_TRANSCRIBE_MAX_WAIT_MS = "2000";
   process.env.BEDROCK_MODEL_ID = "amazon.nova-lite-v1:0";
+  delete process.env.CIGAR_IDENTIFICATION_TIMEOUT_MS;
+  delete process.env.BEDROCK_CIGAR_GUIDE_WEB_GROUNDING;
   process.env.BEDROCK_ENABLE_GUARDRAILS = "1";
   process.env.BEDROCK_GUARDRAIL_ID = "guardrail-test";
   process.env.BEDROCK_GUARDRAIL_VERSION = "1";
@@ -1909,6 +2111,14 @@ const adminClaims = {
   name: "Yuzu Admin",
   "cognito:groups": "admin,concierge_operator",
 };
+
+const realCigarPngBytes = readFileSync(path.join(process.cwd(), "public", "assets", "product-padron.png"));
+const realCigarPngBase64 = realCigarPngBytes.toString("base64");
+
+function buildSizedRealPng(byteLength: number) {
+  assert.ok(byteLength >= realCigarPngBytes.length, "requested fixture size must fit the real PNG bytes");
+  return Buffer.concat([realCigarPngBytes, Buffer.alloc(byteLength - realCigarPngBytes.length)]);
+}
 
 test("health route returns service contract", async () => {
   const response = await handler({
@@ -2268,6 +2478,7 @@ test("commerce age verification route maps AgeChecker status misses to a control
 });
 
 test("commerce checkout loads approved catalog from server configuration before creating Stripe sessions", async () => {
+  const persistenceMock = installPersistenceMocks();
   const mock = installStripeMock();
   try {
     process.env.STRIPE_SECRET_KEY = "sk_test_123";
@@ -2340,10 +2551,12 @@ test("commerce checkout loads approved catalog from server configuration before 
     );
   } finally {
     mock.restore();
+    persistenceMock.restore();
   }
 });
 
 test("commerce checkout allows AgeChecker-verified non-required states to use USPS Ground Advantage", async () => {
+  const persistenceMock = installPersistenceMocks();
   const mock = installStripeMock();
   try {
     process.env.STRIPE_SECRET_KEY = "sk_test_123";
@@ -2362,7 +2575,7 @@ test("commerce checkout allows AgeChecker-verified non-required states to use US
         inventoryPolicy: "track",
         sourceQuantity: 5,
         shippable: true,
-        adultSignatureRequired: true,
+        adultSignatureRequired: false,
         stripePriceId: "price_approved",
       },
     ]);
@@ -2403,10 +2616,12 @@ test("commerce checkout allows AgeChecker-verified non-required states to use US
     assert.equal((mock.checkoutSessionsCreated[0].metadata as Record<string, string>).adult_signature_required, "false");
   } finally {
     mock.restore();
+    persistenceMock.restore();
   }
 });
 
 test("commerce checkout maps disabled Stripe live charges to account-not-ready response", async () => {
+  const persistenceMock = installPersistenceMocks();
   const mock = installStripeMock({
     createSessionError: Object.assign(new Error("Your account cannot currently make live charges."), {
       code: "account_invalid",
@@ -2447,7 +2662,7 @@ test("commerce checkout maps disabled Stripe live charges to account-not-ready r
           state: "AZ",
           postalCode: "85225",
         },
-        shippingMethodId: "usps-ground-advantage",
+        shippingMethodId: "usps-adult-signature-ground",
         compliance: { ageVerificationToken: createSignedAgeVerificationToken("age-secret") },
       }),
       requestContext: { requestId: "req-commerce-checkout-account-not-ready", http: { method: "POST" } },
@@ -2460,6 +2675,7 @@ test("commerce checkout maps disabled Stripe live charges to account-not-ready r
     assert.equal(mock.checkoutSessionsCreated.length, 1);
   } finally {
     mock.restore();
+    persistenceMock.restore();
   }
 });
 
@@ -2727,6 +2943,7 @@ test("commerce checkout rejects cart lines without client price snapshots", asyn
 });
 
 test("commerce checkout blocks member-only SKUs unless a signed membership entitlement is supplied", async () => {
+  const persistenceMock = installPersistenceMocks();
   const mock = installStripeMock();
   const requestBody = {
     items: [{ sku: "MEMBER-BOX", quantity: 1, unitPrice: 140 }],
@@ -2803,6 +3020,7 @@ test("commerce checkout blocks member-only SKUs unless a signed membership entit
     assert.equal((mock.checkoutSessionsCreated[0].metadata as Record<string, string>).shipping_handling_fee_cents, "0");
   } finally {
     mock.restore();
+    persistenceMock.restore();
   }
 });
 
@@ -3359,6 +3577,155 @@ test("Stripe webhook route rejects unsigned events before Cognito auth", async (
 
   assert.equal(response.statusCode, 400);
   assert.equal(JSON.parse(response.body).error, "missing_stripe_signature");
+});
+
+test("commerce checkout fails closed before Stripe when durable order persistence is disabled", async () => {
+  const stripeMock = installStripeMock();
+  const previousFeatureDbWrites = process.env.FEATURE_DB_WRITES;
+  try {
+    process.env.FEATURE_DB_WRITES = "pending_schema";
+    process.env.STRIPE_SECRET_KEY = "sk_test_123";
+    process.env.STRIPE_LAUNCH_CATALOG_READY = "true";
+    process.env.FEATURE_STRIPE_TAX = "ready";
+    process.env.PUBLIC_SITE_URL = "https://www.yuzucigarclub.com";
+    process.env.AGE_VERIFICATION_SIGNING_SECRET = "age-secret";
+    process.env.STRIPE_LAUNCH_CATALOG_JSON = JSON.stringify([
+      {
+        sku: "APPROVED-BOX",
+        slug: "approved-box",
+        name: "Approved Box",
+        price: 120,
+        publishStatus: "published",
+        inventoryPolicy: "track",
+        sourceQuantity: 5,
+        shippable: true,
+        adultSignatureRequired: true,
+        stripePriceId: "price_approved",
+      },
+    ]);
+
+    const response = await handler({
+      routeKey: "POST /commerce/checkout-session",
+      rawPath: "/commerce/checkout-session",
+      body: JSON.stringify({
+        cartId: "cart_fail_closed",
+        items: [{ sku: "APPROVED-BOX", quantity: 1, unitPrice: 120 }],
+        customer: { email: "member@example.com" },
+        shippingAddress: defaultCheckoutAgeIdentity.shippingAddress,
+        shippingMethodId: "usps-adult-signature-ground",
+        compliance: { ageVerificationToken: createSignedAgeVerificationToken("age-secret") },
+      }),
+      requestContext: { requestId: "req-commerce-checkout-fail-closed", http: { method: "POST" } },
+    });
+
+    assert.equal(response.statusCode, 503);
+    assert.equal(JSON.parse(response.body).error, "commerce_persistence_unavailable");
+    assert.equal(stripeMock.checkoutSessionsCreated.length, 0);
+  } finally {
+    if (previousFeatureDbWrites === undefined) delete process.env.FEATURE_DB_WRITES;
+    else process.env.FEATURE_DB_WRITES = previousFeatureDbWrites;
+    stripeMock.restore();
+  }
+});
+
+test("valid Stripe webhooks return retryable 503 when durable persistence is disabled", async () => {
+  const stripeMock = installStripeMock();
+  const previousFeatureDbWrites = process.env.FEATURE_DB_WRITES;
+  try {
+    process.env.FEATURE_DB_WRITES = "pending_schema";
+    process.env.STRIPE_SECRET_KEY = "sk_test_123";
+    process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_123";
+
+    const response = await handler({
+      routeKey: "POST /commerce/webhook/stripe",
+      rawPath: "/commerce/webhook/stripe",
+      body: JSON.stringify({ id: "evt_retryable_123" }),
+      headers: { "stripe-signature": "t=123,v1=sig" },
+      requestContext: { requestId: "req-commerce-webhook-retryable", http: { method: "POST" } },
+    });
+
+    assert.equal(response.statusCode, 503);
+    assert.equal(JSON.parse(response.body).error, "commerce_persistence_unavailable");
+  } finally {
+    if (previousFeatureDbWrites === undefined) delete process.env.FEATURE_DB_WRITES;
+    else process.env.FEATURE_DB_WRITES = previousFeatureDbWrites;
+    stripeMock.restore();
+  }
+});
+
+test("Stripe webhook uses collected shipping and places changed restricted destinations on compliance hold", async () => {
+  const persistenceMock = installPersistenceMocks();
+  const stripeMock = installStripeMock({
+    webhookEvent: {
+      id: "evt_checkout_changed_shipping",
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          id: "cs_changed_shipping",
+          customer: "cus_changed_shipping",
+          customer_details: { email: "member@example.com", phone: "+14805550123" },
+          collected_information: {
+            shipping_details: {
+              name: "Yuzu Member",
+              address: {
+                line1: "99 Changed Way",
+                city: "Salt Lake City",
+                state: "UT",
+                postal_code: "84101",
+                country: "US",
+              },
+            },
+          },
+          payment_intent: "pi_changed_shipping",
+          payment_status: "paid",
+          status: "complete",
+          currency: "usd",
+          amount_subtotal: 12000,
+          amount_total: 13992,
+          total_details: { amount_tax: 992, amount_shipping: 1000 },
+          metadata: {
+            order_kind: "product",
+            age_verification_id: "age_txn_12345678",
+            shipping_method_id: "usps-ground-advantage",
+            shipping_address1: "123 Yuzu Way",
+            shipping_city: "Chandler",
+            shipping_state: "AZ",
+            shipping_postal_code: "85225",
+            shipping_country: "US",
+            adult_signature_required: "false",
+          },
+        },
+      },
+    },
+  });
+  try {
+    process.env.STRIPE_SECRET_KEY = "sk_test_123";
+    process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_123";
+    process.env.FEATURE_DB_WRITES = "schema_ready";
+
+    const response = await handler({
+      routeKey: "POST /commerce/webhook/stripe",
+      rawPath: "/commerce/webhook/stripe",
+      body: JSON.stringify({ id: "evt_checkout_changed_shipping" }),
+      headers: { "stripe-signature": "t=123,v1=sig" },
+      requestContext: { requestId: "req-commerce-webhook-changed-shipping", http: { method: "POST" } },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const queries = persistenceMock.clients.flatMap((client) => client.queries);
+    const orderUpsert = queries.find((query) => query.sql.includes("insert into public.commerce_orders"));
+    assert.ok(orderUpsert);
+    assert.ok(orderUpsert.params.includes("hold"));
+    assert.ok(orderUpsert.params.includes("blocked"));
+    const holdReasons = queries
+      .filter((query) => query.sql.includes("insert into public.commerce_compliance_holds"))
+      .map((query) => query.params[1]);
+    assert.ok(holdReasons.includes("restricted_destination"));
+    assert.ok(holdReasons.includes("verified_shipping_identity_changed"));
+  } finally {
+    stripeMock.restore();
+    persistenceMock.restore();
+  }
 });
 
 test("Stripe webhook persists signed checkout events into commerce order records", async () => {
@@ -4946,6 +5313,229 @@ test("concierge chat routes cigar questions to cigar guide contract", async () =
   assert.equal(body.guardrails.tobaccoHealthClaims, "not_provided");
 });
 
+test("concierge chat routes a named cigar question without the word cigar to YCCCigarGuide", async () => {
+  const mock = installPersistenceMocks({
+    bedrockReply: "Padrón 1964 Anniversary is a Nicaraguan anniversary line with several vitolas and wrapper variants.",
+  });
+
+  try {
+    const response = await handler(
+      createAuthenticatedEvent("POST /concierge/chat", {
+        message: "Tell me about Padrón 1964",
+        conversationId: "conv-named-padron",
+      })
+    );
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.agent, "YCCCigarGuide");
+    assert.equal(body.ai.status, "bedrock_runtime");
+    assert.match(body.reply, /Padrón 1964/);
+    assert.equal(mock.bedrockInvocations.length, 1);
+    assert.match(JSON.stringify(mock.bedrockInvocations[0].system), /YCCCigarGuide/);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("concierge chat routes an unfamiliar title-cased cigar name to YCCCigarGuide", async () => {
+  const mock = installPersistenceMocks({
+    bedrockReply: "Aganorsa Leaf Supreme Leaf is an Aganorsa cigar line offered in limited editions.",
+  });
+
+  try {
+    const response = await handler(
+      createAuthenticatedEvent("POST /concierge/chat", {
+        message: "Tell me about Aganorsa Leaf Supreme Leaf",
+        conversationId: "conv-named-aganorsa",
+      })
+    );
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.agent, "YCCCigarGuide");
+    assert.equal(body.ai.status, "bedrock_runtime");
+    assert.equal(mock.bedrockInvocations.length, 1);
+    assert.match(JSON.stringify(mock.bedrockInvocations[0].system), /YCCCigarGuide/);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("concierge title routing keeps membership benefits out of YCCCigarGuide", async () => {
+  const mock = installPersistenceMocks({
+    bedrockReply: "Your Kisha membership benefits include member access and concierge support.",
+  });
+
+  try {
+    const response = await handler(
+      createAuthenticatedEvent("POST /concierge/chat", {
+        message: "Tell me about my Kisha membership benefits",
+        conversationId: "conv-kisha-membership-benefits",
+      })
+    );
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.agent, "YCCConcierge");
+    assert.notEqual(body.agent, "YCCCigarGuide");
+    assert.equal(mock.bedrockInvocations.length, 1);
+    assert.match(JSON.stringify(mock.bedrockInvocations[0].system), /YCCConcierge/);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("concierge chat exposes normalized knowledge-base source provenance", async () => {
+  const mock = installPersistenceMocks({
+    bedrockReply: "The official reference describes the Padrón 1964 Anniversary Series for adult cigar education.",
+    knowledgeBaseRetrievalResults: [
+      {
+        content: {
+          text: "Padrón 1964 Anniversary Series official product reference.",
+        },
+        location: {
+          s3Location: {
+            uri: "s3://classroom2/ycc/knowledge-base/padron-1964.md",
+          },
+        },
+        metadata: {
+          title: "Padrón 1964 Anniversary Series — official reference",
+          officialUrl: "https://padron.com/1964-anniversary-series/",
+        },
+        score: 0.98765,
+      },
+    ],
+  });
+
+  try {
+    const response = await handler(
+      createAuthenticatedEvent("POST /concierge/chat", {
+        message: "What is the Padrón 1964 Anniversary Series?",
+        conversationId: "conv-padron-provenance",
+      })
+    );
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.agent, "YCCCigarGuide");
+    assert.equal(body.ai.knowledgeBaseId, "KBTEST1");
+    assert.equal(body.ai.knowledgeBaseStatus, "retrieved");
+    assert.equal(body.ai.retrievedContextCount, 1);
+    assert.equal(body.ai.grounded, true);
+    assert.deepEqual(body.ai.sources, [
+      {
+        title: "Padrón 1964 Anniversary Series — official reference",
+        url: "https://padron.com/1964-anniversary-series/",
+        score: 0.9877,
+      },
+    ]);
+    assert.deepEqual(body.citations, body.ai.sources);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("concierge Nova grounding merges cited web provenance without changing the AI summary contract", async () => {
+  const groundingUrl = "https://example.com/cigar-release";
+  const mock = installPersistenceMocks({
+    bedrockContent: [
+      {
+        citationsContent: {
+          content: [{ text: "The latest Padrón release is described in the cited web source." }],
+          citations: [
+            {
+              location: {
+                web: {
+                  url: groundingUrl,
+                  domain: "example.com",
+                },
+              },
+            },
+          ],
+        },
+      },
+    ],
+    knowledgeBaseRetrievalResults: [],
+  });
+
+  try {
+    process.env.BEDROCK_MODEL_ID = "us.amazon.nova-2-lite-v1:0";
+    process.env.BEDROCK_CIGAR_GUIDE_WEB_GROUNDING = "ready";
+
+    const response = await handler(
+      createAuthenticatedEvent("POST /concierge/chat", {
+        message: "What is the latest Padrón cigar release?",
+        conversationId: "conv-nova-grounding",
+      })
+    );
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.agent, "YCCCigarGuide");
+    assert.match(body.reply, /latest Padrón release/i);
+    assert.deepEqual(Object.keys(body.ai).sort(), [
+      "grounded",
+      "knowledgeBaseId",
+      "knowledgeBaseStatus",
+      "modelId",
+      "retrievedContextCount",
+      "sources",
+      "status",
+      "stopReason",
+    ]);
+    assert.deepEqual(body.ai.sources, [{ title: "example.com", url: groundingUrl, score: null }]);
+    assert.deepEqual(body.citations, body.ai.sources);
+    assert.equal(body.ai.grounded, true);
+    assert.equal(body.ai.retrievedContextCount, 1);
+
+    assert.equal(mock.bedrockInvocations.length, 1);
+    const toolConfig = mock.bedrockInvocations[0].toolConfig as {
+      tools: Array<{ systemTool: { name: string } }>;
+    };
+    assert.equal(toolConfig.tools[0].systemTool.name, "nova_grounding");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("concierge direct runtime carries authorized conversation history into the next turn", async () => {
+  const mock = installPersistenceMocks({
+    bedrockReply: "The Maduro option is usually the darker, richer follow-up to the Natural wrapper comparison.",
+    conversationHistoryRows: [
+      { role: "user", content: "Compare the Natural and Maduro versions of Padrón 1964." },
+      { role: "assistant", content: "The Natural and Maduro wrappers lead to different flavor emphasis." },
+    ],
+  });
+
+  try {
+    const response = await handler(
+      createAuthenticatedEvent("POST /concierge/chat", {
+        message: "Which one is richer?",
+        agent: "cigar_guide",
+        conversationId: "22222222-2222-4222-8222-222222222222",
+      })
+    );
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(mock.bedrockInvocations.length, 1);
+    const messages = mock.bedrockInvocations[0].messages as Array<{
+      role: string;
+      content: Array<{ text: string }>;
+    }>;
+    assert.deepEqual(
+      messages.map((message) => [message.role, message.content[0].text]),
+      [
+        ["user", "Compare the Natural and Maduro versions of Padrón 1964."],
+        ["assistant", "The Natural and Maduro wrappers lead to different flavor emphasis."],
+        ["user", "Which one is richer?"],
+      ]
+    );
+  } finally {
+    mock.restore();
+  }
+});
+
 test("concierge chat uses Amazon Lex as the router before invoking the selected YCC agent", async () => {
   const mock = installPersistenceMocks({
     lexIntentName: "YCCCigarGuideIntent",
@@ -5009,7 +5599,7 @@ test("concierge chat ignores Lex fallback intent and still answers cigar questio
     assert.equal(response.statusCode, 200);
     const body = JSON.parse(response.body);
     assert.equal(body.agent, "YCCCigarGuide");
-    assert.deepEqual(body.ai, { status: "bedrock_runtime" });
+    assert.equal(body.ai.status, "bedrock_runtime");
     assert.equal(body.lex.intentName, "FallbackIntent");
     assert.match(body.reply, /Connecticut shade/);
     assert.equal(mock.lexInvocations.length, 1);
@@ -5034,7 +5624,7 @@ test("concierge chat routes cigar follow-up terms to the cigar guide without say
     assert.equal(response.statusCode, 200);
     const body = JSON.parse(response.body);
     assert.equal(body.agent, "YCCCigarGuide");
-    assert.deepEqual(body.ai, { status: "bedrock_runtime" });
+    assert.equal(body.ai.status, "bedrock_runtime");
     assert.match(body.reply, /Maduro/);
     assert.equal(mock.bedrockInvocations.length, 1);
   } finally {
@@ -5057,7 +5647,7 @@ test("concierge chat recovers tobacco comparison refusals for adult cigar questi
     assert.equal(response.statusCode, 200);
     const body = JSON.parse(response.body);
     assert.equal(body.agent, "YCCCigarGuide");
-    assert.deepEqual(body.ai, { status: "bedrock_runtime" });
+    assert.equal(body.ai.status, "bedrock_runtime");
     assert.match(body.reply, /Maduro|Connecticut|espresso/i);
     assert.doesNotMatch(body.reply, /facilitate comparing tobacco products/i);
     assert.equal(mock.bedrockInvocations.length, 1);
@@ -5081,7 +5671,7 @@ test("concierge chat keeps adult wrapper comparison answers on the requested wra
     assert.equal(response.statusCode, 200);
     const body = JSON.parse(response.body);
     assert.equal(body.agent, "YCCCigarGuide");
-    assert.deepEqual(body.ai, { status: "bedrock_runtime" });
+    assert.equal(body.ai.status, "bedrock_runtime");
     assert.match(body.reply, /Maduro/i);
     assert.match(body.reply, /Connecticut/i);
     assert.doesNotMatch(body.reply, /Padron 1964|Davidoff Signature/i);
@@ -5106,7 +5696,7 @@ test("concierge chat recovers redacted adult wrapper terms from direct runtime",
     assert.equal(response.statusCode, 200);
     const body = JSON.parse(response.body);
     assert.equal(body.agent, "YCCCigarGuide");
-    assert.deepEqual(body.ai, { status: "bedrock_runtime" });
+    assert.equal(body.ai.status, "bedrock_runtime");
     assert.match(body.reply, /Connecticut/i);
     assert.match(body.reply, /Maduro/i);
     assert.doesNotMatch(body.reply, /\{ADDRESS\}/i);
@@ -5130,7 +5720,7 @@ test("concierge chat recovers content-filter copy for adult cut and light questi
     assert.equal(response.statusCode, 200);
     const body = JSON.parse(response.body);
     assert.equal(body.agent, "YCCCigarGuide");
-    assert.deepEqual(body.ai, { status: "bedrock_runtime" });
+    assert.equal(body.ai.status, "bedrock_runtime");
     assert.match(body.reply, /clean shallow cut/i);
     assert.match(body.reply, /toast the foot/i);
     assert.doesNotMatch(body.reply, /content filters/i);
@@ -5212,7 +5802,7 @@ test("concierge chat ignores incorrect Lex humidor slot prompts for cigar health
     assert.equal(response.statusCode, 200);
     const body = JSON.parse(response.body);
     assert.equal(body.agent, "YCCCigarGuide");
-    assert.deepEqual(body.ai, { status: "bedrock_runtime" });
+    assert.equal(body.ai.status, "bedrock_runtime");
     assert.equal(body.lex.intentName, "YCCHumidorIntent");
     assert.match(body.reply, /cannot describe cigar use as safe/i);
     assert.doesNotMatch(body.reply, /What humidor concern should I use/i);
@@ -5252,7 +5842,7 @@ test("concierge chat answers cigar humidity questions instead of returning Lex h
     assert.equal(response.statusCode, 200);
     const body = JSON.parse(response.body);
     assert.equal(body.agent, "YCCHumidorAgent");
-    assert.deepEqual(body.ai, { status: "bedrock_runtime" });
+    assert.equal(body.ai.status, "bedrock_runtime");
     assert.equal(body.lex.intentName, "YCCHumidorIntent");
     assert.match(body.reply, /65 to 72 percent/i);
     assert.doesNotMatch(body.reply, /What humidor detail should I focus on/i);
@@ -5279,7 +5869,7 @@ test("concierge chat replaces tobacco health guardrail copy with a direct adult 
     assert.equal(response.statusCode, 200);
     const body = JSON.parse(response.body);
     assert.equal(body.agent, "YCCCigarGuide");
-    assert.deepEqual(body.ai, { status: "bedrock_runtime" });
+    assert.equal(body.ai.status, "bedrock_runtime");
     assert.match(body.reply, /cannot describe cigar use as safe/i);
     assert.doesNotMatch(body.reply, /can't give you information/i);
     assert.equal(mock.bedrockInvocations.length, 1);
@@ -5304,7 +5894,7 @@ test("concierge chat does not surface generic direct-runtime refusal for adult c
     assert.equal(response.statusCode, 200);
     const body = JSON.parse(response.body);
     assert.equal(body.agent, "YCCCigarGuide");
-    assert.deepEqual(body.ai, { status: "bedrock_runtime" });
+    assert.equal(body.ai.status, "bedrock_runtime");
     assert.match(body.reply, /clean shallow cut/i);
     assert.doesNotMatch(body.reply, /cannot help with that request/i);
     assert.equal(mock.bedrockInvocations.length, 1);
@@ -5329,7 +5919,7 @@ test("concierge chat still blocks under-21 tobacco access when recovering cigar 
     assert.equal(response.statusCode, 200);
     const body = JSON.parse(response.body);
     assert.equal(body.agent, "YCCCigarGuide");
-    assert.deepEqual(body.ai, { status: "bedrock_runtime" });
+    assert.equal(body.ai.status, "bedrock_runtime");
     assert.match(body.reply, /adults 21\+/i);
     assert.match(body.reply, /cannot help anyone under 21/i);
     assert.doesNotMatch(body.reply, /clean shallow cut/i);
@@ -5359,7 +5949,7 @@ test("concierge chat retries direct Bedrock Runtime when an agent alias returns 
     assert.equal(response.statusCode, 200);
     const body = JSON.parse(response.body);
     assert.equal(body.agent, "YCCConcierge");
-    assert.deepEqual(body.ai, { status: "bedrock_runtime" });
+    assert.equal(body.ai.status, "bedrock_runtime");
     assert.match(body.reply, /Sensei membership/);
     assert.doesNotMatch(body.reply, /cannot help with that request/i);
     assert.equal(mock.agentInvocations.length, 1);
@@ -5483,14 +6073,14 @@ test("concierge chat uses direct Bedrock Runtime for the selected cigar guide pe
     assert.equal(response.statusCode, 200);
     const body = JSON.parse(response.body);
     assert.equal(body.agent, "YCCCigarGuide");
-    assert.deepEqual(body.ai, { status: "bedrock_runtime" });
+    assert.equal(body.ai.status, "bedrock_runtime");
     assert.match(body.reply, /Connecticut shade/);
     assert.equal(mock.agentInvocations.length, 0);
     assert.equal(mock.bedrockInvocations.length, 1);
     assert.deepEqual(mock.bedrockInvocations[0].guardrailConfig, {
       guardrailIdentifier: "guardrail-test",
       guardrailVersion: "1",
-      trace: "enabled",
+      trace: "disabled",
     });
   } finally {
     mock.restore();
@@ -5514,7 +6104,7 @@ test("concierge chat keeps direct cigar guide answers available with Bedrock gua
     assert.equal(response.statusCode, 200);
     const body = JSON.parse(response.body);
     assert.equal(body.agent, "YCCCigarGuide");
-    assert.deepEqual(body.ai, { status: "bedrock_runtime" });
+    assert.equal(body.ai.status, "bedrock_runtime");
     assert.match(body.reply, /New arrivals/);
     assert.doesNotMatch(body.reply, /cannot help with that request/i);
     assert.equal(mock.agentInvocations.length, 0);
@@ -5523,7 +6113,7 @@ test("concierge chat keeps direct cigar guide answers available with Bedrock gua
     assert.deepEqual(mock.bedrockInvocations[0].guardrailConfig, {
       guardrailIdentifier: "guardrail-test",
       guardrailVersion: "1",
-      trace: "enabled",
+      trace: "disabled",
     });
   } finally {
     mock.restore();
@@ -5763,7 +6353,16 @@ test("concierge chat falls back to direct Bedrock Runtime when specialist agent 
     assert.equal(response.statusCode, 200);
     const body = JSON.parse(response.body);
     assert.equal(body.ai.status, "bedrock_runtime");
-    assert.deepEqual(Object.keys(body.ai), ["status"]);
+    assert.deepEqual(Object.keys(body.ai), [
+      "status",
+      "modelId",
+      "stopReason",
+      "knowledgeBaseId",
+      "knowledgeBaseStatus",
+      "retrievedContextCount",
+      "sources",
+      "grounded",
+    ]);
     assert.match(body.reply, /Direct Bedrock fallback/);
     assert.equal(mock.agentInvocations.length, 1);
     assert.equal(mock.agentInvocations[0].agentId, "AGENTSUPPORT1");
@@ -6016,7 +6615,7 @@ test("weekly cigar news agent uses the published Bedrock agent alias", async () 
     assert.equal(response.statusCode, 200);
     const body = JSON.parse(response.body);
     assert.equal(body.agent, "YCCNewsAgent");
-    assert.deepEqual(body.ai, { status: "bedrock_agent_runtime" });
+    assert.equal(body.ai.status, "bedrock_agent_runtime");
     assert.match(body.reply, /weekly cigars news article/);
     assert.equal(mock.agentInvocations.length, 1);
     assert.equal(mock.agentInvocations[0].agentId, "AGENTNEWS1");
@@ -6434,7 +7033,7 @@ test("news story draft route falls back to direct Bedrock JSON when the agent re
     assert.equal(body.draft.title, "Rocky Patel Updates Its Release Calendar");
     assert.equal(body.draft.sections[0].heading, "Release timing");
     assert.equal(body.ai.status, "bedrock_runtime_news_draft");
-    assert.equal(mock.agentInvocations.length, 2);
+    assert.equal(mock.agentInvocations.length, 1);
     assert.equal(mock.bedrockInvocations.length, 1);
   } finally {
     mock.restore();
@@ -6465,7 +7064,7 @@ test("news story draft route refuses to return scaffold copy when generation is 
     const body = JSON.parse(response.body);
     assert.equal(body.error, "news_story_generation_failed");
     assert.equal(body.ai.status, "bedrock_runtime_news_draft");
-    assert.equal(mock.agentInvocations.length, 2);
+    assert.equal(mock.agentInvocations.length, 1);
     assert.equal(mock.bedrockInvocations.length, 1);
   } finally {
     mock.restore();
@@ -6513,10 +7112,204 @@ test("news story publish route stores approved story and audit row", async () =>
     const queries = mock.clients.flatMap((client) => client.queries.map((query) => query.sql));
     assert.ok(queries.some((sql) => sql.includes("insert into public.news_stories")), "news story should be inserted");
     assert.ok(
-      queries.some((sql) => sql.replace(/\s+/g, " ").includes("published_at = case when excluded.status = 'published' then now() else null end")),
-      "republishing a repeated news slug should refresh published_at so Cigar Flow date matching stays fresh",
+      queries.some((sql) =>
+        sql
+          .replace(/\s+/g, " ")
+          .includes("when excluded.status = 'published' then coalesce(public.news_stories.published_at, now())")
+      ),
+      "republishing a repeated news slug should preserve its original published_at timestamp",
     );
     assert.ok(queries.some((sql) => sql.includes("insert into public.audit_log")), "audit row should be inserted");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("news story publish route requires a specific official source page", async () => {
+  const mock = installPersistenceMocks();
+
+  try {
+    for (const sourceUrl of ["https://www.rockypatel.com/cigar-news/", "https://example.org/releases/unverified-cigar-update"]) {
+      const response = await handler(
+        createAuthenticatedEvent(
+          "POST /news/stories",
+          {
+            title: "Cigar Release Source Verification",
+            dek: "A source-verification regression fixture for the Cigar Flow publisher.",
+            category: "Industry News",
+            publishStatus: "published",
+            sections: [
+              {
+                heading: "Release details",
+                body: "The submitted source needs to identify the exact official release before this story can go live.",
+              },
+            ],
+            sourceNotes: [
+              {
+                label: "Submitted source",
+                url: sourceUrl,
+                note: "Operator-submitted source evidence.",
+              },
+            ],
+            operatorApproved: true,
+          },
+          adminClaims
+        )
+      );
+
+      assert.equal(response.statusCode, 400, sourceUrl);
+      assert.equal(JSON.parse(response.body).error, "verified_source_evidence_required", sourceUrl);
+    }
+
+    const inserts = mock.clients
+      .flatMap((client) => client.queries)
+      .filter((query) => query.sql.includes("insert into public.news_stories"));
+    assert.equal(inserts.length, 0, "unverified source evidence must fail before persistence");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("daily Cigar Flow publishes use one deterministic slug and dedupe key per date", async () => {
+  const mock = installPersistenceMocks();
+  const dailySlugs = [
+    "daily-cigar-flow-2026-08-16-morning-edition",
+    "daily-cigar-flow-2026-08-16-evening-edition",
+  ];
+
+  try {
+    for (const [index, slug] of dailySlugs.entries()) {
+      const response = await handler(
+        createAuthenticatedEvent(
+          "POST /news/stories",
+          {
+            title: `Daily Cigar Flow August 16 Edition ${index + 1}`,
+            slug,
+            automationDate: "2026-08-16",
+            dek: "A deterministic daily Cigar Flow publication fixture.",
+            category: "Industry News",
+            publishStatus: "published",
+            sections: [
+              {
+                heading: "Official release update",
+                body: `Rocky Patel's official release page provides the source evidence for daily edition ${index + 1}.`,
+              },
+            ],
+            sourceNotes: [
+              {
+                label: "Rocky Patel",
+                url: "https://www.rockypatel.com/cigar-news/sixty-release/",
+                note: "Specific official brand release page.",
+                sourceType: "official",
+              },
+            ],
+            leadUrls: ["http://www.halfwheel.com/rocky-patel-sixty-release/?utm_source=rss#latest"],
+            operatorApproved: true,
+          },
+          adminClaims
+        )
+      );
+
+      assert.equal(response.statusCode, 201);
+      const body = JSON.parse(response.body);
+      assert.equal(body.story.slug, "daily-cigar-flow-2026-08-16");
+      assert.equal(body.story.dedupeKey, "daily-cigar-flow:2026-08-16");
+    }
+
+    const inserts = mock.clients
+      .flatMap((client) => client.queries)
+      .filter((query) => query.sql.includes("insert into public.news_stories"));
+    assert.equal(inserts.length, 2);
+
+    for (const insert of inserts) {
+      assert.equal(insert.params.length, 15);
+      assert.equal(insert.params[0], "daily-cigar-flow-2026-08-16");
+      assert.equal(insert.params[7], "daily-cigar-flow:2026-08-16");
+      assert.match(String(insert.params[8]), /^[a-f0-9]{64}$/u);
+      assert.match(String(insert.params[9]), /^[a-f0-9]{64}$/u);
+      assert.equal(insert.params[10], "published");
+    }
+    assert.notEqual(inserts[0].params[8], inserts[1].params[8], "content fingerprints should track changed copy");
+    assert.equal(inserts[0].params[9], inserts[1].params[9], "the same canonical source set should have one fingerprint");
+    const leadReservations = mock.clients
+      .flatMap((client) => client.queries)
+      .filter((query) => query.sql.includes("news_story_processed_leads_reserve"));
+    assert.equal(leadReservations.length, 2);
+    assert.deepEqual(leadReservations[0].params[0], ["https://halfwheel.com/rocky-patel-sixty-release"]);
+    const identityLocks = mock.clients
+      .flatMap((client) => client.queries)
+      .filter((query) => query.sql.includes("news_story_identity_lock"))
+      .map((query) => query.params[0]);
+    assert.ok(identityLocks.includes("slug:daily-cigar-flow-2026-08-16"));
+    assert.ok(identityLocks.includes("dedupe:daily-cigar-flow:2026-08-16"));
+    assert.ok(identityLocks.includes("lead:https://halfwheel.com/rocky-patel-sixty-release"));
+  } finally {
+    mock.restore();
+  }
+});
+
+test("news story publish suppresses a cross-day duplicate already reserved by source or lead identity", async () => {
+  const existingStory = {
+    id: "88888888-8888-4888-8888-888888888888",
+    slug: "daily-cigar-flow-2026-08-15",
+    title: "Existing source-backed update",
+    dek: "The canonical release evidence is already published.",
+    category: "Industry News",
+    body_markdown: "## Release details\nThe official maker release was already covered.",
+    source_notes: [
+      {
+        label: "Rocky Patel",
+        url: "https://www.rockypatel.com/cigar-news/sixty-release/",
+        note: "Specific official brand release page.",
+        sourceType: "official",
+      },
+    ],
+    official_sources: ["https://www.rockypatel.com/cigar-news/sixty-release/"],
+    dedupe_key: "daily-cigar-flow:2026-08-15",
+    content_fingerprint: "existing-content-fingerprint",
+    source_fingerprint: "existing-source-fingerprint",
+    revision: 1,
+    metadata: { leadUrls: ["https://halfwheel.com/existing-release"] },
+    status: "published",
+    published_at: "2026-08-15T19:00:00.000Z",
+    updated_at: "2026-08-15T19:00:00.000Z",
+  };
+  const mock = installPersistenceMocks({ newsIdentityRows: [existingStory] });
+
+  try {
+    const response = await handler(
+      createAuthenticatedEvent(
+        "POST /news/stories",
+        {
+          title: "Changed AI title for the same release",
+          slug: "daily-cigar-flow-2026-08-16-changed-title",
+          automationDate: "2026-08-16",
+          dek: "This retry points at evidence that is already reserved.",
+          category: "Industry News",
+          publishStatus: "published",
+          sections: [{ heading: "Release details", body: "The same official maker release appears again." }],
+          sourceNotes: existingStory.source_notes,
+          leadUrls: ["https://www.halfwheel.com/existing-release/?utm_source=rss#top"],
+          operatorApproved: true,
+        },
+        adminClaims
+      )
+    );
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.deduplicated, true);
+    assert.equal(body.story.slug, existingStory.slug);
+
+    const queries = mock.clients.flatMap((client) => client.queries);
+    assert.equal(
+      queries.filter((query) => query.sql.includes("insert into public.news_stories")).length,
+      0,
+      "identity collision must return the canonical story without another insert",
+    );
+    const auditInsert = queries.find((query) => query.sql.includes("insert into public.audit_log"));
+    assert.ok(auditInsert);
+    assert.ok(auditInsert.params.some((value) => value === "news_story.duplicate_suppressed"));
   } finally {
     mock.restore();
   }
@@ -6572,8 +7365,56 @@ test("news story publish route stores actual story image metadata", async () => 
       .flatMap((client) => client.queries)
       .find((query) => query.sql.includes("insert into public.news_stories"));
     assert.ok(insertQuery, "news story should be inserted");
-    const metadata = JSON.parse(String(insertQuery.params[9] || "{}"));
+    assert.equal(insertQuery.params[10], "published");
+    assert.match(String(insertQuery.params[8]), /^[a-f0-9]{64}$/u);
+    assert.match(String(insertQuery.params[9]), /^[a-f0-9]{64}$/u);
+    const metadata = JSON.parse(String(insertQuery.params[12] || "{}"));
     assert.deepEqual(metadata.images, storyImages);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("news story publish route rejects images outside the verified official source boundary", async () => {
+  const mock = installPersistenceMocks();
+
+  try {
+    const response = await handler(
+      createAuthenticatedEvent(
+        "POST /news/stories",
+        {
+          title: "Verified release with an unrelated image",
+          dek: "The story source is official but the submitted image is not.",
+          category: "Industry News",
+          publishStatus: "published",
+          sections: [{ heading: "Release details", body: "Rocky Patel posted official release details." }],
+          sourceNotes: [
+            {
+              label: "Rocky Patel",
+              url: "https://www.rockypatel.com/cigar-news/sixty-release/",
+              note: "Specific official release page.",
+              sourceType: "official",
+            },
+          ],
+          images: [
+            {
+              label: "Unrelated image",
+              image: "https://untrusted.example/images/release.jpg",
+              sourceUrl: "https://www.rockypatel.com/cigar-news/sixty-release/",
+            },
+          ],
+          operatorApproved: true,
+        },
+        adminClaims,
+      ),
+    );
+
+    assert.equal(response.statusCode, 400);
+    assert.equal(JSON.parse(response.body).error, "unverified_news_image");
+    assert.equal(
+      mock.clients.flatMap((client) => client.queries).filter((query) => query.sql.includes("insert into public.news_stories")).length,
+      0,
+    );
   } finally {
     mock.restore();
   }
@@ -6686,6 +7527,84 @@ test("public news stories route returns published stories without Cognito", asyn
     assert.equal(body.stories[0].images[0].image, "https://www.rockypatel.com/wp-content/uploads/2026/05/rocky-patel-sixty.jpg");
     assert.equal(body.stories[0].images[0].sourceUrl, "https://www.rockypatel.com/cigar-news/sixty-release/");
     assert.equal(body.persistence, "stored");
+  } finally {
+    mock.restore();
+  }
+});
+
+test("public news stories route collapses legacy rows that reuse one canonical source page", async () => {
+  const shared = {
+    dek: "Repeated generated coverage of one official release page.",
+    category: "Industry News",
+    body_markdown: "## Release\nThe same release evidence was reused.",
+    source_notes: [],
+    official_sources: ["http://www.olivacigar.com/news/serie-v-maduro-release/?utm_source=daily"],
+    metadata: {},
+    status: "published",
+    published_at: "2026-06-25T18:00:00.000Z",
+    updated_at: "2026-06-25T18:00:00.000Z",
+  };
+  const mock = installPersistenceMocks({
+    newsStoryRows: [
+      { ...shared, id: "source-duplicate-a", slug: "first-generated-story", title: "First generated story" },
+      {
+        ...shared,
+        id: "source-duplicate-b",
+        slug: "second-generated-story",
+        title: "Second generated story",
+        official_sources: ["https://olivacigar.com/news/serie-v-maduro-release"],
+        published_at: "2026-06-24T18:00:00.000Z",
+      },
+    ],
+  });
+
+  try {
+    const response = await handler({
+      routeKey: "GET /news/stories",
+      rawPath: "/news/stories",
+      queryStringParameters: { limit: "50" },
+      requestContext: { requestId: "req-news-public-source-dedupe", http: { method: "GET" } },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.stories.length, 1);
+    assert.equal(body.stories[0].slug, "first-generated-story");
+    assert.match(body.stories[0].sourceFingerprint, /^[a-f0-9]{64}$/u);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("public news stories route hides legacy publications backed only by generic homepages or news indexes", async () => {
+  const mock = installPersistenceMocks({
+    newsStoryRows: [
+      {
+        id: "legacy-generic-source",
+        slug: "daily-cigar-flow-legacy-generic-source",
+        title: "Legacy generated roundup",
+        dek: "This row never cited a specific announcement.",
+        category: "Industry News",
+        body_markdown: "## Update\nUnsupported generated claims.",
+        source_notes: [],
+        official_sources: ["https://olivacigar.com/news/", "https://www.perdomocigars.com/news"],
+        metadata: {},
+        status: "published",
+        published_at: "2026-06-18T18:00:00.000Z",
+        updated_at: "2026-06-18T18:00:00.000Z",
+      },
+    ],
+  });
+
+  try {
+    const response = await handler({
+      routeKey: "GET /news/stories",
+      rawPath: "/news/stories",
+      requestContext: { requestId: "req-news-public-generic-source", http: { method: "GET" } },
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(JSON.parse(response.body).stories, []);
   } finally {
     mock.restore();
   }
@@ -7265,6 +8184,440 @@ test("humidor smoke logs read recent ratings and drink pairings", async () => {
   }
 });
 
+test("humidor image identification accepts two labeled real PNG views and returns ranked ambiguous candidates", async () => {
+  assert.deepEqual(
+    [...realCigarPngBytes.subarray(0, 8)],
+    [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+    "fixture must have a real PNG signature"
+  );
+  assert.equal(realCigarPngBytes.toString("ascii", 12, 16), "IHDR");
+  assert.ok(realCigarPngBytes.readUInt32BE(16) > 0 && realCigarPngBytes.readUInt32BE(16) <= 8000);
+  assert.ok(realCigarPngBytes.readUInt32BE(20) > 0 && realCigarPngBytes.readUInt32BE(20) <= 8000);
+
+  const mock = installPersistenceMocks({
+    bedrockReply: JSON.stringify({
+      identificationStatus: "identified",
+      name: "Padrón 1964 Anniversary Exclusivo Maduro",
+      brand: "Padrón",
+      line: "1964 Anniversary",
+      vitola: "Exclusivo",
+      wrapper: "Maduro",
+      origin: "Nicaragua",
+      confidence: "high",
+      candidates: [
+        {
+          name: "Padrón 1964 Anniversary Exclusivo Maduro",
+          brand: "Padrón",
+          line: "1964 Anniversary",
+          vitola: "Exclusivo",
+          wrapper: "Maduro",
+          origin: "Nicaragua",
+          confidence: "high",
+          matchScore: 88,
+          evidence: ["Front band reads Padrón 1964"],
+          distinguishingFeatures: ["Dark Maduro wrapper"],
+          sourceUrls: ["https://model-output.example/unverified-maduro-reference"],
+        },
+        {
+          name: "Padrón 1964 Anniversary Exclusivo Natural",
+          brand: "Padrón",
+          line: "1964 Anniversary",
+          vitola: "Exclusivo",
+          wrapper: "Natural",
+          origin: "Nicaragua",
+          confidence: "medium",
+          matchScore: 82,
+          evidence: ["Same anniversary band family"],
+          distinguishingFeatures: ["Lighter Natural wrapper"],
+          sourceUrls: ["https://model-output.example/unverified-natural-reference"],
+        },
+      ],
+      evidence: ["Two views show the primary and secondary anniversary bands"],
+      needsReview: [],
+    }),
+    knowledgeBaseRetrievalResults: [
+      {
+        content: {
+          text: "Official Padrón 1964 Anniversary Exclusivo reference lists Maduro and Natural wrapper variants.",
+        },
+        metadata: {
+          title: "Padrón 1964 Anniversary Series",
+          officialUrl: "https://padron.com/1964-anniversary-series/",
+        },
+        score: 0.96,
+      },
+    ],
+  });
+
+  try {
+    const response = await handler(
+      createAuthenticatedEvent("POST /humidor/identify-cigar", {
+        images: [
+          {
+            imageBase64: realCigarPngBase64,
+            mimeType: "image/png",
+            fileName: "padron-band-front.png",
+            role: "band_front",
+          },
+          {
+            imageBase64: realCigarPngBase64,
+            mimeType: "image/png",
+            fileName: "padron-secondary-band.png",
+            role: "secondary_band",
+          },
+        ],
+        notes: "Padrón 1964 Anniversary cigar; wrapper variant needs confirmation.",
+      })
+    );
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.input.imageCount, 2);
+    assert.deepEqual(body.input.imageTypes, ["image/png", "image/png"]);
+    assert.equal(body.identificationStatus, "ambiguous");
+    assert.equal(body.suggestion.identificationStatus, "ambiguous");
+    assert.deepEqual(body.candidates, body.suggestion.candidates);
+    assert.deepEqual(
+      body.candidates.map((candidate: { name: string }) => candidate.name),
+      ["Padrón 1964 Anniversary Exclusivo Maduro", "Padrón 1964 Anniversary Exclusivo Natural"]
+    );
+    assert.deepEqual(
+      body.candidates.map((candidate: { sourceUrls: string[] }) => candidate.sourceUrls),
+      [[], []],
+      "model-provided candidate URLs must not become trusted provenance"
+    );
+    assert.deepEqual(body.ai.sources, [
+      {
+        title: "Padrón 1964 Anniversary Series",
+        url: "https://padron.com/1964-anniversary-series/",
+        score: 0.96,
+      },
+    ]);
+    assert.equal(body.guardrails.humanHandoff, true);
+    assert.ok(body.nextActions.includes("review_candidate_matches"));
+    assert.equal(body.nextActions.includes("confirm_add_to_humidor"), false);
+    assert.equal(body.ai.rekognition.imageCount, 2);
+    assert.deepEqual(
+      body.ai.rekognition.images.map((image: { role: string }) => image.role),
+      ["band_front", "secondary_band"]
+    );
+
+    assert.equal(mock.bedrockInvocations.length, 1);
+    const content = (mock.bedrockInvocations[0].messages as Array<Record<string, unknown>>)[0]
+      .content as Array<Record<string, unknown>>;
+    assert.match(String(content[0].text || ""), /Cigar view 1: band front \(padron-band-front\.png\)/);
+    assert.equal((content[1].image as { format: string }).format, "png");
+    assert.match(String(content[2].text || ""), /Cigar view 2: secondary band \(padron-secondary-band\.png\)/);
+    assert.equal((content[3].image as { format: string }).format, "png");
+    assert.match(String(content.at(-2)?.text || ""), /ranked best first/i);
+    assert.deepEqual(content.at(-1)?.guardContent, {
+      text: {
+        text: "Member notes: Padrón 1964 Anniversary cigar; wrapper variant needs confirmation.",
+      },
+    });
+  } finally {
+    mock.restore();
+  }
+});
+
+test("humidor image identification rejects corrupt, MIME-mismatched, and oversized-dimension images before providers", async () => {
+  const mock = installPersistenceMocks();
+
+  try {
+    const mimeMismatch = await handler(
+      createAuthenticatedEvent("POST /humidor/identify-cigar", {
+        imageBase64: realCigarPngBase64,
+        mimeType: "image/jpeg",
+      })
+    );
+    assert.equal(mimeMismatch.statusCode, 400);
+    assert.equal(JSON.parse(mimeMismatch.body).error, "invalid_cigar_image");
+
+    const corrupt = await handler(
+      createAuthenticatedEvent("POST /humidor/identify-cigar", {
+        imageBase64: Buffer.from("not-a-decodable-image-file", "utf8").toString("base64"),
+        mimeType: "image/png",
+      })
+    );
+    assert.equal(corrupt.statusCode, 400);
+    assert.equal(JSON.parse(corrupt.body).error, "invalid_cigar_image");
+
+    const oversizedDimensionsPng = Buffer.from(realCigarPngBytes);
+    oversizedDimensionsPng.writeUInt32BE(8001, 16);
+    const oversizedDimensions = await handler(
+      createAuthenticatedEvent("POST /humidor/identify-cigar", {
+        imageBase64: oversizedDimensionsPng.toString("base64"),
+        mimeType: "image/png",
+      })
+    );
+    assert.equal(oversizedDimensions.statusCode, 400);
+    assert.equal(JSON.parse(oversizedDimensions.body).error, "cigar_image_dimensions_too_large");
+
+    assert.equal(mock.bedrockInvocations.length, 0);
+    assert.equal(mock.knowledgeBaseRetrievals.length, 0);
+    assert.equal(mock.rekognitionInvocations.length, 0);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("humidor image identification rejects receipt evidence before provider calls", async () => {
+  const mock = installPersistenceMocks();
+
+  try {
+    const response = await handler(
+      createAuthenticatedEvent("POST /humidor/identify-cigar", {
+        images: [
+          {
+            imageBase64: realCigarPngBase64,
+            mimeType: "image/png",
+            role: "receipt",
+          },
+        ],
+      })
+    );
+
+    assert.equal(response.statusCode, 400);
+    const body = JSON.parse(response.body);
+    assert.equal(body.error, "receipt_cigar_image_not_supported");
+    assert.match(body.message, /personal or payment information/i);
+    assert.equal(mock.bedrockInvocations.length, 0);
+    assert.equal(mock.knowledgeBaseRetrievals.length, 0);
+    assert.equal(mock.rekognitionInvocations.length, 0);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("humidor image identification enforces exact per-image and combined decoded-byte boundaries", async () => {
+  const maxImageBytes = Math.floor(3.75 * 1024 * 1024);
+  const maxCombinedBytes = 4 * 1024 * 1024;
+  const mock = installPersistenceMocks({ bedrockReply: "" });
+
+  try {
+    const atPerImageLimit = await handler(
+      createAuthenticatedEvent("POST /humidor/identify-cigar", {
+        imageBase64: buildSizedRealPng(maxImageBytes).toString("base64"),
+        mimeType: "image/png",
+      })
+    );
+    assert.equal(atPerImageLimit.statusCode, 200);
+    assert.equal(JSON.parse(atPerImageLimit.body).input.imageBytes, maxImageBytes);
+
+    const overPerImageLimit = await handler(
+      createAuthenticatedEvent("POST /humidor/identify-cigar", {
+        imageBase64: buildSizedRealPng(maxImageBytes + 1).toString("base64"),
+        mimeType: "image/png",
+      })
+    );
+    assert.equal(overPerImageLimit.statusCode, 400);
+    assert.equal(JSON.parse(overPerImageLimit.body).error, "cigar_image_too_large");
+
+    const firstImageBytes = Math.floor(maxCombinedBytes / 2) + 1;
+    const combinedOverLimit = await handler(
+      createAuthenticatedEvent("POST /humidor/identify-cigar", {
+        images: [
+          {
+            imageBase64: buildSizedRealPng(firstImageBytes).toString("base64"),
+            mimeType: "image/png",
+            role: "band_front",
+          },
+          {
+            imageBase64: buildSizedRealPng(firstImageBytes).toString("base64"),
+            mimeType: "image/png",
+            role: "box_label",
+          },
+        ],
+      })
+    );
+    assert.equal(combinedOverLimit.statusCode, 400);
+    assert.equal(JSON.parse(combinedOverLimit.body).error, "cigar_images_too_large");
+    assert.equal(mock.bedrockInvocations.length, 1, "only the request at the exact boundary should reach Bedrock");
+    assert.equal(mock.rekognitionInvocations.length, 0);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("humidor image identification normalizes missing or invalid model confidence low and blocks identified confirmation", async () => {
+  for (const modelConfidence of [undefined, "certain"]) {
+    const mock = installPersistenceMocks({
+      bedrockReply: JSON.stringify({
+        identificationStatus: "identified",
+        name: "Padrón 1964 Anniversary Exclusivo Maduro",
+        brand: "Padrón",
+        line: "1964 Anniversary",
+        vitola: "Exclusivo",
+        wrapper: "Maduro",
+        origin: "Nicaragua",
+        ...(modelConfidence === undefined ? {} : { confidence: modelConfidence }),
+        candidates: [
+          {
+            name: "Padrón 1964 Anniversary Exclusivo Maduro",
+            brand: "Padrón",
+            line: "1964 Anniversary",
+            vitola: "Exclusivo",
+            wrapper: "Maduro",
+            confidence: modelConfidence,
+            matchScore: 99,
+            evidence: ["Band text appears to match"],
+            distinguishingFeatures: ["Anniversary secondary band"],
+            sourceUrls: ["https://padron.com/1964-anniversary-series/"],
+          },
+        ],
+      }),
+      knowledgeBaseRetrievalResults: [
+        {
+          content: {
+            text: "Official Padrón 1964 Anniversary Exclusivo Maduro product reference.",
+          },
+          metadata: {
+            title: "Padrón 1964 Anniversary Series",
+            officialUrl: "https://padron.com/1964-anniversary-series/",
+          },
+          score: 0.99,
+        },
+      ],
+    });
+
+    try {
+      const response = await handler(
+        createAuthenticatedEvent("POST /humidor/identify-cigar", {
+          imageBase64: realCigarPngBase64,
+          mimeType: "image/png",
+          notes: "Visible Padrón 1964 Anniversary Exclusivo Maduro band.",
+        })
+      );
+
+      assert.equal(response.statusCode, 200);
+      const body = JSON.parse(response.body);
+      assert.equal(body.suggestion.confidence, "low");
+      assert.equal(body.candidates[0].confidence, "low");
+      assert.notEqual(body.identificationStatus, "identified");
+      assert.equal(body.guardrails.humanHandoff, true);
+      assert.equal(body.nextActions.includes("confirm_add_to_humidor"), false);
+    } finally {
+      mock.restore();
+    }
+  }
+});
+
+test("humidor image identification abstains on an empty model response without a confirm action", async () => {
+  const mock = installPersistenceMocks({ bedrockReply: "" });
+
+  try {
+    const response = await handler(
+      createAuthenticatedEvent("POST /humidor/identify-cigar", {
+        imageBase64: realCigarPngBase64,
+        mimeType: "image/png",
+      })
+    );
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.ai.status, "fallback");
+    assert.equal(body.identificationStatus, "insufficient_evidence");
+    assert.equal(body.suggestion.identificationStatus, "insufficient_evidence");
+    assert.equal(body.suggestion.confidence, "low");
+    assert.deepEqual(body.candidates, []);
+    assert.equal(body.guardrails.humanHandoff, true);
+    assert.deepEqual(body.nextActions, ["add_another_cigar_view", "enter_cigar_details_manually"]);
+    assert.equal(body.nextActions.includes("confirm_add_to_humidor"), false);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("legacy single-image clients cannot save ambiguous or unidentified cigar responses", async () => {
+  const mock = installPersistenceMocks({ bedrockReply: "" });
+
+  try {
+    const response = await handler(
+      createAuthenticatedEvent("POST /humidor/identify-cigar", {
+        contractVersion: 1,
+        imageBase64: realCigarPngBase64,
+        mimeType: "image/png",
+      })
+    );
+
+    assert.equal(response.statusCode, 422);
+    const body = JSON.parse(response.body);
+    assert.equal(body.error, "cigar_identification_review_required");
+    assert.equal(body.identificationStatus, "insufficient_evidence");
+    assert.equal(body.nextActions.includes("confirm_add_to_humidor"), false);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("humidor image identification times out before the API Gateway ceiling and abstains", async () => {
+  const mock = installPersistenceMocks({
+    bedrockDelayMs: 1_000,
+    bedrockReply: JSON.stringify({
+      identificationStatus: "identified",
+      name: "Late model answer",
+      brand: "Late",
+      line: "Answer",
+      vitola: "Toro",
+      confidence: "high",
+    }),
+  });
+  process.env.CIGAR_IDENTIFICATION_TIMEOUT_MS = "20";
+
+  try {
+    const response = await handler(
+      createAuthenticatedEvent("POST /humidor/identify-cigar", {
+        imageBase64: realCigarPngBase64,
+        mimeType: "image/png",
+      })
+    );
+    assert.equal(response.statusCode, 200);
+    assert.equal(mock.bedrockInvocations.length, 1);
+    const body = JSON.parse(response.body);
+    assert.equal(body.ai.status, "timeout");
+    assert.equal(body.ai.stopReason, "timeout");
+    assert.equal(body.identificationStatus, "insufficient_evidence");
+    assert.equal(body.suggestion.confidence, "low");
+    assert.equal(body.nextActions.includes("confirm_add_to_humidor"), false);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("Box Access Pass cannot invoke AI cigar identification providers", async () => {
+  const mock = installPersistenceMocks();
+  const boxAccessClaims = {
+    ...actorClaims,
+    "cognito:groups": "member",
+    "custom:membership_tier": "Box Access Pass",
+    "custom:member_status": "active",
+  };
+
+  try {
+    const response = await handler(
+      createAuthenticatedEvent(
+        "POST /humidor/identify-cigar",
+        {
+          imageBase64: realCigarPngBase64,
+          mimeType: "image/png",
+        },
+        boxAccessClaims
+      )
+    );
+
+    assert.equal(response.statusCode, 403);
+    const body = JSON.parse(response.body);
+    assert.equal(body.error, "ai_cigar_identification_forbidden");
+    assert.equal(body.membership.tier, "box_access_pass");
+    assert.deepEqual(body.membership.requiredTiers, ["kisha", "sensei", "daimyo"]);
+    assert.equal(mock.bedrockInvocations.length, 0);
+    assert.equal(mock.knowledgeBaseRetrievals.length, 0);
+    assert.equal(mock.rekognitionInvocations.length, 0);
+  } finally {
+    mock.restore();
+  }
+});
+
 test("humidor image identification route invokes Bedrock vision and returns reviewable cigar fields", async () => {
   const mock = installPersistenceMocks({
     bedrockReply: JSON.stringify({
@@ -7305,8 +8658,8 @@ test("humidor image identification route invokes Bedrock vision and returns revi
   try {
     const response = await handler(
       createAuthenticatedEvent("POST /humidor/identify-cigar", {
-        imageBase64: Buffer.from("fake-jpeg-bytes").toString("base64"),
-        mimeType: "image/jpeg",
+        imageBase64: realCigarPngBase64,
+        mimeType: "image/png",
         notes: "Band closeup on a cigar resting in the humidor.",
       })
     );
@@ -7329,12 +8682,12 @@ test("humidor image identification route invokes Bedrock vision and returns revi
     assert.deepEqual(body.suggestion.details.imageObservations, ["Brown Padron band", "Anniversary-style secondary band"]);
     assert.deepEqual(body.suggestion.needsReview, ["Confirm vitola before saving"]);
     assert.equal(body.ai.status, "bedrock_runtime");
-    assert.equal(body.input.imageType, "image/jpeg");
+    assert.equal(body.input.imageType, "image/png");
     assert.equal(mock.bedrockInvocations.length, 1);
 
     const content = (mock.bedrockInvocations[0].messages as Array<Record<string, unknown>>)[0]
       .content as Array<Record<string, unknown>>;
-    const promptText = String(content.find((block) => "text" in block)?.text || "");
+    const promptText = content.map((block) => String(block.text || "")).join("\n");
     const imageBlock = content.find((block) => "image" in block)?.image as {
       format: string;
       source: { bytes: Buffer };
@@ -7343,7 +8696,7 @@ test("humidor image identification route invokes Bedrock vision and returns revi
     assert.match(promptText, /manufacturer/);
     assert.match(promptText, /binder/);
     assert.match(promptText, /imageObservations/);
-    assert.equal(imageBlock.format, "jpeg");
+    assert.equal(imageBlock.format, "png");
     assert.ok(Buffer.isBuffer(imageBlock.source.bytes), "Bedrock SDK should receive raw image bytes");
     assert.equal(mock.clients.length, 0, "identification should not persist until the user confirms");
   } finally {
@@ -7390,8 +8743,8 @@ test("humidor image identification uses Rekognition OCR text as Bedrock prompt e
   try {
     const response = await handler(
       createAuthenticatedEvent("POST /humidor/identify-cigar", {
-        imageBase64: Buffer.from("fake-jpeg-bytes").toString("base64"),
-        mimeType: "image/jpeg",
+        imageBase64: realCigarPngBase64,
+        mimeType: "image/png",
         notes: "Close-up photo of the cigar band.",
       })
     );
@@ -7400,8 +8753,19 @@ test("humidor image identification uses Rekognition OCR text as Bedrock prompt e
     const body = JSON.parse(response.body);
     assert.equal(body.ai.rekognition.status, "detected_text");
     assert.deepEqual(
-      body.ai.rekognition.textLines.map((line: { text: string }) => line.text),
-      ["PADRON 1964 ANNIVERSARY", "SERIE 1964"]
+      body.ai.rekognition.textLines.map(
+        (line: { text: string; type: string; imageIndex: number; role: string }) => ({
+          text: line.text,
+          type: line.type,
+          imageIndex: line.imageIndex,
+          role: line.role,
+        })
+      ),
+      [
+        { text: "PADRON 1964 ANNIVERSARY", type: "line", imageIndex: 0, role: "band_front" },
+        { text: "SERIE 1964", type: "line", imageIndex: 0, role: "band_front" },
+        { text: "PADRON", type: "word", imageIndex: 0, role: "band_front" },
+      ]
     );
     assert.equal(mock.rekognitionInvocations.length, 1);
     const rekognitionImage = mock.rekognitionInvocations[0].Image as { Bytes: Buffer };
@@ -7409,13 +8773,13 @@ test("humidor image identification uses Rekognition OCR text as Bedrock prompt e
 
     const content = (mock.bedrockInvocations[0].messages as Array<Record<string, unknown>>)[0]
       .content as Array<Record<string, unknown>>;
-    const promptText = String(content.find((block) => "text" in block)?.text || "");
+    const promptText = content.map((block) => String(block.text || "")).join("\n");
 
     assert.match(promptText, /Amazon Rekognition OCR candidates/i);
     assert.match(promptText, /PADRON 1964 ANNIVERSARY/);
     assert.match(promptText, /SERIE 1964/);
     assert.doesNotMatch(promptText, /low confidence blur/);
-    assert.doesNotMatch(promptText, /"PADRON"/);
+    assert.match(promptText, /PADRON/);
     assert.equal(mock.clients.length, 0, "Rekognition-assisted identification should not persist until confirmation");
   } finally {
     mock.restore();
@@ -7459,8 +8823,8 @@ test("humidor image identification uses Rekognition visual labels as Bedrock pro
   try {
     const response = await handler(
       createAuthenticatedEvent("POST /humidor/identify-cigar", {
-        imageBase64: Buffer.from("fake-jpeg-bytes").toString("base64"),
-        mimeType: "image/jpeg",
+        imageBase64: realCigarPngBase64,
+        mimeType: "image/png",
         notes: "Box and band are visible, but the text is partially blurred.",
       })
     );
@@ -7480,7 +8844,7 @@ test("humidor image identification uses Rekognition visual labels as Bedrock pro
 
     const content = (mock.bedrockInvocations[0].messages as Array<Record<string, unknown>>)[0]
       .content as Array<Record<string, unknown>>;
-    const promptText = String(content.find((block) => "text" in block)?.text || "");
+    const promptText = content.map((block) => String(block.text || "")).join("\n");
 
     assert.match(promptText, /Amazon Rekognition visual labels/i);
     assert.match(promptText, /Cigar/);
@@ -7521,8 +8885,8 @@ test("humidor image identification logs pulled field coverage without image or n
   try {
     const response = await handler(
       createAuthenticatedEvent("POST /humidor/identify-cigar", {
-        imageBase64: Buffer.from("fake-jpeg-bytes").toString("base64"),
-        mimeType: "image/jpeg",
+        imageBase64: realCigarPngBase64,
+        mimeType: "image/png",
         notes: "Private member note that should not be logged.",
       })
     );
@@ -7540,11 +8904,11 @@ test("humidor image identification logs pulled field coverage without image or n
 
     assert.ok(identificationLog, "expected a safe identification summary log");
     assert.equal(identificationLog.suggestedName, "Padron 1964 Anniversary Toro");
-    assert.equal(identificationLog.confidence, "high");
+    assert.equal(identificationLog.confidence, "medium");
     assert.ok(identificationLog.fieldCoverage.includes("brand"));
     assert.ok(identificationLog.detailsCoverage.includes("manufacturer"));
     assert.ok(identificationLog.detailsCoverage.includes("flavorProfile"));
-    assert.equal(JSON.stringify(identificationLog).includes("fake-jpeg-bytes"), false);
+    assert.equal(JSON.stringify(identificationLog).includes(realCigarPngBase64.slice(0, 64)), false);
     assert.equal(JSON.stringify(identificationLog).includes("Private member note"), false);
   } finally {
     console.log = originalLog;
@@ -9948,6 +11312,18 @@ test("commerce migration invoke requires explicit confirmation", async () => {
   assert.equal(body.error, "migration_confirmation_required");
 });
 
+test("events migration invoke requires explicit confirmation", async () => {
+  const response = await handler({
+    source: "ycc.events.migration",
+    action: "apply_events_schema",
+    requestContext: { requestId: "req-events-migration-guard" },
+  });
+
+  assert.equal(response.statusCode, 403);
+  const body = JSON.parse(response.body);
+  assert.equal(body.error, "migration_confirmation_required");
+});
+
 test("commerce migration applies and verifies order tables", async () => {
   const mock = installPersistenceMocks();
 
@@ -10009,6 +11385,214 @@ test("site content migration applies and verifies the live page table", async ()
       queries.some((query) => query.sql.includes("where version = '0003'")),
       "site content verification should check migration version 0003"
     );
+  } finally {
+    mock.restore();
+  }
+});
+
+test("newsroom migration applies and verifies the 0007 dedupe safeguards", async () => {
+  const mock = installPersistenceMocks();
+
+  try {
+    const response = await handler({
+      source: "ycc.newsroom.migration",
+      action: "apply_newsroom_schema",
+      confirm: "APPLY_YCC_NEWSROOM_SCHEMA",
+      requestContext: { requestId: "req-newsroom-migration-apply" },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.status, "applied");
+    assert.equal(body.migration, "0007_newsroom_dedup");
+    assert.deepEqual(body.tables, ["news_stories", "news_story_processed_leads"]);
+    assert.deepEqual(body.missingTables, []);
+    assert.deepEqual(body.missingColumns, []);
+    assert.deepEqual(body.missingIndexes, []);
+    assert.equal(body.migrationRow.version, "0007");
+    assert.equal(body.migrationRow.name, "newsroom_dedup");
+
+    const queries = mock.clients.flatMap((client) => client.queries);
+    assert.ok(
+      queries.some((query) => query.sql.includes("create table if not exists public.news_stories")),
+      "the base newsroom schema should be applied before the dedupe migration"
+    );
+    assert.ok(
+      queries.some(
+        (query) =>
+          query.sql.includes("add column if not exists dedupe_key text") &&
+          query.sql.includes("create unique index if not exists news_stories_dedupe_key_uidx")
+      ),
+      "the 0007 migration should install the persisted identity and uniqueness constraint"
+    );
+    assert.ok(
+      queries.some(
+        (query) =>
+          query.sql.includes("create unique index if not exists news_stories_source_fingerprint_uidx") &&
+          query.sql.includes("create table if not exists public.news_story_processed_leads")
+      ),
+      "the 0007 migration should reserve published source fingerprints and canonical discovery leads",
+    );
+    assert.ok(
+      queries.some((query) => query.sql.includes("where version = '0007'")),
+      "newsroom verification should check migration version 0007"
+    );
+  } finally {
+    mock.restore();
+  }
+});
+
+test("newsroom verification fails closed when the migration checksum is stale", async () => {
+  const mock = installPersistenceMocks({ newsroomMigrationChecksum: "stale-or-partial-migration" });
+
+  try {
+    const response = await handler({
+      source: "ycc.newsroom.migration",
+      action: "verify_newsroom_schema",
+      requestContext: { requestId: "req-newsroom-migration-stale" },
+    });
+
+    assert.equal(response.statusCode, 503);
+    const body = JSON.parse(response.body);
+    assert.equal(body.status, "incomplete");
+    assert.equal(body.ready, false);
+    assert.equal(body.migrationValid, false);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("events migration applies and verifies the shared event tables", async () => {
+  const mock = installPersistenceMocks();
+
+  try {
+    const response = await handler({
+      source: "ycc.events.migration",
+      action: "apply_events_schema",
+      confirm: "APPLY_YCC_EVENTS_SCHEMA",
+      requestContext: { requestId: "req-events-migration-apply" },
+    });
+
+    assert.equal(response.statusCode, 200);
+    const body = JSON.parse(response.body);
+    assert.equal(body.status, "applied");
+    assert.equal(body.migration, "0006_events_schema");
+    assert.deepEqual(body.missingTables, []);
+    assert.deepEqual(body.tables, ["event_sources", "events", "event_sync_runs"]);
+    assert.equal(body.migrationRow.version, "0006");
+
+    const queries = mock.clients.flatMap((client) => client.queries);
+    assert.ok(
+      queries.some((query) => query.sql.includes("create table if not exists public.events")),
+      "events migration SQL should be executed"
+    );
+    assert.ok(
+      queries.some((query) => query.sql.includes("where version = '0006'")),
+      "events verification should check migration version 0006"
+    );
+  } finally {
+    mock.restore();
+  }
+});
+
+test("public events feed returns active published records with cache metadata", async () => {
+  const mock = installPersistenceMocks();
+  try {
+    const response = await handler({
+      routeKey: "GET /events",
+      rawPath: "/events",
+      queryStringParameters: {
+        from: "2026-09-01T00:00:00.000Z",
+        to: "2026-10-01T00:00:00.000Z",
+        limit: "25",
+      },
+      headers: {},
+      requestContext: { requestId: "req-public-events", http: { method: "GET", sourceIp: "198.51.100.9" } },
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.headers["cache-control"], "public, max-age=300, stale-while-revalidate=900");
+    assert.match(String(response.headers.etag), /^"[A-Za-z0-9_-]+"$/);
+    const body = JSON.parse(response.body);
+    assert.equal(body.events.length, 1);
+    assert.equal(body.events[0].title, "Yuzu Sunday Social");
+    assert.equal(body.events[0].source.provider, "facebook");
+    assert.equal(body.feed.count, 1);
+    assert.equal(body.feed.lastSuccessfulSyncAt, "2026-08-16T19:55:00.000Z");
+
+    const feedQuery = mock.clients.flatMap((client) => client.queries).find((query) => query.sql.includes("public_events_feed"));
+    assert.ok(feedQuery, "public feed query should run");
+    assert.match(feedQuery.sql, /e\.status = 'published'/);
+    assert.match(feedQuery.sql, /e\.visibility = 'public'/);
+    assert.match(feedQuery.sql, /e\.canceled_at is null/);
+    assert.deepEqual(feedQuery.params, ["2026-09-01T00:00:00.000Z", "2026-10-01T00:00:00.000Z", 25]);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("admin event import accepts nested source and location fields and writes an audit row", async () => {
+  const mock = installPersistenceMocks();
+  try {
+    const response = await handler(
+      createAuthenticatedEvent(
+        "POST /admin/events",
+        {
+          slug: "yuzu-sunday-social",
+          title: "Yuzu Sunday Social",
+          summary: "A Yuzu-hosted gathering.",
+          description: "Join the club for an evening gathering.",
+          host: "Yuzu Cigar Club",
+          startsAt: "2026-09-20T23:00:00.000Z",
+          endsAt: "2026-09-21T02:00:00.000Z",
+          timezone: "America/Phoenix",
+          location: { name: "Yuzu Clubhouse", latitude: 33.3528, longitude: -111.789 },
+          source: { type: "operator_import", provider: "facebook", url: "https://www.facebook.com/events/123" },
+          accessLevel: "public",
+          capacity: 40,
+          includes: ["Cigar education"],
+          agenda: ["Doors open"],
+          goodFor: ["Members"],
+          status: "draft",
+          visibility: "public",
+          verificationStatus: "verified",
+        },
+        adminClaims
+      )
+    );
+
+    assert.equal(response.statusCode, 201);
+    const body = JSON.parse(response.body);
+    assert.equal(body.event.source.type, "operator_import");
+    assert.equal(body.event.source.provider, "facebook");
+    assert.equal(body.persistence.table, "events");
+    const queries = mock.clients.flatMap((client) => client.queries);
+    const insert = queries.find((query) => query.sql.includes("insert into public.events"));
+    assert.ok(insert, "event should be durably inserted");
+    assert.equal(insert.params[1], "operator_import");
+    assert.equal(insert.params[2], "facebook");
+    assert.ok(queries.some((query) => query.sql.includes("insert into public.audit_log") && query.params.includes("event.created")));
+  } finally {
+    mock.restore();
+  }
+});
+
+test("admin event publication requires an operator and writes an audit row", async () => {
+  const denied = await handler(
+    createAuthenticatedEvent("POST /admin/events/abababab-abab-4bab-8bab-abababababab/publish", {}, actorClaims)
+  );
+  assert.equal(denied.statusCode, 403);
+
+  const mock = installPersistenceMocks();
+  try {
+    const response = await handler(
+      createAuthenticatedEvent("POST /admin/events/abababab-abab-4bab-8bab-abababababab/publish", {}, adminClaims)
+    );
+    assert.equal(response.statusCode, 200);
+    assert.equal(JSON.parse(response.body).event.status, "published");
+    const queries = mock.clients.flatMap((client) => client.queries);
+    assert.ok(queries.some((query) => query.sql.includes("update public.events") && query.params.includes("published")));
+    assert.ok(queries.some((query) => query.sql.includes("insert into public.audit_log") && query.params.includes("event.published")));
   } finally {
     mock.restore();
   }

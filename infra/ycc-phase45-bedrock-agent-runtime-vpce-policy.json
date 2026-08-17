@@ -28,6 +28,21 @@
         "bedrock:RetrieveAndGenerate"
       ],
       "Resource": "arn:aws:bedrock:us-east-1:374587466106:knowledge-base/48GFMCLSTG"
+    },
+    {
+      "Sid": "AllowTaggedYccCigarKnowledgeBaseRetrieval",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::374587466106:role/service-role/ycyyy-1778040454500"
+      },
+      "Action": "bedrock:Retrieve",
+      "Resource": "arn:aws:bedrock:us-east-1:374587466106:knowledge-base/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/Project": "YCC",
+          "aws:ResourceTag/DataClass": "CigarCatalog"
+        }
+      }
     }
   ]
 }

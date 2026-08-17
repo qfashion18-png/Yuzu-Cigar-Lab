@@ -1,5 +1,6 @@
 import { draftToBodyMarkdown, type NewsroomDraft, type NewsroomDraftInput, type NewsStory, type NewsStoryImage } from "@/lib/newsroom";
 import type { HumidorSensorDevice } from "@/lib/humidor-devices";
+import type { EventExperience } from "@/lib/data";
 
 export type LiveApiHeaders = Record<string, string>;
 
@@ -365,6 +366,16 @@ export type ConciergeVoiceDetails = {
   speech: ConciergeSpeechOutput;
 };
 
+export type AiSource = {
+  title?: string;
+  label?: string;
+  url?: string;
+  uri?: string;
+  domain?: string;
+  sourceType?: string;
+  score?: number;
+};
+
 export type ConciergeChatResponse = {
   conversation: {
     id: string;
@@ -374,6 +385,13 @@ export type ConciergeChatResponse = {
   agent: string;
   ai: {
     status: string;
+    modelId?: string;
+    stopReason?: string | null;
+    knowledgeBaseId?: string | null;
+    knowledgeBaseStatus?: string;
+    retrievedContextCount?: number;
+    sources?: AiSource[];
+    grounded?: boolean;
   };
   lex?: {
     status: string;
@@ -399,6 +417,7 @@ export type ConciergeChatResponse = {
     humanHandoff: boolean;
   };
   nextActions: string[];
+  citations?: AiSource[];
 };
 
 export type ConciergeVoiceInput = {
@@ -580,11 +599,48 @@ export type HumidorSharedItemInput = {
   sharedNotes?: string;
 };
 
-export type CigarImageIdentifyInput = {
+export type CigarImageRole =
+  | "band_front"
+  | "band_back"
+  | "secondary_band"
+  | "box_front"
+  | "box_back"
+  | "box_label"
+  | "barcode"
+  | "whole_cigar"
+  | "other";
+
+export type CigarImageIdentifyImage = {
   imageBase64: string;
   mimeType: string;
   fileName?: string;
+  role?: CigarImageRole;
+};
+
+export type CigarImageIdentifyInput = {
+  contractVersion?: 2;
+  /** Legacy single-image fields remain available while deployed clients and APIs roll forward. */
+  imageBase64?: string;
+  mimeType?: string;
+  fileName?: string;
+  images?: CigarImageIdentifyImage[];
   notes?: string;
+};
+
+export type CigarIdentificationStatus = "identified" | "ambiguous" | "insufficient_evidence";
+
+export type CigarImageCandidate = {
+  name: string;
+  brand: string;
+  line: string;
+  vitola: string;
+  wrapper: string;
+  origin: string;
+  confidence: "high" | "medium" | "low";
+  matchScore: number;
+  evidence: string[];
+  distinguishingFeatures: string[];
+  sourceUrls: string[];
 };
 
 export type CigarImageDetails = {
@@ -616,14 +672,22 @@ export type CigarImageSuggestion = HumidorItemInput & {
   evidence: string[];
   needsReview: string[];
   details: CigarImageDetails;
+  identificationStatus?: CigarIdentificationStatus;
+  candidates?: CigarImageCandidate[];
 };
 
 export type CigarImageIdentifyResponse = {
   suggestion: CigarImageSuggestion;
+  identificationStatus?: CigarIdentificationStatus;
+  candidates?: CigarImageCandidate[];
+  sources?: AiSource[];
   ai: {
     status: string;
     modelId?: string;
     stopReason?: string | null;
+    knowledgeBaseStatus?: string;
+    retrievedContextCount?: number;
+    sources?: AiSource[];
     rekognition?: {
       status: string;
       minConfidence: number;
@@ -770,6 +834,7 @@ export type NewsStoryDraftResponse = {
 
 export type PublishNewsStoryResponse = {
   story: NewsStory;
+  deduplicated?: boolean;
   persistence: {
     status: string;
     table: "news_stories";
@@ -780,6 +845,228 @@ export type PublishedNewsStoriesResponse = {
   stories: NewsStory[];
   persistence: string;
 };
+
+export type LiveEventStatus = "draft" | "published" | "canceled" | "archived";
+export type LiveEventVisibility = "public" | "members" | "sensei" | "daimyo";
+export type LiveEventVerificationStatus = "trusted_source" | "needs_review" | "verified" | "stale";
+
+export type LiveEventLocation = {
+  name: string | null;
+  addressLine1: string | null;
+  addressLine2: string | null;
+  city: string | null;
+  state: string | null;
+  postalCode: string | null;
+  country: string | null;
+  latitude: number | null;
+  longitude: number | null;
+};
+
+export type LiveEventSource = {
+  type: string;
+  provider: string | null;
+  sourceId: string | null;
+  providerEventId: string | null;
+  providerOccurrenceId: string | null;
+  url: string | null;
+};
+
+export type LivePublishedEvent = {
+  id: string;
+  slug: string;
+  title: string;
+  summary: string | null;
+  description: string | null;
+  host: string | null;
+  status: LiveEventStatus;
+  visibility: LiveEventVisibility;
+  verificationStatus: LiveEventVerificationStatus;
+  startsAt: string;
+  endsAt: string;
+  timezone: string | null;
+  allDay: boolean;
+  startDate: string | null;
+  endDate: string | null;
+  location: LiveEventLocation;
+  source: LiveEventSource;
+  ticketUrl: string | null;
+  imageUrl: string | null;
+  accessLevel: string | null;
+  capacity: string | null;
+  includes: string[];
+  agenda: Array<{ time: string; label: string }>;
+  goodFor: string[];
+  publishedAt: string | null;
+  updatedAt: string;
+};
+
+export type PublishedEventsResponse = {
+  requestId?: string;
+  events: LivePublishedEvent[];
+  feed: {
+    from: string;
+    to: string;
+    count: number;
+    updatedAt: string | null;
+    lastSuccessfulSyncAt: string | null;
+  };
+  persistence: string;
+};
+
+export type PublishedEventsRequestOptions = {
+  from?: string;
+  to?: string;
+  limit?: number;
+};
+
+export type AdminEventsResponse = {
+  requestId?: string;
+  events: LivePublishedEvent[];
+  summary?: Partial<Record<LiveEventStatus, number>>;
+  persistence: string;
+};
+
+export type AdminEventsRequestOptions = {
+  limit?: number;
+  status?: LiveEventStatus;
+};
+
+export type AdminEventInput = {
+  slug?: string;
+  title: string;
+  summary?: string | null;
+  description?: string | null;
+  host?: string | null;
+  startsAt: string;
+  endsAt: string;
+  timezone?: string | null;
+  allDay?: boolean;
+  startDate?: string | null;
+  endDate?: string | null;
+  location?: Partial<LiveEventLocation>;
+  source?: Partial<LiveEventSource>;
+  ticketUrl?: string | null;
+  imageUrl?: string | null;
+  accessLevel?: string | null;
+  capacity?: string | null;
+  includes?: string[];
+  agenda?: Array<{ time: string; label: string }>;
+  goodFor?: string[];
+  status?: LiveEventStatus;
+  visibility?: LiveEventVisibility;
+  verificationStatus?: LiveEventVerificationStatus;
+};
+
+export type AdminEventUpdateInput = Partial<AdminEventInput>;
+
+export type AdminEventMutationResponse = {
+  event: LivePublishedEvent;
+  persistence: {
+    status: string;
+    table: "events";
+  };
+};
+
+export type RuntimeEventExperience = EventExperience & {
+  liveId: string;
+  imported: boolean;
+  sourceName: string;
+  sourceType: string;
+  externalSource: boolean;
+};
+
+export function livePublishedEventToExperience(event: LivePublishedEvent): RuntimeEventExperience {
+  const sourceUrl = event.ticketUrl || event.source.url || undefined;
+  const location = formatLiveEventLocation(event.location);
+
+  return {
+    liveId: event.id,
+    slug: event.slug,
+    title: event.title,
+    startsAt: event.startsAt,
+    endsAt: event.endsAt,
+    date: formatLiveEventDate(event),
+    time: formatLiveEventTime(event),
+    location,
+    access: event.accessLevel || "Open",
+    image: event.imageUrl || "/assets/about-lounge.png",
+    imagePosition: "50% 50%",
+    deck: event.summary || event.description || "See the source listing for current event details.",
+    description: event.description || event.summary || "See the source listing for current event details.",
+    host: event.host || event.location.name || "Yuzu Cigar Club",
+    capacity: event.capacity || "See event listing",
+    sourceUrl,
+    coordinates:
+      typeof event.location.latitude === "number" && typeof event.location.longitude === "number"
+        ? { latitude: event.location.latitude, longitude: event.location.longitude }
+        : undefined,
+    includes: event.includes,
+    agenda: event.agenda,
+    goodFor: event.goodFor,
+    imported: event.source.type === "operator_import",
+    sourceName: event.source.provider || event.source.type,
+    sourceType: event.source.type,
+    externalSource: Boolean(sourceUrl),
+  };
+}
+
+function formatLiveEventLocation(location: LiveEventLocation) {
+  return [
+    location.name,
+    location.addressLine1,
+    location.addressLine2,
+    [location.city, location.state, location.postalCode].filter(Boolean).join(" "),
+  ]
+    .filter(Boolean)
+    .join(", ") || "Location announced with registration";
+}
+
+function formatLiveEventDate(event: LivePublishedEvent) {
+  if (event.allDay && event.startDate) {
+    return formatCalendarDate(event.startDate, event.timezone);
+  }
+
+  return formatCalendarDate(event.startsAt, event.timezone);
+}
+
+function formatLiveEventTime(event: LivePublishedEvent) {
+  if (event.allDay) {
+    return "All day";
+  }
+
+  const timeZone = safeEventTimeZone(event.timezone);
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone,
+    timeZoneName: "short",
+  });
+
+  return `${formatter.format(new Date(event.startsAt))} - ${formatter.format(new Date(event.endsAt))}`;
+}
+
+function formatCalendarDate(value: string, requestedTimeZone: string | null) {
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T12:00:00.000Z`) : new Date(value);
+  return new Intl.DateTimeFormat("en-US", {
+    day: "numeric",
+    month: "long",
+    timeZone: /^\d{4}-\d{2}-\d{2}$/.test(value) ? "UTC" : safeEventTimeZone(requestedTimeZone),
+    year: "numeric",
+  }).format(date);
+}
+
+function safeEventTimeZone(value: string | null) {
+  if (!value) {
+    return "America/Phoenix";
+  }
+
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value }).format();
+    return value;
+  } catch {
+    return "America/Phoenix";
+  }
+}
 
 type ErrorPayload = {
   error?: string;
@@ -977,6 +1264,56 @@ export async function fetchPublishedNewsStories(limit = 12) {
   return getPublicLive<PublishedNewsStoriesResponse>(`/news/stories?limit=${normalizedLimit}`);
 }
 
+export async function fetchPublishedEvents(options: PublishedEventsRequestOptions = {}) {
+  const params = new URLSearchParams();
+
+  if (options.from) {
+    params.set("from", options.from);
+  }
+
+  if (options.to) {
+    params.set("to", options.to);
+  }
+
+  if (options.limit) {
+    params.set("limit", String(Math.min(Math.max(Math.trunc(options.limit), 1), 250)));
+  }
+
+  const query = params.toString();
+  return getPublicLive<PublishedEventsResponse>(`/events${query ? `?${query}` : ""}`);
+}
+
+export async function fetchAdminEvents(headers: LiveApiHeaders, options: AdminEventsRequestOptions = {}) {
+  const params = new URLSearchParams();
+
+  if (options.status) {
+    params.set("status", options.status);
+  }
+
+  if (options.limit) {
+    params.set("limit", String(Math.min(Math.max(Math.trunc(options.limit), 1), 250)));
+  }
+
+  const query = params.toString();
+  return getLive<AdminEventsResponse>(`/admin/events${query ? `?${query}` : ""}`, headers);
+}
+
+export async function createAdminEvent(input: AdminEventInput, headers: LiveApiHeaders) {
+  return postLive<AdminEventMutationResponse>("/admin/events", input, headers);
+}
+
+export async function updateAdminEvent(eventId: string, input: AdminEventUpdateInput, headers: LiveApiHeaders) {
+  return patchLive<AdminEventMutationResponse>(`/admin/events/${encodeURIComponent(eventId)}`, input, headers);
+}
+
+export async function publishAdminEvent(eventId: string, headers: LiveApiHeaders) {
+  return postLive<AdminEventMutationResponse>(`/admin/events/${encodeURIComponent(eventId)}/publish`, {}, headers);
+}
+
+export async function archiveAdminEvent(eventId: string, headers: LiveApiHeaders) {
+  return postLive<AdminEventMutationResponse>(`/admin/events/${encodeURIComponent(eventId)}/archive`, {}, headers);
+}
+
 export async function draftNewsStory(input: NewsStoryDraftInput, headers: LiveApiHeaders) {
   return postLive<NewsStoryDraftResponse>("/news/story-drafts", input, headers);
 }
@@ -1012,7 +1349,7 @@ export function getLiveApiErrorMessage(error: unknown) {
     invalid_profile: "Enter a display name before saving your account profile.",
     invalid_cigar_image: "The uploaded cigar image could not be decoded.",
     unsupported_cigar_image_type: "Upload a PNG, JPEG, GIF, or WebP cigar image.",
-    cigar_image_too_large: "Upload a cigar image under 5 MB.",
+    cigar_image_too_large: "Keep each cigar photo under 3.75 MB and 8000 pixels per side, and the full set under 4 MB. Crop tightly around the band or label and try again.",
     database_writes_not_ready: "The live member database is not ready for updates yet.",
     humidor_item_not_found: "That humidor cigar could not be found for this account.",
     invalid_humidor_enrichment_fields: "Choose info, image, or MSRP for humidor enrichment.",
@@ -1026,6 +1363,11 @@ export function getLiveApiErrorMessage(error: unknown) {
     news_agent_not_configured: "The weekly news agent is not configured for this environment yet.",
     news_publish_forbidden: "Only admins and concierge operators can publish news stories.",
     official_source_required: "Add at least one official source before drafting or publishing.",
+    verified_source_evidence_required:
+      "Publishing needs a specific official release, product, event, regulator, or wire page—not a homepage or unverified source.",
+    invalid_news_slug: "Use a story title or slug containing letters or numbers.",
+    unverified_news_image:
+      "Use a Yuzu-owned image or an image from the cited official maker page; remove unrelated or unverified image URLs.",
     internal_error: "The live Yuzu API is temporarily unavailable.",
     live_api_error: "The live Yuzu API is temporarily unavailable.",
     news_story_placeholder_body: "The draft still contains placeholder scaffold copy. Regenerate or replace it with a real story before publishing.",

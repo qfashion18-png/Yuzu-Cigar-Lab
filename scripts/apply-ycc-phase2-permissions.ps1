@@ -57,41 +57,22 @@ Write-Host "Applied Lambda runtime policy YccApiPhase2RuntimePolicy."
 $eventBus = Ensure-EventBus
 Write-Host "Event bus ready: $($eventBus.Arn)"
 
-$envPath = Join-Path $env:TEMP "ycc-api-lambda-env-ycc-events.json"
-$envJson = @'
-{
-  "Variables": {
-    "APP_ENV": "prod",
-    "AWS_NODEJS_CONNECTION_REUSE_ENABLED": "1",
-    "COGNITO_USER_POOL_ID": "us-east-1_63U9PflAX",
-    "COGNITO_USER_POOL_CLIENT_ID": "2i2nvtt41l94n0mivc4tu4f9ms",
-    "DB_PROXY_ENDPOINT": "proxy-1778040454500-database-1ycc.proxy-cuvgmek2eh9j.us-east-1.rds.amazonaws.com",
-    "DB_PORT": "5432",
-    "DB_NAME": "postgresycc",
-    "DB_SECRET_ARN": "arn:aws:secretsmanager:us-east-1:374587466106:secret:rds-db-credentials/database-1ycc/postgresycc/1778040454500-6vRH4q",
-    "EVENT_BUS_NAME": "ycc-events",
-    "S3_APP_BUCKET": "classroom2",
-    "FEATURE_DB_WRITES": "pending_schema",
-    "FEATURE_BEDROCK": "pending_agent",
-    "FEATURE_LEX_ROUTER": "pending_bot",
-    "LEX_ROUTER_LOCALE_ID": "en_US",
-    "FEATURE_CONCIERGE_VOICE": "pending_services",
-    "CONCIERGE_TRANSCRIBE_LANGUAGE_CODE": "en-US",
-    "CONCIERGE_VOICE_BUCKET": "classroom2",
-    "CONCIERGE_VOICE_PREFIX": "ycc/concierge-voice/",
-    "CONCIERGE_VOICE_TRANSCRIBE_MAX_WAIT_MS": "22000",
-    "CONCIERGE_POLLY_ENGINE": "neural",
-    "CONCIERGE_POLLY_VOICE_ID": "Joanna",
-    "FEATURE_SES": "pending_identity"
-  }
+$functionConfig = Invoke-AwsJson @(
+  "lambda", "get-function-configuration",
+  "--function-name", "ycyyy"
+)
+$variables = [ordered]@{}
+foreach ($property in $functionConfig.Environment.Variables.PSObject.Properties) {
+  $variables[$property.Name] = [string]$property.Value
 }
-'@
-$envJson | Set-Content -LiteralPath $envPath -Encoding ascii
+$variables["EVENT_BUS_NAME"] = "ycc-events"
+$environmentJson = @{ Variables = $variables } | ConvertTo-Json -Depth 10 -Compress
 
 $null = Invoke-AwsJson @(
   "lambda", "update-function-configuration",
   "--function-name", "ycyyy",
-  "--environment", "file://$envPath"
+  "--environment", $environmentJson,
+  "--revision-id", $functionConfig.RevisionId
 )
 
 & uv @awsBase @("lambda", "wait", "function-updated", "--function-name", "ycyyy") | Out-Null

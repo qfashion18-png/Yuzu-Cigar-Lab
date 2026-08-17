@@ -159,7 +159,7 @@ function validateCheckoutReadiness(input = {}) {
       continue;
     }
 
-    const expectedPrice = Number(product.price);
+    const expectedPrice = resolveCatalogCheckoutPrice(product, membership);
     const submittedPrice = Number(item.unitPrice);
     if (!Number.isFinite(submittedPrice)) {
       pushError(errors, "price_snapshot_required", `SKU ${sku} needs a fresh price snapshot. Refresh the cart before checkout.`);
@@ -193,7 +193,7 @@ function validateCheckoutReadiness(input = {}) {
       productSlug: product.slug,
       name: product.name,
       stripeProductId: product.stripeProductId || null,
-      stripePriceId: product.stripePriceId || null,
+      stripePriceId: resolveCatalogStripePriceId(product, membership),
       adultSignatureRequired: product.adultSignatureRequired !== false,
     });
   }
@@ -280,9 +280,13 @@ function resolveCheckoutShippingMethod(shippingMethodId) {
 function requiresAdultSignatureDelivery(normalizedItems = [], destination = {}) {
   if (!Array.isArray(normalizedItems)) {
     destination = normalizedItems || {};
+    normalizedItems = [];
   }
 
-  return adultSignatureRequiredStates.has(getDestinationState(destination));
+  return (
+    normalizedItems.some((item) => item?.adultSignatureRequired === true) ||
+    adultSignatureRequiredStates.has(getDestinationState(destination))
+  );
 }
 
 function isAgeVerified(ageVerification) {
@@ -339,6 +343,34 @@ function normalizeMembership(value) {
   };
 }
 
+function resolveCatalogCheckoutPrice(product, membership) {
+  const accountPrice = membership.trusted
+    ? getOptionalCatalogPrice(product.memberPrice)
+    : getOptionalCatalogPrice(product.publicPrice ?? product.nonMemberPrice);
+  const fallbackPrice = getOptionalCatalogPrice(product.price);
+
+  return accountPrice ?? fallbackPrice ?? Number.NaN;
+}
+
+function resolveCatalogStripePriceId(product, membership) {
+  const accountPriceId = membership.trusted ? normalizeStripePriceId(product.memberStripePriceId) : null;
+  return accountPriceId || normalizeStripePriceId(product.stripePriceId);
+}
+
+function getOptionalCatalogPrice(value) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+
+  const price = Number(value);
+  return Number.isFinite(price) ? price : null;
+}
+
+function normalizeStripePriceId(value) {
+  const priceId = String(value || "").trim();
+  return priceId || null;
+}
+
 function pushError(errors, code, message, holdReasons) {
   errors.push({ code, message });
 
@@ -386,6 +418,7 @@ module.exports = {
   adultSignatureShippingMethodIds,
   checkoutShippingMethods,
   invalidAgeVerificationTokens,
+  isRestrictedDestination,
   nonMemberShippingHandlingFeeCents,
   requiredShippingCarrier,
   restrictedDestinationStates,

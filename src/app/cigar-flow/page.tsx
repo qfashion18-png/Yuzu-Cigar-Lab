@@ -248,7 +248,7 @@ export default function CigarFlowPage() {
               <Newspaper className="size-6 text-yuzu-gold" />
               <h2 className="font-heading text-3xl text-yuzu-cream">Daily refresh scheduled</h2>
               <p className="text-sm leading-6 text-yuzu-muted">
-                {cigarFlowAutomation.cadence}. The newsroom automation drafts and publishes source-safe Cigar Flow stories from the same verified source set.
+                {cigarFlowAutomation.cadence}. The automation prepares source-backed drafts; a human operator reviews the final revision before publication.
               </p>
             </CardContent>
           </Card>

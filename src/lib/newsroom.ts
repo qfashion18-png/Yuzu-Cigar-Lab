@@ -1,3 +1,5 @@
+import cigarNewsSourceConfig from "../../config/cigar-news-sources.json";
+
 export type NewsSourceStatus = "official" | "needs_review" | "blocked_secondary" | "invalid";
 
 export type NewsSourceCandidate = {
@@ -69,75 +71,24 @@ export type NewsStory = {
   images?: NewsStoryImage[];
   sourceNotes: NewsSourceNote[];
   officialSources: string[];
+  leadUrls?: string[];
+  dedupeKey?: string | null;
+  contentFingerprint?: string | null;
+  sourceFingerprint?: string | null;
+  revision?: number;
   status: "draft" | "published" | "archived";
   publishedAt: string | null;
   updatedAt: string | null;
 };
 
-export const officialCigarNewsSources = [
-  { name: "A.J. Fernandez", url: "https://ajfcigars.com/", domain: "ajfcigars.com" },
-  { name: "Aganorsa Leaf", url: "https://www.aganorsaleaf.com/", domain: "aganorsaleaf.com" },
-  { name: "Alec Bradley", url: "https://alecbradley.com/", domain: "alecbradley.com" },
-  { name: "Ashton", url: "https://www.ashtoncigar.com/", domain: "ashtoncigar.com" },
-  { name: "Black Label Trading Company", url: "https://blacklabeltrading.com/", domain: "blacklabeltrading.com" },
-  { name: "CAO", url: "https://www.caocigars.com/", domain: "caocigars.com" },
-  { name: "Camacho", url: "https://www.camachocigars.com/", domain: "camachocigars.com" },
-  { name: "Casdagli Cigars", url: "https://casdaglicigars.com/", domain: "casdaglicigars.com" },
-  { name: "Cavalier Geneve", url: "https://www.cavaliergeneve.com/", domain: "cavaliergeneve.com" },
-  { name: "CLE Cigar Company", url: "https://www.clecigarcompany.com/", domain: "clecigarcompany.com" },
-  { name: "Cohiba", url: "https://www.cohiba.com/", domain: "cohiba.com" },
-  { name: "Crowned Heads", url: "https://www.crownedheads.com/", domain: "crownedheads.com" },
-  { name: "Dunbarton Tobacco & Trust", url: "https://dunbartoncigars.com/", domain: "dunbartoncigars.com" },
-  { name: "Drew Estate", url: "https://drewestate.com/", domain: "drewestate.com" },
-  { name: "E.P. Carrillo", url: "https://epcarrillo.com/", domain: "epcarrillo.com" },
-  { name: "Espinosa Cigars", url: "https://espinosacigars.com/", domain: "espinosacigars.com" },
-  { name: "Gurkha Cigars", url: "https://gurkhacigars.com/", domain: "gurkhacigars.com" },
-  { name: "Kristoff Cigars", url: "https://kristoff.com/", domain: "kristoff.com" },
-  { name: "La Flor Dominicana", url: "https://www.laflordominicana.com/", domain: "laflordominicana.com" },
-  { name: "Luciano Cigars", url: "https://lucianocigars.com/", domain: "lucianocigars.com" },
-  { name: "Macanudo", url: "https://www.macanudo.com/", domain: "macanudo.com" },
-  { name: "Montecristo", url: "https://www.montecristo.com/", domain: "montecristo.com" },
-  { name: "My Father Cigars", url: "https://myfathercigars.com/", domain: "myfathercigars.com" },
-  { name: "Padron Cigars", url: "https://padron.com/", domain: "padron.com" },
-  { name: "PDR Cigars", url: "https://pdrcigars.com/", domain: "pdrcigars.com" },
-  { name: "Plasencia Cigars", url: "https://plasenciacigars.com/", domain: "plasenciacigars.com" },
-  { name: "Quesada Cigars", url: "https://quesadacigars.com/", domain: "quesadacigars.com" },
-  { name: "RoMa Craft Tobac", url: "https://romacrafttobac.com/", domain: "romacrafttobac.com" },
-  { name: "Romeo y Julieta", url: "https://www.romeoyjulietacigars.com/", domain: "romeoyjulietacigars.com" },
-  { name: "Rocky Patel", url: "https://www.rockypatel.com/cigar-news/", domain: "rockypatel.com" },
-  { name: "Room101 Brand", url: "https://room101brand.com/", domain: "room101brand.com" },
-  { name: "Tatuaje", url: "https://www.tatuajecigars.com/", domain: "tatuajecigars.com" },
-  { name: "Viaje", url: "https://www.viajecigars.com/", domain: "viajecigars.com" },
-  { name: "West Tampa Tobacco Company", url: "https://westtampatobacco.com/", domain: "westtampatobacco.com" },
-  { name: "J.C. Newman", url: "https://www.jcnewman.com/", domain: "jcnewman.com" },
-  { name: "Arturo Fuente", url: "https://arturofuente.com/", domain: "arturofuente.com" },
-  { name: "Oliva", url: "https://olivacigar.com/news/", domain: "olivacigar.com" },
-  { name: "Perdomo", url: "https://www.perdomocigars.com/news", domain: "perdomocigars.com" },
-  { name: "Foundation Cigar Company", url: "https://foundationcigarcompany.com/press/", domain: "foundationcigarcompany.com" },
-  { name: "Fratello", url: "https://fratellocigar.com/fratello-news/", domain: "fratellocigar.com" },
-  { name: "Warped", url: "https://www.warpedcigars.com/news", domain: "warpedcigars.com" },
-  { name: "La Aurora", url: "https://www.laaurora.com.do/?lang=en", domain: "laaurora.com.do" },
-  { name: "Oettinger Davidoff", url: "https://www.oettingerdavidoff.com/", domain: "oettingerdavidoff.com" },
-  { name: "Habanos", url: "https://www.habanos.com/en/categoria-news/news/", domain: "habanos.com" },
-  { name: "Altadis U.S.A. PR Newswire", url: "https://www.prnewswire.com/news/altadis.u.s.a./", domain: "prnewswire.com" },
-  { name: "Cigar World / General Cigar", url: "https://www.cigarworld.com/news/tag/general-cigar-co/", domain: "cigarworld.com" },
-] as const;
+export const officialCigarNewsSources = cigarNewsSourceConfig.officialSources;
+export const officialCigarNewsDomains = [
+  ...new Set([...officialCigarNewsSources.map((source) => source.domain), ...cigarNewsSourceConfig.additionalOfficialDomains]),
+];
 
-const officialDomains: ReadonlySet<string> = new Set(officialCigarNewsSources.map((source) => source.domain));
+const officialDomains: ReadonlySet<string> = new Set(officialCigarNewsDomains);
 
-const blockedSecondaryDomains = new Set([
-  "blindmanspuff.com",
-  "cigaraficionado.com",
-  "cigardojo.com",
-  "cigarjournal.com",
-  "cigar-coop.com",
-  "cigarcoop.com",
-  "cigarsnobmag.com",
-  "developingpalates.com",
-  "halfwheel.com",
-  "stogieguys.com",
-  "tobaccobusiness.com",
-]);
+const blockedSecondaryDomains = new Set(cigarNewsSourceConfig.blockedSecondaryDomains);
 
 const fallbackNewsBodyPatterns = [
   "keep this section factual and concise until an operator verifies each detail against the source urls.",
@@ -177,7 +128,7 @@ export function normalizeNewsSourceCandidate(value: string): NewsSourceCandidate
       };
     }
 
-    if (officialDomains.has(domain)) {
+    if (isOfficialDomain(domain)) {
       return {
         input,
         url: parsedUrl.toString(),
@@ -314,7 +265,7 @@ export function mergeNewsStoryImages(...values: unknown[]) {
   return values
     .flatMap((value) => normalizeNewsStoryImages(value))
     .filter((image) => {
-      const key = image.image.toLowerCase();
+      const key = canonicalNewsImageKey(image.image);
 
       if (seen.has(key)) {
         return false;
@@ -337,8 +288,8 @@ export function normalizeNewsStoryImages(value: unknown): NewsStoryImage[] {
         return null;
       }
 
-      const image = cleanText(record.image || record.src || record.url, 1000);
-      if (!isHttpUrl(image)) {
+      const image = normalizeNewsImageUrl(cleanText(record.image || record.src || record.url, 1000));
+      if (!isHttpUrl(image) && !image.startsWith("/assets/")) {
         return null;
       }
 
@@ -405,6 +356,71 @@ export function slugifyNewsTitle(value: string) {
   return slug || `story-${Date.now()}`;
 }
 
+export function canonicalizeNewsUrl(value: string) {
+  try {
+    const parsedUrl = new URL(value.trim());
+    if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+      return "";
+    }
+
+    const domain = normalizeDomain(parsedUrl.hostname);
+    const params = [...parsedUrl.searchParams.entries()]
+      .filter(([key]) => !/^(?:utm_.+|fbclid|gclid|mc_cid|mc_eid|ref|source)$/i.test(key))
+      .sort(([leftKey, leftValue], [rightKey, rightValue]) => leftKey.localeCompare(rightKey) || leftValue.localeCompare(rightValue));
+    const search = new URLSearchParams(params).toString();
+    const pathname = (parsedUrl.pathname || "/").replace(/\/{2,}/g, "/").replace(/\/$/, "") || "/";
+
+    return `https://${domain}${pathname}${search ? `?${search}` : ""}`;
+  } catch {
+    return "";
+  }
+}
+
+export function isSpecificNewsSourceUrl(value: string) {
+  const canonicalUrl = canonicalizeNewsUrl(value);
+  if (!canonicalUrl) {
+    return false;
+  }
+
+  const pathname = new URL(canonicalUrl).pathname.toLowerCase().replace(/\/$/, "") || "/";
+  return !new Set([
+    "/",
+    "/blog",
+    "/cigar-news",
+    "/en/categoria-news/news",
+    "/en/search/tag/cigar",
+    "/fratello-news",
+    "/news",
+    "/news-releases/news-releases-list",
+    "/news/tag/general-cigar-co",
+    "/newsroom",
+    "/press",
+  ]).has(pathname);
+}
+
+export function normalizeNewsImageUrl(value: string) {
+  const input = value.trim();
+  if (!input) {
+    return "";
+  }
+
+  try {
+    const parsedUrl = new URL(input);
+    if (normalizeDomain(parsedUrl.hostname) === "yuzucigarclub.com" && parsedUrl.pathname.startsWith("/assets/")) {
+      return `${parsedUrl.pathname}${parsedUrl.search}`;
+    }
+  } catch {
+    return input.startsWith("/assets/") ? input : "";
+  }
+
+  return input;
+}
+
+export function canonicalNewsImageKey(value: string) {
+  const normalized = normalizeNewsImageUrl(value);
+  return normalized.startsWith("/assets/") ? normalized.toLowerCase().split("?")[0] : canonicalizeNewsUrl(normalized) || normalized.toLowerCase();
+}
+
 function normalizeSourceNotes(value: unknown, input: NewsroomDraftInput): NewsSourceNote[] {
   const rawNotes = Array.isArray(value) ? value : [];
   const notesFromReply = rawNotes
@@ -439,10 +455,10 @@ function normalizeSourceNotes(value: unknown, input: NewsroomDraftInput): NewsSo
     .filter((item): item is NewsSourceNote => Boolean(item?.url));
 
   if (notesFromReply.length) {
-    return notesFromReply;
+    return deduplicateNewsSourceNotes(notesFromReply);
   }
 
-  return input.sourceUrls
+  return deduplicateNewsSourceNotes(input.sourceUrls
     .map((sourceUrl, index) => {
       const source = normalizeNewsSourceCandidate(sourceUrl);
       return {
@@ -454,7 +470,19 @@ function normalizeSourceNotes(value: unknown, input: NewsroomDraftInput): NewsSo
         reviewNote: source.reviewNote,
       } satisfies NewsSourceNote;
     })
-    .filter((source) => Boolean(source.url));
+    .filter((source) => Boolean(source.url)));
+}
+
+function deduplicateNewsSourceNotes(notes: NewsSourceNote[]) {
+  const seen = new Set<string>();
+  return notes.filter((note) => {
+    const key = canonicalizeNewsUrl(note.url);
+    if (!key || seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
 }
 
 function normalizeSections(value: unknown): NewsroomSection[] {
@@ -582,6 +610,10 @@ function isHttpUrl(value: string) {
 
 function isBlockedSecondaryDomain(domain: string) {
   return blockedSecondaryDomains.has(domain) || [...blockedSecondaryDomains].some((blocked) => domain.endsWith(`.${blocked}`));
+}
+
+function isOfficialDomain(domain: string) {
+  return officialDomains.has(domain) || [...officialDomains].some((official) => domain.endsWith(`.${official}`));
 }
 
 function cleanText(value: unknown, maxLength: number) {

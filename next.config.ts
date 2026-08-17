@@ -6,26 +6,9 @@ const nextConfig: NextConfig = {
   images: {
     unoptimized: true,
     remotePatterns: [
-      {
-        protocol: "https",
-        hostname: "swwest.com",
-        pathname: "/Images/SunsetItems/**",
-      },
-      {
-        protocol: "https",
-        hostname: "halfwheel.com",
-        pathname: "/wp-content/uploads/**",
-      },
-      {
-        protocol: "https",
-        hostname: "cigardojo.com",
-        pathname: "/wp-content/uploads/**",
-      },
-      {
-        protocol: "https",
-        hostname: "classroom2.s3.us-east-1.amazonaws.com",
-        pathname: "/ycc/humidor-images/**",
-      },
+      // Static export serves remote images directly; the deployed CSP below is the
+      // authoritative, shared allowlist and blocks every unapproved image host.
+      { protocol: "https", hostname: "**", pathname: "/**" },
     ],
   },
   trailingSlash: true,

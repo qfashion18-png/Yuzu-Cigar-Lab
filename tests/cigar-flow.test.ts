@@ -12,13 +12,27 @@ import {
   cigarPressReleaseSearchSources,
 } from "../src/lib/cigar-flow";
 import { navItems } from "../src/lib/data";
-import { officialCigarNewsSources } from "../src/lib/newsroom";
+import {
+  canonicalizeNewsUrl,
+  isSpecificNewsSourceUrl,
+  normalizeNewsSourceCandidate,
+  officialCigarNewsSources,
+} from "../src/lib/newsroom";
 import { siteUrl } from "../src/lib/site";
+
+type CigarNewsSourceConfig = {
+  officialSources: Array<{ name: string; url: string; domain: string }>;
+  additionalOfficialDomains: string[];
+  blockedSecondaryDomains: string[];
+};
 
 const cigarFlowPageSource = readFileSync(new URL("../src/app/cigar-flow/page.tsx", import.meta.url), "utf8");
 const cigarFlowExperienceSource = readFileSync(new URL("../src/components/cigar-flow-experience.tsx", import.meta.url), "utf8");
 const homePageSource = readFileSync(new URL("../src/app/page.tsx", import.meta.url), "utf8");
 const dailyCigarNewsRunSource = readFileSync(new URL("../scripts/daily-cigar-news-run.ts", import.meta.url), "utf8");
+const cigarNewsSourceConfig = JSON.parse(
+  readFileSync(new URL("../config/cigar-news-sources.json", import.meta.url), "utf8"),
+) as CigarNewsSourceConfig;
 
 test("cigar flow exposes verified RSS feed sources", () => {
   const feedUrls = cigarFlowSources.map((source) => source.feedUrl);
@@ -27,8 +41,8 @@ test("cigar flow exposes verified RSS feed sources", () => {
   assert.ok(feedUrls.includes("https://halfwheel.com/feed"));
   assert.ok(feedUrls.includes("https://cigardojo.com/feed"));
   assert.ok(feedUrls.includes("https://www.cigarjournal.com/feed"));
-  assert.ok(feedUrls.includes("https://www.jrcigars.com/blending-room/feed/"));
-  assert.ok(feedUrls.includes("http://cigaraficionado.com/"));
+  assert.equal(feedUrls.includes("https://www.jrcigars.com/blending-room/feed/"), false, "Incapsula HTML is not an RSS feed");
+  assert.equal(feedUrls.includes("http://cigaraficionado.com/"), false, "an HTTP homepage is not an RSS feed");
 
   for (const source of cigarFlowSources) {
     assert.match(source.feedUrl, /^https?:\/\//);
@@ -36,12 +50,69 @@ test("cigar flow exposes verified RSS feed sources", () => {
   }
 });
 
-test("cigar flow feed mixes RSS news, manufacturer drops, member posts, image cards, and video cards", () => {
+test("cigar news URLs canonicalize tracking and transport aliases without collapsing meaningful queries", () => {
+  const aliases = [
+    "http://www.perdomocigars.com:80/news//?utm_source=newsletter&b=2&a=1#release",
+    "https://perdomocigars.com/news?a=1&b=2",
+    "https://www.perdomocigars.com/news/?b=2&a=1&fbclid=tracking",
+  ];
+
+  assert.deepEqual(
+    aliases.map(canonicalizeNewsUrl),
+    aliases.map(() => "https://perdomocigars.com/news?a=1&b=2"),
+  );
+  assert.notEqual(
+    canonicalizeNewsUrl("https://example.com/release?issue=1"),
+    canonicalizeNewsUrl("https://example.com/release?issue=2"),
+    "non-tracking query values may identify different source records",
+  );
+  assert.equal(canonicalizeNewsUrl("mailto:news@example.com"), "");
+  assert.equal(canonicalizeNewsUrl("not a url"), "");
+  assert.equal(isSpecificNewsSourceUrl("https://olivacigar.com/news/"), false);
+  assert.equal(isSpecificNewsSourceUrl("https://olivacigar.com/news/serie-v-maduro-release/"), true);
+});
+
+test("shared cigar news source policy stays canonical, unique, and authoritative", () => {
+  assert.deepEqual(officialCigarNewsSources, cigarNewsSourceConfig.officialSources);
+
+  const canonicalSourceUrls = officialCigarNewsSources.map((source) => canonicalizeNewsUrl(source.url));
+  const officialDomains = new Set(officialCigarNewsSources.map((source) => source.domain));
+  const allOfficialDomains = new Set([...officialDomains, ...cigarNewsSourceConfig.additionalOfficialDomains]);
+
+  assert.equal(new Set(canonicalSourceUrls).size, canonicalSourceUrls.length, "official source URLs must not contain canonical aliases");
+  assert.equal(officialDomains.size, officialCigarNewsSources.length, "one configured official source should own each domain");
+  assert.equal(
+    cigarNewsSourceConfig.blockedSecondaryDomains.some((domain) => allOfficialDomains.has(domain)),
+    false,
+    "a domain cannot be both official and blocked secondary coverage",
+  );
+
+  for (const source of officialCigarNewsSources) {
+    const normalized = normalizeNewsSourceCandidate(source.url);
+    assert.equal(normalized.status, "official", `${source.name} should be accepted from the shared policy`);
+    assert.equal(normalized.domain, source.domain);
+  }
+
+  for (const domain of cigarNewsSourceConfig.additionalOfficialDomains) {
+    assert.equal(normalizeNewsSourceCandidate(`https://${domain}/news/example`).status, "official");
+  }
+
+  for (const domain of cigarNewsSourceConfig.blockedSecondaryDomains) {
+    assert.equal(normalizeNewsSourceCandidate(`https://${domain}/story/example`).status, "blocked_secondary");
+  }
+
+  assert.deepEqual(
+    officialCigarNewsSources.find((source) => source.name === "Altadis U.S.A."),
+    { name: "Altadis U.S.A.", url: "https://www.altadisusa.com/", domain: "altadisusa.com" },
+  );
+});
+
+test("cigar flow feed labels secondary coverage as RSS and mixes member, image, and video cards", () => {
   const kinds = new Set(cigarFlowItems.map((item) => item.kind));
   const mediaTypes = new Set(cigarFlowItems.map((item) => item.mediaType));
 
   assert.ok(kinds.has("rss"));
-  assert.ok(kinds.has("manufacturer"));
+  assert.equal(kinds.has("manufacturer"), false, "third-party coverage must not be labeled as a manufacturer-direct post");
   assert.ok(kinds.has("member"));
   assert.ok(mediaTypes.has("image"));
   assert.ok(mediaTypes.has("video"));
@@ -93,7 +164,7 @@ test("cigar flow documents the actual daily newsroom automation target", () => {
   assert.equal(cigarFlowAutomation.id, "cigar-flow-daily-newsroom-refresh");
   assert.equal(cigarFlowAutomation.cadence, "Daily at 8:00 AM America/Phoenix");
   assert.ok(cigarFlowAutomation.outputTargets.includes("Cigar Flow news desk"));
-  assert.ok(cigarFlowAutomation.outputTargets.includes("Published newsroom story"));
+  assert.ok(cigarFlowAutomation.outputTargets.includes("Operator-review draft"));
   assert.ok(cigarFlowAutomation.outputTargets.includes("Operator review trail"));
   assert.ok(
     cigarFlowAutomation.updateScope.some((line) => /daily search/i.test(line) && /cigar press releases/i.test(line)),
@@ -110,7 +181,9 @@ test("cigar flow documents the actual daily newsroom automation target", () => {
     "automation metadata should not claim the API job edits static source files"
   );
   assert.ok(workflowSource.includes('cron: "0 15 * * *"'), "GitHub workflow should match the displayed 8 AM Phoenix daily cadence");
-  assert.ok(workflowSource.includes('YCC_DAILY_NEWSROOM_AUTO_PUBLISH: "true"'), "workflow should publish the reviewed newsroom story");
+  assert.ok(workflowSource.includes('YCC_DAILY_NEWSROOM_AUTO_PUBLISH: "false"'), "scheduled automation must stop at human review");
+  assert.ok(workflowSource.includes('YCC_DAILY_NEWSROOM_REQUIRE_FRESH_LEADS: "true"'));
+  assert.ok(workflowSource.includes("concurrency:"), "workflow should prevent overlapping daily runs");
   assert.ok(officialCigarNewsSources.length >= 40);
   assert.ok(cigarFlowNewsStories.some((story) => story.title.includes("May 31 Cigar Industry Highlights")));
   assert.ok(cigarFlowNewsStories.some((story) => /Oliva Serie V Maduro/.test(story.bodyMarkdown)));

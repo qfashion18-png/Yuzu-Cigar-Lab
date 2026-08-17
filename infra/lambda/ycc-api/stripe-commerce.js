@@ -1,6 +1,6 @@
 "use strict";
 
-const DEFAULT_STRIPE_API_VERSION = "2026-02-25.clover";
+const DEFAULT_STRIPE_API_VERSION = "2026-07-29.dahlia";
 
 const handledStripeEventActions = {
   "checkout.session.completed": "record_checkout_completion",
@@ -251,12 +251,22 @@ function getHandledStripeEventAction(eventType) {
   return handledStripeEventActions[eventType] || "ignore";
 }
 
-async function createCommerceCheckoutSession(stripe, input, env = process.env) {
-  return stripe.checkout.sessions.create(buildCheckoutSessionParams(input, env));
+async function createCommerceCheckoutSession(stripe, input, env = process.env, requestOptions = {}) {
+  const idempotencyKey = toMetadataString(requestOptions.idempotencyKey || input?.idempotencyKey, 255);
+  const params = buildCheckoutSessionParams(input, env);
+
+  return idempotencyKey
+    ? stripe.checkout.sessions.create(params, { idempotencyKey })
+    : stripe.checkout.sessions.create(params);
 }
 
-async function createMembershipCheckoutSession(stripe, input, env = process.env) {
-  return stripe.checkout.sessions.create(buildMembershipSessionParams(input, env));
+async function createMembershipCheckoutSession(stripe, input, env = process.env, requestOptions = {}) {
+  const idempotencyKey = toMetadataString(requestOptions.idempotencyKey || input?.idempotencyKey, 255);
+  const params = buildMembershipSessionParams(input, env);
+
+  return idempotencyKey
+    ? stripe.checkout.sessions.create(params, { idempotencyKey })
+    : stripe.checkout.sessions.create(params);
 }
 
 async function createFriendsFamilyCustomer(stripe, input, requestOptions = {}) {

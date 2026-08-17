@@ -57,7 +57,7 @@ export function NewsroomAgentPanel() {
   const candidates = useMemo(() => sourceUrls.map(normalizeNewsSourceCandidate), [sourceUrls]);
   const sourceSummary = useMemo(() => summarizeCandidates(candidates), [candidates]);
   const canDraft = sourceSummary.accepted > 0 && !isDrafting;
-  const canPublish = Boolean(draft && operatorApproved && !isPublishing);
+  const canPublish = Boolean(draft && operatorApproved && !publishedStory && !isPublishing);
 
   async function handleDraft() {
     if (!canDraft) {
@@ -133,7 +133,12 @@ export function NewsroomAgentPanel() {
       );
 
       setPublishedStory(response.story);
-      setMessage("Story published from official source notes.");
+      setOperatorApproved(false);
+      setMessage(
+        response.deduplicated
+          ? "A story using the same verified source evidence is already published; no duplicate was created."
+          : "Story published from official source notes.",
+      );
     } catch (publishError) {
       setError(getLiveApiErrorMessage(publishError));
     } finally {
@@ -145,10 +150,12 @@ export function NewsroomAgentPanel() {
     field: K,
     value: NewsroomDraft[K],
   ) {
+    markDraftEdited();
     setDraft((current) => (current ? { ...current, [field]: value } : current));
   }
 
   function updateSection(index: number, patch: Partial<NewsroomSection>) {
+    markDraftEdited();
     setDraft((current) => {
       if (!current) {
         return current;
@@ -164,6 +171,7 @@ export function NewsroomAgentPanel() {
   }
 
   function addSection() {
+    markDraftEdited();
     setDraft((current) =>
       current
         ? {
@@ -175,6 +183,7 @@ export function NewsroomAgentPanel() {
   }
 
   function removeSection(index: number) {
+    markDraftEdited();
     setDraft((current) => {
       if (!current || current.sections.length <= 1) {
         return current;
@@ -185,6 +194,12 @@ export function NewsroomAgentPanel() {
         sections: current.sections.filter((_, sectionIndex) => sectionIndex !== index),
       };
     });
+  }
+
+  function markDraftEdited() {
+    setOperatorApproved(false);
+    setPublishedStory(null);
+    setMessage("Draft changed. Review and approve the final revision again before publishing.");
   }
 
   return (

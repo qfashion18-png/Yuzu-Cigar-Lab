@@ -1,19 +1,24 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CalendarDays, CheckCircle2, ClipboardCheck, MapPin, ShieldCheck, Sparkles } from "lucide-react";
 
+import { useBackupAuth } from "@/components/backup-auth-provider";
 import { Button } from "@/components/ui/button";
 import {
-  approvedEventImportsStorageKey,
-  approvedEventImportsUpdatedEvent,
   approveEventImportDraft,
   draftEventImportFromFacebookText,
-  readApprovedEventImports,
-  serializeApprovedEventImports,
   type ApprovedImportedEvent,
   type EventImportDraft,
 } from "@/lib/event-import-agent";
+import {
+  createAdminEvent,
+  fetchAdminEvents,
+  getLiveApiErrorMessage,
+  publishAdminEvent,
+  type AdminEventInput,
+  type LivePublishedEvent,
+} from "@/lib/live-api";
 
 const sampleFacebookText = [
   "Cigar Night at Fox Cigar Bar -Every 2nd Saturday",
@@ -24,16 +29,62 @@ const sampleFacebookText = [
 ].join("\n");
 
 export function EventImportAgentPanel() {
+  const auth = useBackupAuth();
+  const { authSource, createApiHeaders, isReady, isSignedIn } = auth;
   const [sourceUrl, setSourceUrl] = useState("https://www.facebook.com/events/2502127350222287/");
   const [sourceText, setSourceText] = useState(sampleFacebookText);
   const [draft, setDraft] = useState<EventImportDraft | ApprovedImportedEvent | null>(null);
-  const [approvedEvents, setApprovedEvents] = useState<ApprovedImportedEvent[]>(() =>
-    typeof window === "undefined" ? [] : readApprovedEventImports(window.localStorage.getItem(approvedEventImportsStorageKey)),
-  );
+  const [approvedEvents, setApprovedEvents] = useState<LivePublishedEvent[]>([]);
   const [operatorApproved, setOperatorApproved] = useState(false);
   const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [isLoadingEvents, setIsLoadingEvents] = useState(false);
+  const [isPublishing, setIsPublishing] = useState(false);
 
-  const serializedApprovedEvents = useMemo(() => serializeApprovedEventImports(approvedEvents), [approvedEvents]);
+  const serializedApprovedEvents = useMemo(() => JSON.stringify(approvedEvents, null, 2), [approvedEvents]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!isReady || !isSignedIn || authSource !== "cognito") {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    window.queueMicrotask(() => {
+      if (!cancelled) {
+        setIsLoadingEvents(true);
+      }
+    });
+    void createApiHeaders()
+      .then((headers) => {
+        if (!headers.Authorization) {
+          throw new Error("A live Cognito admin session is required to load shared events.");
+        }
+
+        return fetchAdminEvents(headers, { status: "published", limit: 100 });
+      })
+      .then((response) => {
+        if (!cancelled) {
+          setApprovedEvents(response.events);
+        }
+      })
+      .catch((loadError: unknown) => {
+        if (!cancelled) {
+          setError(getLiveApiErrorMessage(loadError));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoadingEvents(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authSource, createApiHeaders, isReady, isSignedIn]);
 
   function handleDraft() {
     const nextDraft = draftEventImportFromFacebookText({
@@ -44,31 +95,40 @@ export function EventImportAgentPanel() {
     setDraft(nextDraft);
     setOperatorApproved(false);
     setMessage("Draft ready for operator review.");
+    setError("");
   }
 
-  function handleApprove() {
+  async function handleApprove() {
     if (!draft || draft.approvalStatus !== "draft" || !operatorApproved) {
-      setMessage("Operator approval is required before this event can be exported.");
+      setError("Operator approval is required before this event can be published.");
       return;
     }
 
-    const approved = approveEventImportDraft(draft, new Date().toISOString());
-    const storedEvents = readApprovedEventImports(window.localStorage.getItem(approvedEventImportsStorageKey));
-    const nextApprovedEvents = [
-      approved,
-      ...storedEvents.filter((event) => event.slug !== approved.slug && event.sourceUrl !== approved.sourceUrl),
-      ...approvedEvents.filter(
-        (event) =>
-          event.slug !== approved.slug &&
-          event.sourceUrl !== approved.sourceUrl &&
-          !storedEvents.some((storedEvent) => storedEvent.slug === event.slug || storedEvent.sourceUrl === event.sourceUrl),
-      ),
-    ];
+    setIsPublishing(true);
+    setMessage("");
+    setError("");
 
-    setApprovedEvents(nextApprovedEvents);
-    setDraft(approved);
-    storeApprovedEvents(nextApprovedEvents);
-    setMessage("Event approved for static storefront import.");
+    try {
+      const headers = await auth.createApiHeaders();
+
+      if (!headers.Authorization) {
+        throw new Error("Sign in with a live Cognito admin session before publishing events.");
+      }
+
+      const approved = approveEventImportDraft(draft, new Date().toISOString());
+      const created = await createAdminEvent(buildAdminEventInput(approved), headers);
+      const published = await publishAdminEvent(created.event.id, headers);
+      setApprovedEvents((current) => [
+        published.event,
+        ...current.filter((event) => event.id !== published.event.id && event.slug !== published.event.slug),
+      ]);
+      setDraft(approved);
+      setMessage("Event approved and published to the shared storefront feed.");
+    } catch (publishError) {
+      setError(getLiveApiErrorMessage(publishError));
+    } finally {
+      setIsPublishing(false);
+    }
   }
 
   return (
@@ -101,7 +161,11 @@ export function EventImportAgentPanel() {
             <div className="mt-5 grid gap-2 text-sm text-yuzu-cream/82">
               <RuleRow label="Draft" value={draft ? draft.approvalStatus : "Not started"} tone={draft ? "ok" : "warn"} />
               <RuleRow label="Approval" value={operatorApproved ? "Operator checked" : "Review required"} tone={operatorApproved ? "ok" : "warn"} />
-              <RuleRow label="Export" value={`${approvedEvents.length} approved`} tone={approvedEvents.length ? "ok" : "warn"} />
+              <RuleRow
+                label="Published"
+                value={isLoadingEvents ? "Loading" : `${approvedEvents.length} shared`}
+                tone={approvedEvents.length ? "ok" : "warn"}
+              />
             </div>
           </div>
         </div>
@@ -154,14 +218,15 @@ export function EventImportAgentPanel() {
             </label>
             <Button
               className="mt-5 h-11 w-full bg-yuzu-gold text-yuzu-ink hover:bg-yuzu-gold-light"
-              disabled={!draft || !operatorApproved}
+              disabled={!draft || !operatorApproved || isPublishing}
               type="button"
               onClick={handleApprove}
             >
               <CheckCircle2 className="size-4" />
-              Approve Event
+              {isPublishing ? "Publishing Event" : "Approve Event"}
             </Button>
             {message ? <p className="mt-4 text-sm leading-6 text-yuzu-muted">{message}</p> : null}
+            {error ? <p className="mt-4 text-sm leading-6 text-red-300" role="alert">{error}</p> : null}
           </section>
         </div>
 
@@ -204,7 +269,7 @@ export function EventImportAgentPanel() {
           </section>
 
           <section className="border border-yuzu-line bg-yuzu-panel/72 p-5">
-            <h2 className="text-sm font-black uppercase tracking-[0.18em] text-yuzu-gold">Approved Static Export</h2>
+            <h2 className="text-sm font-black uppercase tracking-[0.18em] text-yuzu-gold">Shared Published Events</h2>
             <textarea
               className="mt-5 min-h-64 w-full border border-yuzu-line bg-yuzu-night/72 p-3 font-mono text-xs leading-5 text-yuzu-cream outline-none"
               readOnly
@@ -217,9 +282,36 @@ export function EventImportAgentPanel() {
   );
 }
 
-function storeApprovedEvents(events: ApprovedImportedEvent[]) {
-  window.localStorage.setItem(approvedEventImportsStorageKey, serializeApprovedEventImports(events));
-  window.dispatchEvent(new Event(approvedEventImportsUpdatedEvent));
+function buildAdminEventInput(event: ApprovedImportedEvent): AdminEventInput {
+  return {
+    slug: event.slug,
+    title: event.title,
+    summary: event.deck,
+    description: event.description,
+    host: event.host,
+    startsAt: event.startsAt,
+    endsAt: event.endsAt,
+    timezone: "America/Phoenix",
+    location: {
+      name: event.location,
+      latitude: event.coordinates.latitude,
+      longitude: event.coordinates.longitude,
+    },
+    source: {
+      type: "operator_import",
+      provider: event.sourceName.toLowerCase().includes("facebook") ? "facebook" : event.sourceName,
+      url: event.sourceUrl,
+    },
+    imageUrl: event.image,
+    accessLevel: event.access,
+    capacity: event.capacity,
+    includes: event.includes,
+    agenda: event.agenda,
+    goodFor: event.goodFor,
+    status: "draft",
+    visibility: "public",
+    verificationStatus: "verified",
+  };
 }
 
 function RuleRow({ label, value, tone }: { label: string; value: string; tone: "ok" | "warn" }) {

@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { createServer, type IncomingMessage } from "node:http";
+import { randomUUID } from "node:crypto";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { once } from "node:events";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
@@ -14,6 +16,9 @@ type DraftCall = {
 
 type PublishCall = {
   slug?: string;
+  automationDate?: string;
+  dedupeKey?: string;
+  leadUrls?: string[];
   images?: Array<{ image?: string; imagePosition?: string; sourceUrl?: string }>;
   sourceNotes?: Array<{ label?: string; url?: string; note?: string }>;
 };
@@ -342,6 +347,7 @@ test("daily cigar flow writer pulls fresh RSS leads and prioritizes matching off
       YCC_DAILY_NEWSROOM_MAX_ATTEMPTS: "1",
       YCC_DAILY_NEWSROOM_RSS_FEEDS: `http://127.0.0.1:${address.port}/rss.xml`,
       YCC_DAILY_NEWSROOM_RSS_LEAD_LIMIT: "2",
+      YCC_DAILY_NEWSROOM_NOW: "2026-06-25T18:00:00.000Z",
     });
 
     assert.equal(result.code, 0, result.stderr || result.stdout);
@@ -355,7 +361,200 @@ test("daily cigar flow writer pulls fresh RSS leads and prioritizes matching off
   }
 });
 
-test("daily cigar flow writer carries primary source notes into publish when draft omits them", async () => {
+test("daily cigar flow writer keeps the newest fresh canonical RSS alias and rejects stale, future, and undated leads", async () => {
+  const draftCalls: DraftCall[] = [];
+  const server = createServer(async (request, response) => {
+    if (request.method === "GET" && request.url === "/rss.xml") {
+      response.writeHead(200, { "content-type": "application/rss+xml" });
+      response.end(`
+        <rss version="2.0">
+          <channel>
+            <title>Canonical cigar feed</title>
+            <item>
+              <title>Stale alias must not suppress its fresh canonical match</title>
+              <link>http://www.example.test/releases/rocky/?utm_source=old&amp;b=2&amp;a=1#fragment</link>
+              <pubDate>Wed, 24 Jun 2026 12:00:00 GMT</pubDate>
+            </item>
+            <item>
+              <title>Fresh Rocky Patel canonical lead</title>
+              <link>https://example.test/releases/rocky?b=2&amp;a=1</link>
+              <pubDate>Thu, 25 Jun 2026 17:00:00 GMT</pubDate>
+            </item>
+            <item>
+              <title>Too old to be today</title>
+              <link>https://example.test/releases/old</link>
+              <pubDate>Sun, 21 Jun 2026 17:00:00 GMT</pubDate>
+            </item>
+            <item>
+              <title>Too far in the future</title>
+              <link>https://example.test/releases/future</link>
+              <pubDate>Fri, 26 Jun 2026 03:00:00 GMT</pubDate>
+            </item>
+            <item>
+              <title>Undated lead</title>
+              <link>https://example.test/releases/undated</link>
+            </item>
+          </channel>
+        </rss>
+      `);
+      return;
+    }
+
+    if (request.method === "POST" && request.url === "/news/story-drafts") {
+      const payload = JSON.parse(await readRequestBody(request)) as DraftCall;
+      draftCalls.push(payload);
+      respondWithDraft(response, payload, "Fresh Rocky Patel Canonical Update");
+      return;
+    }
+
+    response.writeHead(404, { "content-type": "application/json" });
+    response.end(JSON.stringify({ error: "not_found" }));
+  });
+
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+
+    const result = await runDailyWriter({
+      NEXT_PUBLIC_YCC_API_BASE_URL: `http://127.0.0.1:${address.port}`,
+      YCC_NEWSROOM_BEARER_TOKEN: "test-token",
+      YCC_DAILY_NEWSROOM_RSS_FEEDS: `http://127.0.0.1:${address.port}/rss.xml`,
+      YCC_DAILY_NEWSROOM_RSS_LEAD_LIMIT: "8",
+      YCC_DAILY_NEWSROOM_RSS_MAX_AGE_HOURS: "24",
+      YCC_DAILY_NEWSROOM_RSS_MAX_FUTURE_SKEW_HOURS: "2",
+      YCC_DAILY_NEWSROOM_REQUIRE_FRESH_LEADS: "true",
+      YCC_DAILY_NEWSROOM_NOW: "2026-06-25T18:00:00.000Z",
+    });
+
+    assert.equal(result.code, 0, result.stderr || result.stdout);
+    assert.equal(draftCalls.length, 1);
+    const leadNotes = (draftCalls[0].sourceNotes ?? []).filter((note) => /Current RSS lead/i.test(note));
+    assert.equal(leadNotes.length, 1);
+    assert.match(leadNotes[0], /Fresh Rocky Patel canonical lead/);
+    assert.match(leadNotes[0], /https:\/\/example\.test\/releases\/rocky\?a=1&b=2/);
+    assert.doesNotMatch(leadNotes[0], /Stale alias|Too old|Too far|Undated/i);
+    assert.match(result.stdout, /Fresh RSS leads pulled: 1/);
+  } finally {
+    server.close();
+    await once(server, "close").catch(() => undefined);
+  }
+});
+
+test("daily cigar flow writer rejects a successful HTML response masquerading as an RSS feed", async () => {
+  let draftCallCount = 0;
+  const server = createServer(async (request, response) => {
+    if (request.method === "GET" && request.url === "/rss.xml") {
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      response.end("<html><body><item><title>Not actually RSS</title></item></body></html>");
+      return;
+    }
+
+    if (request.method === "POST" && request.url === "/news/story-drafts") {
+      draftCallCount += 1;
+    }
+
+    response.writeHead(404, { "content-type": "application/json" });
+    response.end(JSON.stringify({ error: "not_found" }));
+  });
+
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+
+    const result = await runDailyWriter({
+      NEXT_PUBLIC_YCC_API_BASE_URL: `http://127.0.0.1:${address.port}`,
+      YCC_NEWSROOM_BEARER_TOKEN: "test-token",
+      YCC_DAILY_NEWSROOM_RSS_FEEDS: `http://127.0.0.1:${address.port}/rss.xml`,
+      YCC_DAILY_NEWSROOM_RSS_LEAD_LIMIT: "8",
+      YCC_DAILY_NEWSROOM_REQUIRE_FRESH_LEADS: "true",
+      YCC_DAILY_NEWSROOM_NOW: "2026-06-25T18:00:00.000Z",
+    });
+
+    assert.equal(result.code, 0, result.stderr || result.stdout);
+    assert.equal(draftCallCount, 0);
+    assert.match(result.stderr, /response is not an RSS or Atom feed/i);
+    assert.match(result.stdout, /No action: no fresh, unprocessed RSS leads/i);
+  } finally {
+    server.close();
+    await once(server, "close").catch(() => undefined);
+  }
+});
+
+test("daily cigar flow writer suppresses a canonically equivalent lead already published in a prior run", async () => {
+  let draftCallCount = 0;
+  let storyListCallCount = 0;
+  const server = createServer(async (request, response) => {
+    if (request.method === "GET" && request.url === "/news/stories?limit=50") {
+      storyListCallCount += 1;
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          stories: [
+            {
+              slug: "daily-cigar-flow-2026-06-24",
+              leadUrls: ["http://www.example.test/releases/rocky/?utm_source=prior#story"],
+            },
+          ],
+        }),
+      );
+      return;
+    }
+
+    if (request.method === "GET" && request.url === "/rss.xml") {
+      response.writeHead(200, { "content-type": "application/rss+xml" });
+      response.end(`
+        <rss version="2.0">
+          <channel>
+            <item>
+              <title>Previously published Rocky Patel lead</title>
+              <link>https://example.test/releases/rocky</link>
+              <pubDate>Thu, 25 Jun 2026 17:00:00 GMT</pubDate>
+            </item>
+          </channel>
+        </rss>
+      `);
+      return;
+    }
+
+    if (request.method === "POST" && request.url === "/news/story-drafts") {
+      draftCallCount += 1;
+    }
+
+    response.writeHead(404, { "content-type": "application/json" });
+    response.end(JSON.stringify({ error: "not_found" }));
+  });
+
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+
+    const result = await runDailyWriter({
+      NEXT_PUBLIC_YCC_API_BASE_URL: `http://127.0.0.1:${address.port}`,
+      YCC_NEWSROOM_BEARER_TOKEN: "test-token",
+      YCC_DAILY_NEWSROOM_DEDUPE_PREFLIGHT: "true",
+      YCC_DAILY_NEWSROOM_RSS_FEEDS: `http://127.0.0.1:${address.port}/rss.xml`,
+      YCC_DAILY_NEWSROOM_RSS_LEAD_LIMIT: "8",
+      YCC_DAILY_NEWSROOM_REQUIRE_FRESH_LEADS: "true",
+      YCC_DAILY_NEWSROOM_NOW: "2026-06-25T18:00:00.000Z",
+    });
+
+    assert.equal(result.code, 0, result.stderr || result.stdout);
+    assert.equal(storyListCallCount, 1);
+    assert.equal(draftCallCount, 0);
+    assert.match(result.stdout, /No action: no fresh, unprocessed RSS leads/i);
+  } finally {
+    server.close();
+    await once(server, "close").catch(() => undefined);
+  }
+});
+
+test("daily cigar flow writer refuses to invent primary source notes when the draft omits them", async () => {
   const draftCalls: DraftCall[] = [];
   const publishCalls: PublishCall[] = [];
   const server = createServer(async (request, response) => {
@@ -436,22 +635,19 @@ test("daily cigar flow writer carries primary source notes into publish when dra
       YCC_DAILY_NEWSROOM_MAX_ATTEMPTS: "1",
     });
 
-    assert.equal(result.code, 0, result.stderr || result.stdout);
+    assert.equal(result.code, 1, result.stderr || result.stdout);
     assert.equal(draftCalls.length, 1);
-    assert.equal(publishCalls.length, 1);
-    assert.match(publishCalls[0].slug ?? "", /^daily-cigar-flow-\d{4}-\d{2}-\d{2}-/);
-    assert.ok(
-      publishCalls[0].sourceNotes?.some((note) => draftCalls[0].sourceUrls.includes(note.url ?? "")),
-      "publish should retain at least one source URL from the draft request",
-    );
+    assert.equal(publishCalls.length, 0);
+    assert.match(result.stderr, /requires at least one draft-returned, specific official source note/i);
   } finally {
     server.close();
     await once(server, "close").catch(() => undefined);
   }
 });
 
-test("daily cigar flow writer verifies the published story is first in the live runtime feed", async () => {
+test("daily cigar flow writer uses a deterministic Phoenix-date slug and verifies it first in the live runtime feed", async () => {
   let publishedSlug = "";
+  const publishCalls: PublishCall[] = [];
   const server = createServer(async (request, response) => {
     if (request.method === "POST" && request.url === "/news/story-drafts") {
       const payload = JSON.parse(await readRequestBody(request)) as DraftCall;
@@ -488,6 +684,7 @@ test("daily cigar flow writer verifies the published story is first in the live 
 
     if (request.method === "POST" && request.url === "/news/stories") {
       const payload = JSON.parse(await readRequestBody(request)) as PublishCall;
+      publishCalls.push(payload);
       publishedSlug = payload.slug || "";
 
       response.writeHead(201, { "content-type": "application/json" });
@@ -540,11 +737,15 @@ test("daily cigar flow writer verifies the published story is first in the live 
       YCC_DAILY_NEWSROOM_SOURCE_LIMIT: "3",
       YCC_DAILY_NEWSROOM_MAX_ATTEMPTS: "1",
       YCC_DAILY_NEWSROOM_VERIFY_PUBLISHED: "true",
+      YCC_DAILY_NEWSROOM_NOW: "2026-06-25T18:00:00.000Z",
     });
 
     assert.equal(result.code, 0, result.stderr || result.stdout);
     assert.match(result.stdout, /Runtime freshness verified:/);
-    assert.ok(publishedSlug.startsWith("daily-cigar-flow-"));
+    assert.equal(publishedSlug, "daily-cigar-flow-2026-06-25", "generated title wording must not change the daily identity");
+    assert.equal(publishCalls.length, 1);
+    assert.equal(publishCalls[0].automationDate, "2026-06-25");
+    assert.equal(publishCalls[0].dedupeKey, "daily-cigar-flow:2026-06-25");
   } finally {
     server.close();
     await once(server, "close").catch(() => undefined);
@@ -791,6 +992,36 @@ test("daily cigar flow writer publishes only renderable draft story images", asy
   }
 });
 
+function respondWithDraft(response: ServerResponse, payload: DraftCall, title: string) {
+  response.writeHead(200, { "content-type": "application/json" });
+  response.end(
+    JSON.stringify({
+      draft: {
+        title,
+        dek: "A source-safe daily update for adult Yuzu readers.",
+        category: "Industry News",
+        bodyMarkdown: "## Release desk\nA fresh canonical lead produced a publication-ready operator draft.",
+        sections: [
+          {
+            heading: "Release desk",
+            body: "A fresh canonical lead produced a publication-ready operator draft.",
+          },
+        ],
+        sourceNotes: [
+          {
+            label: "Official source",
+            url: payload.sourceUrls[0],
+            note: "Accepted official source.",
+          },
+        ],
+      },
+      prompt: {
+        acceptedSourceCount: payload.sourceUrls.length,
+      },
+    }),
+  );
+}
+
 function runDailyWriter(env: Record<string, string>) {
   const scriptPath = path.resolve("scripts/daily-cigar-news-run.ts");
   const child = spawn(process.execPath, ["--import", "tsx", scriptPath], {
@@ -801,6 +1032,13 @@ function runDailyWriter(env: Record<string, string>) {
       YCC_NEWSROOM_COGNITO_PASSWORD: "",
       YCC_DAILY_NEWSROOM_RSS_LEAD_LIMIT: "0",
       YCC_DAILY_NEWSROOM_VERIFY_PUBLISHED: "false",
+      YCC_DAILY_NEWSROOM_DEDUPE_PREFLIGHT: "false",
+      YCC_DAILY_NEWSROOM_FETCH_SOURCE_EVIDENCE: "false",
+      YCC_DAILY_NEWSROOM_REQUIRE_SOURCE_EVIDENCE: "false",
+      YCC_DAILY_NEWSROOM_REQUIRE_FRESH_LEADS: "false",
+      YCC_DAILY_NEWSROOM_OPERATOR_APPROVED: "true",
+      YCC_DAILY_NEWSROOM_MIN_PUBLISH_IMAGES: "0",
+      YCC_DAILY_NEWSROOM_DRAFT_OUTPUT_PATH: path.join(tmpdir(), `ycc-cigar-flow-draft-${randomUUID()}.json`),
       ...env,
     },
     stdio: "pipe",

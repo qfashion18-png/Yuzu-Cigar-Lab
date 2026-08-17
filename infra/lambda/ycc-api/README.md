@@ -26,6 +26,12 @@ Stripe owns payment processing, hosted Checkout, Billing/subscriptions, Products
 - `GET /news/stories`
 - `POST /news/story-drafts`
 - `POST /news/stories`
+- `GET /events`
+- `GET /admin/events`
+- `POST /admin/events`
+- `PATCH /admin/events/{id}`
+- `POST /admin/events/{id}/publish`
+- `POST /admin/events/{id}/archive`
 - `GET /admin/members`
 - `PATCH /admin/members/{id}/access`
 - `DELETE /admin/members/{id}`
@@ -36,9 +42,28 @@ Stripe owns payment processing, hosted Checkout, Billing/subscriptions, Products
 - `POST /humidor/alerts`
 - `POST /humidor/alerts/dispatch`
 
-`GET /health`, `GET /content/pages`, `GET /news/stories`, `POST /newsletter/subscribe`, and `POST /support/contact` are public. All other routes expect API Gateway to provide Cognito JWT claims at `requestContext.authorizer.jwt.claims`; the handler also checks this defensively. `POST /content/pages`, `POST /news/story-drafts`, and `POST /news/stories` additionally require an `admin` or `concierge_operator` group.
+`GET /health`, `GET /content/pages`, `GET /news/stories`, `GET /events`, `POST /newsletter/subscribe`, and `POST /support/contact` are public. All other routes expect API Gateway to provide Cognito JWT claims at `requestContext.authorizer.jwt.claims`; the handler also checks this defensively. Content, newsroom, and event administration additionally require an `admin` or `concierge_operator` group.
 
 `DELETE /admin/members/{id}` is admin-only, writes an audit row, and refuses members with commerce orders or subscription records.
+
+## Events
+
+`GET /events?from=<ISO>&to=<ISO>&limit=<n>` returns only published, public, non-canceled, non-archived events that intersect the requested window. It sorts happening-now records first, then future records by start time. Responses include feed-level `updatedAt` and `lastSuccessfulSyncAt`, an `ETag`, and `Cache-Control: public, max-age=300, stale-while-revalidate=900`; matching `If-None-Match` requests receive `304`.
+
+Authenticated operators use `GET /admin/events`, `POST /admin/events`, `PATCH /admin/events/{id}`, `POST /admin/events/{id}/publish`, and `POST /admin/events/{id}/archive`. Create/update bodies use camelCase fields and accept nested `location` and `source` objects. All admin mutations are transactional and write `public.audit_log` rows.
+
+EventBridge Scheduler invokes the same Lambda with this non-HTTP payload every 15 minutes:
+
+```json
+{
+  "source": "ycc.events.sync",
+  "detail-type": "YCC Google Calendar Sync",
+  "action": "sync-google-calendar",
+  "provider": "google_calendar"
+}
+```
+
+The worker reads `GOOGLE_CALENDAR_ID` and `GOOGLE_CALENDAR_CREDENTIAL_SECRET_ID`, performs bounded full or incremental Google Calendar sync, and atomically updates `event_sources`, occurrence-level `events`, `event_sync_runs`, cancellations, and the next sync token. Provider credentials remain in Secrets Manager and are never returned by either API.
 
 ## Commerce Routes
 
@@ -82,7 +107,7 @@ Required commerce secret shape:
   "stripe": {
     "secretKey": "sk_live_replace_me",
     "webhookSecret": "whsec_replace_me",
-    "apiVersion": "2026-02-25.clover",
+    "apiVersion": "2026-07-29.dahlia",
     "customerPortalConfigurationId": "bpc_replace_me",
     "launchCatalogReady": true,
     "launchCatalogS3Uri": "s3://classroom2/ycc/commerce/stripe-launch-catalog.json",
@@ -149,7 +174,7 @@ Local fallback environment:
 COMMERCE_PROVIDER_SECRET_ARN=
 STRIPE_SECRET_KEY=sk_test_replace_me
 STRIPE_WEBHOOK_SECRET=whsec_replace_me
-STRIPE_API_VERSION=2026-02-25.clover
+STRIPE_API_VERSION=2026-07-29.dahlia
 STRIPE_CUSTOMER_PORTAL_CONFIGURATION_ID=bpc_replace_me
 STRIPE_LAUNCH_CATALOG_READY=1
 STRIPE_LAUNCH_CATALOG_JSON=[{"sku":"APPROVED-BOX","name":"Approved Box","price":120,"publishStatus":"published","inventoryPolicy":"track","sourceQuantity":5,"shippable":true,"adultSignatureRequired":true,"stripePriceId":"price_replace_me"}]
@@ -185,6 +210,7 @@ When `FEATURE_DB_WRITES=schema_ready`, protected routes write through RDS Proxy 
 - `POST /news/story-drafts` creates a review-required YCCNewsAgent story draft from official or operator-verified primary source URLs.
 - `POST /news/stories` stores an operator-approved story in `news_stories` and writes an audit row.
 - `GET /news/stories` reads published stories for the public static storefront without Cognito.
+- `GET /events` reads the active published event window; admin event mutations persist durable shared records and audit rows.
 - `POST /humidor/identify-cigar` uses Bedrock Runtime vision to identify a member-uploaded cigar image, returns editable humidor fields plus richer cigar-reference details, and writes a safe field-coverage log without image bytes or raw member notes.
 - `POST /humidor/items` stores the member, humidor item, and audit row after the member confirms the fields.
 - `GET /humidor/alerts` reads stored humidor notification preference settings from `member_profiles.preferences`.
@@ -244,6 +270,12 @@ Direct Lambda migration invokes are guarded and intended for operator use from t
 - `source=ycc.newsroom.migration`, `action=verify_newsroom_schema`
 - `source=ycc.phase3.migration`, `action=apply_member_stripe_customer_link_schema`, confirm `APPLY_YCC_MEMBER_STRIPE_CUSTOMER_LINK_SCHEMA`
 - `source=ycc.phase3.migration`, `action=verify_member_stripe_customer_link_schema`
+- `source=ycc.events.migration`, `action=apply_events_schema`, confirm `APPLY_YCC_EVENTS_SCHEMA`
+- `source=ycc.events.migration`, `action=verify_events_schema`
+
+The events schema is `infra/database/migrations/0006_events_schema.sql`. Apply it with the guarded events migration invoke before enabling the scheduled sync or frontend live feed. It adds durable source cursors, recurrence/occurrence identifiers, public/admin event records, sync-run counters, and idempotency indexes.
+
+The newsroom apply action runs both `0004_newsroom_schema.sql` and `0007_newsroom_dedup.sql`. Migration 0007 adds deterministic publication identities, a unique published-source fingerprint, revision tracking, and the `news_story_processed_leads` canonical-URL ledger. The verify action fails closed unless the required tables, columns, indexes, migration name, and checksum all match.
 
 ## AI Runtime
 
@@ -262,7 +294,13 @@ The live agents share Knowledge Base `48GFMCLSTG` and the `YCCOperations` action
 
 If Agent Runtime fails, the route logs the fallback and tries direct Bedrock Runtime `Converse` with `BEDROCK_MODEL_ID`. If that also fails, it returns the scaffolded assistant contract rather than failing the member request.
 
-`POST /humidor/identify-cigar` powers the AI Cigar Adder. When `FEATURE_REKOGNITION=detect_text_ready`, Lambda first runs Amazon Rekognition `DetectText` against member-uploaded PNG/JPEG bytes, filters line detections by `REKOGNITION_MIN_TEXT_CONFIDENCE`, and passes those OCR candidates into the Bedrock Nova Vision prompt as visual evidence. When `FEATURE_REKOGNITION=image_understanding_ready`, Lambda also runs `DetectLabels`, filters visual labels by `REKOGNITION_MIN_LABEL_CONFIDENCE`, and passes cigar, box, band, receipt, or humidor-scene cues into the same prompt as supplemental visual context. `PATCH /humidor/items/{id}/enrich` uses the same Rekognition path for saved member-uploaded humidor images before asking `YCCHumidorAgent` to fill missing info, image, or MSRP fields. Rekognition failures, unsupported GIF/WebP images, disabled feature flags, or missing permissions degrade back to the existing Bedrock-only image identification/enrichment flow, and the routes still require member confirmation before saving anything to the humidor.
+`POST /humidor/identify-cigar` powers the AI Cigar Adder. It accepts one legacy image or up to four labeled views (`band_front`, `band_back`, `box_label`, `barcode`, `whole_cigar`, or `other`). The API explicitly rejects the legacy `receipt` role because receipts can contain customer or payment data; clients should upload a box label or barcode instead. Lambda combines Amazon Rekognition OCR/scene evidence from supported images, text retrieval from `BEDROCK_KNOWLEDGE_BASE_ID`, optional image-to-image retrieval from a separately evaluated Nova Multimodal Embeddings knowledge base in `BEDROCK_CIGAR_IMAGE_KNOWLEDGE_BASE_ID`, and a final Nova 2 Lite visual reconciliation. In `us-east-1`, Nova 2 Lite must be invoked through `us.amazon.nova-2-lite-v1:0`; IAM, the Runtime VPC endpoint policy, and applicable SCPs must allow the profile plus its `us-east-1`, `us-east-2`, and `us-west-2` destination model ARNs. It returns ranked candidates, provenance, and one of `identified`, `ambiguous`, or `insufficient_evidence`. Ambiguous and insufficient results ask for another view or member confirmation instead of silently turning an unknown cigar into a saveable guess.
+
+The multimodal knowledge base is intentionally opt-in: populate it with canonical, licensed product images plus brand/line/vitola/wrapper/GTIN aliases and authoritative source metadata, tag it `Project=YCC` and `DataClass=CigarCatalog`, and enable its ID only after the offline evaluation gates in `docs/ai-cigar-intelligence-research-2026-08-16.md` pass. `BEDROCK_RERANK_MODEL_ARN` optionally reranks text retrieval; in `us-east-1` the supported configuration is Cohere Rerank 3.5 and requires model/Marketplace access before use. Keep `BEDROCK_KNOWLEDGE_BASE_SEARCH_TYPE=SEMANTIC` for the current S3 Vectors index; `HYBRID` can favor exact names and SKUs only on a backing vector store that supports hybrid search.
+
+When `FEATURE_REKOGNITION=detect_text_ready`, Lambda runs `DetectText` against PNG/JPEG bytes and filters detections by `REKOGNITION_MIN_TEXT_CONFIDENCE`. When `FEATURE_REKOGNITION=image_understanding_ready`, it also runs `DetectLabels`, filtered by `REKOGNITION_MIN_LABEL_CONFIDENCE`. GIF/WebP views remain available to Nova and a multimodal knowledge base but do not use Rekognition unless they are transcoded before upload. `PATCH /humidor/items/{id}/enrich` reuses the evidence path for saved images. Provider failures degrade to an explicit review state; no model result removes the member-confirmation requirement.
+
+YCCCigarGuide retrieval keeps source locations and relevance scores, optionally reranks a wider candidate set, and exposes safe citations through the Concierge response contract. With `BEDROCK_CIGAR_GUIDE_WEB_GROUNDING=ready`, direct Nova 2 calls can also use the built-in `nova_grounding` system tool for current cigar releases and time-sensitive facts; the runtime IAM and VPC endpoint policies grant its scoped `bedrock:InvokeTool` permission, and returned web citations are preserved for the member. Factual product/release claims should be treated as grounded only when retrieval or Web Grounding supplies evidence. General education can still be answered directly, but obscure, current, or conflicting facts must be qualified rather than invented.
 
 ## Concierge Voice
 

@@ -1,10 +1,312 @@
 # Codex Worktree Tracking
 
-Last updated: 2026-07-03
+Last updated: 2026-08-17
 
 Purpose: track the dirty worktree I encounter while expanding and verifying the Yuzu admin/backend. This file is Codex-owned working notes, so future passes have a stable place to record what was changed, verified, and still needs audit.
 
 Project memory: `AGENTS.md` now requires Codex to use this file as the persistent worktree ledger. Every meaningful update, fix, audit, verification pass, or newly discovered dirty/untracked area should be recorded here in the same turn.
+
+### 2026-08-17 Cigar Flow Deep Audit and Duplicate Hardening
+
+- Audited the complete Cigar Flow path: live public feed, daily source collection and Bedrock drafting, operator approval/publish, PostgreSQL persistence, public API mapping, storefront rendering, static-export security headers, Lambda packaging, GitHub workflow behavior, and Facebook Page publishing/retry handling.
+- Read-only live evidence before the fix: the public API returned 35 published rows with no exact slug/title/body collision, but 19 stories repeated the same Oliva Serie V Maduro theme, 7 repeated Perdomo 20th Anniversary, 23 reused the same Oliva/Perdomo/Foundation homepage set, 31 lacked images, and the newest story was roughly 52 days stale. None of the 35 rows cited a specific official announcement/product page that satisfies the new evidence boundary. The database rows were not deleted or mutated during this pass.
+- Added shared source policy in `config/cigar-news-sources.json`, removed invalid HTML/blocked RSS entries, repaired the Altadis source, canonicalized tracking/transport URL aliases, rejected stale/future/undated leads and HTML masquerading as RSS, rotated the maker source batch by date, retrieved bounded official-page evidence, and required draft notes/images to match the retrieved official evidence.
+- Added deterministic Phoenix-date identity (`daily-cigar-flow-YYYY-MM-DD`), content/source fingerprints, canonical lead URLs, advisory transaction locks, immutable same-date handling, duplicate suppression responses/audits, and processed-lead reservations. Migration `infra/database/migrations/0007_newsroom_dedup.sql` adds the durable columns, unique indexes, checksum record, and processed-lead table; runtime migration verification now fails closed on a stale or partial schema.
+- Publishing is now operator-review-first: the scheduled workflow produces a draft, has a concurrency guard and timeout, and no longer hardcodes approval/auto-publish. Edits reset approval, repeated publish is disabled, Bedrock calls are bounded, and the recursive News Agent action-group path was removed.
+- The public API and Cigar Flow UI independently collapse logical duplicates and hide legacy publications backed only by generic homepages/news indexes. Story and generated images are canonicalized/deduplicated, official image origins are constrained, the apex/www CSP break is fixed, leading duplicate Markdown H1s are stripped, stale/empty state is visible, and generated visual allocation no longer forces reuse.
+- Facebook publishing now uses stable content identity, local atomic claims, remote preflight plus a final pre-feed duplicate check, authoritative publication dates, byte-level image dedupe without deleting a selected shared file, and treats an accepted Graph post ID as published even if readback is temporarily unavailable.
+- Verification passed: `npm test` 693/693; TypeScript; focused ESLint; Lambda syntax; 37 newsroom/UI/social regressions; 47 source/readiness regressions; `npm run build` (1,022 static routes); `npm run lambda:package`. The packaged zip contains `index.js`, `cigar-news-sources.json`, and migration 0007.
+- Browser QA against the rebuilt static export and the live 35-row API response showed the safe bundled archive state, one newsroom article, four unique fully loaded images, no repeated/literal Markdown heading, and zero console errors or warnings.
+- Production deployment completed on 2026-08-16 America/Phoenix: guarded migration 0007 applied at `2026-08-17T03:53:33.366Z` and verified with all 2 tables, 4 columns, 4 indexes, migration name, and checksum present; Lambda package hash `rxc5dbxAk2H4iGErmXw65PDQNbKmvEQkUV7Ylmng20Q=` was published as version `58` and the `live` alias moved from `57` to `58` under a revision guard.
+- Amplify staging branch (production stage) deployment job `171` completed `SUCCEED`; the custom domain and referenced `_next/static` asset returned HTTP 200. Live API deep health passed with database query/TLS readiness, and `/news/stories?limit=50` returned zero unsupported legacy rows.
+- Post-deploy browser QA on `https://www.yuzucigarclub.com/cigar-flow/` passed: operator-review copy and safe bundled archive state visible, one newsroom article, four unique fully loaded images, no repeated/literal Markdown heading, and zero console errors or warnings. Existing legacy database rows were preserved rather than destructively deleted.
+- Source synchronization is tracked in GitHub pull request `#2`. Its first Quality Gates run stopped at `npm audit --omit=dev`; the lockfile and the PostCSS override were refreshed to Next `16.3.1`, Sharp `0.35.3`, NanoID `3.3.18`, and PostCSS `8.5.23`. A clean `npm ci`, zero-vulnerability production audit, TypeScript, lint, and the 1,022-route production build passed locally. The full 696-test run had one 15-second child-process timeout only while it was intentionally competing with that build; the affected daily Cigar Flow file immediately passed `11/11` in isolation.
+
+### 2026-08-08 Interstate Shipping Compliance Statement Revision
+
+- Revised the Stripe shipping statement and updated the previously delivered `docs/yuzu-interstate-shipping-compliance-statement-stripe-2026-08-08-final-v2.docx` in place; the clean revision was also retained as `final-v3`.
+- Removed the `Prepared for Stripe review` subtitle and the entire `6. Authorized representative attestation` section, including signature fields.
+- Updated the footer to `Confidential - Yuzu Cigar Club`.
+- Privacy scrub completed; text checks confirmed the removed phrase and attestation heading are absent.
+- Manual LibreOffice/Poppler render produced three pages; all pages were visually inspected and passed with no clipping, overlap, broken tables, or stray blank page.
+
+### 2026-08-08 Interstate Shipping Compliance Statement For Stripe
+
+- Created `docs/yuzu-interstate-shipping-compliance-statement-stripe-2026-08-08-final-v2.docx` for Stripe review on behalf of Company Quon LLC d/b/a Yuzu Cigar Club.
+- Document scope: domestic U.S. shipping controls for adult cigar/tobacco commerce, blocked states (AR, ME, SD, UT, VT), adult-signature states (AR, CA, DE, FL, GA, MA, MN, ND, RI, SC, WY), USPS-only checkout, AgeChecker.Net 21+ verification, Stripe Tax readiness, server-side checkout gating, compliance holds, audit trail, external references, and authorized-representative attestation fields.
+- Privacy scrub completed with `privacy_scrub.py`; the final-v2 copy has scrubbed core metadata and `rsid` attributes.
+- Render verification: packaged `render_docx.py` was attempted but LibreOffice resolved through a broken Scoop shim and returned `libpng: Write Error`. Manual fallback using the installed `C:\Program Files\LibreOffice\program\soffice.com` plus Poppler produced three PNG pages; all three pages were visually inspected and passed with no clipping, overlap, broken tables, or stray fourth page.
+- No Stripe or AWS state was changed; this update created only a local document artifact and QA outputs.
+
+### 2026-08-07 Cigar Flow Facebook Social Run
+
+- Automation `cigar-flow-facebook-social-run` ran for the current America/Phoenix date `2026-08-07`.
+- Command used the requested live social settings without `--force`: `AWS_PROFILE=ycc-mcp`, `AWS_SDK_LOAD_CONFIG=1`, `YCC_FACEBOOK_SECRET_ID=ycc/social/facebook/prod`, and `npm run cigar-flow:facebook -- --date=2026-08-07 --publish-page`.
+- Result: explicit no-action failure. The command exited before story selection or any Facebook Page request because the Cigar Flow stories endpoint returned HTTP 500.
+- Verification:
+  - A direct read-only request to `https://api.yuzucigarclub.com/news/stories?limit=12` also returned HTTP 500.
+  - No dated `2026-08-07` social-output directory, Facebook manifest, Page status/permalink, or `FACEBOOK-GROUP-POST-KIT.md` was generated.
+  - Because the story fetch failed before any output was created, no Page post or manual group/browser action occurred.
+- The Facebook group posting prep skill was loaded; its referenced `references/meta-facebook-docs.md` file is not present in this checkout, and no manual group posting was attempted because there was no story output to review.
+- No Meta access token or secret value was written to files.
+
+### 2026-08-01 Cigar Flow Facebook Social Run
+
+- Automation `cigar-flow-facebook-social-run` ran for the current America/Phoenix date `2026-08-01`.
+- Command used the requested live social settings without `--force`: `AWS_PROFILE=ycc-mcp`, `AWS_SDK_LOAD_CONFIG=1`, `YCC_FACEBOOK_SECRET_ID=ycc/social/facebook/prod`, and `npm run cigar-flow:facebook -- --date=2026-08-01 --publish-page`.
+- Result: explicit no-action failure. The command exited before story selection or any Facebook Page request because the Cigar Flow stories endpoint returned HTTP 500.
+- Verification:
+  - An independent request to `https://api.yuzucigarclub.com/news/stories?limit=12` also returned HTTP 500.
+  - No dated `2026-08-01` output directory, Facebook manifest, Page status/permalink, or `FACEBOOK-GROUP-POST-KIT.md` was generated.
+  - Because the story fetch failed before any output was created, no Page post or manual group/browser action occurred.
+- The Facebook group posting prep skill was loaded; its referenced `references/meta-facebook-docs.md` file was not present in this checkout, and no manual group posting was attempted because there was no story output to review.
+- No Meta access token or secret value was written to files.
+
+### 2026-07-29 Cigar Flow Facebook Social Run
+
+- Automation `cigar-flow-facebook-social-run` ran for the current America/Phoenix date `2026-07-29`.
+- Command used the requested live social settings without `--force`: `AWS_PROFILE=ycc-mcp`, `AWS_SDK_LOAD_CONFIG=1`, `YCC_FACEBOOK_SECRET_ID=ycc/social/facebook/prod`, and `npm run cigar-flow:facebook -- --date=2026-07-29 --publish-page`.
+- Result: explicit no-action failure. The command exited before story selection or any Facebook Page request because the Cigar Flow stories endpoint returned HTTP 500.
+- Verification:
+  - An independent request to `https://api.yuzucigarclub.com/news/stories?limit=12` also returned HTTP 500.
+  - No dated `2026-07-29` output directory, Facebook manifest, Page status/permalink, or `FACEBOOK-GROUP-POST-KIT.md` was generated.
+  - Because the story fetch failed before any output was created, no Page post or manual group/browser action occurred.
+- The Facebook group posting prep skill and its Meta reference were loaded; no manual group posting was attempted because there was no story output to review.
+- No Meta access token or secret value was written to files.
+
+### 2026-07-28 Cigar Flow Facebook Social Run
+
+- Automation `cigar-flow-facebook-social-run` ran for the current America/Phoenix date `2026-07-28`.
+- Command used the requested live social settings without `--force`: `AWS_PROFILE=ycc-mcp`, `AWS_SDK_LOAD_CONFIG=1`, `YCC_FACEBOOK_SECRET_ID=ycc/social/facebook/prod`, and `npm run cigar-flow:facebook -- --date=2026-07-28 --publish-page`.
+- Result: explicit no-action failure. The command exited before story selection or any Facebook Page request because the Cigar Flow stories endpoint returned HTTP 500.
+- Verification:
+  - An independent request to `https://api.yuzucigarclub.com/news/stories?limit=12` also returned HTTP 500.
+  - No dated `2026-07-28` output directory, Facebook manifest, Page status/permalink, or `FACEBOOK-GROUP-POST-KIT.md` was generated.
+  - Because the story fetch failed before any output was created, no Page post or manual group/browser action occurred.
+- The Facebook group posting prep skill was loaded; its referenced `references/meta-facebook-docs.md` file was not present in this checkout, and no manual group posting was attempted because there was no story output to review.
+- No Meta access token or secret value was written to files.
+
+### 2026-07-26 Cigar Flow Facebook Social Run
+
+- Automation `cigar-flow-facebook-social-run` ran for the current America/Phoenix date `2026-07-26`.
+- Command used the requested live social settings without `--force`: `AWS_PROFILE=ycc-mcp`, `AWS_SDK_LOAD_CONFIG=1`, `YCC_FACEBOOK_SECRET_ID=ycc/social/facebook/prod`, and `npm run cigar-flow:facebook -- --date=2026-07-26 --publish-page`.
+- Result: explicit no-action failure. The command exited before story selection or any Facebook Page request because the Cigar Flow stories endpoint returned HTTP 500.
+- Verification:
+  - An independent request to `https://api.yuzucigarclub.com/news/stories?limit=12` also returned HTTP 500.
+  - No dated `2026-07-26` output directory, Facebook manifest, Page status/permalink, or `FACEBOOK-GROUP-POST-KIT.md` was generated.
+  - Because the story fetch failed before any output was created, no Page post or manual group/browser action occurred.
+- The Facebook group posting prep skill and its Meta reference were loaded; no manual group posting was attempted because there was no story output to review.
+- No Meta access token or secret value was written to files.
+
+### 2026-07-21 Cigar Flow Facebook Social Run
+
+- Automation `cigar-flow-facebook-social-run` ran for the current America/Phoenix date `2026-07-21`.
+- Command used the requested live social settings without `--force`: `AWS_PROFILE=ycc-mcp`, `AWS_SDK_LOAD_CONFIG=1`, `YCC_FACEBOOK_SECRET_ID=ycc/social/facebook/prod`, and `npm run cigar-flow:facebook -- --date=2026-07-21 --publish-page`.
+- Result: explicit no-action failure. The command exited with `[cigar-flow-facebook-run] fetch failed` before story selection, Page publishing, or artifact generation.
+- Verification:
+  - Direct read-only DNS and HTTP checks could not resolve `api.yuzucigarclub.com`; `www.yuzucigarclub.com` also returned a DNS server failure.
+  - No dated `2026-07-21` Facebook manifest, Page status/permalink, or group post kit was generated.
+  - Because the story fetch failed before any output was created, no Page post or manual group/browser action occurred.
+- The Facebook group posting prep skill and its Meta reference were loaded; no manual group posting was attempted because there was no story output to review.
+- No Meta access token or secret value was written to files.
+
+### 2026-07-20 Cigar Flow Facebook Social Run
+
+- Automation `cigar-flow-facebook-social-run` ran for the current America/Phoenix date `2026-07-20`.
+- Command used the requested live social settings without `--force`: `AWS_PROFILE=ycc-mcp`, `AWS_SDK_LOAD_CONFIG=1`, `YCC_FACEBOOK_SECRET_ID=ycc/social/facebook/prod`, and `npm run cigar-flow:facebook -- --date=2026-07-20 --publish-page`.
+- Result: explicit no-action failure. The command exited with `[cigar-flow-facebook-run] fetch failed` before story selection, Page publishing, or artifact generation.
+- Verification:
+  - A direct read-only request failed because DNS could not resolve `api.yuzucigarclub.com` (`DNS server failure`).
+  - No dated `2026-07-20` output directory, Facebook manifest, Page status/permalink, or group post kit was generated.
+  - Because the story fetch failed before any output was created, no Page post or manual group/browser action occurred.
+- No Meta access token or secret value was written to files.
+
+### 2026-07-19 Cigar Flow Facebook Social Run
+
+- Automation `cigar-flow-facebook-social-run` ran for the current America/Phoenix date `2026-07-19`.
+- Command used the requested live social settings without `--force`: `AWS_PROFILE=ycc-mcp`, `AWS_SDK_LOAD_CONFIG=1`, `YCC_FACEBOOK_SECRET_ID=ycc/social/facebook/prod`, and `npm run cigar-flow:facebook -- --date=2026-07-19 --publish-page`.
+- Result: explicit no-action failure. The command exited with `[cigar-flow-facebook-run] fetch failed` before story selection, Page publishing, or artifact generation.
+- Verification:
+  - A direct read-only request failed because DNS could not resolve `api.yuzucigarclub.com`.
+  - No dated `2026-07-19` output directory, Facebook manifest, Page status/permalink, or group post kit was generated.
+  - Because the story fetch failed before any output was created, no Page post or manual group/browser action occurred.
+- No Meta access token or secret value was written to files.
+
+### 2026-07-18 Cigar Flow Facebook Social Run
+
+- Automation `cigar-flow-facebook-social-run` ran for the current America/Phoenix date `2026-07-18`.
+- Command used the requested live social settings without `--force`: `AWS_PROFILE=ycc-mcp`, `AWS_SDK_LOAD_CONFIG=1`, `YCC_FACEBOOK_SECRET_ID=ycc/social/facebook/prod`, and `npm run cigar-flow:facebook -- --date=2026-07-18 --publish-page`.
+- Result: explicit no-action failure. The command exited with `[cigar-flow-facebook-run] fetch failed` before story selection, Page publishing, or artifact generation.
+- Verification:
+  - A direct read-only request failed because DNS could not resolve `api.yuzucigarclub.com`.
+  - No dated `2026-07-18` output directory, Facebook manifest, Page status/permalink, or group post kit was generated.
+  - Because the story fetch failed before any output was created, no Page post or manual group/browser action occurred.
+- No Meta access token or secret value was written to files.
+
+### 2026-07-17 Cigar Flow Facebook Social Run
+
+- Automation `cigar-flow-facebook-social-run` ran for the current America/Phoenix date `2026-07-17`.
+- Command used the requested live social settings without `--force`: `AWS_PROFILE=ycc-mcp`, `AWS_SDK_LOAD_CONFIG=1`, `YCC_FACEBOOK_SECRET_ID=ycc/social/facebook/prod`, and `npm run cigar-flow:facebook -- --date=2026-07-17 --publish-page`.
+- Result: explicit no-action failure. The command exited with `[cigar-flow-facebook-run] fetch failed` before story selection, Page publishing, or artifact generation.
+- Verification:
+  - A direct read-only request failed because DNS could not resolve `api.yuzucigarclub.com`.
+  - No dated `2026-07-17` output directory, Facebook manifest, Page status/permalink, or group post kit was generated.
+  - Because the story fetch failed before any output was created, no Page post or manual group/browser action occurred.
+- No Meta access token or secret value was written to files.
+
+### 2026-07-16 Cigar Flow Facebook Social Run
+
+- Automation `cigar-flow-facebook-social-run` ran for the current America/Phoenix date `2026-07-16`.
+- Command used the requested live social settings without `--force`: `AWS_PROFILE=ycc-mcp`, `AWS_SDK_LOAD_CONFIG=1`, `YCC_FACEBOOK_SECRET_ID=ycc/social/facebook/prod`, and `npm run cigar-flow:facebook -- --date=2026-07-16 --publish-page`.
+- Result: explicit no-action failure. The command exited with `[cigar-flow-facebook-run] fetch failed` before story selection, Page publishing, or artifact generation.
+- Verification:
+  - A direct read-only request failed because DNS could not resolve `api.yuzucigarclub.com` (`DNS server failure`).
+  - No dated `2026-07-16` output directory, Facebook manifest, Page status/permalink, or group post kit was generated.
+  - Because the story fetch failed before any output was created, no Page post or manual group/browser action occurred.
+- No Meta access token or secret value was written to files.
+
+### 2026-07-15 Cigar Flow Facebook Social Run
+
+- Automation `cigar-flow-facebook-social-run` ran for the current America/Phoenix date `2026-07-15`.
+- Command used the requested live social settings without `--force`: `AWS_PROFILE=ycc-mcp`, `AWS_SDK_LOAD_CONFIG=1`, `YCC_FACEBOOK_SECRET_ID=ycc/social/facebook/prod`, and `npm run cigar-flow:facebook -- --date=2026-07-15 --publish-page`.
+- Result: explicit no-action failure. The command exited with `[cigar-flow-facebook-run] fetch failed` before story selection, Page publishing, or artifact generation.
+- Verification:
+  - A direct read-only request to `https://api.yuzucigarclub.com/news/stories?limit=12` failed because DNS could not resolve `api.yuzucigarclub.com`.
+  - No dated `2026-07-15` output directory, Facebook manifest, Page status/permalink, or group post kit was generated.
+  - Because the story fetch failed before any output was created, no Page post or manual group/browser action occurred.
+- No Meta access token or secret value was written to files.
+
+### 2026-07-14 Cigar Flow Facebook Social Run
+
+- Automation `cigar-flow-facebook-social-run` ran for the current America/Phoenix date `2026-07-14`.
+- Command used the requested live social settings without `--force`: `AWS_PROFILE=ycc-mcp`, `AWS_SDK_LOAD_CONFIG=1`, `YCC_FACEBOOK_SECRET_ID=ycc/social/facebook/prod`, and `npm run cigar-flow:facebook -- --date=2026-07-14 --publish-page`.
+- Result: explicit no-action failure. The initial run and one safe retry both exited with `[cigar-flow-facebook-run] fetch failed` before story selection, Page publishing, or artifact generation.
+- Verification:
+  - A direct read-only request to `https://api.yuzucigarclub.com/news/stories?limit=12` failed because DNS could not resolve `api.yuzucigarclub.com`.
+  - No dated `2026-07-14` output directory, Facebook manifest, Page status/permalink, or group post kit was generated.
+  - Because the story fetch failed before any output was created, no Page post or manual group/browser action occurred.
+- No Meta access token or secret value was written to files.
+
+### 2026-07-13 Cigar Flow Facebook Social Run
+
+- Automation `cigar-flow-facebook-social-run` ran for the current America/Phoenix date `2026-07-13`.
+- Command used the requested live social settings without `--force`: `AWS_PROFILE=ycc-mcp`, `AWS_SDK_LOAD_CONFIG=1`, `YCC_FACEBOOK_SECRET_ID=ycc/social/facebook/prod`, and `npm run cigar-flow:facebook -- --date=2026-07-13 --publish-page`.
+- Result: skipped/no story. The script exited with `[cigar-flow-facebook-run] No published story matched date 2026-07-13.` before creating a manifest, Page post, or group post kit.
+- Verification:
+  - Live `https://api.yuzucigarclub.com/news/stories?limit=12` returned successfully.
+  - The newest published Cigar Flow story remained `daily-cigar-flow-2026-06-25-source-watch`, published `2026-06-25T22:40:51.980Z`.
+  - No dated `2026-07-13` Facebook manifest, Page permalink, group post kit, or other Facebook run artifact was present after the skipped run.
+  - The Facebook group posting prep skill and its Meta reference were loaded; no manual group/browser posting was attempted because there was no story output to review or publish.
+- No Meta access token or secret value was written to files.
+
+### 2026-07-12 Cigar Flow Facebook Social Run
+
+- Automation `cigar-flow-facebook-social-run` ran for the current America/Phoenix date `2026-07-12`.
+- Command used the requested live social settings without `--force`: `AWS_PROFILE=ycc-mcp`, `AWS_SDK_LOAD_CONFIG=1`, `YCC_FACEBOOK_SECRET_ID=ycc/social/facebook/prod`, and `npm run cigar-flow:facebook -- --date=2026-07-12 --publish-page`.
+- Result: skipped/no story. The script exited with `[cigar-flow-facebook-run] No published story matched date 2026-07-12.` before creating a manifest, Page post, or group post kit.
+- Verification:
+  - Live `https://api.yuzucigarclub.com/news/stories?limit=12` returned successfully.
+  - The newest published Cigar Flow story remained `daily-cigar-flow-2026-06-25-source-watch`, published `2026-06-25T22:40:51.980Z`.
+  - No dated `2026-07-12` Facebook manifest, Page permalink, group post kit, or other Facebook run artifact was present after the skipped run.
+  - The Facebook group posting prep skill and its Meta reference were loaded; no manual group/browser posting was attempted because there was no story output to review or publish.
+- No Meta access token or secret value was written to files.
+
+### 2026-07-11 Cigar Flow Facebook Social Run
+
+- Automation `cigar-flow-facebook-social-run` ran for the current America/Phoenix date `2026-07-11`.
+- Command used the requested live social settings without `--force`: `AWS_PROFILE=ycc-mcp`, `AWS_SDK_LOAD_CONFIG=1`, `YCC_FACEBOOK_SECRET_ID=ycc/social/facebook/prod`, and `npm run cigar-flow:facebook -- --date=2026-07-11 --publish-page`.
+- Result: skipped/no story. The script exited with `[cigar-flow-facebook-run] No published story matched date 2026-07-11.` before creating a manifest, Page post, or group post kit.
+- Verification:
+  - Live `https://api.yuzucigarclub.com/news/stories?limit=12` returned successfully.
+  - The newest published Cigar Flow story remained `daily-cigar-flow-2026-06-25-source-watch`, published `2026-06-25T22:40:51.980Z`.
+  - No dated `2026-07-11` Facebook manifest, Page permalink, group post kit, or other Facebook run artifact was present after the skipped run.
+  - The Facebook group posting prep skill and its Meta reference were loaded; no manual group/browser posting was attempted because there was no story output to review or publish.
+- No Meta access token or secret value was written to files.
+
+### 2026-07-10 Cigar Flow Facebook Social Run
+
+- Automation `cigar-flow-facebook-social-run` ran for the current America/Phoenix date `2026-07-10`.
+- Command used the requested live social settings without `--force`: `AWS_PROFILE=ycc-mcp`, `AWS_SDK_LOAD_CONFIG=1`, `YCC_FACEBOOK_SECRET_ID=ycc/social/facebook/prod`, and `npm run cigar-flow:facebook -- --date=2026-07-10 --publish-page`.
+- Result: skipped/no story. The script exited with `[cigar-flow-facebook-run] No published story matched date 2026-07-10.` before creating a manifest, Page post, or group post kit.
+- Verification:
+  - Live `https://api.yuzucigarclub.com/news/stories?limit=12` returned HTTP `200`.
+  - The newest published Cigar Flow story in that response was `daily-cigar-flow-2026-06-25-source-watch`, published `2026-06-25T22:40:51.980Z`.
+  - No `output/social/cigar-flow-facebook-2026-07-10*` run folder, `cigar-flow-facebook-social-manifest.json`, `FACEBOOK-GROUP-POST-KIT.md`, or other `2026-07-10` Facebook kit was present after the skipped run.
+  - The Facebook group posting prep skill was loaded; `references/meta-facebook-docs.md` was not present in this checkout, and no manual group/browser posting was attempted because there was no story output to review or publish.
+- No Meta access token or secret value was written to files.
+
+### 2026-07-09 Cigar Flow Facebook Social Run
+
+- Automation `cigar-flow-facebook-social-run` ran for the current America/Phoenix date `2026-07-09`.
+- Command used the requested live social settings without `--force`: `AWS_PROFILE=ycc-mcp`, `AWS_SDK_LOAD_CONFIG=1`, `YCC_FACEBOOK_SECRET_ID=ycc/social/facebook/prod`, and `npm run cigar-flow:facebook -- --date=2026-07-09 --publish-page`.
+- Result: skipped/no story. The script exited with `[cigar-flow-facebook-run] No published story matched date 2026-07-09.` before creating a manifest, Page post, or group post kit.
+- Verification:
+  - Live `https://api.yuzucigarclub.com/news/stories?limit=12` returned HTTP `200`.
+  - The newest published Cigar Flow story in that response was `daily-cigar-flow-2026-06-25-source-watch`, published `2026-06-25T22:40:51.980Z`.
+  - No `output/social/cigar-flow-facebook-2026-07-09*` run folder, `cigar-flow-facebook-social-manifest.json`, `FACEBOOK-GROUP-POST-KIT.md`, or other `2026-07-09` Facebook kit was present after the skipped run.
+  - The Facebook group posting prep skill was loaded; `references/meta-facebook-docs.md` was not present in this checkout, and no manual group/browser posting was attempted because there was no story output to review or publish.
+- No Meta access token or secret value was written to files.
+
+### 2026-07-08 Cigar Flow Facebook Social Run
+
+- Automation `cigar-flow-facebook-social-run` ran for the current America/Phoenix date `2026-07-08`.
+- Command used the requested live social settings without `--force`: `AWS_PROFILE=ycc-mcp`, `AWS_SDK_LOAD_CONFIG=1`, `YCC_FACEBOOK_SECRET_ID=ycc/social/facebook/prod`, and `npm run cigar-flow:facebook -- --date=2026-07-08 --publish-page`.
+- Result: skipped/no story. The script exited with `[cigar-flow-facebook-run] No published story matched date 2026-07-08.` before creating a manifest, Page post, or group post kit.
+- Verification:
+  - Live `https://api.yuzucigarclub.com/news/stories?limit=12` returned HTTP `200`.
+  - The newest published Cigar Flow story in that response was `daily-cigar-flow-2026-06-25-source-watch`, published `2026-06-25T22:40:51.980Z`.
+  - No `output/social/cigar-flow-facebook-2026-07-08*` run folder, `cigar-flow-facebook-social-manifest.json`, `FACEBOOK-GROUP-POST-KIT.md`, or other `2026-07-08` Facebook kit was present after the skipped run.
+  - The Facebook group posting prep skill and `references/meta-facebook-docs.md` were loaded; no manual group/browser posting was attempted because there was no story output to review or publish.
+- No Meta access token or secret value was written to files.
+
+### 2026-07-07 Cigar Flow Facebook Social Run
+
+- Automation `cigar-flow-facebook-social-run` ran for the current America/Phoenix date `2026-07-07`.
+- Command used the requested live social settings without `--force`: `AWS_PROFILE=ycc-mcp`, `AWS_SDK_LOAD_CONFIG=1`, `YCC_FACEBOOK_SECRET_ID=ycc/social/facebook/prod`, and `npm run cigar-flow:facebook -- --date=2026-07-07 --publish-page`.
+- Result: skipped/no story. The script exited with `[cigar-flow-facebook-run] No published story matched date 2026-07-07.` before creating a manifest, Page post, or group post kit.
+- Verification:
+  - Live `https://api.yuzucigarclub.com/news/stories?limit=12` returned HTTP `200`.
+  - The newest published Cigar Flow story in that response was `daily-cigar-flow-2026-06-25-source-watch`, published `2026-06-25T22:40:51.980Z`.
+  - No `output/social/cigar-flow-facebook-2026-07-07*` run folder, `cigar-flow-facebook-social-manifest.json`, `FACEBOOK-GROUP-POST-KIT.md`, or other `2026-07-07` Facebook kit was present after the skipped run.
+  - The Facebook group posting prep skill was loaded; `references/meta-facebook-docs.md` was not present in this checkout, and no manual group/browser posting was attempted because there was no story output to review or publish.
+- No Meta access token or secret value was written to files.
+
+### 2026-07-06 Cigar Flow Facebook Social Run
+
+- Automation `cigar-flow-facebook-social-run` ran for the current America/Phoenix date `2026-07-06`.
+- Initial PowerShell date lookup using IANA timezone `America/Phoenix` failed on Windows before npm received a date; reran with the equivalent Windows timezone `US Mountain Standard Time`.
+- Command used the requested live social settings without `--force`: `AWS_PROFILE=ycc-mcp`, `AWS_SDK_LOAD_CONFIG=1`, `YCC_FACEBOOK_SECRET_ID=ycc/social/facebook/prod`, and `npm run cigar-flow:facebook -- --date=2026-07-06 --publish-page`.
+- Result: skipped/no story. The script exited with `[cigar-flow-facebook-run] No published story matched date 2026-07-06.` before creating a manifest, Page post, or group post kit.
+- Verification:
+  - Live `https://api.yuzucigarclub.com/news/stories?limit=12` returned HTTP `200`.
+  - The newest published Cigar Flow story in that response was `daily-cigar-flow-2026-06-25-source-watch`, published `2026-06-25T22:40:51.980Z`.
+  - No `output/social/cigar-flow-facebook-2026-07-06*` run folder, `cigar-flow-facebook-social-manifest.json`, `FACEBOOK-GROUP-POST-KIT.md`, or other `2026-07-06` Facebook kit was present after the skipped run.
+  - The Facebook group posting prep skill was loaded; no manual group/browser posting was attempted because there was no story output to review or publish.
+- No Meta access token or secret value was written to files.
+
+### 2026-07-05 Cigar Flow Facebook Social Run
+
+- Automation `cigar-flow-facebook-social-run` ran for the current America/Phoenix date `2026-07-05`.
+- Command used the requested live social settings without `--force`: `AWS_PROFILE=ycc-mcp`, `AWS_SDK_LOAD_CONFIG=1`, `YCC_FACEBOOK_SECRET_ID=ycc/social/facebook/prod`, and `npm run cigar-flow:facebook -- --date=2026-07-05 --publish-page`.
+- Result: skipped/no story. The script exited with `[cigar-flow-facebook-run] No published story matched date 2026-07-05.` before creating a manifest, Page post, or group post kit.
+- Verification:
+  - Live `https://api.yuzucigarclub.com/news/stories?limit=12` returned HTTP `200`.
+  - The newest published Cigar Flow story in that response was `daily-cigar-flow-2026-06-25-source-watch`, published `2026-06-25T22:40:51.980Z`.
+  - No `output/social/cigar-flow-facebook-2026-07-05*` run folder, `cigar-flow-facebook-social-manifest.json`, or `FACEBOOK-GROUP-POST-KIT.md` was present after the skipped run.
+  - The local `references/meta-facebook-docs.md` file named by the Facebook group posting prep skill was not present in this checkout; no manual group/browser posting was attempted.
+- No Meta access token or secret value was written to files.
+
+### 2026-07-04 Cigar Flow Facebook Social Run
+
+- Automation `cigar-flow-facebook-social-run` ran for the current America/Phoenix date `2026-07-04`.
+- Command used the requested live social settings without `--force`: `AWS_PROFILE=ycc-mcp`, `AWS_SDK_LOAD_CONFIG=1`, `YCC_FACEBOOK_SECRET_ID=ycc/social/facebook/prod`, and `npm run cigar-flow:facebook -- --date=2026-07-04 --publish-page`.
+- Result: skipped/no story. The script exited with `[cigar-flow-facebook-run] No published story matched date 2026-07-04.` before creating a manifest, Page post, or group post kit.
+- Verification:
+  - Live `https://api.yuzucigarclub.com/news/stories?limit=12` returned HTTP `200`.
+  - The newest published Cigar Flow story in that response was `daily-cigar-flow-2026-06-25-source-watch`, published `2026-06-25T22:40:51.980Z`.
+  - No `output/social/cigar-flow-facebook-2026-07-04*` run folder, `cigar-flow-facebook-social-manifest.json`, or `FACEBOOK-GROUP-POST-KIT.md` was present after the skipped run.
+  - The local `references/meta-facebook-docs.md` file named by the Facebook group posting prep skill was not present in this checkout; no manual group/browser posting was attempted.
+- No Meta access token or secret value was written to files.
 
 ### 2026-07-03 Deploy All Updates And Worktree Cleanup
 
@@ -11101,3 +11403,433 @@ Use this order for follow-up cleanup and fixes:
 - Result: no published Cigar Flow story matched Phoenix date `2026-06-29`; the script exited on the explicit no-story/no-action path before creating a story output directory.
 - Verification: no Facebook Page post was attempted, no Page permalink was generated, and no group post kit was generated because there was no matching story to package.
 - No Meta access tokens or secret values were written to repo files.
+
+### 2026-07-22 Cigar Flow Facebook Social Automation
+
+- Used America/Phoenix date `2026-07-22` and ran `npm run cigar-flow:facebook -- --date=2026-07-22 --publish-page` with `AWS_PROFILE=ycc-mcp`, `AWS_SDK_LOAD_CONFIG=1`, and `YCC_FACEBOOK_SECRET_ID=ycc/social/facebook/prod`.
+- Did not pass `--force`, preserving the existing-manifest duplicate-post guard.
+- Result: the command exited with `[cigar-flow-facebook-run] fetch failed` before story selection or any Facebook Page request.
+- Verified the current DNS resolver returns server failures for both `api.yuzucigarclub.com` and `www.yuzucigarclub.com`, matching the prior run's external DNS/API blocker.
+- No `2026-07-22` output directory, Facebook manifest, Page status/permalink, or `FACEBOOK-GROUP-POST-KIT.md` was generated; this was an explicit no-action failure rather than a partial publish.
+- No Meta access tokens or secret values were written to repo files.
+
+### 2026-07-24 Cigar Flow Facebook Social Automation
+
+- Used America/Phoenix date `2026-07-24` and ran `npm run cigar-flow:facebook -- --date=2026-07-24 --publish-page` with `AWS_PROFILE=ycc-mcp`, `AWS_SDK_LOAD_CONFIG=1`, and `YCC_FACEBOOK_SECRET_ID=ycc/social/facebook/prod`.
+- Did not pass `--force`, preserving the existing-manifest duplicate-post guard.
+- Result: the command exited before story selection or any Facebook Page request because `https://api.yuzucigarclub.com/news/stories?limit=12` returned HTTP 500.
+- Verification confirmed `api.yuzucigarclub.com` now resolves in DNS, but the stories endpoint independently returned HTTP 500.
+- No `2026-07-24` output directory, Facebook manifest, Page status/permalink, or `FACEBOOK-GROUP-POST-KIT.md` was generated; this was an explicit no-story/no-action failure rather than a partial publish.
+- No Meta access tokens or secret values were written to repo files.
+
+### 2026-07-25 Cigar Flow Facebook Social Automation
+
+- Used America/Phoenix date `2026-07-25` and ran `npm run cigar-flow:facebook -- --date=2026-07-25 --publish-page` with `AWS_PROFILE=ycc-mcp`, `AWS_SDK_LOAD_CONFIG=1`, and `YCC_FACEBOOK_SECRET_ID=ycc/social/facebook/prod`.
+- Did not pass `--force`, preserving the existing-manifest duplicate-post guard.
+- Result: the command exited before story selection or any Facebook Page request because `https://api.yuzucigarclub.com/news/stories?limit=12` returned HTTP 500.
+- An independent request to the stories endpoint also returned HTTP 500.
+- No `2026-07-25` output directory, Facebook manifest, Page status/permalink, or `FACEBOOK-GROUP-POST-KIT.md` was generated; this was an explicit no-story/no-action failure rather than a partial publish.
+- No Meta access tokens or secret values were written to repo files.
+
+### 2026-07-27 Cigar Flow Facebook Social Automation
+
+- Used America/Phoenix date `2026-07-27` and ran `npm run cigar-flow:facebook -- --date=2026-07-27 --publish-page` with `AWS_PROFILE=ycc-mcp`, `AWS_SDK_LOAD_CONFIG=1`, and `YCC_FACEBOOK_SECRET_ID=ycc/social/facebook/prod`.
+- Did not pass `--force`, preserving the existing-manifest duplicate-post guard.
+- Result: the command exited before story selection or any Facebook Page request because `https://api.yuzucigarclub.com/news/stories?limit=12` returned HTTP 500.
+- Verified no `2026-07-27` output directory, Facebook manifest, Page status/permalink, or `FACEBOOK-GROUP-POST-KIT.md` was generated; this was an explicit no-action failure rather than a partial publish.
+- No Meta access tokens or secret values were written to repo files.
+
+## 2026-08-16 Events Auto-Update Research
+
+- User reported that the public Events page is old and asked how to make it update automatically.
+- Read the project-specific Next.js 16 static-export guide before making recommendations.
+- Current-state findings:
+  - `src/lib/data.ts` remains the production event source and contains hard-coded records.
+  - `src/lib/event-schedule.ts` automatically filters/sorts configured events but does not ingest new ones.
+  - The admin event importer persists approvals only to browser `localStorage`, so imports are not shared with other visitors and are not durable production content.
+  - Curated event records can use non-machine-readable labels such as `This week` or `Check calendar`, so they do not expire reliably.
+  - The app is a Next.js static export on Amplify; current Next.js documentation supports runtime client fetching but not ISR in this mode.
+- Researched current primary documentation for Google Calendar incremental sync and push-channel renewal, Eventbrite organization event APIs and event webhooks, AWS EventBridge Scheduler retries/DLQs, and AWS Secrets Manager.
+- Recommendation:
+  - Use a shared Yuzu Google Calendar as the default owned-event source, or Eventbrite if Yuzu already uses it for ticketing.
+  - Sync into durable PostgreSQL event/source records through a Lambda invoked every 15 minutes by EventBridge Scheduler.
+  - Expose published records through a public `GET /events` API and fetch them at runtime from the existing static frontend.
+  - Move the admin import/approval workflow from localStorage to authenticated admin APIs.
+  - Auto-publish only allowlisted Yuzu-owned sources; send third-party/Facebook/unstructured discoveries through operator review.
+  - Keep cancellation, recurrence, timezone, idempotency, stale-source, audit, fallback, monitoring, retry, and DLQ handling in the implementation contract.
+- Added `docs/events-auto-update-research-2026-08-16.md` with the proposed architecture, data model, API surface, source policy, rollout sequence, operational controls, and acceptance criteria.
+- Verification:
+  - `tests/event-import-agent.test.ts` passed 3/3, confirming the current localStorage import/merge workflow described in the audit.
+  - The combined event test run could not load `tests/events-experience.test.ts` because the current `node_modules` install is incomplete: `next/link.js` references missing `next/dist/client/link`, and a direct TSX check also found a missing `tsx/dist/index-XurvG3JN.mjs` file.
+  - The dependency-install issue was not repaired because this was a read-only application research pass and no runtime code changed.
+- No application, infrastructure, database, or live AWS changes were made in this research pass.
+
+## 2026-08-16 Events Auto-Update Frontend Implementation
+
+- Added typed public and authenticated admin event clients in `src/lib/live-api.ts` for the shared feed and event listing/create/update/publish/archive routes.
+- Added the public API event-to-storefront adapter for nested source/location data, timezone-aware display text, coordinates, safe image defaults, and external source attribution.
+- Updated the events grid and home event feature to fetch the same shared API after hydration while retaining only three active build-time records during loading or API failure.
+- Added visible loading, live, fallback, empty-feed, and last-successful-sync status copy.
+- Made live records with source URLs open the canonical source in a new tab; live records without a valid source remain non-clickable and do not claim to have a detail route.
+- Replaced browser-local import approval in `src/components/event-import-agent-panel.tsx` with Cognito-authenticated admin create-then-publish calls and shared published-event state.
+- Verification:
+  - `node --import tsx --test --test-concurrency=1 tests/events-live-api.test.ts tests/event-import-agent.test.ts` passed 4/4.
+  - Focused ESLint passed for the event frontend, API client, and tests.
+  - The existing `tests/events-experience.test.ts` still cannot start because `lucide-react` is missing from the incomplete local `node_modules` install.
+- Full `npx tsc --noEmit` remains blocked by invalid declarations under `tmp/node_modules-corrupt-20260816`; the failures occur before project type checking.
+
+## 2026-08-16 Events Auto-Update Recommended Setup Implementation
+
+- Implemented the researched Google Calendar-first architecture with three parallel workstreams for event persistence/API, provider synchronization/infrastructure, and storefront/admin integration.
+- Backend and database:
+  - Added `infra/database/migrations/0006_events_schema.sql` with durable `event_sources`, occurrence-level `events`, `event_sync_runs`, provider cursors, recurrence identifiers, cancellation/archive state, and idempotency indexes.
+  - Added public cached `GET /events` with active-window filters, ETag/304 support, feed freshness, and stale-while-revalidate headers.
+  - Added Cognito-protected admin list/create/update/publish/archive routes with transactional audit logging and matching API Gateway routes.
+  - Wired the scheduled Google Calendar event directly into the existing Lambda handler and an atomic PostgreSQL sync store.
+- Google Calendar synchronization:
+  - Added `infra/lambda/ycc-api/event-sync.js` with service-account JWT OAuth using the read-only Calendar scope, paged full and incremental sync, persisted `nextSyncToken`, HTTP 410 full-resync recovery, recurring occurrence identities, cancellations/deletions, input sanitization, and bounded sync windows.
+  - Added `infra/ycc-events-sync.yaml` for a 15-minute EventBridge Scheduler target, three retries over one hour, an encrypted SQS DLQ, and a dedicated scheduler role and group.
+  - The schedule intentionally defaults to `DISABLED`; no live Google Calendar ID or credential secret currently exists in the inspected AWS account.
+- Frontend and admin:
+  - Updated the home and Events surfaces to fetch the shared public feed after hydration and retain three active static records as a safe build-time/API-failure fallback.
+  - Added loading, live, empty, fallback, and last-successful-sync states; external records link to canonical sources and live records without a source do not claim a nonexistent static detail route.
+  - Replaced browser-local event approval storage with Cognito-authenticated admin create-then-publish calls and a shared persisted event list.
+- Packaging/readiness:
+  - Added the sync worker and migration `0006` to the Lambda package and launch-readiness required-entry checks.
+  - Removed an unimplemented frontend manual-source-sync helper so the shipped client matches the actual backend/API Gateway contract.
+- Verification:
+  - Focused event/backend/Gateway/packaging regression suite passed 50/50.
+  - Node syntax checks passed for the Lambda handler and sync worker.
+  - `git diff --check` passed with line-ending notices only.
+  - AWS CloudFormation `validate-template` passed for `infra/ycc-events-sync.yaml`.
+  - Focused event frontend and backend ESLint checks passed in the parallel implementation lanes.
+  - Full TypeScript/build verification remains blocked by the pre-existing incomplete shared `node_modules`; the corrupt tree was moved out of the workspace to `C:\Users\qfash\AppData\Local\Temp\codex-ycc-node_modules-corrupt-20260816`, and enough exact packages were restored locally to run the focused event suite without changing the package manifest or lockfile.
+- No live deployment or schema migration was performed. Activation remains blocked by missing Google Calendar/service-account configuration and the already documented unavailable production RDS/API path; enabling the schedule before those prerequisites would only generate retries and DLQ traffic.
+
+## 2026-08-16 Stripe Approval And End-To-End Order Audit
+
+- User reported Stripe approval and asked for a swarm/full audit proving that a shopper can place an order.
+- Ran three parallel audit lanes:
+  - live Stripe account/configuration and Checkout/webhook integration,
+  - storefront/cart/compliance/order/fulfillment logic,
+  - production AWS/API Gateway/Lambda/RDS runtime readiness.
+- Go-live verdict: **do not enable live ordering yet**. Stripe itself is approved and ready, but the public API and production order database are both unavailable, and there is no completed paid live-order proof.
+
+### Live Stripe positives
+
+- Sanitized live Stripe readback confirmed:
+  - live account details submitted,
+  - charges and payouts enabled,
+  - `card_payments` capability active,
+  - no currently due or past-due account requirements,
+  - enabled live webhook endpoint with exactly the nine event types handled by the Lambda,
+  - active US/AZ Stripe Tax registration,
+  - active customer portal configuration,
+  - all 12 membership Prices active/live/USD,
+  - all 923 published launch-catalog Prices active/live/USD and attached to active Products.
+- Only two live Checkout Sessions existed; both were expired/unpaid. No live completed/paid order could be used as fulfillment proof.
+- The application is a single-merchant retail integration. It does not use Stripe Connect connected accounts, destination charges, transfers, or application fees; Stripe Connect is not required unless Yuzu later pays third-party sellers.
+
+### Production P0 blockers found and recovery status
+
+- Public commerce API TLS is broken:
+  - normal `curl https://api.yuzucigarclub.com/health` fails with exit `60` / `SEC_E_WRONG_PRINCIPAL`,
+  - OpenSSL shows the presented certificate is only for `*.execute-api.us-east-1.amazonaws.com`, not `api.yuzucigarclub.com`,
+  - `curl -k` reaches the Lambda, proving routing/Lambda health behind the invalid certificate,
+  - API Gateway custom-domain, ACM, API mapping, and Route 53 control-plane readbacks appear green/correct.
+- Re-bound the same issued ACM certificate to the existing regional API Gateway custom domain with `update-domain-name`; the operation returned `AVAILABLE` but did not change the presented edge certificate after propagation checks.
+- The API Gateway default execute-api endpoint is intentionally disabled and returns `404`, so it is not a current browser fallback.
+- TLS remediation completed:
+  - requested and DNS-validated fresh ACM certificate `b95633ad-c142-4410-99a8-3d4a3efba170`, preserving the old certificate,
+  - swapping the certificate ARN on the existing custom-domain object still served the execute-api wildcard,
+  - captured the exact API mapping and Route 53 alias, deleted only the broken API Gateway custom-domain object, recreated `api.yuzucigarclub.com`, restored the `$default` mapping to API `13710cp67l`, and updated the Route 53 alias to replacement regional target `d-6vz1278iyf.execute-api.us-east-1.amazonaws.com`,
+  - normal HTTPS now returns `200`; OpenSSL presents `CN/SAN=api.yuzucigarclub.com`; no `-k` bypass is required.
+- Production RDS is unavailable:
+  - `database-1ycc` status is `inaccessible-encryption-credentials`,
+  - RDS Proxy `proxy-1778040454500-database-1ycc` is `suspended`,
+  - proxy target is unavailable and live Lambda schema queries fail with `Connection terminated unexpectedly`,
+  - latest restorable time is `2026-07-14T14:37:58Z`, with automated snapshot `rds:database-1ycc-2026-07-14-09-47` available,
+  - the database has deletion protection; no database or snapshot was deleted.
+- Initial non-destructive restore attempts to replacement identifier `database-1ycc-restored-20260816` through the named `ycc-mcp` role/user credentials were denied `rds:RestoreDBInstanceFromDBSnapshot`; the later root-authenticated recovery is recorded below.
+- Database remediation completed after the active AWS session was found to be authenticated as account root:
+  - restored automated snapshot `rds:database-1ycc-2026-07-14-09-47` to private, encrypted, deletion-protected replacement `database-1ycc-restored-20260816`,
+  - replacement reached `available`, PostgreSQL port `5432`, seven-day backups,
+  - CloudTrail showed the former suspended proxy was separately deleted by root at `2026-08-16T22:33:51Z`,
+  - recreated proxy `proxy-1778040454500-database-1ycc` from the preserved RDS proxy IAM role, database secret, subnets, and security groups; it retained the exact Lambda-configured DNS endpoint and `RequireTLS=true`,
+  - registered only the restored DB target; target health reached `AVAILABLE`,
+  - invoked deployed Lambda `verify_commerce_schema`: HTTP `200`, `status=verified`, migration `0002_commerce_schema`, six tables, zero missing tables,
+  - live `GET /health?deep=1` now returns HTTP `200` and `proxyReachable=true`,
+  - inaccessible source `database-1ycc` remains deletion-protected and was not deleted.
+
+### Emergency live checkout disable
+
+- Because fixing TLS made the current deployed checkout API reachable before the audited fail-closed Lambda changes were deployed, updated only the live commerce secret’s checkout-enablement fields:
+  - `stripe.launchCatalogReady=false`,
+  - `stripe.priceIds={}`.
+- Preserved the live Stripe secret key and webhook signing secret so Stripe event verification/recovery continues.
+- Secrets Manager retained the prior configuration as `AWSPREVIOUS`; current version is `19954472-a3a6-4699-8bb6-e3f7503a51e6`.
+- Verified over normal HTTPS:
+  - product Checkout probe returns `409 commerce_not_configured`,
+  - paid membership Checkout probe returns `409 stripe_not_ready`,
+  - no Stripe Checkout Session is created by either disabled path.
+
+### Catalog, inventory, and pricing blockers
+
+- Live S3 launch catalog was last modified `2026-05-13` and contains 923 products.
+- Sampled current storefront SKUs `777293`, `777295`-`777301`, and `777303` are absent and would fail `unknown_sku`.
+- All 923 live catalog products use `inventoryPolicy=manual` with null quantity; there is no reservation/decrement/release ledger, so oversell protection is not implemented.
+- Member checkout previously sent `memberPrice` while Lambda validated the one catalog `price` (normally public price): 786 products have distinct public/member prices and 784 of those map the live catalog to the public price. Example SKU `22`: public/catalog `$55`, member `$47`.
+- Code now validates trusted members against `memberPrice` and selects `memberStripePriceId` when present, but the live catalog/Stripe inventory still needs current member Price IDs before member-discount ordering can be certified.
+- Local promotion totals are not sent as a canonical server promotion to Checkout; the shopper can see a local discounted total but reach Stripe at a different amount. This remains a launch blocker until promotion ownership is server-side or local promotion display is removed.
+
+### Implemented fail-safe fixes (not deployed)
+
+- Updated Stripe SDK default API version to current `2026-07-29.dahlia`; synchronized `.env.example` and Lambda README examples.
+- Added optional deterministic idempotency keys to product and membership Checkout helpers and wired stable server-generated keys into both handlers.
+- Product and membership Checkout now execute a real SQL readiness query before calling Stripe. If durable storage is disabled or unreachable, they return `503` and create no Checkout Session.
+- Deep health now runs `select 1` through the same database/proxy configuration rather than treating TCP reachability as database readiness.
+- Valid handled Stripe webhook events now return retryable `503` when database persistence is disabled; only signature failures return `400`.
+- Stripe line-item fetch failures now throw and roll back processing instead of silently recording a zero-item order and marking the event processed.
+- Membership Checkout completion events no longer create product-order rows.
+- Webhook shipping snapshots now use current Stripe `collected_information.shipping_details` (with legacy fallback), not billing address.
+- Paid product orders are re-evaluated against the verified pre-Checkout shipping snapshot. Missing address/age evidence, restricted destinations, changed verified shipping identity, and newly required adult-signature delivery create durable compliance holds and block fulfillment.
+- Product-level `adultSignatureRequired` now participates in delivery selection even when the destination state alone would not require it.
+- Guest/member catalog price and Stripe Price selection now use the correct entitlement-specific fields with legacy fallback.
+
+### Additional unresolved audit findings
+
+- No atomic inventory reservation/decrement/release workflow exists.
+- Partial `charge.refunded` events are treated as full refunds and cancel fulfillment.
+- Subscription invoice/update handling can use the invoice ID instead of subscription ID and can flatten actual subscription states to `active`.
+- Admin fulfillment mutation lacks strict paid/compliance/refund transition guards and automated label/tracking/adult-signature evidence fields.
+- Confirmation email does not cover every asynchronous success path and has no durable outbox/retry; provider failures can be swallowed.
+- Checkout success currently clears the cart once Stripe reports paid even if the order row is still not recorded.
+- `customer_creation: always` can fragment member Stripe Customer history.
+- Live secret still pins the prior Stripe API version and uses a full live secret key rather than a least-privilege restricted key; update/migrate only with a tested Lambda deploy.
+- Amplify build environment initially lacked the required public API/base/AgeChecker/Cognito variables even though the currently deployed bundle contains the expected API URL. Synchronized the existing controlled public values into app `d2yxcklt245wh0`, branch `staging` (production stage), preserving the VAPID public key. The branch now has all 12 expected `NEXT_PUBLIC_*` keys; no deployment was started.
+
+### Verification
+
+- `node --check` passed for `infra/lambda/ycc-api/index.js`, `commerce-rules.js`, and `stripe-commerce.js`.
+- Focused commerce/Lambda regression run passed `192/192`, including new tests for:
+  - guest/member price selection,
+  - product-level adult signature,
+  - deterministic Checkout idempotency,
+  - checkout fail-closed before Stripe,
+  - retryable valid webhook behavior,
+  - changed/restricted Stripe-collected shipping compliance holds.
+- `git diff --check` passed (line-ending warnings only).
+- The first repository-wide `npm test` attempt was invalid because the shared `node_modules` tree was concurrently incomplete/corrupt (`lucide-react`, then `tsx`/`esbuild` package files missing); it was stopped after cascading loader failures. After the separate dependency repair completed:
+  - full `npm test` passed `637/637`,
+  - `npx tsc --noEmit` passed,
+  - full ESLint completed with zero errors and two unrelated unused-import warnings in `scripts/render-yuzu-strength-heygen-avatar-lead-composite.mjs`,
+  - Next.js `16.3.1` production build passed and generated all 1,022 static pages,
+  - direct static runtime audit passed: 139 routes, 112 internal links, 99 runtime assets, expected 404 probe, zero warnings,
+  - Lambda package completed at `output/ycc-api-lambda-2026-08-16T2312.zip`, SHA-256 `FC9EWkSKS3VrFlPiUG0eFWT6iSmqnQv3NkBS1DYhZ+U=`.
+- Deployed the tested Lambda package through named profile `ycc-mcp`:
+  - published immutable version `55`, retaining prior live version `54` for rollback,
+  - promoted alias `live` to version `55`,
+  - live version `55` schema verification returned `200 verified`, zero missing tables,
+  - live deep health returned HTTP `200`, `proxyReachable=true`, and the newly added `queryReady=true`,
+  - product and membership Checkout remained safely disabled (`409`), browser preflight returned `204` with the correct storefront origin, normal TLS health returned `200`.
+- No Amplify application deploy, catalog mutation, or production checkout was performed. Production mutations were limited to the documented API custom-domain recovery, replacement DB/proxy recovery, Amplify public build-environment synchronization, recoverable commerce-secret emergency disable, and Lambda version `55` promotion. No customer was charged and no unsafe live order was attempted.
+
+### Required recovery sequence
+
+1. Completed: replacement RDS restore, proxy reconstruction/retarget, schema verification, and deep health without deleting the original DB.
+2. Completed: API Gateway regional custom-domain recreation with normal hostname-valid TLS.
+3. Rebuild/sync the current launch catalog, decide and provision member Stripe Prices, and add real inventory reservation/decrement/release semantics.
+4. Resolve promotion total parity and remaining refund/subscription/fulfillment transition defects.
+5. Completed: dependency stabilization, full lint/TypeScript/tests/build, Lambda package, and static runtime audit.
+6. Completed deployment portion: fail-safe Lambda version `55` is live with version `54` retained for rollback. Still required: provision a Stripe test-mode secret/configuration and run a controlled test-mode order through webhook, database order/items, compliance, confirmation, admin fulfillment, and refund assertions.
+7. Only after catalog/inventory/promotion/state fixes and test-mode E2E pass, restore the intended checkout-enablement fields from a reviewed secret version and run an owner-approved minimal live-order smoke before opening checkout to customers.
+
+## 2026-08-16 Product Detail Page Audit And Clean Redesign
+
+- Audited the live J.C. Newman sampler page, the reusable static product-detail route, catalog enrichment, SEO output, cart interaction, and responsive behavior with three parallel swarm lanes for live UX, code/data architecture, and QA.
+- Live baseline findings:
+  - desktop Add Item began around `y=1418` in a `1440x1000` viewport; the hero was about `1254px` high and the page about `3854px` high,
+  - mobile Add Item began around `y=2188` at `390x844`; the page was about `8028px` high and the fixed concierge intersected the H1,
+  - SKU, package, stock, format, size, strength, compliance, and price were repeated across the hero grid, Catalog Signals, Blend Details, Catalog Intelligence, fulfillment callout, and oversized related cards,
+  - the decorative inventory meter implied quantity precision even though SKU `11279` has no exact managed quantity,
+  - the target metadata description was `772` characters and Product JSON-LD incorrectly identified the brand as `Sampler`.
+- Rebuilt `src/app/shop/[slug]/page.tsx` as a reusable server-rendered editorial product page:
+  - one contained product image and one focused purchase column,
+  - price, honest availability, and a `48px` Add to cart action before secondary facts,
+  - one semantic overview definition list, one narrative section, one unique specification list, one independent reviews section, and truly compact related cards,
+  - removed Catalog Signals, Catalog Intelligence, source-status/debug language, the fake stock meter, duplicated member banner/actions, and repeated compliance blocks,
+  - preserved static params, canonical metadata, Product/Breadcrumb JSON-LD, auth-aware pricing, cart behavior, review sources, and server/client boundaries.
+- Added `src/lib/product-page-content.ts` to separate a concise lead from the longer story, strip imported appended key-value spec prose, and cap metadata descriptions at `158` decoded characters. An audit across all `1,143` imported descriptions found no empty leads and no generated metadata description over the cap.
+- Corrected the target SKU's shopper identity in the catalog view model to `J.C. Newman Sesenta Sampler` / `J.C. Newman` without changing SKU `11279`, slug, pricing (`$34.43` public / `$28` member), or checkout identifiers.
+- Replaced the misleading homogeneous Toro Gordo/Medium-Full record with assortment-level catalog values and a sourced four-item assortment model: two Brick House Mighty Mighty selections at 6¼ × 60 and two Perla del Mar Double Toro selections at 6 × 60. The page attributes the contents to Best Cigar Prices.
+- Independent QA follow-up also moved the split hero to the large breakpoint to eliminate 768px fact clipping, reserved the concierge corner through tablet widths, replaced cigar-only story headings with neutral cross-catalog language, made SEO titles package-aware/unique, and aligned Product JSON-LD with cleaned visible copy.
+- Updated the matching loading skeleton, product-detail regression tests, and added `docs/product-page-audit-redesign-2026-08-16.md` with the audit evidence, information architecture, acceptance criteria, and data follow-up.
+- Exported-page verification after the final mobile refinement:
+  - desktop `1440x1000`: CTA `y=657`, hero about `710px`, page about `3214px` including the sourced contents section, no horizontal overflow,
+  - mobile `390x844`: CTA fully visible at `y=769–817`, H1 at `y=466–556`, no concierge overlap at scroll positions `0` or `45`, no horizontal overflow, page about `5899px`,
+  - tablet `768x1024`: the fact rail measured `579px` client/scroll width with no clipping or document overflow,
+  - visible SKU `11279` and `In stock` each occur once; package/format/strength have one overview home and removed internal section labels occur zero times,
+  - Add to cart stayed on the product route, updated the global cart count, and stored the correct SKU/price/quantity,
+  - browser console recorded zero errors/warnings; axe reported zero WCAG A/AA violations,
+  - canonical stayed correct, the target metadata description is `148` decoded characters (all product metadata stays at or below `158`), and Product JSON-LD now emits the cleaned assortment narrative, brand `J.C. Newman`, and SKU `11279`.
+- Verification passed:
+  - focused product/pricing/cart/SEO/static-preview suite `77/77`,
+  - focused ESLint and full `npx tsc --noEmit --pretty false`,
+  - production `npm run build`, exporting `1,022` static pages including all `956` product detail routes.
+- Dependency note: the incomplete shared `node_modules` tree was recovered with npm 10 and legacy peer resolution without changing `package.json` or `package-lock.json`. `npm ci` remains unavailable because the pre-existing lockfile is internally out of sync; the installed tree resolved allowed newer patch/minor versions locally, while the committed lockfile was preserved.
+- Follow-up data work remains: future assortment imports should add source timestamps and supplier reconciliation so content changes trigger review before the next static build. No production deployment or generated source-inventory rewrite was performed in this pass.
+
+## 2026-08-16 Product Detail Redesign Deployment
+
+- Completed a catalog-wide deployment review before publishing the reusable product-detail redesign:
+  - `956` published `storefrontProducts`, `956` unique catalog slugs, and `956` exported `out/shop/<slug>/index.html` routes matched exactly, with no missing or unexpected product routes.
+  - All `956/956` exported product pages contain the shared `data-product-page-layout="editorial"` template marker, one nonempty H1, one Add to cart action, Product JSON-LD, BreadcrumbList JSON-LD, a concise metadata description no longer than `158` decoded characters, and none of the removed Catalog Signals/Catalog Intelligence or internal audit copy.
+  - The redesign is template-wide because `src/app/shop/[slug]/page.tsx` generates every product route directly from `storefrontProducts`; it is not a one-product override.
+- The final all-products narrative sweep found four imported records with operational catalog/SKU wording. Kept the generated `src/lib/imported-product-descriptions.ts` unchanged and added durable SKU-keyed shopper-copy overrides in `src/lib/catalog.ts` for `572745`, `777299`, `777300`, and `777301`, while continuing to parse their specifications from the original imported copy.
+- Added a catalog-wide regression assertion in `tests/product-detail.test.ts` so every published product narrative and listing summary must remain free of SKU reconciliation, inventory, storefront, catalog, fulfillment, and source-reference language.
+- Final verification after the corrective pass:
+  - focused product/pricing/cart/SEO suite passed `66/66`,
+  - focused ESLint passed,
+  - full `npx tsc --noEmit --pretty false` passed,
+  - `npm run build` passed and generated all `1,022` static routes, including the `956` product routes,
+  - the rebuilt export passed the `956/956` structural/content/SEO scan with zero failures and exact catalog/export slug parity.
+- Amplify deployment:
+  - app `d2yxcklt245wh0` (`app7216_yuzucigarclub`), branch `staging`, which Amplify reports as stage `PRODUCTION`, region `us-east-1`,
+  - job `167` successfully deployed the first verified redesign artifact and was immediately superseded by the corrected final artifact,
+  - final job `168` completed with status `SUCCEED` on 2026-08-16,
+  - final archive `yuzu-cigar-club-amplify-deploy-product-pages-clean-final-20260816-2026-08-16-170919.zip` contains `6,434` POSIX-path entries and was created only from the contents of `out/`,
+  - Amplify homepage smoke returned `200`; deployed asset `/_next/static/chunks/0jbo7cs_stw3o.css` returned `200`.
+- Live verification after job `168`:
+  - nine representative Amplify routes returned `200` and passed template, cart-action, schema, metadata, and removed-copy checks: the J.C. Newman sampler, all four corrected legacy products, lighter fluid, a torch, a humidor, and a standard cigar,
+  - the public custom-domain routes for the J.C. Newman sampler, Clipper lighter fluid, and ACID 1400CC also returned `200` with the new editorial layout and without the removed repeated panels,
+  - final URLs: `https://staging.d2yxcklt245wh0.amplifyapp.com/` and `https://yuzucigarclub.com/shop/6-x-60-sampler-jc-newman-4-bx/`.
+
+## 2026-08-16 AI Cigar Adder Multi-View Frontend And Provenance
+
+- Upgraded the live client contract in `src/lib/live-api.ts` for up to four role-labeled cigar images while retaining the legacy single-image fields during rollout. Added explicit identification status, ranked candidate, grounding-source, and optional Concierge citation types.
+- Reworked `src/components/humidor-dashboard.tsx` so members can add, label, preview, and remove up to four band/box/barcode/receipt/whole-cigar evidence views. The client enforces the Bedrock/Lambda boundaries: no more than four images, 3.75 MiB per image, 4 MiB decoded total, and 8000 pixels per side, with tight-crop recovery guidance.
+- Added request-generation invalidation so changing an image, its evidence role, or member notes makes prior/in-flight results stale. Ambiguous results now require an explicit ranked-candidate selection; insufficient-evidence and sentinel unidentified results cannot be saved through the AI confirmation action.
+- Added visible evidence, review notes, distinguishing features, confidence/status cues, and grounded sources to the review surface. HTTP(S) sources use isolated external links; KB/S3 identifiers remain inert text.
+- Updated `src/components/floating-concierge.tsx` to normalize optional `citations` and `ai.sources` metadata, deduplicate it, render only HTTP(S) references as links, and preserve non-HTTP KB/S3 provenance as plain labels.
+- Added frontend/API regression coverage in `tests/humidor-dashboard.test.ts` and `tests/live-page-editor.test.ts` for multi-view limits and roles, stale-result protection, ambiguity/insufficient-evidence save guards, request serialization, and safe citation rendering.
+- Verification passed:
+  - `npx tsc --noEmit --pretty false`,
+  - focused ESLint on `src/lib/live-api.ts`, `src/components/humidor-dashboard.tsx`, and `src/components/floating-concierge.tsx`,
+  - focused dashboard/live-client suite `53/53`,
+  - `git diff --check` for the five frontend/API/test files (line-ending warnings only).
+
+## 2026-08-16 AI Cigar Intelligence Grounding, Research, And Final Hardening
+
+- Supersedes the earlier frontend ledger wording that listed `receipt` as an accepted evidence role. Receipt selection was removed from the client and the API now explicitly returns `receipt_cigar_image_not_supported` before Rekognition, Bedrock, or Knowledge Base calls because receipts can contain customer/payment data.
+- Completed an AWS-primary-source research pass and added `docs/ai-cigar-intelligence-research-2026-08-16.md`. It defines the defensible promise (identify any visually distinguishable maintained identity or abstain), a seven-stage evidence architecture, a 250-identity/1,250-positive plus 500-negative evaluation corpus, accuracy/calibration/latency/reliability/cost gates, adversarial cases, privacy controls, and rollout prerequisites.
+- Upgraded the AI Cigar Adder backend and contract:
+  - up to four labeled views, 3.75 MiB per view, 4 MiB decoded total, and 8,000-pixel maximum dimensions;
+  - magic-byte/MIME/dimension validation for JPEG, PNG, GIF, and WebP;
+  - Rekognition LINE and WORD evidence, Nova media-first prompting, text Knowledge Base retrieval, optional multimodal image retrieval, and optional reranking;
+  - ranked candidates and explicit `identified`, `ambiguous`, and `insufficient_evidence` states;
+  - exact brand/line/vitola corroboration must occur within one retrieved evidence record; missing/invalid confidence defaults low;
+  - unknown or incomplete output cannot expose a confirm action, and Kisha/Sensei/Daimyo entitlement is enforced server-side;
+  - model-supplied candidate URLs are discarded; only actual retrieval provenance reaches the citation UI.
+- Hardened the review UI against stale in-flight responses and result reuse. Alternate-candidate selection now clears top-candidate strength, rating, value/provenance, tasting notes, blend, binder/filler, MSRP, and other dependent details before review/save.
+- Expanded YCCCigarGuide:
+  - word-boundary and unfamiliar title-cased product routing while preserving membership routing;
+  - ownership-checked bounded conversation history for multi-turn comparisons;
+  - Knowledge Base scores/locations/citations, source-safe rendering, prompt-injection-resistant context framing, and adaptive provider retries;
+  - opt-in Nova 2 `nova_grounding` system tool for current releases/time-sensitive questions with preserved citations and scoped `bedrock:InvokeTool` IAM/VPCE policy.
+- Corrected the default direct-runtime model to the US inference profile `us.amazon.nova-2-lite-v1:0`. The checked-in Lambda IAM and Bedrock Runtime VPC endpoint policies authorize the profile plus its `us-east-1`, `us-east-2`, and `us-west-2` destination model ARNs with the required inference-profile condition.
+- Added `scripts/build-cigar-intelligence-corpus.ts` and `npm run ai:cigar-corpus`. The generated ignored artifact under `output/cigar-intelligence-corpus/` contains 907 text records across 96 catalog brand values and 59 local canonical images; 848 records still lack local images, so multimodal Knowledge Base enablement remains blocked pending licensed band/box/real-phone images and golden-corpus gates.
+- Generalized `scripts/humidor-agent-image-e2e-check.ts` for JPEG/PNG/GIF/WebP detection and per-fixture expected brand/name. Its IAM audit now checks the Nova 2 profile, all three destination regions, and the profile condition instead of treating Nova Lite v1 as sufficient.
+- Verification after the final hardening:
+  - Lambda Concierge/image focused suite passed `43/43`;
+  - infrastructure, corpus, E2E-harness, dashboard, and live-client suite passed `68/68` (111 focused tests total);
+  - scoped ESLint passed; `node --check` and policy JSON parsing passed; scoped TypeScript diagnostics were zero;
+  - repository-wide `npx tsc --noEmit --pretty false` passed after concurrent news/social edits stabilized;
+  - final `npm run build` passed compilation, TypeScript, and static generation of all `1,022` routes. Two earlier attempts encountered transient type failures while unrelated concurrent news/social files were mid-edit; the stable final rerun cleared them.
+- A prior full Lambda run was `177/182`; all five failures were unrelated concurrent newsroom test/mock changes. A prior full repository test run was `644/656`; its 12 failures were likewise in concurrently edited news automation, while all cigar-focused paths above passed.
+- Read-only production audit (no deployment or mutation): Lambda alias `live` version 56 still uses `amazon.nova-lite-v1:0`; deployed IAM lacks Nova 2/profile/Web Grounding permissions; the active Titan text/S3 Vectors Knowledge Base last indexed only five documents on 2026-05-06. The live audit script was stopped after a long wait on the deployed invocation, then hardened with explicit AWS CLI connection/read/process timeouts. Production rollout, corpus upload/ingestion, and real-image accuracy benchmarking remain required before making a broad-coverage claim.
+
+## 2026-08-16 Yuzu 21+ Campaign Creative Swarm
+
+- Ran four parallel creative lanes covering brand/reference audit, campaign concepts and copy, format/packaging guidance, and source-photo generation.
+- Created four text-free premium editorial source plates with the built-in ImageGen workflow:
+  - Quiet Ritual,
+  - Membership Refined,
+  - Collection in Focus / Digital Humidor,
+  - Follow the Craft / Cigar Flow.
+- Added `scripts/render-yuzu-campaign-assets.mjs` to composite the canonical Yuzu mark, deterministic Georgia/Arial typography, CTA, and `ADULTS 21+ ONLY` footer over the generated photography.
+- Rendered 12 final JPEG exports under ignored `output/social/yuzu-campaign-2026-08-16/`:
+  - four `1080x1350` feed assets,
+  - four `1080x1080` square assets,
+  - four `1080x1920` Story assets,
+  - plus four PNG masters, source plates, ratio-specific contact sheets, copy, prompt, rights, README, and manifest files.
+- Kept the campaign free of health, reduced-risk, price, discount, inventory, availability, giveaway, sample, and ordering claims. The package is explicitly marked for owned/organic or separately approved adult 21+ placements only; it is not cleared for paid Facebook/Instagram tobacco advertising under the repository's existing operating rule.
+- Verification:
+  - visually inspected all four generated source plates,
+  - visually inspected feed, square, and Story contact sheets for composition, copy legibility, branding, safe margins, and 21+ framing,
+  - confirmed 12 exports and the expected native dimensions with the Sharp renderer,
+  - no site build or production deployment was performed because the change is an isolated campaign-asset package plus renderer.
+
+## 2026-08-16 Local Event Feed Production Repair
+
+- Reproduced both live failures:
+  - `GET https://api.yuzucigarclub.com/events` returned API Gateway `404` without CORS because production API `13710cp67l` had no event route.
+  - A direct invoke of deployed Lambda `ycyyy:live` version `55` reached the event handler but failed with PostgreSQL `42P01` because `public.events` did not exist.
+  - Production pages served `Permissions-Policy: geolocation=()`, so the browser blocked every location request regardless of the visitor's choice.
+- Implemented guarded `apply_events_schema` / `verify_events_schema` Lambda actions for migration `0006`, with explicit confirmation and verification of `event_sources`, `event_sync_runs`, `events`, indexes, and the schema-migration record. Updated the Lambda README and regression mocks/tests.
+- Updated the location-aware event components to distinguish permission denial, unavailable location, and timeout states. Updated the home/events client fallback copy to avoid exposing API/CORS diagnostics and retain verified build-time listings when the live feed is reachable but empty.
+- Changed `customHttp.yml` to allow `geolocation=(self)` and added a launch-readiness assertion that rejects `geolocation=()`.
+- Production Lambda/database/API repair:
+  - built a minimal Lambda artifact from the exact deployed version `55` zip; the new artifact kept all `7,125` entries and changed only `index.js`, avoiding unrelated dirty-worktree AI changes,
+  - published immutable Lambda version `56` with code SHA-256 `IyqCwxCfBqNPrPqTiVqWHLNPp2aVwTBx7jHeAAfZlFg=`, retained version `55` for rollback, and promoted alias `live` to `56`,
+  - applied and separately verified migration `0006_events_schema`: all three event tables present, zero missing tables, migration version `0006`, and 12 matching indexes,
+  - created only the public unauthenticated API Gateway route `GET /events` (`7oghurh`) against the existing live Lambda integration; the `$default` stage auto-deployed,
+  - live `GET /events?limit=1` now returns `200`, `application/json`, persistence `stored`, the expected cache policy, and exact ACAO for `https://www.yuzucigarclub.com`.
+- Amplify hosting repair:
+  - updated app `d2yxcklt245wh0` custom headers with the repo policy,
+  - reused the exact already-live job `168` static archive so no unrelated storefront build entered production,
+  - Amplify job `169` succeeded and refreshed both the custom domain and Amplify domain to `geolocation=(self)`,
+  - production Events HTML and a referenced `_next/static` JavaScript asset return `200`.
+- Browser verification after job `169`:
+  - hydrated `https://www.yuzucigarclub.com/events/` through the age gate,
+  - the Local Event Feed completed its API request and showed the current empty-calendar state instead of the reported API/CORS failure,
+  - the browser recorded the event API request at `200`, zero console errors, zero console warnings, and no Permissions Policy violation,
+  - headless browser location remained user-denied, which is expected without a granted browser permission; the site policy no longer forces denial.
+- Verification passed:
+  - focused migration/public-feed Lambda tests `3/3`,
+  - combined event, Gateway, backend-contract, and launch-readiness tests `45/45`,
+  - full `npx tsc --noEmit --pretty false`,
+  - focused ESLint on the changed event/Lambda/test files,
+  - `git diff --check` for the scoped files (line-ending notices only).
+- The shared live database currently has zero published events and the Google Calendar schedule remains intentionally disabled pending real Calendar ID/credential configuration. The curated local guide remains populated. The improved client fallback/location copy is in source for the next normal storefront build; job `169` intentionally changed only hosting headers.
+
+## 2026-08-16 AI Cigar Intelligence Production Deployment
+
+- Deployed the grounded multi-view AI Cigar Adder and source-backed Yuzu Concierge through the shared monolithic `ycyyy` Lambda. The release also contains the checkout's tested newsroom safeguards and their packaged configuration/migration file; migration `0007` was **not** invoked during this rollout.
+- Published immutable Lambda version `57`, code SHA-256 `IT1MVHu6IH51OwyB7OJwfsaUYXDaQqAh1zsuTP354AI=`, and promoted alias `live` with revision `84791d13-83d1-42b5-9113-25dc82a84446`. Exact version `56` remains the rollback target with SHA-256 `IyqCwxCfBqNPrPqTiVqWHLNPp2aVwTBx7jHeAAfZlFg=` and local rollback archive `output/ycc-api-lambda-events-fix-v55-minimal-2026-08-17T0048.zip`.
+- Preserved all 71 deployed Lambda environment variables while selecting the image-capable `us.amazon.nova-2-lite-v1:0` inference profile, text Knowledge Base `48GFMCLSTG`, Rekognition image understanding, guardrail `xczjnv3f1wzs:8`, and Nova Web Grounding. Optional multimodal-image KB and reranker environment fields remain unset because their service-role permissions and licensed image corpus are not ready.
+- Applied the reviewed Lambda IAM and VPC endpoint policies without removing the existing email-provider secret permission. Restored private, private-DNS endpoints in both Lambda subnets:
+  - Bedrock Runtime `vpce-04d1d745735c206ce`,
+  - Bedrock Agent Runtime `vpce-0d3f89f289f1b9831`,
+  - Rekognition `vpce-089844ebc1d2db6e5`.
+- The deployment role was denied when attempting to expand the Knowledge Base service-role policy. The active Titan text/S3 Vectors KB path remains functional; multimodal embedding and reranking remain deliberately disabled rather than partially configured.
+- Generated and ingested the canonical catalog text corpus:
+  - 907 catalog identities across 96 catalog brand values,
+  - 907 Markdown documents plus 907 compact metadata sidecars under versioned prefix `s3://classroom2/ycc/knowledge-base/cigar-catalog/`,
+  - current prefix size `2,177,500` bytes and sorted `key + ETag + size` manifest SHA-256 `6f5fa76c19c87cc884ea8a28f70e5b3ba801d8c2216ec2d79429f3f594d0b7da`,
+  - initial job `DNXDRHNHIT` exposed the 1,024-byte metadata ceiling; job `SOKYE61LRH` indexed 865 and exposed 42 blank-vitola records; generator fixes compacted metadata and omitted empty values; final job `K65JMPDCMG` indexed the remaining 42 with zero failures,
+  - active KB now has all 907 catalog documents plus the five original curated documents (912 total). Catalog rollback is prefix-scoped: place recoverable delete markers only on `ycc/knowledge-base/cigar-catalog/` and run a new ingestion; a Lambda alias rollback does not revert shared KB vectors.
+- Corrected an initial live `guardrail_intervened` result by using Bedrock Converse selective `guardContent`: only member notes are guardrail-assessed, while the fixed system/schema/OCR/reference prompt remains trusted. This retained prompt-injection screening without having the prompt-attack filter classify the application's own defensive instructions.
+- Added a 24-second identification route budget (configurable only within 10–25 seconds), safe timeout abstention, contract version `2`, and a legacy 422 ambiguity branch so backend-first rollout cannot let cached older clients save the `Unidentified cigar` sentinel.
+- Live Lambda/provider verification passed on `$LATEST`, immutable version `57`, and the promoted `live` alias. The non-persisting Padron fixture returned `Padron / 1964 Anniversary Series`, high confidence, with Rekognition text/labels, Bedrock runtime status, grounded confirmation enabled, and no humidor write.
+- The full live agent operations audit passed: all six agents and aliases are PREPARED on version 8, all six action groups match least-privilege contracts, all six have KB `48GFMCLSTG`, the guardrail is READY, the latest ingestion is COMPLETE, deep API health is HTTP `200`, database query readiness is healthy, and unauthenticated Concierge access remains `401`.
+- Added the real-photo evaluation system in `scripts/ai-cigar-real-photo-benchmark.ts` and npm script `ai:cigar-benchmark`: strict labeled manifests, 1–4 local structural image checks, rights/owner evidence, SHA-256 inventory, endpoint or direct-Lambda transport, bounded concurrency/timeouts, top-1/top-3/selective/abstention/confidently-wrong and latency metrics, optional release gates, and output that excludes image bytes, tokens, query strings, raw model responses, and provider usage. No real-photo accuracy percentage is claimed yet: the workspace contains product images but no defensible ownership/license record for a labeled phone-photo golden set. The harness fails closed until rights-cleared photos and ground-truth labels are supplied.
+- Frontend deployment:
+  - `npm run build` compiled, type-checked, and exported all 1,022 static routes,
+  - Amplify app `d2yxcklt245wh0`, production-stage branch `staging`, job `170` completed `SUCCEED`,
+  - archive `yuzu-cigar-club-amplify-deploy-ai-cigar-intelligence-20260816-2026-08-16-195040.zip` contains 6,434 POSIX-path entries and only the contents of `out/`,
+  - deployment smoke returned homepage `200`, hashed CSS `200`, `/humidor/` `200`, and the deployed `3r3wm7qmzjroo.js` chunk `200` with `contractVersion:2` and candidate-review code present.
+- Final verification:
+  - full Lambda suite `194/194`, including image validation, multi-view ranking, selective guardrail content, legacy 422, timeout abstention, Concierge routing/history/provenance, commerce, newsroom, events, and migrations,
+  - focused live/corpus/benchmark harness suite `12/12`, image-focused suite `11/11`, full TypeScript, scoped ESLint, `node --check`, and `git diff --check` (line-ending notices only),
+  - real provider and infrastructure smokes passed after promotion.
+- The unrelated zero-byte untracked root file named `({type` predated this work and was not touched.

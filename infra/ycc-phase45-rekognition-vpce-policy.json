@@ -1,0 +1,17 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowYccLambdaCigarImageAnalysis",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::374587466106:role/service-role/ycyyy-1778040454500"
+      },
+      "Action": [
+        "rekognition:DetectText",
+        "rekognition:DetectLabels"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
