@@ -310,6 +310,8 @@ test("Amplify custom headers include production browser security headers", () =>
 
   assert.match(customHeaders, /frame-ancestors 'none'/u);
   assert.match(customHeaders, /object-src 'none'/u);
+  assert.match(customHeaders, /geolocation=\(self\)/u);
+  assert.doesNotMatch(customHeaders, /geolocation=\(\)/u);
   assert.match(customHeaders, /connect-src 'self' https:\/\/api\.yuzucigarclub\.com/u);
   assert.match(customHeaders, /script-src[^"]*https:\/\/www\.googletagmanager\.com/u);
   assert.match(customHeaders, /img-src[^"]*https:\/\/www\.google-analytics\.com/u);
@@ -317,32 +319,50 @@ test("Amplify custom headers include production browser security headers", () =>
   assert.match(customHeaders, /connect-src[^"]*https:\/\/www\.google-analytics\.com/u);
 });
 
-test("Lambda deploy zip validation requires runtime files, CA bundle, and migrations", () => {
+test("Lambda package script stages the shared news config and 0007 dedupe migration", () => {
+  const packageJson = JSON.parse(readFileSync("package.json", "utf8")) as { scripts: Record<string, string> };
+  const scriptSource = readFileSync("scripts/package-ycc-api-lambda.mjs", "utf8");
+
+  assert.equal(packageJson.scripts["lambda:package"], "node scripts/package-ycc-api-lambda.mjs");
+  assert.match(scriptSource, /\["config\/cigar-news-sources\.json", "cigar-news-sources\.json"\]/u);
+  assert.match(scriptSource, /"0007_newsroom_dedup\.sql"/u);
+  assert.match(scriptSource, /"cigar-news-sources\.json",\s*\.\.\.migrationFiles/u);
+});
+
+test("Lambda deploy zip validation requires runtime files, shared news config, CA bundle, and migrations", () => {
   assert.deepEqual(
     validateLambdaDeployZipEntries([
       "index.js",
+      "event-sync.js",
       "commerce-rules.js",
       "stripe-commerce.js",
       "global-bundle.pem",
+      "cigar-news-sources.json",
       "migrations/0001_phase3_app_schema.sql",
       "migrations/0002_commerce_schema.sql",
       "migrations/0003_site_content_schema.sql",
       "migrations/0004_newsroom_schema.sql",
       "migrations/0005_member_stripe_customer_link.sql",
+      "migrations/0006_events_schema.sql",
+      "migrations/0007_newsroom_dedup.sql",
       "node_modules/pg/package.json",
     ]),
     [],
   );
 
   assert.deepEqual(validateLambdaDeployZipEntries(["index.js", "infra/lambda/ycc-api/index.js", "assets\\bad.js"]), [
+    "missing:event-sync.js",
     "missing:commerce-rules.js",
     "missing:stripe-commerce.js",
     "missing:global-bundle.pem",
+    "missing:cigar-news-sources.json",
     "missing:migrations/0001_phase3_app_schema.sql",
     "missing:migrations/0002_commerce_schema.sql",
     "missing:migrations/0003_site_content_schema.sql",
     "missing:migrations/0004_newsroom_schema.sql",
     "missing:migrations/0005_member_stripe_customer_link.sql",
+    "missing:migrations/0006_events_schema.sql",
+    "missing:migrations/0007_newsroom_dedup.sql",
     "invalid:infra/lambda/ycc-api/index.js",
     "invalid:assets\\bad.js",
   ]);

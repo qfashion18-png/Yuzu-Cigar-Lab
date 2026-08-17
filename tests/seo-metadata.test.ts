@@ -11,8 +11,9 @@ import { generateMetadata as generateProductMetadata } from "../src/app/shop/[sl
 import { metadata as shopMetadata } from "../src/app/shop/page";
 import robots from "../src/app/robots";
 import sitemap from "../src/app/sitemap";
-import { getCatalogProductDetails, storefrontProducts } from "../src/lib/catalog";
+import { getCatalogProductDetails, getCatalogProductSeoName, storefrontProducts } from "../src/lib/catalog";
 import { events } from "../src/lib/data";
+import { buildProductPageCopy } from "../src/lib/product-page-content";
 import { buildProductJsonLd } from "../src/lib/seo";
 import { getCategorySlug } from "../src/lib/seo-content";
 import { siteUrl } from "../src/lib/site";
@@ -105,6 +106,17 @@ test("generated detail metadata carries complete canonical social cards", async 
   assertCompleteSocialMetadata(eventMetadata, `/events/${event.slug}/`);
 });
 
+test("product metadata titles remain unique when package counts differ", async () => {
+  const seoNames = storefrontProducts.map((product) => getCatalogProductSeoName(product));
+  const sampler = storefrontProducts.find((product) => product.sku === "11279");
+
+  assert.equal(new Set(seoNames).size, seoNames.length);
+  assert.ok(sampler);
+
+  const metadata = await generateProductMetadata({ params: Promise.resolve({ slug: sampler.slug }) });
+  assert.match(String(metadata.title), /J\.C\. Newman Sesenta Sampler — Box of 4/);
+});
+
 test("product detail pages expose canonical metadata and ecommerce JSON-LD", () => {
   const product = storefrontProducts.find((item) => item.slug === "acid-20-twenty-year-24-bx");
 
@@ -112,8 +124,10 @@ test("product detail pages expose canonical metadata and ecommerce JSON-LD", () 
 
   const productJsonLd = buildProductJsonLd(product, getCatalogProductDetails(product)) as {
     [key: string]: unknown;
+    description?: string;
     offers?: { [key: string]: unknown };
   };
+  const expectedDescription = buildProductPageCopy(getCatalogProductDetails(product).summary, product.sku).narrative;
 
   assert.ok(productPageSource.includes("buildPageMetadata"), "product metadata should use the shared canonical/social helper");
   assert.ok(productPageSource.includes("buildProductJsonLd"), "product JSON-LD should use the shared Product builder");
@@ -121,6 +135,8 @@ test("product detail pages expose canonical metadata and ecommerce JSON-LD", () 
   assert.ok(productPageSource.includes("jsonLdScriptProps"), "structured data should render as safe JSON-LD script tags");
   assert.equal(productJsonLd["@type"], "Product");
   assert.equal(productJsonLd.sku, product.sku);
+  assert.equal(productJsonLd.description, expectedDescription);
+  assert.doesNotMatch(productJsonLd.description ?? "", /Country of Origin:|Wrapper:|Shape:|Profile:/i);
   assert.equal(productJsonLd.offers?.priceCurrency, "USD");
   assert.equal(typeof productJsonLd.offers?.availability, "string");
 });

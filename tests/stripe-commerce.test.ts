@@ -9,9 +9,22 @@ const stripeCommercePath = new URL("../infra/lambda/ycc-api/stripe-commerce.js",
 function loadStripeCommerce() {
   assert.equal(existsSync(stripeCommercePath), true, "stripe commerce module should exist");
   return require("../infra/lambda/ycc-api/stripe-commerce.js") as {
+    DEFAULT_STRIPE_API_VERSION: string;
     buildCheckoutSessionParams: (input: Record<string, unknown>, env?: Record<string, string>) => Record<string, unknown>;
     buildMembershipSessionParams: (input: Record<string, unknown>, env?: Record<string, string>) => Record<string, unknown>;
     buildCustomerPortalSessionParams: (input: Record<string, unknown>, env?: Record<string, string>) => Record<string, unknown>;
+    createCommerceCheckoutSession: (
+      stripe: Record<string, unknown>,
+      input: Record<string, unknown>,
+      env?: Record<string, string>,
+      requestOptions?: { idempotencyKey?: string }
+    ) => Promise<unknown>;
+    createMembershipCheckoutSession: (
+      stripe: Record<string, unknown>,
+      input: Record<string, unknown>,
+      env?: Record<string, string>,
+      requestOptions?: { idempotencyKey?: string }
+    ) => Promise<unknown>;
     mapCheckoutSessionStatus: (session: Record<string, unknown>) => Record<string, unknown>;
     verifyStripeWebhook: (input: Record<string, unknown>) => unknown;
     shouldProcessStripeEvent: (event: { id: string }, processedEventIds: Set<string>) => boolean;
@@ -25,6 +38,12 @@ const env = {
   STRIPE_CUSTOMER_PORTAL_CONFIGURATION_ID: "bpc_test_123",
 };
 const fakeWebhookSecret = ["whsec", "test"].join("_");
+
+test("Stripe client defaults to the current API version", () => {
+  const { DEFAULT_STRIPE_API_VERSION } = loadStripeCommerce();
+
+  assert.equal(DEFAULT_STRIPE_API_VERSION, "2026-07-29.dahlia");
+});
 
 test("Stripe product checkout sessions use hosted Checkout with server-computed line items", () => {
   const { buildCheckoutSessionParams } = loadStripeCommerce();
@@ -163,6 +182,75 @@ test("Stripe membership checkout sessions preserve friends and family yearly pas
   assert.equal(params.metadata.membership_offer_access, "box_access_pass_1_year");
   assert.equal(params.metadata.membership_offer_trial_days, "365");
   assert.equal(params.subscription_data.metadata.membership_offer_campaign, "friends-family-1-year-box-pass");
+});
+
+test("Stripe Checkout helpers pass deterministic idempotency request options when provided", async () => {
+  const { createCommerceCheckoutSession, createMembershipCheckoutSession } = loadStripeCommerce();
+  const calls: Array<{ params: Record<string, unknown>; options?: { idempotencyKey?: string } }> = [];
+  const stripe = {
+    checkout: {
+      sessions: {
+        async create(params: Record<string, unknown>, options?: { idempotencyKey?: string }) {
+          calls.push({ params, options });
+          return { id: `cs_test_${calls.length}` };
+        },
+      },
+    },
+  };
+
+  await createCommerceCheckoutSession(
+    stripe,
+    {
+      customer: { email: "member@example.com" },
+      items: [{ stripePriceId: "price_product", quantity: 1 }],
+      statusToken: "chkst_product_test_123456789012345678901234567890",
+      shipping: { address: { country: "US" } },
+    },
+    env,
+    { idempotencyKey: "checkout-cart-123-v1" }
+  );
+  await createMembershipCheckoutSession(
+    stripe,
+    {
+      customer: { email: "member@example.com" },
+      tierKey: "sensei",
+      billingPeriod: "monthly",
+      stripePriceId: "price_sensei_monthly",
+      statusToken: "chkst_member_test_123456789012345678901234567890",
+    },
+    env,
+    { idempotencyKey: "membership-member-123-sensei-monthly" }
+  );
+
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls.map((call) => call.options), [
+    { idempotencyKey: "checkout-cart-123-v1" },
+    { idempotencyKey: "membership-member-123-sensei-monthly" },
+  ]);
+});
+
+test("Stripe Checkout helpers preserve one-argument session creation without idempotency", async () => {
+  const { createCommerceCheckoutSession } = loadStripeCommerce();
+  const argumentCounts: number[] = [];
+  const stripe = {
+    checkout: {
+      sessions: {
+        async create(...args: unknown[]) {
+          argumentCounts.push(args.length);
+          return { id: "cs_test_without_idempotency" };
+        },
+      },
+    },
+  };
+
+  await createCommerceCheckoutSession(stripe, {
+    customer: { email: "member@example.com" },
+    items: [{ stripePriceId: "price_product", quantity: 1 }],
+    statusToken: "chkst_product_test_123456789012345678901234567890",
+    shipping: { address: { country: "US" } },
+  }, env);
+
+  assert.deepEqual(argumentCounts, [1]);
 });
 
 test("Stripe customer portal sessions keep subscription management inside Stripe", () => {

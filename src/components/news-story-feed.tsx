@@ -8,7 +8,14 @@ import { ReferenceImage } from "@/components/reference-image";
 import { Button } from "@/components/ui/button";
 import { fetchPublishedNewsStories, getLiveApiErrorMessage } from "@/lib/live-api";
 import { buildEditorialImageAlt } from "@/lib/image-seo";
-import type { NewsStory, NewsStoryImage } from "@/lib/newsroom";
+import {
+  canonicalNewsImageKey,
+  canonicalizeNewsUrl,
+  isSpecificNewsSourceUrl,
+  normalizeNewsImageUrl,
+  type NewsStory,
+  type NewsStoryImage,
+} from "@/lib/newsroom";
 import { cn } from "@/lib/utils";
 
 type NewsStoryFeedProps = {
@@ -45,38 +52,37 @@ export function NewsStoryFeed({
   const [stories, setStories] = useState<NewsStory[]>(fallbackStories);
   const [isLoading, setIsLoading] = useState(!fallbackStories.length);
   const [error, setError] = useState("");
+  const [fallbackNotice, setFallbackNotice] = useState("");
   const auth = useOptionalBackupAuth();
   const intro = getFeedIntro(variant);
-  const storyCards = useMemo(() => buildStoryCardModels(stories, variant), [stories, variant]);
+  const deduplicatedStories = useMemo(() => deduplicateNewsStories(stories).slice(0, limit), [stories, limit]);
+  const storyCards = useMemo(() => buildStoryCardModels(deduplicatedStories, variant), [deduplicatedStories, variant]);
+  const freshnessNotice = useMemo(() => getNewsFreshnessNotice(deduplicatedStories), [deduplicatedStories]);
   const canUseReadAloud = Boolean(auth?.isReady && auth.isMember && variant === "cigarFlow");
 
   useEffect(() => {
     let cancelled = false;
 
     async function loadStories() {
-      const canUseLocalFallback = fallbackStories.length > 0 && ["localhost", "127.0.0.1"].includes(window.location.hostname);
-
-      if (canUseLocalFallback) {
-        setStories(fallbackStories);
-        setIsLoading(false);
-        setError("");
-        return;
-      }
-
       setIsLoading(!fallbackStories.length);
       setError("");
+      setFallbackNotice("");
 
       try {
         const response = await fetchPublishedNewsStories(limit);
-        const liveStories = mergeFallbackStoryImages(response.stories, fallbackStories);
+        const liveStories = deduplicateNewsStories(mergeFallbackStoryImages(response.stories, fallbackStories)).filter(
+          hasSpecificNewsStoryEvidence,
+        );
 
         if (!cancelled) {
           setStories(liveStories.length ? liveStories : fallbackStories);
+          setFallbackNotice(liveStories.length ? "" : "The live newsroom is empty. Showing the bundled archive instead.");
         }
       } catch (loadError) {
         if (!cancelled) {
           if (fallbackStories.length) {
             setStories(fallbackStories);
+            setFallbackNotice("The live newsroom could not be reached. Showing the bundled archive instead.");
           } else {
             setError(getLiveApiErrorMessage(loadError));
           }
@@ -115,7 +121,7 @@ export function NewsStoryFeed({
     );
   }
 
-  if (!stories.length) {
+  if (!deduplicatedStories.length) {
     return (
       <div className="grid min-h-72 place-items-center border border-yuzu-line bg-yuzu-panel/70 p-8 text-center">
         <div className="max-w-md">
@@ -139,11 +145,18 @@ export function NewsStoryFeed({
         <div className="grid gap-3 sm:justify-items-end">
           <div className="inline-flex items-center gap-2 text-sm text-yuzu-muted">
             <ShieldCheck className="size-5 text-yuzu-gold" />
-            Operator reviewed
+            Published newsroom
           </div>
-          {canUseReadAloud ? <NewsReadAloudControl stories={stories} /> : null}
+          {canUseReadAloud ? <NewsReadAloudControl stories={deduplicatedStories} /> : null}
         </div>
       </div>
+
+      {fallbackNotice || freshnessNotice ? (
+        <div className="flex items-start gap-3 border border-amber-400/55 bg-amber-950/20 p-4 text-amber-100" role="status">
+          <AlertTriangle className="mt-0.5 size-5 shrink-0 text-amber-200" />
+          <p className="text-sm leading-6">{fallbackNotice || freshnessNotice}</p>
+        </div>
+      ) : null}
 
       {variant === "cigarFlow" ? (
         <div className="grid gap-6" data-cigar-flow-editorial-feed="true">
@@ -245,7 +258,7 @@ export function buildLatestNewsNarration(stories: NewsStory[]) {
   }
 
   const storyBriefs = stories.slice(0, 8).map((story, index) => {
-    const sections = markdownSections(story.bodyMarkdown).slice(0, 2);
+    const sections = markdownSections(story.bodyMarkdown, story.title).slice(0, 2);
 
     return [
       `Story ${index + 1}: ${story.title}.`,
@@ -261,7 +274,7 @@ export function buildLatestNewsNarration(stories: NewsStory[]) {
 }
 
 function StoryCard({ story, featured, visuals }: { story: NewsStory; featured: boolean; visuals: NewsStoryVisual[] }) {
-  const sections = useMemo(() => markdownSections(story.bodyMarkdown), [story.bodyMarkdown]);
+  const sections = useMemo(() => markdownSections(story.bodyMarkdown, story.title), [story.bodyMarkdown, story.title]);
   const publishedDate = story.publishedAt ? new Intl.DateTimeFormat("en", { month: "short", day: "numeric", year: "numeric" }).format(new Date(story.publishedAt)) : "Recently";
 
   return (
@@ -285,8 +298,8 @@ function StoryCard({ story, featured, visuals }: { story: NewsStory; featured: b
         <p className="mt-4 text-sm leading-7 text-yuzu-cream/82">{story.dek}</p>
 
         <div className="mt-5 grid gap-4">
-          {sections.slice(0, featured ? 3 : 2).map((section) => (
-            <section key={section.heading} className="border-t border-yuzu-line/70 pt-4">
+          {sections.slice(0, featured ? 3 : 2).map((section, index) => (
+            <section key={`${index}-${section.heading}-${section.body.slice(0, 24)}`} className="border-t border-yuzu-line/70 pt-4">
               <h4 className="text-sm font-black uppercase tracking-[0.14em] text-yuzu-gold">{section.heading}</h4>
               <p className="mt-2 text-sm leading-7 text-yuzu-muted">{section.body}</p>
             </section>
@@ -306,7 +319,7 @@ function CigarFlowEditorialStory({
   featured: boolean;
   visuals: NewsStoryVisual[];
 }) {
-  const sections = useMemo(() => markdownSections(story.bodyMarkdown), [story.bodyMarkdown]);
+  const sections = useMemo(() => markdownSections(story.bodyMarkdown, story.title), [story.bodyMarkdown, story.title]);
   const publishedDate = story.publishedAt
     ? new Intl.DateTimeFormat("en", { month: "short", day: "numeric", year: "numeric" }).format(new Date(story.publishedAt))
     : "Recently";
@@ -379,7 +392,7 @@ function CigarFlowEditorialStory({
 
         <div className="mt-6 grid gap-6" data-cigar-flow-story-body="true">
           {sections.map((section, index) => (
-            <section key={section.heading} className="grid gap-4" data-cigar-flow-story-section={section.heading}>
+            <section key={`${index}-${section.heading}-${section.body.slice(0, 24)}`} className="grid gap-4" data-cigar-flow-story-section={section.heading}>
               <div>
                 <h4 className="text-sm font-black uppercase tracking-[0.18em] text-yuzu-gold">{section.heading}</h4>
                 <p className="mt-3 text-sm leading-7 text-yuzu-muted sm:text-[0.95rem] sm:leading-8">{section.body}</p>
@@ -535,31 +548,102 @@ function mergeFallbackStoryImages(stories: NewsStory[], fallbackStories: NewsSto
   });
 }
 
+export function deduplicateNewsStories(stories: NewsStory[]) {
+  const seen = new Set<string>();
+
+  return stories.filter((story) => {
+    const publishedDay = story.publishedAt?.slice(0, 10) || "";
+    const dailyDate = story.slug.match(/^daily-cigar-flow-(20\d{2}-\d{2}-\d{2})(?:-|$)/)?.[1] || "";
+    const identities = [
+      story.id ? `id:${story.id}` : "",
+      story.slug ? `slug:${story.slug.toLowerCase()}` : "",
+      story.dedupeKey ? `dedupe:${story.dedupeKey}` : "",
+      story.contentFingerprint ? `content:${story.contentFingerprint}` : "",
+      newsStorySourceIdentity(story),
+      dailyDate ? `daily:${dailyDate}` : "",
+      story.title && publishedDay ? `title-day:${story.title.toLowerCase().replace(/\s+/g, " ").trim()}:${publishedDay}` : "",
+    ].filter(Boolean);
+
+    if (identities.some((identity) => seen.has(identity))) {
+      return false;
+    }
+
+    identities.forEach((identity) => seen.add(identity));
+    return true;
+  });
+}
+
+function newsStorySourceIdentity(story: NewsStory) {
+  if (story.sourceFingerprint) {
+    return `sources:${story.sourceFingerprint}`;
+  }
+
+  const sources = [...new Set((story.officialSources ?? []).map(canonicalizeNewsUrl).filter(Boolean))].sort();
+  return sources.length ? `sources:${sources.join("|")}` : "";
+}
+
+function hasSpecificNewsStoryEvidence(story: NewsStory) {
+  return [
+    ...(story.officialSources ?? []),
+    ...(story.sourceNotes ?? []).filter((source) => source.sourceType === "official").map((source) => source.url),
+  ].some(isSpecificNewsSourceUrl);
+}
+
+function getNewsFreshnessNotice(stories: NewsStory[]) {
+  const newestTimestamp = Math.max(...stories.map((story) => Date.parse(story.publishedAt || "")).filter(Number.isFinite));
+  if (!Number.isFinite(newestTimestamp)) {
+    return "Published newsroom stories do not include a valid publication time.";
+  }
+
+  const ageHours = (Date.now() - newestTimestamp) / (60 * 60 * 1000);
+  return ageHours > 36 ? `The latest live newsroom update is ${Math.floor(ageHours / 24)} days old; no newer source-backed story has been published.` : "";
+}
+
 function storyIdentityKeys(story: NewsStory) {
   return [story.id, story.slug, story.title].filter((value): value is string => Boolean(value));
 }
 
 function buildStoryCardModels(stories: NewsStory[], variant: NewsStoryFeedProps["variant"]): NewsStoryCardModel[] {
-  const usedGeneratedImages = new Set<string>();
-  const minimumVisualCount = variant === "cigarFlow" ? 3 : 1;
+  const displayedStoryImages = new Set<string>();
+  const usedGeneratedImages = new Set(
+    stories.flatMap((story) => (story.images ?? []).map((image) => canonicalNewsImageKey(image.image)).filter(Boolean)),
+  );
 
-  return stories.map((story, index) => ({
-    story,
-    visuals: storyVisuals(story, index, usedGeneratedImages, minimumVisualCount),
-  }));
+  return stories.map((story, index) => {
+    const unusedGeneratedCount = generatedStoryVisuals.filter((visual) => !usedGeneratedImages.has(canonicalNewsImageKey(visual.image))).length;
+    const storiesRemaining = stories.length - index;
+    const fairShare = Math.max(1, Math.floor(unusedGeneratedCount / Math.max(storiesRemaining, 1)));
+    const visualCount = variant === "cigarFlow" ? Math.min(3, fairShare) : 1;
+    return {
+      story,
+      visuals: storyVisuals(story, index, displayedStoryImages, usedGeneratedImages, visualCount),
+    };
+  });
 }
 
 function storyVisuals(
   story: NewsStory,
   storyIndex: number,
+  displayedStoryImages: Set<string>,
   usedGeneratedImages: Set<string>,
   minimumVisualCount: number,
 ): NewsStoryVisual[] {
   const generatedBrandLogo = brandLogoForStory(story);
+  const seenStoryImages = new Set<string>();
   const storyImages = (story.images ?? [])
     .filter((visual) => visual.image)
+    .filter((visual) => {
+      const key = canonicalNewsImageKey(visual.image);
+      if (!key || seenStoryImages.has(key) || displayedStoryImages.has(key)) {
+        return false;
+      }
+      seenStoryImages.add(key);
+      displayedStoryImages.add(key);
+      return true;
+    })
     .map((visual, index) => ({
       ...visual,
+      image: normalizeNewsImageUrl(visual.image),
       imagePosition: visual.imagePosition ?? "50% 50%",
       isStoryImage: true,
       brandLogo: index === 0 ? brandLogoForStoryImage(visual) : undefined,
@@ -594,19 +678,23 @@ function generatedVisualsForStory(
   const offset = stableIndex(`${story.id || story.slug || story.title}-${storyIndex}`, orderedVisuals.length);
   const selectedVisuals: NewsStoryVisual[] = [];
 
-  for (let selectedIndex = 0; selectedIndex < Math.max(1, count); selectedIndex += 1) {
-    let selected = orderedVisuals[(offset + selectedIndex) % orderedVisuals.length] ?? generatedStoryVisuals[0];
+  for (let selectedIndex = 0; selectedIndex < count; selectedIndex += 1) {
+    let selected: (typeof orderedVisuals)[number] | undefined;
 
     for (let index = 0; index < orderedVisuals.length; index += 1) {
       const candidate = orderedVisuals[(offset + selectedIndex + index) % orderedVisuals.length];
 
-      if (!usedGeneratedImages.has(candidate.image)) {
+      if (!usedGeneratedImages.has(canonicalNewsImageKey(candidate.image))) {
         selected = candidate;
         break;
       }
     }
 
-    usedGeneratedImages.add(selected.image);
+    if (!selected) {
+      break;
+    }
+
+    usedGeneratedImages.add(canonicalNewsImageKey(selected.image));
     selectedVisuals.push({
       label: selectedIndex === 0 && brandLogo ? brandLogo.label : selected.label,
       image: selected.image,
@@ -851,17 +939,36 @@ const generatedStoryVisuals: Array<Pick<NewsStoryVisual, "label" | "image" | "im
   },
 ];
 
-function markdownSections(markdown: string) {
+export function markdownSections(markdown: string, storyTitle = "") {
   const sections: Array<{ heading: string; body: string }> = [];
-  const parts = markdown.split(/^##\s+/m).map((part) => part.trim()).filter(Boolean);
+  let normalized = markdown.trim();
+  const leadingH1 = normalized.match(/^#\s+(.+?)(?:\n+|$)/);
+  if (leadingH1 && normalizeHeading(leadingH1[1]) === normalizeHeading(storyTitle)) {
+    normalized = normalized.slice(leadingH1[0].length).trim();
+  }
 
-  for (const part of parts) {
-    const [headingLine, ...bodyLines] = part.split("\n");
-    const heading = headingLine?.trim() || "Story Update";
-    const body = bodyLines.join("\n").replace(/\s+/g, " ").trim();
+  const headings = [...normalized.matchAll(/^#{2,4}\s+(.+)$/gm)];
+  if (headings[0]?.index) {
+    const preamble = normalized.slice(0, headings[0].index).replace(/^#+\s*/gm, "").replace(/\s+/g, " ").trim();
+    if (preamble) {
+      sections.push({ heading: "Story Update", body: preamble });
+    }
+  }
 
-    if (body) {
+  headings.forEach((headingMatch, index) => {
+    const heading = headingMatch[1].replace(/^#+\s*/, "").trim() || "Story Update";
+    const start = (headingMatch.index || 0) + headingMatch[0].length;
+    const end = index + 1 < headings.length ? headings[index + 1].index : normalized.length;
+    const body = normalized.slice(start, end).replace(/^#+\s*/gm, "").replace(/\s+/g, " ").trim();
+    if (body && normalizeHeading(heading) !== normalizeHeading(storyTitle)) {
       sections.push({ heading, body });
+    }
+  });
+
+  if (!headings.length) {
+    const body = normalized.replace(/^#+\s*/gm, "").replace(/\s+/g, " ").trim();
+    if (body) {
+      sections.push({ heading: "Story Update", body });
     }
   }
 
@@ -869,5 +976,9 @@ function markdownSections(markdown: string) {
     return sections;
   }
 
-  return [{ heading: "Story Update", body: markdown.replace(/\s+/g, " ").trim() || "This story is being reviewed." }];
+  return [{ heading: "Story Update", body: normalized.replace(/\s+/g, " ").trim() || "This story is being reviewed." }];
+}
+
+function normalizeHeading(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }

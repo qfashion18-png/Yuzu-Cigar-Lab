@@ -72,9 +72,32 @@ test("event import agent UI is wired into admin and public location feed surface
 
   assert.match(gridSource, /data-location-aware-event-feed/);
   assert.match(gridSource, /navigator\.geolocation/);
-  assert.match(gridSource, /readApprovedEventImports/);
+  assert.match(gridSource, /fetchPublishedEvents/);
+  assert.doesNotMatch(gridSource, /readApprovedEventImports/);
   assert.match(panelSource, /draftEventImportFromFacebookText/);
   assert.match(panelSource, /operatorApproved/);
+  assert.match(panelSource, /createAdminEvent/);
+  assert.match(panelSource, /publishAdminEvent/);
+  assert.match(panelSource, /createApiHeaders/);
   assert.match(panelSource, /Approve Event/);
+  assert.doesNotMatch(panelSource, /localStorage/);
+  assert.doesNotMatch(panelSource, /approvedEventImportsStorageKey/);
   assert.match(adminEventsPageSource, /EventImportAgentPanel/);
+});
+
+test("location-aware event surfaces distinguish actionable geolocation failures", () => {
+  const gridSource = readFileSync(new URL("../src/components/auto-updating-event-grid.tsx", import.meta.url), "utf8");
+  const curatedSource = readFileSync(new URL("../src/components/curated-events-explorer.tsx", import.meta.url), "utf8");
+
+  for (const source of [gridSource, curatedSource]) {
+    assert.match(source, /case error\.PERMISSION_DENIED:/);
+    assert.match(source, /case error\.POSITION_UNAVAILABLE:/);
+    assert.match(source, /case error\.TIMEOUT:/);
+    assert.match(source, /Allow location for this site in your browser settings, then try again\./);
+    assert.match(source, /Your device could not determine its location\./);
+    assert.match(source, /Finding your location took too long\./);
+  }
+
+  assert.match(curatedSource, /search by city or ZIP/);
+  assert.match(gridSource, /Check your signal and try again\./);
 });

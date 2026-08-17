@@ -73,22 +73,6 @@ export const cigarFlowSources: CigarFlowSource[] = [
     focus: "Global cigar news and manufacturer updates",
     cadence: "International dispatches",
   },
-  {
-    name: "JR Cigars Blending Room",
-    publisher: "JR Cigars",
-    feedUrl: "https://www.jrcigars.com/blending-room/feed/",
-    websiteUrl: "https://www.jrcigars.com/blending-room/",
-    focus: "New cigar education, lists, and retail editorial",
-    cadence: "Retail editorial feed",
-  },
-  {
-    name: "Cigar Aficionado",
-    publisher: "Cigar Aficionado",
-    feedUrl: "http://cigaraficionado.com/",
-    websiteUrl: "https://www.cigaraficionado.com",
-    focus: "Ratings, cigar news, blogs, videos, and magazine coverage",
-    cadence: "Homepage and blog monitor",
-  },
 ];
 
 export const cigarPressReleaseSearchSources: CigarPressReleaseSearchSource[] = [
@@ -122,14 +106,14 @@ export const cigarFlowAutomation: CigarFlowAutomation = {
   id: "cigar-flow-daily-newsroom-refresh",
   cadence: "Daily at 8:00 AM America/Phoenix",
   owner: "GitHub Actions newsroom automation",
-  outputTargets: ["Cigar Flow news desk", "Published newsroom story", "Operator review trail"],
+  outputTargets: ["Cigar Flow news desk", "Operator-review draft", "Operator review trail"],
   updateScope: [
     "Research current cigar and cigar-adjacent news from verified sources.",
-    "Monitor every configured manufacturer URL in officialCigarNewsSources for brand-direct updates.",
+    "Rotate the configured manufacturer URLs across daily source-evidence scans, prioritizing makers matched by fresh RSS leads.",
     "Run a daily search for cigar press releases across approved wire/newsroom search pages to find story leads.",
     "POST /news/story-drafts with source-safe notes and only source-aligned story imagery.",
     "Keep every published Cigar Flow story in the editorial split-hero layout with inline images throughout the story body.",
-    "POST /news/stories with operator approval so the Cigar Flow news desk updates through the live API.",
+    "Require a human-reviewed final revision before POST /news/stories updates the live Cigar Flow news desk.",
     "Keep static member smoke-log concept cards distinct from live newsroom stories.",
   ],
 };
@@ -241,7 +225,7 @@ export const cigarFlowItems: CigarFlowItem[] = [
   },
   {
     id: "cromagnon-visigoth-2026",
-    kind: "manufacturer",
+    kind: "rss",
     mediaType: "video",
     sourceName: "Roma Craft watch",
     sourceHandle: "@makerwatch",
@@ -279,8 +263,8 @@ export const cigarFlowItems: CigarFlowItem[] = [
     saves: 92,
   },
   {
-    id: "aganorsa-single-cask-release",
-    kind: "manufacturer",
+    id: "camacho-factory-unleashed-3",
+    kind: "rss",
     mediaType: "image",
     sourceName: "Camacho watch",
     sourceHandle: "@makerwatch",
@@ -292,14 +276,14 @@ export const cigarFlowItems: CigarFlowItem[] = [
     imagePosition: "55% 50%",
     publishedAt: "May 2026",
     readTime: "Drop",
-    tags: ["New drop", "Aganorsa", "Pairing"],
+    tags: ["New drop", "Camacho", "Bold"],
     likes: 535,
     comments: 63,
     saves: 201,
   },
   {
     id: "loaisiga-infiel-box-press",
-    kind: "manufacturer",
+    kind: "rss",
     mediaType: "image",
     sourceName: "Loaisiga Cigars",
     sourceHandle: "@makerwatch",
@@ -357,7 +341,7 @@ export const cigarFlowItems: CigarFlowItem[] = [
   },
   {
     id: "cigar-prop-anniversary",
-    kind: "manufacturer",
+    kind: "rss",
     mediaType: "image",
     sourceName: "Cigar Prop",
     sourceHandle: "@cigarpropwatch",

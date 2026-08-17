@@ -18,6 +18,7 @@ import {
   Crown,
   DollarSign,
   Droplets,
+  ExternalLink,
   FileSpreadsheet,
   Flame,
   Image as ImageIcon,
@@ -110,7 +111,12 @@ import {
   type HumidorAlertPreferences,
   type HumidorPushSubscription,
   updateHumidorAlertPreferences,
+  type AiSource,
+  type CigarIdentificationStatus,
+  type CigarImageCandidate,
+  type CigarImageIdentifyImage,
   type CigarImageIdentifyResponse,
+  type CigarImageRole,
   type CigarImageSuggestion,
   enrichHumidorItem,
   type HumidorCigarImage,
@@ -164,6 +170,14 @@ type HumidorForm = {
   estimatedValueCurrency: string;
   estimatedValueSource: string;
   tastingNotes: string;
+};
+
+type AiCigarImageDraft = Omit<CigarImageIdentifyImage, "fileName" | "role"> & {
+  id: string;
+  bytes: number;
+  fileName: string;
+  preview: string;
+  role: CigarImageRole;
 };
 
 type SmokeLogForm = {
@@ -453,6 +467,23 @@ const blankSmokeLogForm: SmokeLogForm = {
 const fullMembershipHumidorToolsCopy =
   "Kisha, Sensei, and Daimyo memberships include AI cigar adder and bulk import. Box Access Pass keeps single-item humidor adds.";
 const aiCigarAdderGateStatus = "AI cigar adder is available for Kisha, Sensei, and Daimyo members.";
+const maxAiCigarImages = 4;
+const maxAiCigarImageBytes = Math.floor(3.75 * 1024 * 1024);
+const maxAiCigarImagesTotalBytes = 4 * 1024 * 1024;
+const maxAiCigarImageDimension = 8000;
+const supportedAiCigarImageTypes = new Set(["image/jpeg", "image/jpg", "image/png", "image/gif", "image/webp"]);
+const aiCigarImageRoleOptions: Array<{ value: CigarImageRole; label: string }> = [
+  { value: "band_front", label: "Front band" },
+  { value: "band_back", label: "Back band" },
+  { value: "secondary_band", label: "Secondary band" },
+  { value: "box_front", label: "Box front" },
+  { value: "box_back", label: "Box back" },
+  { value: "box_label", label: "Box label" },
+  { value: "barcode", label: "Barcode" },
+  { value: "whole_cigar", label: "Whole cigar" },
+  { value: "other", label: "Other clue" },
+];
+const defaultAiCigarImageRoles: CigarImageRole[] = ["band_front", "band_back", "box_label", "whole_cigar"];
 
 export function HumidorDashboard() {
   const auth = useBackupAuth();
@@ -464,10 +495,10 @@ export function HumidorDashboard() {
   const [isSaving, setIsSaving] = useState(false);
   const [cigarFlowIntent, setCigarFlowIntent] = useState(false);
   const [aiAdderInput, setAiAdderInput] = useState("");
-  const [aiImagePayload, setAiImagePayload] = useState<{ imageBase64: string; mimeType: string; fileName: string } | null>(null);
-  const [aiImagePreview, setAiImagePreview] = useState("");
+  const [aiImages, setAiImages] = useState<AiCigarImageDraft[]>([]);
   const [aiIdentification, setAiIdentification] = useState<CigarImageIdentifyResponse | null>(null);
   const [aiIdentifiedForm, setAiIdentifiedForm] = useState<HumidorForm | null>(null);
+  const [selectedAiCandidateIndex, setSelectedAiCandidateIndex] = useState<number | null>(null);
   const [aiAgingStartPreset, setAiAgingStartPreset] = useState<AgingStartPreset>("exact");
   const [aiAdderStatus, setAiAdderStatus] = useState("");
   const [isAiAdderSending, setIsAiAdderSending] = useState(false);
@@ -502,12 +533,30 @@ export function HumidorDashboard() {
   const [humidorAlertsStatus, setHumidorAlertsStatus] = useState("");
   const [isHumidorAlertsSaving, setIsHumidorAlertsSaving] = useState(false);
   const [isRequestingPushPermission, setIsRequestingPushPermission] = useState(false);
+  const aiIdentificationRequestRef = useRef(0);
   const agingNow = useMemo(() => new Date(), []);
   const liveAuthRequired = process.env.NEXT_PUBLIC_REQUIRE_LIVE_AUTH === "true";
   const { isCognitoConfigured } = auth;
   const isAnonymousDemo = auth.isReady && !auth.isSignedIn;
   const canBulkImport = canUseHumidorBulkImport(auth.session?.membership.tier);
   const canUseAiCigarAdder = canBulkImport;
+  const primaryAiImage = aiImages[0] || null;
+  const aiImagePayload = primaryAiImage
+    ? { imageBase64: primaryAiImage.imageBase64, mimeType: primaryAiImage.mimeType, fileName: primaryAiImage.fileName }
+    : null;
+  const aiImagePreview = primaryAiImage?.preview || "";
+  const aiIdentificationStatus = aiIdentification ? resolveCigarIdentificationStatus(aiIdentification) : null;
+  const aiCandidates = aiIdentification ? getRankedCigarCandidates(aiIdentification) : [];
+  const selectedAiCandidate = selectedAiCandidateIndex === null ? null : aiCandidates[selectedAiCandidateIndex] || null;
+  const aiEvidence = selectedAiCandidate?.evidence?.length ? selectedAiCandidate.evidence : aiIdentification?.suggestion.evidence || [];
+  const aiSources = aiIdentification ? getCigarIdentificationSources(aiIdentification, selectedAiCandidateIndex) : [];
+  const canConfirmAiIdentification = Boolean(
+    aiIdentification &&
+      aiIdentifiedForm &&
+      aiIdentificationStatus !== "insufficient_evidence" &&
+      (aiIdentificationStatus !== "ambiguous" || selectedAiCandidateIndex !== null) &&
+      !isUnidentifiedCigarName(aiIdentifiedForm?.name || ""),
+  );
 
   const applyHumidorAlertPreferences = useCallback((preferences: HumidorAlertPreferences) => {
     const pairedDevices = normalizeHumidorDevices(preferences.pairedDevices);
@@ -1095,56 +1144,110 @@ export function HumidorDashboard() {
     );
   }
 
-  async function handleAiImageChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.currentTarget.files?.[0];
+  function invalidateAiIdentification(status = "") {
+    aiIdentificationRequestRef.current += 1;
     setAiIdentification(null);
     setAiIdentifiedForm(null);
+    setSelectedAiCandidateIndex(null);
     setAiAgingStartPreset("exact");
-    setAiAdderStatus("");
+    setIsAiAdderSending(false);
+    setAiAdderStatus(status);
+  }
 
-    if (!file) {
-      setAiImagePayload(null);
-      setAiImagePreview("");
+  async function handleAiImageChange(event: ChangeEvent<HTMLInputElement>) {
+    const input = event.currentTarget;
+    const files = Array.from(input.files || []);
+
+    if (!files.length) {
       return;
     }
 
-    if (!file.type.startsWith("image/")) {
-      setAiImagePayload(null);
-      setAiImagePreview("");
-      setAiAdderStatus("Upload a cigar image before asking the humidor agent.");
+    const remainingSlots = Math.max(0, maxAiCigarImages - aiImages.length);
+    if (!remainingSlots) {
+      input.value = "";
+      setAiAdderStatus(`You can use up to ${maxAiCigarImages} cigar photos.`);
       return;
     }
 
-    if (file.size > 5 * 1024 * 1024) {
-      setAiImagePayload(null);
-      setAiImagePreview("");
-      setAiAdderStatus("Upload a cigar image under 5 MB.");
-      return;
+    const selectedFiles = files.slice(0, remainingSlots);
+    const nextImages: AiCigarImageDraft[] = [];
+    const skippedMessages: string[] = [];
+    let selectedBytes = aiImages.reduce((total, image) => total + image.bytes, 0);
+
+    if (files.length > remainingSlots) {
+      skippedMessages.push(`Only the first ${remainingSlots} selected photo${remainingSlots === 1 ? "" : "s"} fit the four-photo limit.`);
     }
 
-    try {
-      const dataUrl = await readImageFileAsDataUrl(file);
-      const payload = parseImageDataUrl(dataUrl);
-
-      if (!payload) {
-        setAiImagePayload(null);
-        setAiImagePreview("");
-        setAiAdderStatus("The uploaded cigar image could not be decoded.");
-        return;
+    for (const [index, file] of selectedFiles.entries()) {
+      const normalizedType = file.type.toLowerCase();
+      if (!supportedAiCigarImageTypes.has(normalizedType)) {
+        skippedMessages.push(`${file.name || "One photo"} is not JPEG, PNG, GIF, or WebP.`);
+        continue;
       }
 
-      setAiImagePayload({
-        imageBase64: payload.imageBase64,
-        mimeType: payload.mimeType || file.type,
-        fileName: file.name,
-      });
-      setAiImagePreview(dataUrl);
-      setAiAdderStatus("Image ready. Identify it to load the humidor fields.");
-    } catch {
-      setAiImagePayload(null);
-      setAiImagePreview("");
-      setAiAdderStatus("The uploaded cigar image could not be read.");
+      if (file.size > maxAiCigarImageBytes) {
+        skippedMessages.push(`${file.name || "One photo"} is over 3.75 MB; crop it tightly around the band or label.`);
+        continue;
+      }
+
+      if (selectedBytes + file.size > maxAiCigarImagesTotalBytes) {
+        skippedMessages.push(`${file.name || "One photo"} would put the set over 4 MB; crop or remove another view.`);
+        continue;
+      }
+
+      try {
+        const dataUrl = await readImageFileAsDataUrl(file);
+        const payload = parseImageDataUrl(dataUrl);
+
+        if (!payload) {
+          skippedMessages.push(`${file.name || "One photo"} could not be decoded.`);
+          continue;
+        }
+
+        const dimensions = await readImageDimensions(dataUrl);
+        if (dimensions.width > maxAiCigarImageDimension || dimensions.height > maxAiCigarImageDimension) {
+          skippedMessages.push(`${file.name || "One photo"} is over 8000 pixels on one side; crop it around the identifying clue.`);
+          continue;
+        }
+
+        nextImages.push({
+          id: createAiCigarImageId(file, aiImages.length + index),
+          imageBase64: payload.imageBase64,
+          mimeType: payload.mimeType || normalizedType,
+          fileName: file.name || `cigar-photo-${aiImages.length + index + 1}`,
+          bytes: file.size,
+          preview: dataUrl,
+          role: defaultAiCigarImageRoles[aiImages.length + nextImages.length] || "other",
+        });
+        selectedBytes += file.size;
+      } catch {
+        skippedMessages.push(`${file.name || "One photo"} could not be read.`);
+      }
     }
+
+    input.value = "";
+    if (!nextImages.length) {
+      setAiAdderStatus(skippedMessages[0] || "The selected cigar photos could not be read.");
+      return;
+    }
+
+    invalidateAiIdentification();
+    setAiImages((current) => [...current, ...nextImages].slice(0, maxAiCigarImages));
+    const nextCount = Math.min(maxAiCigarImages, aiImages.length + nextImages.length);
+    const skippedSuffix = skippedMessages.length ? ` ${skippedMessages.join(" ")}` : "";
+    setAiAdderStatus(`${nextCount} of ${maxAiCigarImages} photos ready. Label each view, then identify the cigar.${skippedSuffix}`);
+  }
+
+  function handleRemoveAiImage(imageId: string) {
+    const hadIdentification = Boolean(aiIdentification || isAiAdderSending);
+    setAiImages((current) => current.filter((image) => image.id !== imageId));
+    invalidateAiIdentification(hadIdentification ? "Photo removed. Identify the updated set again." : "Photo removed.");
+  }
+
+  function handleAiImageRoleChange(imageId: string, role: CigarImageRole) {
+    const hadIdentification = Boolean(aiIdentification || isAiAdderSending);
+    setAiImages((current) => current.map((image) => (image.id === imageId ? { ...image, role } : image)));
+    invalidateAiIdentification(hadIdentification ? "Photo label changed. Identify the updated set again." : "Photo label updated.");
   }
 
   async function handleAiAdderSubmit(event: FormEvent<HTMLFormElement>) {
@@ -1160,11 +1263,13 @@ export function HumidorDashboard() {
       return;
     }
 
-    if (!aiImagePayload) {
+    if (!aiImages.length || !aiImagePayload) {
       setAiAdderStatus("Upload or take a cigar photo first.");
       return;
     }
 
+    const requestVersion = aiIdentificationRequestRef.current + 1;
+    aiIdentificationRequestRef.current = requestVersion;
     setIsAiAdderSending(true);
     setAiAdderStatus("");
 
@@ -1172,31 +1277,77 @@ export function HumidorDashboard() {
       const headers = await auth.createApiHeaders();
       const response = await identifyCigarFromImage(
         {
-          ...aiImagePayload,
+          contractVersion: 2,
+          images: aiImages.map(({ imageBase64, mimeType, fileName, role }) => ({ imageBase64, mimeType, fileName, role })),
           notes: aiAdderInput.trim() || undefined,
         },
         headers,
       );
 
+      if (requestVersion !== aiIdentificationRequestRef.current) {
+        return;
+      }
+
+      const identificationStatus = resolveCigarIdentificationStatus(response);
+      const candidates = getRankedCigarCandidates(response);
       setAiIdentification(response);
+      setSelectedAiCandidateIndex(identificationStatus === "identified" && candidates.length ? 0 : null);
       setAiIdentifiedForm(getFormWithDefaultHumidorLocation(buildHumidorFormFromSuggestion(response.suggestion)));
       setAiAgingStartPreset("exact");
-      setAiAdderStatus("Cigar information loaded. Review it, then confirm to add it to your humidor.");
+      setAiAdderStatus(getCigarIdentificationStatusMessage(identificationStatus, candidates.length));
     } catch (error) {
-      setAiAdderStatus(getLiveApiErrorMessage(error));
+      if (requestVersion === aiIdentificationRequestRef.current) {
+        setAiAdderStatus(getLiveApiErrorMessage(error));
+      }
     } finally {
-      setIsAiAdderSending(false);
+      if (requestVersion === aiIdentificationRequestRef.current) {
+        setIsAiAdderSending(false);
+      }
     }
   }
 
+  function handleSelectAiCandidate(candidate: CigarImageCandidate, candidateIndex: number) {
+    if (!aiIdentification) {
+      return;
+    }
+
+    const selectedSuggestion = mergeCigarCandidateIntoSuggestion(aiIdentification.suggestion, candidate);
+    setSelectedAiCandidateIndex(candidateIndex);
+    setAiIdentifiedForm(getFormWithDefaultHumidorLocation(buildHumidorFormFromSuggestion(selectedSuggestion)));
+    setAiAgingStartPreset("exact");
+    setAiAdderStatus(`${candidate.name || "Candidate"} selected. Review every field before saving.`);
+  }
+
+  function handleCopyAiIdentificationToManualForm() {
+    const sourceForm = aiIdentifiedForm || { ...blankHumidorForm };
+    setItemForm(
+      getFormWithDefaultHumidorLocation({
+        ...sourceForm,
+        name: isUnidentifiedCigarName(sourceForm.name) ? "" : sourceForm.name,
+      }),
+    );
+    setItemAgingStartPreset("exact");
+    setAiAdderStatus("Copied to the manual form below so you can enter a verified identity.");
+  }
+
   async function handleConfirmAiCigar() {
+    if (aiIdentificationStatus === "insufficient_evidence") {
+      setAiAdderStatus("Add another view or use the manual form before saving this cigar.");
+      return;
+    }
+
+    if (aiIdentificationStatus === "ambiguous" && selectedAiCandidateIndex === null) {
+      setAiAdderStatus("Choose the matching cigar candidate before saving.");
+      return;
+    }
+
     if (!aiIdentifiedForm) {
       setAiAdderStatus("Identify a cigar image before confirming.");
       return;
     }
 
-    if (!aiIdentifiedForm.name.trim()) {
-      setAiAdderStatus("Confirm the cigar name before adding it to your humidor.");
+    if (isUnidentifiedCigarName(aiIdentifiedForm.name)) {
+      setAiAdderStatus("Enter and verify the cigar name before adding it to your humidor.");
       return;
     }
 
@@ -1229,10 +1380,11 @@ export function HumidorDashboard() {
       }));
       setAiIdentification(null);
       setAiIdentifiedForm(null);
+      setSelectedAiCandidateIndex(null);
       setAiAgingStartPreset("exact");
-      setAiImagePayload(null);
-      setAiImagePreview("");
+      setAiImages([]);
       setAiAdderInput("");
+      aiIdentificationRequestRef.current += 1;
       setAiAdderStatus(
         response.persistence.status === "stored"
           ? "Confirmed and added to your live humidor."
@@ -2191,11 +2343,13 @@ export function HumidorDashboard() {
             ) : (
               <>
                 <form className="grid gap-3" onSubmit={handleAiAdderSubmit}>
-              <Field label="Upload or take a cigar photo">
+              <Field label={`Upload up to ${maxAiCigarImages} cigar photos (${aiImages.length}/${maxAiCigarImages})`}>
                 <Input
                   accept="image/*"
                   capture="environment"
                   className="h-11 rounded-sm border-yuzu-line bg-yuzu-night text-sm text-yuzu-cream"
+                  disabled={aiImages.length >= maxAiCigarImages}
+                  multiple
                   type="file"
                   onChange={handleAiImageChange}
                 />
@@ -2203,27 +2357,60 @@ export function HumidorDashboard() {
               <Textarea
                 aria-label="AI cigar adder notes"
                 className="min-h-24 rounded-sm border-yuzu-line bg-yuzu-night text-sm text-yuzu-cream"
-                placeholder="Optional notes from the band, box label, receipt line, or smoke"
+                placeholder="Optional notes from the band, box label, barcode, or smoke"
+                maxLength={1000}
                 value={aiAdderInput}
                 onChange={(event: ChangeEvent<HTMLTextAreaElement>) => {
+                  const hadIdentification = Boolean(aiIdentification || isAiAdderSending);
                   setAiAdderInput(event.currentTarget.value);
-                  setAiAdderStatus("");
+                  invalidateAiIdentification(hadIdentification ? "Notes changed. Identify the cigar again with the updated evidence." : "");
                 }}
               />
-              {aiImagePreview ? (
-                <div className="grid gap-3 border border-yuzu-line/65 bg-yuzu-night/50 p-3 sm:grid-cols-[180px_1fr] sm:items-center">
-                  <NextImage
-                    alt="Selected cigar for AI identification"
-                    className="aspect-[4/3] w-full object-cover"
-                    height={270}
-                    src={aiImagePreview}
-                    unoptimized
-                    width={360}
-                  />
-                  <div className="grid gap-2 text-sm text-yuzu-muted">
-                    <p className="font-heading text-xl text-yuzu-cream">{aiImagePayload?.fileName || "Selected cigar image"}</p>
-                    <p>The humidor agent will inspect the band, label, box, or receipt details and load editable fields before anything is saved.</p>
+              {aiImages.length ? (
+                <div className="grid gap-3 border border-yuzu-line/65 bg-yuzu-night/50 p-3">
+                  <div className="flex flex-col gap-1 text-sm text-yuzu-muted sm:flex-row sm:items-center sm:justify-between">
+                    <p className="font-heading text-xl text-yuzu-cream">Identification evidence</p>
+                    <p>Sharp band text plus a box label or barcode gives the strongest match.</p>
                   </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {aiImages.map((image, index) => (
+                      <div key={image.id} className="grid gap-2 border border-yuzu-line/60 bg-yuzu-ink/35 p-2 sm:grid-cols-[108px_1fr]">
+                        <NextImage
+                          alt={`${getAiCigarImageRoleLabel(image.role)} cigar evidence ${index + 1}`}
+                          className="aspect-[4/3] w-full object-cover"
+                          height={162}
+                          src={image.preview}
+                          unoptimized
+                          width={216}
+                        />
+                        <div className="grid min-w-0 content-start gap-2">
+                          <p className="truncate text-xs text-yuzu-muted" title={image.fileName}>{image.fileName}</p>
+                          <select
+                            aria-label={`Photo ${index + 1} evidence type`}
+                            className="h-10 w-full rounded-sm border border-yuzu-line bg-yuzu-night px-2 text-xs text-yuzu-cream outline-none focus:border-yuzu-gold"
+                            value={image.role}
+                            onChange={(event: ChangeEvent<HTMLSelectElement>) => handleAiImageRoleChange(image.id, event.currentTarget.value as CigarImageRole)}
+                          >
+                            {aiCigarImageRoleOptions.map((option) => (
+                              <option key={option.value} value={option.value}>{option.label}</option>
+                            ))}
+                          </select>
+                          <Button
+                            aria-label={`Remove photo ${index + 1}`}
+                            className="h-9 w-fit border-yuzu-line text-yuzu-muted hover:text-yuzu-cream"
+                            size="sm"
+                            type="button"
+                            variant="outline"
+                            onClick={() => handleRemoveAiImage(image.id)}
+                          >
+                            <X data-icon="inline-start" />
+                            Remove
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-xs leading-5 text-yuzu-muted">Each photo must be JPEG, PNG, GIF, or WebP under 3.75 MB and no more than 8000 pixels per side; the set must stay under 4 MB. Crop tightly around the band or label if a phone photo is too large.</p>
                 </div>
               ) : null}
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -2256,6 +2443,11 @@ export function HumidorDashboard() {
                         <ImageIcon data-icon="inline-start" />
                         {formatPersistence(aiIdentification.suggestion.confidence)} confidence
                       </Badge>
+                      {aiIdentificationStatus ? (
+                        <Badge className={cn("border-yuzu-line text-yuzu-muted", aiIdentificationStatus === "identified" && "border-emerald-400/50 text-emerald-200", aiIdentificationStatus === "ambiguous" && "border-amber-300/50 text-amber-100", aiIdentificationStatus === "insufficient_evidence" && "border-red-300/50 text-red-100")} variant="outline">
+                          {formatCigarIdentificationStatus(aiIdentificationStatus)}
+                        </Badge>
+                      ) : null}
                     </div>
                     <p className="font-heading text-2xl text-yuzu-cream">Review identified cigar</p>
                   </div>
@@ -2263,15 +2455,24 @@ export function HumidorDashboard() {
                     className="h-10 border-yuzu-line text-yuzu-cream"
                     type="button"
                     variant="outline"
-                    onClick={() => {
-                      setItemForm(getFormWithDefaultHumidorLocation(aiIdentifiedForm));
-                      setItemAgingStartPreset("exact");
-                    }}
+                    onClick={handleCopyAiIdentificationToManualForm}
                   >
                     <Plus data-icon="inline-start" />
-                    Copy To Manual Form
+                    {aiIdentificationStatus === "insufficient_evidence" ? "Use Manual Form" : "Copy To Manual Form"}
                   </Button>
                 </div>
+
+                {aiIdentificationStatus === "ambiguous" ? (
+                  <div className="grid gap-2 border border-amber-300/40 bg-amber-300/10 p-3 text-sm leading-6 text-amber-50">
+                    <p className="font-bold">Several cigars share these visual clues.</p>
+                    <p>Choose the exact match below, or add another labeled view before saving.</p>
+                  </div>
+                ) : aiIdentificationStatus === "insufficient_evidence" ? (
+                  <div className="grid gap-2 border border-red-300/40 bg-red-300/10 p-3 text-sm leading-6 text-red-50">
+                    <p className="font-bold">There is not enough evidence for a safe identification.</p>
+                    <p>Add a sharp front or back band, box label, or barcode photo. This result cannot be saved as an identified cigar.</p>
+                  </div>
+                ) : null}
 
                 {aiImagePreview ? (
                   <div className="grid gap-3 border border-yuzu-line/65 bg-yuzu-ink/35 p-3 sm:grid-cols-[120px_1fr] sm:items-center">
@@ -2286,6 +2487,40 @@ export function HumidorDashboard() {
                     <div className="grid gap-1 text-sm text-yuzu-muted">
                       <p className="text-xs uppercase tracking-[0.16em] text-yuzu-gold">Saved photo</p>
                       <p className="font-heading text-xl text-yuzu-cream">{aiImagePayload?.fileName || "Cigar image"}</p>
+                      <p>{aiImages.length > 1 ? `${aiImages.length - 1} additional labeled view${aiImages.length === 2 ? "" : "s"} supported this identification.` : "This primary view will be saved with the humidor item."}</p>
+                    </div>
+                  </div>
+                ) : null}
+
+                {aiCandidates.length ? (
+                  <div className="grid gap-3 border border-yuzu-line/65 bg-yuzu-ink/35 p-3">
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                      <div>
+                        <p className="text-xs uppercase tracking-[0.16em] text-yuzu-gold">Ranked matches</p>
+                        <p className="mt-1 text-sm text-yuzu-muted">Compare line, vitola, wrapper, and distinguishing clues.</p>
+                      </div>
+                      {aiIdentificationStatus === "ambiguous" && selectedAiCandidateIndex === null ? <p className="text-xs font-bold uppercase tracking-[0.12em] text-amber-100">Selection required</p> : null}
+                    </div>
+                    <div className="grid gap-2 md:grid-cols-2">
+                      {aiCandidates.map((candidate, candidateIndex) => {
+                        const isSelected = selectedAiCandidateIndex === candidateIndex;
+                        return (
+                          <button
+                            key={`${candidate.name}-${candidateIndex}`}
+                            aria-pressed={isSelected}
+                            className={cn("grid min-h-28 gap-2 border border-yuzu-line/70 bg-yuzu-night/70 p-3 text-left transition hover:border-yuzu-gold/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yuzu-gold", isSelected && "border-yuzu-gold bg-yuzu-gold/10")}
+                            type="button"
+                            onClick={() => handleSelectAiCandidate(candidate, candidateIndex)}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <span className="font-heading text-lg text-yuzu-cream">{candidate.name || [candidate.brand, candidate.line, candidate.vitola].filter(Boolean).join(" ") || `Candidate ${candidateIndex + 1}`}</span>
+                              <Badge className="shrink-0 border-yuzu-line text-yuzu-muted" variant="outline">#{candidateIndex + 1}</Badge>
+                            </div>
+                            <span className="text-xs uppercase tracking-[0.12em] text-yuzu-gold">{formatCigarCandidateScore(candidate.matchScore)} · {formatPersistence(candidate.confidence)} confidence</span>
+                            {candidate.distinguishingFeatures.length ? <span className="text-sm leading-5 text-yuzu-muted">{candidate.distinguishingFeatures.slice(0, 2).join(" · ")}</span> : null}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                 ) : null}
@@ -2383,28 +2618,47 @@ export function HumidorDashboard() {
                   </div>
                 ) : null}
 
-                <div className="grid gap-3 text-sm leading-6 text-yuzu-muted md:grid-cols-2">
+                <div className={cn("grid gap-3 text-sm leading-6 text-yuzu-muted", aiSources.length ? "md:grid-cols-3" : "md:grid-cols-2")}>
                   <div>
                     <p className="text-xs uppercase tracking-[0.16em] text-yuzu-gold">Evidence</p>
                     <ul className="mt-2 grid gap-1">
-                      {aiIdentification.suggestion.evidence.map((item) => (
-                        <li key={item}>{item}</li>
+                      {(aiEvidence.length ? aiEvidence : ["Review the visible band, box, or barcode clues before saving."]).map((item, index) => (
+                        <li key={`${item}-${index}`}>{item}</li>
                       ))}
                     </ul>
                   </div>
                   <div>
                     <p className="text-xs uppercase tracking-[0.16em] text-yuzu-gold">Review</p>
                     <ul className="mt-2 grid gap-1">
-                      {(aiIdentification.suggestion.needsReview.length ? aiIdentification.suggestion.needsReview : ["Confirm the fields before saving."]).map((item) => (
-                        <li key={item}>{item}</li>
+                      {(aiIdentification.suggestion.needsReview.length ? aiIdentification.suggestion.needsReview : ["Confirm the fields before saving."]).map((item, index) => (
+                        <li key={`${item}-${index}`}>{item}</li>
                       ))}
                     </ul>
                   </div>
+                  {aiSources.length ? (
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.16em] text-yuzu-gold">Reference sources</p>
+                      <ul className="mt-2 grid gap-2">
+                        {aiSources.map((source, index) => (
+                          <li key={`${source.url || source.title}-${index}`}>
+                            {source.url ? (
+                              <a className="inline-flex items-start gap-1 text-yuzu-cream underline decoration-yuzu-gold/50 underline-offset-4 hover:text-yuzu-gold" href={source.url} rel="noopener noreferrer" target="_blank">
+                                <span>{source.title}</span>
+                                <ExternalLink className="mt-1 size-3 shrink-0" aria-hidden="true" />
+                              </a>
+                            ) : (
+                              <span className="text-yuzu-cream">{source.title}</span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
                 </div>
 
-                <Button className="h-11 w-fit bg-yuzu-gold text-yuzu-ink hover:bg-yuzu-gold-light" disabled={isAiConfirmSaving || !aiIdentifiedForm.name.trim() || isAnonymousDemo || !canUseAiCigarAdder} type="button" onClick={handleConfirmAiCigar}>
+                <Button className="h-11 w-fit bg-yuzu-gold text-yuzu-ink hover:bg-yuzu-gold-light" disabled={isAiConfirmSaving || !canConfirmAiIdentification || isAnonymousDemo || !canUseAiCigarAdder} type="button" onClick={handleConfirmAiCigar}>
                   {isAiConfirmSaving ? <LoaderCircle className="animate-spin" data-icon="inline-start" /> : <CheckCircle2 data-icon="inline-start" />}
-                  {isAiConfirmSaving ? "Adding To Humidor" : "Confirm & Add To Humidor"}
+                  {isAiConfirmSaving ? "Adding To Humidor" : aiIdentificationStatus === "ambiguous" && selectedAiCandidateIndex === null ? "Choose A Match To Continue" : aiIdentificationStatus === "insufficient_evidence" ? "More Evidence Required" : "Confirm & Add To Humidor"}
                 </Button>
               </div>
             ) : null}
@@ -4385,6 +4639,176 @@ function normalizeAgingStartPreset(value: string): AgingStartPreset {
   return agingStartPresetOptions.some((option) => option.value === value) ? (value as AgingStartPreset) : "exact";
 }
 
+function createAiCigarImageId(file: File, index: number) {
+  const randomId = globalThis.crypto?.randomUUID?.();
+  return randomId || `${file.name}-${file.lastModified}-${file.size}-${index}`;
+}
+
+function getAiCigarImageRoleLabel(role: CigarImageRole) {
+  return aiCigarImageRoleOptions.find((option) => option.value === role)?.label || "Other clue";
+}
+
+function resolveCigarIdentificationStatus(response: CigarImageIdentifyResponse): CigarIdentificationStatus {
+  const explicitStatus = response.identificationStatus || response.suggestion.identificationStatus;
+  if (explicitStatus === "identified" || explicitStatus === "ambiguous" || explicitStatus === "insufficient_evidence") {
+    return explicitStatus;
+  }
+
+  if (isUnidentifiedCigarName(response.suggestion.name) || (response.guardrails.humanHandoff && response.suggestion.confidence === "low")) {
+    return "insufficient_evidence";
+  }
+
+  return getRankedCigarCandidates(response).length > 1 ? "ambiguous" : "identified";
+}
+
+function getCigarIdentificationStatusMessage(status: CigarIdentificationStatus, candidateCount: number) {
+  if (status === "ambiguous") {
+    return `${candidateCount || "Several"} possible matches found. Choose the exact cigar or add another view.`;
+  }
+
+  if (status === "insufficient_evidence") {
+    return "The cigar could not be identified safely. Add a sharper band, box, or barcode view, or use the manual form.";
+  }
+
+  return "Cigar information loaded. Review it, then confirm to add it to your humidor.";
+}
+
+function formatCigarIdentificationStatus(status: CigarIdentificationStatus) {
+  if (status === "insufficient_evidence") {
+    return "More evidence needed";
+  }
+
+  return status === "ambiguous" ? "Possible matches" : "Identified";
+}
+
+function getRankedCigarCandidates(response: CigarImageIdentifyResponse) {
+  const candidates = response.candidates?.length ? response.candidates : response.suggestion.candidates || [];
+  return [...candidates].sort((left, right) => (Number(right.matchScore) || 0) - (Number(left.matchScore) || 0));
+}
+
+function mergeCigarCandidateIntoSuggestion(suggestion: CigarImageSuggestion, candidate: CigarImageCandidate): CigarImageSuggestion {
+  return {
+    ...suggestion,
+    name: candidate.name || [candidate.brand, candidate.line, candidate.vitola].filter(Boolean).join(" "),
+    brand: candidate.brand || "",
+    line: candidate.line || "",
+    vitola: candidate.vitola || "",
+    wrapper: candidate.wrapper || "",
+    origin: candidate.origin || "",
+    strength: "",
+    rating: null,
+    estimatedValue: null,
+    estimatedValueCurrency: "",
+    estimatedValueSource: "",
+    tastingNotes: "",
+    confidence: candidate.confidence,
+    evidence: candidate.evidence || [],
+    needsReview: Array.from(
+      new Set([
+        ...(suggestion.needsReview || []),
+        "Verify blend, strength, value, and tasting details for the selected candidate before saving.",
+      ]),
+    ),
+    details: {
+      manufacturer: "",
+      country: candidate.origin || "",
+      region: "",
+      factory: "",
+      size: candidate.vitola || "",
+      length: "",
+      ringGauge: "",
+      shape: candidate.vitola || "",
+      wrapper: candidate.wrapper || "",
+      binder: "",
+      filler: "",
+      blend: "",
+      flavorProfile: [],
+      body: "",
+      finish: "",
+      msrp: "",
+      releaseStatus: "",
+      packaging: "",
+      sourceSummary: "",
+      imageObservations: [...(candidate.evidence || []), ...(candidate.distinguishingFeatures || [])],
+    },
+  };
+}
+
+function isUnidentifiedCigarName(value: string) {
+  const normalized = value.trim().toLowerCase();
+  return !normalized || /^(?:unidentified|unknown|unrecognized)(?:\s+cigar)?$/.test(normalized);
+}
+
+function formatCigarCandidateScore(value: number) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return "Ranked match";
+  }
+
+  const percent = parsed <= 1 ? parsed * 100 : parsed;
+  return `${Math.round(Math.min(100, Math.max(0, percent)))}% match`;
+}
+
+type SafeAiSource = {
+  title: string;
+  url?: string;
+  score?: number;
+};
+
+function getCigarIdentificationSources(response: CigarImageIdentifyResponse, selectedCandidateIndex: number | null): SafeAiSource[] {
+  void selectedCandidateIndex;
+  return normalizeAiSources([...(response.sources || []), ...(response.ai.sources || [])]);
+}
+
+function normalizeAiSources(sources: AiSource[]): SafeAiSource[] {
+  const normalized: SafeAiSource[] = [];
+  const seen = new Set<string>();
+
+  for (const source of sources) {
+    const rawReference = String(source.url || source.uri || "").trim().slice(0, 2048);
+    const url = getSafeHttpUrl(rawReference);
+    const plainIdentifier = url ? "" : getSafePlainSourceIdentifier(rawReference);
+    const parsedUrl = url ? new URL(url) : null;
+    const title = String(source.title || source.label || source.domain || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 160) || parsedUrl?.hostname.replace(/^www\./, "") || plainIdentifier || String(source.sourceType || "").trim().slice(0, 80);
+    const dedupeKey = url || title.toLowerCase();
+    if (!title || !dedupeKey || seen.has(dedupeKey)) {
+      continue;
+    }
+
+    seen.add(dedupeKey);
+    const score = Number(source.score);
+    normalized.push({
+      title,
+      ...(url ? { url } : {}),
+      ...(Number.isFinite(score) ? { score } : {}),
+    });
+  }
+
+  return normalized.slice(0, 8);
+}
+
+function getSafeHttpUrl(value: string | undefined) {
+  const candidate = String(value || "").trim().slice(0, 2048);
+  if (!candidate) {
+    return "";
+  }
+
+  try {
+    const parsed = new URL(candidate);
+    return parsed.protocol === "https:" || parsed.protocol === "http:" ? parsed.href : "";
+  } catch {
+    return "";
+  }
+}
+
+function getSafePlainSourceIdentifier(value: string) {
+  const candidate = value.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 180);
+  return /^(?:s3|kb|bedrock|urn):/i.test(candidate) ? candidate : "";
+}
+
 function buildHumidorFormFromSuggestion(suggestion: CigarImageSuggestion): HumidorForm {
   const detailNotes = formatCigarDetailsForNotes(suggestion.details);
 
@@ -4486,6 +4910,15 @@ function readImageFileAsDataUrl(file: File) {
     });
     reader.addEventListener("error", () => reject(reader.error || new Error("Image file could not be read.")));
     reader.readAsDataURL(file);
+  });
+}
+
+function readImageDimensions(dataUrl: string) {
+  return new Promise<{ height: number; width: number }>((resolve, reject) => {
+    const image = new window.Image();
+    image.addEventListener("load", () => resolve({ height: image.naturalHeight, width: image.naturalWidth }), { once: true });
+    image.addEventListener("error", () => reject(new Error("Image dimensions could not be read.")), { once: true });
+    image.src = dataUrl;
   });
 }
 

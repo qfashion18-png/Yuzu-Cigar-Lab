@@ -4,7 +4,8 @@ import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { officialCigarNewsSources } from "../src/lib/newsroom";
+import { canonicalNewsImageKey, normalizeNewsImageUrl, officialCigarNewsSources } from "../src/lib/newsroom";
+import { deduplicateNewsStories, markdownSections } from "../src/components/news-story-feed";
 import type { NewsStory } from "../src/lib/newsroom";
 
 function source(path: string) {
@@ -85,8 +86,8 @@ test("cigar flow latest news assigns unique generated images when live stories l
       dek: "A second source-backed maker note that should not reuse the same visual.",
       category: "Cigar Industry News",
       bodyMarkdown: "## Factory note\nDrew Estate shared another official update for adult cigar readers watching maker news.",
-      sourceNotes: [sourceNote],
-      officialSources: [sourceNote.url],
+      sourceNotes: [{ ...sourceNote, url: "https://drewestate.com/news/factory-update" }],
+      officialSources: ["https://drewestate.com/news/factory-update"],
       status: "published",
       publishedAt: "2026-05-21T12:00:00.000Z",
       updatedAt: "2026-05-21T12:00:00.000Z",
@@ -103,6 +104,39 @@ test("cigar flow latest news assigns unique generated images when live stories l
   assert.ok(markup.includes('data-news-brand-logo="Drew Estate"'), "branded latest news should display a brand logo badge on the image");
   assert.equal(markup.includes("/assets/product-liga.png"), false, "image-less live stories should not fall back to repeated static product art");
   assert.ok(uniqueGeneratedImages.size >= stories.length * 3, "each image-less latest news story should receive a unique hero image plus inline story images");
+});
+
+test("cigar flow never reuses a generated visual across an eight-story image-less feed", async () => {
+  const newsStoryFeedModule = (await import("../src/components/news-story-feed")) as unknown as {
+    default?: { NewsStoryFeed?: React.ComponentType<{ fallbackStories: NewsStory[]; variant: "cigarFlow" }> };
+    NewsStoryFeed?: React.ComponentType<{ fallbackStories: NewsStory[]; variant: "cigarFlow" }>;
+  };
+  const NewsStoryFeed = newsStoryFeedModule.default?.NewsStoryFeed ?? newsStoryFeedModule.NewsStoryFeed;
+  assert.ok(NewsStoryFeed);
+
+  const stories = Array.from({ length: 8 }, (_, index): NewsStory => ({
+    id: `unique-visual-story-${index}`,
+    slug: `unique-visual-story-${index}`,
+    title: `Source-backed release update ${index}`,
+    dek: "An image-less source-backed update.",
+    category: "Industry News",
+    bodyMarkdown: "## Release signal\nThe official source confirms an update for adult cigar readers.",
+    sourceNotes: [],
+    officialSources: [`https://drewestate.com/news/unique-release-${index}`],
+    status: "published",
+    publishedAt: `2026-08-${String(16 - index).padStart(2, "0")}T15:00:00.000Z`,
+    updatedAt: `2026-08-${String(16 - index).padStart(2, "0")}T15:00:00.000Z`,
+  }));
+
+  const markup = renderToStaticMarkup(React.createElement(NewsStoryFeed, { fallbackStories: stories, variant: "cigarFlow" }));
+  const renderedImages = [...markup.matchAll(/<img\b[^>]*\bsrc="([^"]+)"/g)]
+    .map((match) => new URL(match[1].replace(/&amp;/g, "&"), "https://www.yuzucigarclub.com"))
+    .map((value) => value.searchParams.get("url") || value.pathname)
+    .filter((value) => value.startsWith("/assets/news/"));
+  const canonicalPaths = renderedImages.map((value) => decodeURIComponent(value).split("?")[0]);
+
+  assert.ok(canonicalPaths.length >= stories.length, "every rendered story needs at least one visual");
+  assert.equal(new Set(canonicalPaths).size, canonicalPaths.length, "a visual may appear at most once across the feed");
 });
 
 test("story image logo overlays match the image brand instead of unrelated source notes", async () => {
@@ -254,4 +288,61 @@ test("newsroom manufacturer watchlist seeds all configured brand sources", () =>
   assert.ok(officialCigarNewsSources.some((source) => source.name === "Rocky Patel"));
   assert.ok(officialCigarNewsSources.some((source) => source.name === "J.C. Newman"));
   assert.equal(new Set(officialCigarNewsSources.map((source) => source.domain)).size, officialCigarNewsSources.length);
+});
+
+test("newsroom feed collapses logical daily duplicates and canonical same-site images", () => {
+  const baseStory: NewsStory = {
+    id: "story-a",
+    slug: "daily-cigar-flow-2026-08-16-first-title",
+    title: "Daily Cigar Flow Update",
+    dek: "A source-backed update.",
+    category: "Industry News",
+    bodyMarkdown: "## Update\nA factual update.",
+    images: [],
+    sourceNotes: [],
+    officialSources: [],
+    status: "published",
+    publishedAt: "2026-08-16T15:00:00.000Z",
+    updatedAt: "2026-08-16T15:00:00.000Z",
+  };
+  const stories = deduplicateNewsStories([
+    baseStory,
+    { ...baseStory, id: "story-b", slug: "daily-cigar-flow-2026-08-16-changed-ai-title" },
+  ]);
+
+  assert.equal(stories.length, 1);
+
+  const repeatedSourceStories = deduplicateNewsStories([
+    {
+      ...baseStory,
+      id: "source-story-a",
+      slug: "first-generated-title",
+      title: "First generated title",
+      officialSources: ["http://www.olivacigar.com/news/?utm_source=daily"],
+    },
+    {
+      ...baseStory,
+      id: "source-story-b",
+      slug: "second-generated-title",
+      title: "Second generated title",
+      officialSources: ["https://olivacigar.com/news"],
+      publishedAt: "2026-08-15T15:00:00.000Z",
+    },
+  ]);
+  assert.equal(repeatedSourceStories.length, 1, "one official source page must not render as multiple generated stories");
+
+  assert.equal(normalizeNewsImageUrl("https://yuzucigarclub.com/assets/news/example.jpg"), "/assets/news/example.jpg");
+  assert.equal(
+    canonicalNewsImageKey("https://www.yuzucigarclub.com/assets/news/example.jpg?utm_source=test"),
+    canonicalNewsImageKey("/assets/news/example.jpg"),
+  );
+});
+
+test("newsroom markdown parser drops a leading H1 that repeats the story title", () => {
+  const sections = markdownSections(
+    "# Source-Backed Update\n\n## Release desk\nThe official release page confirms the update.",
+    "Source-Backed Update",
+  );
+
+  assert.deepEqual(sections, [{ heading: "Release desk", body: "The official release page confirms the update." }]);
 });

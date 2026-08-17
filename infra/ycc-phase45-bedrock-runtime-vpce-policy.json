@@ -13,8 +13,39 @@
       ],
       "Resource": [
         "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-micro-v1:0",
-        "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-lite-v1:0"
+        "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-lite-v1:0",
+        "arn:aws:bedrock:us-east-1:374587466106:inference-profile/us.amazon.nova-2-lite-v1:0"
       ]
+    },
+    {
+      "Sid": "AllowYccLambdaNova2LiteUsDestinations",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::374587466106:role/service-role/ycyyy-1778040454500"
+      },
+      "Action": [
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream"
+      ],
+      "Resource": [
+        "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-2-lite-v1:0",
+        "arn:aws:bedrock:us-east-2::foundation-model/amazon.nova-2-lite-v1:0",
+        "arn:aws:bedrock:us-west-2::foundation-model/amazon.nova-2-lite-v1:0"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "bedrock:InferenceProfileArn": "arn:aws:bedrock:us-east-1:374587466106:inference-profile/us.amazon.nova-2-lite-v1:0"
+        }
+      }
+    },
+    {
+      "Sid": "AllowYccLambdaNovaWebGrounding",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::374587466106:role/service-role/ycyyy-1778040454500"
+      },
+      "Action": "bedrock:InvokeTool",
+      "Resource": "arn:aws:bedrock::374587466106:system-tool/amazon.nova_grounding"
     },
     {
       "Sid": "AllowYccLambdaGuardrailApplication",

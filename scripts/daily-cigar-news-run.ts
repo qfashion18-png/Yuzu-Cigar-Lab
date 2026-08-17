@@ -1,10 +1,14 @@
 import { request as httpRequest, type OutgoingHttpHeaders } from "node:http";
 import { request as httpsRequest } from "node:https";
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 
 import { cigarFlowItems, cigarFlowSources, cigarPressReleaseSearchSources } from "../src/lib/cigar-flow";
 import { resolveNewsroomAutomationAuth } from "../src/lib/newsroom-automation-auth";
 import {
   isPlaceholderNewsBodyMarkdown,
+  canonicalizeNewsUrl,
+  canonicalNewsImageKey,
   normalizeNewsSourceCandidate,
   officialCigarNewsSources,
   type NewsSourceNote,
@@ -28,14 +32,19 @@ type NewsStoryDraftResponse = {
 
 type NewsStoryPublishResponse = {
   story: { title: string; slug: string; status: string };
+  deduplicated?: boolean;
   persistence: { status: string; table: string };
 };
 
 type PublishedNewsStoriesResponse = {
   stories: Array<{
+    id?: string;
     slug?: string;
     title?: string;
     publishedAt?: string | null;
+    leadUrls?: string[];
+    officialSources?: string[];
+    sourceNotes?: Array<{ url?: string }>;
   }>;
 };
 
@@ -58,6 +67,12 @@ type DailyCigarFlowRssLead = {
   publishedAt: string | null;
 };
 
+type DailyCigarFlowSourceEvidence = {
+  sourceUrl: string;
+  note: string;
+  image: NewsStoryImage | null;
+};
+
 const defaultRenderableStoryImageHosts = [
   "swwest.com",
   "halfwheel.com",
@@ -65,19 +80,39 @@ const defaultRenderableStoryImageHosts = [
   "classroom2.s3.us-east-1.amazonaws.com",
   "yuzucigarclub.com",
   "www.yuzucigarclub.com",
+  ...officialCigarNewsSources.map((source) => source.domain),
 ];
 
 const storyImageProbeTimeoutMs = 4_000;
 const defaultStoryImagePosition = "50% 50%";
 const rssLeadFetchTimeoutMs = 7_000;
+const sourceEvidenceFetchTimeoutMs = 8_000;
+const apiRequestTimeoutMs = 15_000;
 
 async function runDailyCigarFlow() {
   const baseUrl = resolveRequiredEnv("NEXT_PUBLIC_YCC_API_BASE_URL");
-  const auth = await resolveNewsroomAutomationAuth(process.env);
   const insecureApiTls = readBoolean("YCC_NEWSROOM_API_TLS_INSECURE", false);
   const autoPublish = readBoolean("YCC_DAILY_NEWSROOM_AUTO_PUBLISH", false);
-  const runDate = getPhoenixDate();
-  const rssLeads = await collectDailyCigarFlowRssLeads();
+  const runNow = resolveDailyRunNow();
+  const runDate = getPhoenixDate(runNow);
+  const stableSlug = buildDailyCigarFlowPublishSlug("", runDate);
+  const existingStories = readBoolean("YCC_DAILY_NEWSROOM_DEDUPE_PREFLIGHT", true)
+    ? await getJson<PublishedNewsStoriesResponse>(`${baseUrl}/news/stories?limit=50`, insecureApiTls)
+    : { stories: [] };
+
+  if (!readBoolean("YCC_DAILY_NEWSROOM_FORCE_RERUN", false) && existingStories.stories.some((story) => story.slug === stableSlug)) {
+    console.log(`No action: ${stableSlug} is already published.`);
+    return;
+  }
+
+  const seenLeadUrls = collectPublishedLeadUrlKeys(existingStories.stories);
+  const rssLeads = (await collectDailyCigarFlowRssLeads(runNow)).filter((lead) => !seenLeadUrls.has(canonicalizeNewsUrl(lead.link)));
+  if (readBoolean("YCC_DAILY_NEWSROOM_REQUIRE_FRESH_LEADS", true) && !rssLeads.length) {
+    console.log("No action: no fresh, unprocessed RSS leads passed the recency and canonical-URL checks.");
+    return;
+  }
+
+  const auth = await resolveNewsroomAutomationAuth(process.env);
   const sourceLimit = readInt("YCC_DAILY_NEWSROOM_SOURCE_LIMIT", 3, 1, officialCigarNewsSources.length);
   const maxDraftAttempts = readInt(
     "YCC_DAILY_NEWSROOM_MAX_ATTEMPTS",
@@ -85,7 +120,7 @@ async function runDailyCigarFlow() {
     1,
     Math.max(1, Math.ceil(officialCigarNewsSources.length / sourceLimit)),
   );
-  const sourceBatches = buildDailyCigarFlowSourceBatches(sourceLimit, maxDraftAttempts, rssLeads);
+  const sourceBatches = buildDailyCigarFlowSourceBatches(sourceLimit, maxDraftAttempts, rssLeads, runDate);
 
   console.log(
     `Auth ready: ${auth.source === "cognito_password" ? `fresh Cognito token for ${auth.username}` : "bearer token from env"}${
@@ -95,7 +130,7 @@ async function runDailyCigarFlow() {
   console.log(
     rssLeads.length
       ? `Fresh RSS leads pulled: ${rssLeads.length} (${rssLeads.map((lead) => lead.sourceName).join(", ")})`
-      : "Fresh RSS leads pulled: 0; continuing with official source rotation.",
+      : "Fresh RSS leads pulled: 0; continuing only because fresh-lead enforcement is disabled.",
   );
 
   const draftUrl = `${baseUrl}/news/story-drafts`;
@@ -105,8 +140,19 @@ async function runDailyCigarFlow() {
   let publishSourceNotes: NewsSourceNote[] = [];
 
   for (const [index, sourceBatch] of sourceBatches.entries()) {
-    const storyImages = buildDailyCigarFlowStoryImages(sourceBatch.sourceUrls);
-    const draftInput = buildDailyCigarFlowDraftInput(sourceBatch, storyImages, rssLeads, runDate);
+    const fetchSourceEvidence = readBoolean("YCC_DAILY_NEWSROOM_FETCH_SOURCE_EVIDENCE", true);
+    const sourceEvidence = fetchSourceEvidence
+      ? await collectDailyCigarFlowSourceEvidence(sourceBatch.sourceUrls, runNow)
+      : [];
+    if (readBoolean("YCC_DAILY_NEWSROOM_REQUIRE_SOURCE_EVIDENCE", true) && !sourceEvidence.length) {
+      console.warn(`Draft attempt ${index + 1}/${sourceBatches.length}: no retrievable official source evidence; trying the next batch.`);
+      continue;
+    }
+    const storyImages = mergeDailyStoryImages(
+      sourceEvidence.map((evidence) => evidence.image).filter((image): image is NewsStoryImage => Boolean(image)),
+      buildDailyCigarFlowStoryImages(sourceBatch.sourceUrls),
+    );
+    const draftInput = buildDailyCigarFlowDraftInput(sourceBatch, storyImages, rssLeads, runDate, sourceEvidence);
     console.log(`Draft attempt ${index + 1}/${sourceBatches.length}: ${sourceBatch.sourceNames.join(", ")}`);
 
     try {
@@ -114,8 +160,12 @@ async function runDailyCigarFlow() {
       if (isPlaceholderNewsBodyMarkdown(draftResult.draft.bodyMarkdown)) {
         throw new Error("Draft generation returned placeholder scaffold copy instead of a real story.");
       }
+      assertDailyDraftDateConsistency(draftResult.draft.title, runDate);
       publishImages = await selectSourceAlignedStoryImages(draftResult.draft.images, draftInput.sourceUrls, storyImages);
-      publishSourceNotes = buildDailyCigarFlowPublishSourceNotes(draftResult.draft.sourceNotes, sourceBatch);
+      publishSourceNotes = buildDailyCigarFlowPublishSourceNotes(
+        draftResult.draft.sourceNotes,
+        fetchSourceEvidence ? sourceEvidence.map((evidence) => evidence.sourceUrl) : sourceBatch.sourceUrls,
+      );
       break;
     } catch (error) {
       lastDraftError = error;
@@ -136,15 +186,32 @@ async function runDailyCigarFlow() {
   console.log(
     `Draft generated: ${draftResult.draft.title} (${draftResult.prompt?.acceptedSourceCount ?? "n/a"} source(s) accepted)`,
   );
+  await writeDailyDraftArtifact(runDate, runNow, draftResult.draft, rssLeads);
 
   if (!autoPublish) {
-    console.log("Auto-publish is disabled. Draft was generated only.");
+    console.log("Auto-publish is disabled. Draft was generated for human review only.");
     return;
+  }
+
+  if (!readBoolean("YCC_DAILY_NEWSROOM_OPERATOR_APPROVED", false)) {
+    throw new Error("Auto-publish requires YCC_DAILY_NEWSROOM_OPERATOR_APPROVED=true after a human reviews the final draft revision.");
+  }
+
+  if (!publishSourceNotes.length) {
+    throw new Error("Auto-publish requires at least one draft-returned, specific official source note from the requested source set.");
+  }
+
+  const minimumImages = readInt("YCC_DAILY_NEWSROOM_MIN_PUBLISH_IMAGES", 1, 0, 6);
+  if (publishImages.length < minimumImages) {
+    throw new Error(`Auto-publish requires at least ${minimumImages} verified source-aligned image(s); received ${publishImages.length}.`);
   }
 
   const publishPayload = {
     ...draftResult.draft,
-    slug: buildDailyCigarFlowPublishSlug(draftResult.draft.title, runDate),
+    slug: stableSlug,
+    automationDate: runDate,
+    dedupeKey: `daily-cigar-flow:${runDate}`,
+    leadUrls: rssLeads.map((lead) => canonicalizeNewsUrl(lead.link)).filter(Boolean),
     images: publishImages,
     sourceNotes: publishSourceNotes,
     operatorApproved: true,
@@ -153,6 +220,13 @@ async function runDailyCigarFlow() {
   };
 
   const publishResult = await postJson<NewsStoryPublishResponse>(`${baseUrl}/news/stories`, publishPayload, auth.authorizationHeader, insecureApiTls);
+  if (publishResult.persistence?.status !== "stored") {
+    throw new Error(`Publish was not durably stored (${publishResult.persistence?.status || "unknown"}).`);
+  }
+  if (publishResult.deduplicated) {
+    console.log(`No action: verified source evidence is already attached to ${publishResult.story.slug}; no duplicate was created.`);
+    return;
+  }
   console.log(`Published: ${publishResult.story.title} (${publishResult.story.slug})`);
   console.log(`Persistence: ${publishResult.persistence.status}/${publishResult.persistence.table}`);
 
@@ -161,11 +235,28 @@ async function runDailyCigarFlow() {
   }
 }
 
+async function writeDailyDraftArtifact(
+  runDate: string,
+  runNow: Date,
+  draft: NewsStoryDraftResponse["draft"],
+  rssLeads: readonly DailyCigarFlowRssLead[],
+) {
+  const outputPath = resolve(process.env.YCC_DAILY_NEWSROOM_DRAFT_OUTPUT_PATH || `output/cigar-flow-drafts/${runDate}.json`);
+  await mkdir(dirname(outputPath), { recursive: true });
+  await writeFile(
+    outputPath,
+    `${JSON.stringify({ generatedAt: runNow.toISOString(), runDate, draft, discoveryLeads: rssLeads }, null, 2)}\n`,
+    "utf8",
+  );
+  console.log(`Draft artifact: ${outputPath}`);
+}
+
 function buildDailyCigarFlowDraftInput(
   sourceBatch: DailyCigarFlowSourceBatch,
   storyImages: NewsStoryImage[],
   rssLeads: readonly DailyCigarFlowRssLead[],
   runDate: string,
+  sourceEvidence: readonly DailyCigarFlowSourceEvidence[] = [],
 ) {
   const sourceUrls = uniqueStrings([...sourceBatch.sourceUrls, ...cigarPressReleaseSearchSources.map((source) => source.url)]);
   const searchSourceNames = cigarPressReleaseSearchSources.map((source) => source.publisher).join(", ");
@@ -186,6 +277,7 @@ function buildDailyCigarFlowDraftInput(
       `Daily cigar press-release search: search ${searchSourceNames} for ${searchQueries} to find source-safe leads to write stories on. Treat search pages as discovery surfaces and draft only from primary release, wire, or official maker pages.`,
       "Cigar Flow editorial format: write sectioned markdown with ## headings for the split hero/inline-image layout, and return 3-6 real source-aligned story images for hero and inline placement.",
       "image web/source-page search: use accepted source pages or primary release pages to find actual image URLs; each image must include label, image, imagePosition, alt, and sourceUrl. Do not invent image URLs.",
+      ...sourceEvidence.map((evidence) => evidence.note),
       ...rssLeadNotes,
     ],
     ...(storyImages.length ? { storyImages } : {}),
@@ -196,8 +288,9 @@ function buildDailyCigarFlowSourceBatches(
   sourceLimit: number,
   maxAttempts: number,
   rssLeads: readonly DailyCigarFlowRssLead[] = [],
+  runDate = getPhoenixDate(),
 ): DailyCigarFlowSourceBatch[] {
-  const rankedSources = rankDailyCigarFlowSources(officialCigarNewsSources, rssLeads);
+  const rankedSources = rankDailyCigarFlowSources(officialCigarNewsSources, rssLeads, runDate);
   const batches: DailyCigarFlowSourceBatch[] = [];
 
   for (let start = 0; start < rankedSources.length && batches.length < maxAttempts; start += sourceLimit) {
@@ -218,11 +311,21 @@ function buildDailyCigarFlowSourceBatches(
 function rankDailyCigarFlowSources(
   sources: readonly OfficialCigarNewsSource[],
   rssLeads: readonly DailyCigarFlowRssLead[] = [],
+  runDate = getPhoenixDate(),
 ) {
   return [...sources].sort((left, right) => {
     const scoreDifference = getDailySourceScore(right, rssLeads) - getDailySourceScore(left, rssLeads);
-    return scoreDifference || left.name.localeCompare(right.name);
+    return scoreDifference || dailyRotationRank(left, runDate) - dailyRotationRank(right, runDate) || left.name.localeCompare(right.name);
   });
+}
+
+function dailyRotationRank(source: OfficialCigarNewsSource, runDate: string) {
+  let hash = 2166136261;
+  for (const character of `${runDate}:${source.domain}`) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
 }
 
 function getDailySourceScore(source: OfficialCigarNewsSource, rssLeads: readonly DailyCigarFlowRssLead[] = []) {
@@ -252,6 +355,117 @@ function buildDailyCigarFlowStoryImages(sourceUrls: readonly string[], limit = 3
       alt: `${item.title} story image`,
       sourceUrl: item.href,
     }));
+}
+
+function mergeDailyStoryImages(...groups: readonly NewsStoryImage[][]) {
+  const seen = new Set<string>();
+  return groups
+    .flat()
+    .filter((image) => {
+      const key = canonicalNewsImageKey(image.image);
+      if (!key || seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 6);
+}
+
+async function collectDailyCigarFlowSourceEvidence(sourceUrls: readonly string[], runNow: Date) {
+  const results = await Promise.allSettled(sourceUrls.map((sourceUrl) => fetchDailyCigarFlowSourceEvidence(sourceUrl, runNow)));
+  return results.flatMap((result, index) => {
+    if (result.status === "fulfilled" && result.value) {
+      return [result.value];
+    }
+    const reason = result.status === "rejected" ? (result.reason instanceof Error ? result.reason.message : String(result.reason)) : "empty source page";
+    console.warn(`Skipping official source evidence ${sourceUrls[index]}: ${reason}.`);
+    return [];
+  });
+}
+
+async function fetchDailyCigarFlowSourceEvidence(sourceUrl: string, runNow: Date): Promise<DailyCigarFlowSourceEvidence | null> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), sourceEvidenceFetchTimeoutMs);
+
+  try {
+    const response = await fetch(sourceUrl, {
+      headers: {
+        accept: "text/html,application/xhtml+xml,text/plain;q=0.8",
+        "user-agent": "Yuzu Cigar Flow official-source monitor/2.0",
+      },
+      redirect: "follow",
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const contentType = (response.headers.get("content-type") || "").toLowerCase();
+    if (!/(?:text\/html|application\/xhtml\+xml|text\/plain)/.test(contentType)) {
+      throw new Error(`unsupported content type ${contentType || "unknown"}`);
+    }
+    if (!hostnamesOverlap(getHostname(sourceUrl), getHostname(response.url || sourceUrl))) {
+      throw new Error(`redirected outside the configured official domain to ${response.url}`);
+    }
+
+    const html = await response.text();
+    const title = extractHtmlMetadata(html, "title") || extractHtmlTitle(html) || getHostname(sourceUrl);
+    const description = extractHtmlMetadata(html, "description");
+    const pageText = decodeXmlText(
+      html
+        .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
+        .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
+        .replace(/<nav\b[\s\S]*?<\/nav>/gi, " ")
+        .replace(/<footer\b[\s\S]*?<\/footer>/gi, " "),
+    ).slice(0, 1800);
+    const excerpt = cleanDailySourceNoteText([description, pageText].filter(Boolean).join(" "), 2000);
+    if (excerpt.length < 80) {
+      return null;
+    }
+
+    const resolvedSourceUrl = response.url || sourceUrl;
+    const imageUrl = resolvePageUrl(extractHtmlMetadata(html, "og:image") || extractHtmlMetadata(html, "twitter:image"), resolvedSourceUrl);
+    return {
+      sourceUrl: resolvedSourceUrl,
+      note: `Retrieved official-source evidence at ${runNow.toISOString()} from ${title} (${resolvedSourceUrl}): ${excerpt}`,
+      image: imageUrl
+        ? {
+            label: title,
+            image: imageUrl,
+            imagePosition: defaultStoryImagePosition,
+            alt: `${title} official source image`,
+            sourceUrl: resolvedSourceUrl,
+          }
+        : null,
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function extractHtmlMetadata(html: string, key: string) {
+  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const patterns = [
+    new RegExp(`<meta\\b[^>]*(?:property|name)=["']${escapedKey}["'][^>]*content=["']([^"']+)["'][^>]*>`, "i"),
+    new RegExp(`<meta\\b[^>]*content=["']([^"']+)["'][^>]*(?:property|name)=["']${escapedKey}["'][^>]*>`, "i"),
+  ];
+  return decodeXmlText(patterns.map((pattern) => html.match(pattern)?.[1] || "").find(Boolean) || "");
+}
+
+function extractHtmlTitle(html: string) {
+  return decodeXmlText(html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1] || "");
+}
+
+function resolvePageUrl(value: string, baseUrl: string) {
+  if (!value) {
+    return "";
+  }
+  try {
+    return new URL(value, baseUrl).toString();
+  } catch {
+    return "";
+  }
 }
 
 async function selectSourceAlignedStoryImages(
@@ -365,8 +579,7 @@ function isAllowedRenderableStoryImageUrl(value: string) {
 
 function getRenderableStoryImageHosts() {
   return new Set(
-    (process.env.YCC_DAILY_NEWSROOM_ALLOWED_IMAGE_HOSTS || defaultRenderableStoryImageHosts.join(","))
-      .split(",")
+    [...defaultRenderableStoryImageHosts, ...(process.env.YCC_DAILY_NEWSROOM_ALLOWED_IMAGE_HOSTS || "").split(",")]
       .map((host) => host.trim().toLowerCase())
       .filter(Boolean),
   );
@@ -392,26 +605,15 @@ function normalizeStoryImagePosition(value: string | undefined) {
 
 function buildDailyCigarFlowPublishSourceNotes(
   draftNotes: NewsSourceNote[] | undefined,
-  sourceBatch: DailyCigarFlowSourceBatch,
+  retrievedEvidenceUrls: readonly string[],
 ): NewsSourceNote[] {
-  const sourceBatchNotes = sourceBatch.sourceUrls.map((sourceUrl, index) => {
-    const source = normalizeNewsSourceCandidate(sourceUrl);
-    const label = sourceBatch.sourceNames[index] || source.domain || `Source ${index + 1}`;
-
-    return {
-      label,
-      url: source.url || sourceUrl,
-      note: `${label} selected by the daily Cigar Flow automation as a primary source for this story.`,
-      sourceType: source.sourceType,
-      domain: source.domain,
-      reviewNote: source.reviewNote,
-    } satisfies NewsSourceNote;
-  });
-
-  return uniqueNewsSourceNotes([...normalizeDailyPublishSourceNotes(draftNotes), ...sourceBatchNotes]);
+  const allowedSourceUrls = new Set(retrievedEvidenceUrls.map(canonicalizeNewsUrl).filter(Boolean));
+  return uniqueNewsSourceNotes(normalizeDailyPublishSourceNotes(draftNotes)).filter(
+    (note) => note.sourceType === "official" && allowedSourceUrls.has(canonicalizeNewsUrl(note.url)),
+  );
 }
 
-async function collectDailyCigarFlowRssLeads(): Promise<DailyCigarFlowRssLead[]> {
+async function collectDailyCigarFlowRssLeads(now = new Date()): Promise<DailyCigarFlowRssLead[]> {
   const leadLimit = readInt("YCC_DAILY_NEWSROOM_RSS_LEAD_LIMIT", 8, 0, 20);
   if (leadLimit <= 0) {
     return [];
@@ -433,8 +635,13 @@ async function collectDailyCigarFlowRssLeads(): Promise<DailyCigarFlowRssLead[]>
     return [];
   });
 
-  return uniqueRssLeads(leads)
-    .sort((left, right) => rssLeadTimestamp(right) - rssLeadTimestamp(left))
+  const maxAgeHours = readInt("YCC_DAILY_NEWSROOM_RSS_MAX_AGE_HOURS", 72, 1, 720);
+  const maxFutureSkewHours = readInt("YCC_DAILY_NEWSROOM_RSS_MAX_FUTURE_SKEW_HOURS", 6, 0, 48);
+  return uniqueRssLeads(
+    leads
+      .filter((lead) => isFreshRssLead(lead, now, maxAgeHours, maxFutureSkewHours))
+      .sort((left, right) => rssLeadTimestamp(right) - rssLeadTimestamp(left)),
+  )
     .slice(0, leadLimit);
 }
 
@@ -476,7 +683,14 @@ async function fetchTextWithTimeout(url: string, timeoutMs: number) {
       throw new Error(`HTTP ${response.status}`);
     }
 
-    return response.text();
+    const contentType = (response.headers.get("content-type") || "").toLowerCase();
+    const text = await response.text();
+    const looksLikeFeed = /<(?:rss|feed|rdf:RDF)\b/i.test(text) && /<(?:item|entry)\b/i.test(text);
+    if (!looksLikeFeed || (contentType.includes("text/html") && !/<(?:rss|feed|rdf:RDF)\b/i.test(text))) {
+      throw new Error(`response is not an RSS or Atom feed (${contentType || "unknown content type"})`);
+    }
+
+    return text;
   } finally {
     clearTimeout(timeout);
   }
@@ -524,7 +738,7 @@ function normalizeRssLink(value: string, feedUrl: string) {
   }
 
   try {
-    return new URL(trimmed, feedUrl).toString();
+    return canonicalizeNewsUrl(new URL(trimmed, feedUrl).toString());
   } catch {
     return "";
   }
@@ -552,7 +766,7 @@ function uniqueRssLeads(leads: readonly DailyCigarFlowRssLead[]) {
   const seen = new Set<string>();
 
   return leads.filter((lead) => {
-    const key = (lead.link || lead.title).toLowerCase();
+    const key = canonicalizeNewsUrl(lead.link) || lead.title.toLowerCase();
     if (seen.has(key)) {
       return false;
     }
@@ -560,6 +774,20 @@ function uniqueRssLeads(leads: readonly DailyCigarFlowRssLead[]) {
     seen.add(key);
     return true;
   });
+}
+
+function isFreshRssLead(lead: DailyCigarFlowRssLead, now: Date, maxAgeHours: number, maxFutureSkewHours: number) {
+  if (!lead.publishedAt) {
+    return false;
+  }
+
+  const timestamp = Date.parse(lead.publishedAt);
+  if (!Number.isFinite(timestamp)) {
+    return false;
+  }
+
+  const ageMs = now.getTime() - timestamp;
+  return ageMs <= maxAgeHours * 60 * 60 * 1000 && ageMs >= -maxFutureSkewHours * 60 * 60 * 1000;
 }
 
 function rssLeadTimestamp(lead: DailyCigarFlowRssLead) {
@@ -589,20 +817,11 @@ function formatRssLeadNote(lead: DailyCigarFlowRssLead) {
 }
 
 function buildDailyCigarFlowPublishSlug(title: string, runDate: string) {
-  const titleSlug = slugifyDailyStoryTitle(title)
-    .replace(/^daily-cigar-flow-update-?/, "")
-    .replace(/^daily-cigar-flow-?/, "")
-    .replace(new RegExp(`^${runDate.replace(/-/g, "-")}-?`), "");
-  const slug = ["daily-cigar-flow", runDate, titleSlug].filter(Boolean).join("-");
-  return slug.replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 180);
-}
-
-function slugifyDailyStoryTitle(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/['"]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+  void title;
+  if (!/^20\d{2}-\d{2}-\d{2}$/.test(runDate)) {
+    throw new Error(`Invalid daily Cigar Flow run date: ${runDate}.`);
+  }
+  return `daily-cigar-flow-${runDate}`;
 }
 
 function getPhoenixDate(date = new Date()) {
@@ -615,6 +834,40 @@ function getPhoenixDate(date = new Date()) {
   const part = (type: string) => parts.find((item) => item.type === type)?.value || "";
 
   return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
+function resolveDailyRunNow() {
+  const configured = process.env.YCC_DAILY_NEWSROOM_NOW?.trim();
+  if (!configured) {
+    return new Date();
+  }
+
+  const date = new Date(configured);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error("YCC_DAILY_NEWSROOM_NOW must be a valid ISO date/time.");
+  }
+  return date;
+}
+
+function collectPublishedLeadUrlKeys(stories: PublishedNewsStoriesResponse["stories"]) {
+  return new Set(
+    stories
+      .flatMap((story) => [
+        ...(story.leadUrls ?? []),
+        ...(story.sourceNotes ?? []).map((note) => note.url || ""),
+      ])
+      .map((url) => canonicalizeNewsUrl(url))
+      .filter(Boolean),
+  );
+}
+
+function assertDailyDraftDateConsistency(title: string, runDate: string) {
+  const expectedYear = runDate.slice(0, 4);
+  const titleYears = [...title.matchAll(/\b(20\d{2})\b/g)].map((match) => match[1]);
+  const mismatchedYear = titleYears.find((year) => year !== expectedYear);
+  if (mismatchedYear) {
+    throw new Error(`Draft title contains stale year ${mismatchedYear}; the daily run date is ${runDate}.`);
+  }
 }
 
 function normalizeDailyPublishSourceNotes(value: unknown): NewsSourceNote[] {
@@ -655,7 +908,7 @@ function uniqueNewsSourceNotes(notes: readonly NewsSourceNote[]) {
       return false;
     }
 
-    const key = note.url.toLowerCase();
+    const key = canonicalizeNewsUrl(note.url);
     if (seen.has(key)) {
       return false;
     }
@@ -673,6 +926,8 @@ function cleanDailySourceNoteText(value: unknown, maxLength: number) {
 }
 
 async function postJson<TResponse>(url: string, body: unknown, token: string, insecureTls: boolean): Promise<TResponse> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), apiRequestTimeoutMs);
   const init = {
     method: "POST",
     headers: {
@@ -681,35 +936,47 @@ async function postJson<TResponse>(url: string, body: unknown, token: string, in
       Authorization: token.startsWith("Bearer ") ? token : `Bearer ${token}`,
     },
     body: JSON.stringify(body),
+    signal: controller.signal,
   } satisfies RequestInit;
 
-  const response = insecureTls ? await postJsonWithInsecureTls(url, init) : await fetch(url, init);
+  try {
+    const response = insecureTls ? await postJsonWithInsecureTls(url, init) : await fetch(url, init);
 
-  const payload = (await response.json().catch(() => ({}))) as Record<string, unknown> | null;
+    const payload = (await response.json().catch(() => ({}))) as Record<string, unknown> | null;
 
-  if (!response.ok) {
-    throw new JsonHttpError(response.status, payload);
+    if (!response.ok) {
+      throw new JsonHttpError(response.status, payload);
+    }
+
+    return payload as TResponse;
+  } finally {
+    clearTimeout(timeout);
   }
-
-  return payload as TResponse;
 }
 
 async function getJson<TResponse>(url: string, insecureTls: boolean): Promise<TResponse> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), apiRequestTimeoutMs);
   const init = {
     method: "GET",
     headers: {
       accept: "application/json",
     },
+    signal: controller.signal,
   } satisfies RequestInit;
 
-  const response = insecureTls ? await requestJsonWithInsecureTls(url, init) : await fetch(url, init);
-  const payload = (await response.json().catch(() => ({}))) as Record<string, unknown> | null;
+  try {
+    const response = insecureTls ? await requestJsonWithInsecureTls(url, init) : await fetch(url, init);
+    const payload = (await response.json().catch(() => ({}))) as Record<string, unknown> | null;
 
-  if (!response.ok) {
-    throw new JsonHttpError(response.status, payload);
+    if (!response.ok) {
+      throw new JsonHttpError(response.status, payload);
+    }
+
+    return payload as TResponse;
+  } finally {
+    clearTimeout(timeout);
   }
-
-  return payload as TResponse;
 }
 
 async function postJsonWithInsecureTls(url: string, init: RequestInit) {
@@ -750,6 +1017,7 @@ async function requestJsonWithInsecureTls(url: string, init: RequestInit) {
     );
 
     request.on("error", reject);
+    request.setTimeout(apiRequestTimeoutMs, () => request.destroy(new Error(`Request timed out after ${apiRequestTimeoutMs} ms.`)));
 
     if (typeof init.body === "string" || Buffer.isBuffer(init.body)) {
       request.write(init.body);

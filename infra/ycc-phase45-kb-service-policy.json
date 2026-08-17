@@ -14,7 +14,22 @@
       "Sid": "InvokeYccEmbeddingModel",
       "Effect": "Allow",
       "Action": "bedrock:InvokeModel",
-      "Resource": "arn:aws:bedrock:us-east-1::foundation-model/amazon.titan-embed-text-v2:0"
+      "Resource": [
+        "arn:aws:bedrock:us-east-1::foundation-model/amazon.titan-embed-text-v2:0",
+        "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-2-multimodal-embeddings-v1:0"
+      ]
+    },
+    {
+      "Sid": "RerankYccKnowledgeBaseResults",
+      "Effect": "Allow",
+      "Action": "bedrock:Rerank",
+      "Resource": "*"
+    },
+    {
+      "Sid": "InvokeYccKnowledgeBaseReranker",
+      "Effect": "Allow",
+      "Action": "bedrock:InvokeModel",
+      "Resource": "arn:aws:bedrock:us-east-1::foundation-model/cohere.rerank-v3-5:0"
     },
     {
       "Sid": "ReadYccKnowledgeBaseSource",

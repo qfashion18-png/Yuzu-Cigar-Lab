@@ -3,38 +3,40 @@ import { notFound } from "next/navigation";
 import type { LucideIcon } from "lucide-react";
 import {
   ArrowLeft,
+  ArrowRight,
   Cigarette,
-  Clock,
   ExternalLink,
-  FileText,
   Flame,
-  Gauge,
-  Hash,
-  Layers3,
-  Leaf,
   Package,
-  Ruler,
   ShieldCheck,
-  Sparkles,
   Star,
-  Tag,
   Truck,
 } from "lucide-react";
 
 import { AddToCartButton } from "@/components/add-to-cart-button";
 import Link from "@/components/static-link";
-import { MemberViewBanner } from "@/components/member-view-banner";
 import { ProductPrice } from "@/components/product-price";
-import { ProductCard } from "@/components/product-card";
 import { ReferenceImage } from "@/components/reference-image";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { getCatalogProductDetails, getStorefrontProductBySlug, storefrontProducts } from "@/lib/catalog";
+import type { CatalogProduct } from "@/lib/catalog";
+import {
+  getCatalogProductDetails,
+  getCatalogProductDisplayName,
+  getCatalogProductSeoName,
+  getStorefrontProductBySlug,
+  storefrontProducts,
+} from "@/lib/catalog";
 import { buildProductImageAlt } from "@/lib/image-seo";
+import { buildProductPageCopy } from "@/lib/product-page-content";
 import { buildBreadcrumbJsonLd, buildPageMetadata, buildProductJsonLd, jsonLdScriptProps } from "@/lib/seo";
 
 type ProductPageProps = {
   params: Promise<{ slug: string }>;
+};
+
+type ProductFact = {
+  icon: LucideIcon;
+  label: string;
+  value: string;
 };
 
 export const dynamicParams = false;
@@ -54,14 +56,17 @@ export async function generateMetadata({ params }: ProductPageProps): Promise<Me
   }
 
   const details = getCatalogProductDetails(product);
+  const copy = buildProductPageCopy(details.summary, product.sku);
+  const displayName = getCatalogProductDisplayName(product.name);
+  const seoName = getCatalogProductSeoName(product);
 
   return buildPageMetadata({
-    title: `${product.name} | Yuzu Cigar Club`,
-    description: details.summary,
+    title: `${seoName} | Yuzu Cigar Club`,
+    description: copy.metaDescription,
     path: `/shop/${product.slug}/`,
     image: product.image,
     imageAlt: buildProductImageAlt(product),
-    keywords: [product.name, product.brand, product.category, "premium cigar box"],
+    keywords: [displayName, product.brand, product.category, "premium cigar box"],
   });
 }
 
@@ -74,48 +79,41 @@ export default async function ProductDetailPage({ params }: ProductPageProps) {
   }
 
   const details = getCatalogProductDetails(product);
+  const copy = buildProductPageCopy(details.summary, product.sku);
+  const displayName = getCatalogProductDisplayName(product.name);
+  const overviewFacts = buildOverviewFacts(product);
+  const specificationRows = buildSpecificationRows(product);
   const relatedProducts = storefrontProducts
     .filter((candidate) => candidate.id !== product.id)
     .filter((candidate) => candidate.category === product.category || candidate.brand === product.brand)
     .slice(0, 3);
-  const hasCigarSpecs = Boolean(product.vitola || product.length || product.gauge || product.strength || product.wrapper || product.filler || product.binder);
   const productJsonLd = buildProductJsonLd(product, details);
   const breadcrumbJsonLd = buildBreadcrumbJsonLd([
     { name: "Home", path: "/" },
     { name: "Shop", path: "/shop/" },
-    { name: product.name, path: `/shop/${product.slug}/` },
+    { name: displayName, path: `/shop/${product.slug}/` },
   ]);
-  const specTiles = [
-    ...(hasCigarSpecs
-      ? [
-          { icon: Cigarette, label: "Product", value: product.vitola ?? product.category },
-          { icon: Ruler, label: "Length", value: product.length ?? "Not listed" },
-          { icon: Gauge, label: "Gauge", value: product.gauge ?? "Not listed" },
-          { icon: Flame, label: "Strength", value: product.strength ?? "Not listed" },
-        ]
-      : []),
-    { icon: Hash, label: "SKU", value: product.sku },
-    { icon: Layers3, label: "Category", value: product.category },
-    { icon: Package, label: "Package", value: product.packageLabel },
-    { icon: Clock, label: "Availability", value: product.availability },
-    { icon: Tag, label: "Source", value: product.sourceStatus },
-  ];
 
   return (
-    <div className="mx-auto flex max-w-[1520px] flex-col gap-8 px-5 py-8 md:px-[clamp(3rem,8.5vw,5rem)]">
+    <div
+      data-product-page-layout="editorial"
+      className="mx-auto flex max-w-[1520px] flex-col gap-10 px-5 py-7 md:px-[clamp(3rem,8.5vw,5rem)] md:py-9"
+    >
       <script {...jsonLdScriptProps(productJsonLd)} />
       <script {...jsonLdScriptProps(breadcrumbJsonLd)} />
-      <Link href="/shop" className="inline-flex w-fit items-center gap-2 text-xs font-bold uppercase tracking-[0.2em] text-yuzu-muted transition hover:text-yuzu-gold">
+
+      <Link
+        href="/shop"
+        className="inline-flex min-h-11 w-fit items-center gap-2 text-xs font-bold uppercase tracking-[0.2em] text-yuzu-muted transition hover:text-yuzu-gold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yuzu-gold"
+      >
         <ArrowLeft className="size-4" />
         Back to shop
       </Link>
 
-      <MemberViewBanner context="shop" />
-
-      <section className="luxury-card grid overflow-hidden md:grid-cols-[1.05fr_0.95fr]">
+      <section aria-labelledby="product-title" className="luxury-card grid overflow-hidden lg:grid-cols-[1.04fr_0.96fr]">
         <div
           data-product-main-image="contained"
-          className="relative min-h-[22rem] border-b border-yuzu-line/70 bg-[#d8ccb1] md:min-h-[44rem] md:border-b-0 md:border-r"
+          className="relative min-h-[14rem] border-b border-yuzu-line/70 bg-[#d8ccb1] sm:min-h-[22rem] lg:min-h-[38rem] lg:border-b-0 lg:border-r"
         >
           <ReferenceImage
             src={product.image}
@@ -126,152 +124,133 @@ export default async function ProductDetailPage({ params }: ProductPageProps) {
             sizes="(max-width: 768px) 100vw, 52vw"
             priority
           />
-          <div className="absolute left-4 top-4 flex flex-wrap gap-2">
-            {product.tags.map((tag) => (
-              <Badge key={tag} className="border-yuzu-gold bg-yuzu-night/75 text-yuzu-gold backdrop-blur" variant="outline">
-                {tag}
-              </Badge>
-            ))}
-          </div>
+          {product.memberOnly && (
+            <span className="absolute left-4 top-4 border border-yuzu-gold bg-yuzu-night/85 px-3 py-2 text-xs font-bold uppercase tracking-[0.16em] text-yuzu-gold backdrop-blur">
+              Members only
+            </span>
+          )}
         </div>
 
-        <div className="flex flex-col justify-between gap-8 p-6 md:gap-5 md:p-5 lg:gap-6 lg:p-8 xl:gap-8 xl:p-10">
-          <div className="flex flex-col gap-5 md:gap-4 lg:gap-6">
-            <div className="flex flex-wrap items-center gap-3 text-xs font-bold uppercase tracking-[0.22em] text-yuzu-gold">
-              <span>{product.brand}</span>
-              <span className="h-px w-8 bg-yuzu-line" />
-              <span>SKU {product.sku}</span>
-              {product.memberOnly && <span className="border border-yuzu-gold px-2 py-1 text-yuzu-gold">Member</span>}
-            </div>
-
-            <div className="space-y-4 md:space-y-3 lg:space-y-4">
-              <h1 className="font-heading text-4xl leading-tight text-yuzu-cream md:text-[2rem] lg:text-5xl xl:text-6xl">{product.name}</h1>
-              <p className="max-w-2xl text-sm leading-7 text-yuzu-muted md:text-xs md:leading-6 lg:text-sm lg:leading-7 xl:text-base xl:leading-8">{details.summary}</p>
-            </div>
-
-            <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 lg:gap-3">
-              {specTiles.map((spec) => (
-                <Spec key={spec.label} icon={spec.icon} label={spec.label} value={spec.value} />
-              ))}
-            </div>
+        <div className="flex min-w-0 flex-col p-6 sm:p-8 md:p-7 lg:p-10 xl:p-12">
+          <div className="flex flex-wrap items-center gap-3 text-xs font-bold uppercase tracking-[0.2em] text-yuzu-gold">
+            <span>{product.brand}</span>
+            <span aria-hidden="true" className="h-px w-8 bg-yuzu-line" />
+            <span className="text-yuzu-muted">{product.category}</span>
           </div>
 
-          <div className="grid gap-4 border-t border-yuzu-line pt-5 md:gap-3 md:pt-4 lg:gap-5 lg:pt-6">
-            <div className="flex flex-wrap items-end justify-between gap-4">
-              <div>
-                <p className="text-xs font-bold uppercase tracking-[0.22em] text-yuzu-muted">Box price</p>
-                <ProductPrice
-                  product={product}
-                  priceClassName="font-heading text-4xl text-yuzu-gold lg:text-5xl"
-                  captionClassName="text-xs uppercase tracking-[0.16em]"
-                />
-              </div>
-              <div className="min-w-40">
-                <div className="mb-2 flex items-center justify-between text-xs uppercase tracking-[0.18em] text-yuzu-muted md:text-[0.6rem] lg:text-xs">
-                  <span>Inventory</span>
-                  <span>{product.availability}</span>
-                </div>
-                <div className="h-2 overflow-hidden bg-yuzu-night ring-1 ring-yuzu-line">
-                  <div className="h-full bg-yuzu-gold" style={{ width: product.availability === "Out of stock" ? "12%" : product.availability === "Low stock" ? "42%" : "88%" }} />
-                </div>
-              </div>
-            </div>
+          <h1 id="product-title" className="mt-4 max-w-3xl font-heading text-4xl leading-tight text-yuzu-cream sm:mt-5 lg:text-5xl xl:text-6xl">
+            {displayName}
+          </h1>
+          <p data-product-summary="lead" className="mt-3 max-w-2xl text-sm leading-7 text-yuzu-muted sm:mt-4 lg:text-base lg:leading-8">
+            {copy.lead}
+          </p>
 
-            <div className="flex flex-col gap-3 sm:flex-row">
-              <AddToCartButton
+          <div className="mt-5 border-y border-yuzu-line/70 py-5 max-lg:pr-12 sm:mt-7 sm:py-6">
+            <div className="flex flex-wrap items-end justify-between gap-5">
+              <ProductPrice
                 product={product}
-                label="Add Item"
-                icon="bag"
-                className="h-10 bg-yuzu-gold px-4 text-xs text-yuzu-ink hover:bg-yuzu-gold-light lg:px-6"
-                variant="default"
-                showInlineStatus
+                priceClassName="font-heading text-4xl text-yuzu-gold lg:text-5xl"
+                captionClassName="text-xs uppercase tracking-[0.16em]"
               />
-              <Button className="h-10 border-yuzu-gold px-4 text-xs text-yuzu-gold hover:bg-yuzu-gold hover:text-yuzu-ink lg:px-6" variant="outline" render={<Link href="/membership" />}>
-                <Sparkles data-icon="inline-start" />
-                Member Pricing
-              </Button>
+              <p className="inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-yuzu-cream">
+                <span aria-hidden="true" className="size-2 bg-yuzu-gold" />
+                {product.availability}
+              </p>
+            </div>
+
+            <AddToCartButton
+              product={product}
+              label="Add to cart"
+              icon="bag"
+              className="mt-4 h-12 w-full bg-yuzu-gold px-6 text-sm text-yuzu-ink hover:bg-yuzu-gold-light sm:mt-5"
+              variant="default"
+            />
+
+            <div className="mt-4 grid gap-3 text-xs leading-5 text-yuzu-muted sm:grid-cols-2">
+              <p className="flex items-center gap-2">
+                <ShieldCheck className="size-4 shrink-0 text-yuzu-gold" />
+                Age-verified checkout
+              </p>
+              <p className="flex items-center gap-2 sm:justify-end">
+                <Truck className="size-4 shrink-0 text-yuzu-gold" />
+                Adult signature delivery
+              </p>
             </div>
           </div>
+
+          {overviewFacts.length > 0 && (
+            <dl className="mt-6 grid gap-x-6 gap-y-5 sm:grid-cols-3">
+              {overviewFacts.map((fact) => (
+                <OverviewFact key={fact.label} {...fact} />
+              ))}
+            </dl>
+          )}
         </div>
       </section>
 
-      <section className="grid gap-5 md:grid-cols-[1.08fr_0.92fr]">
-        <div className="grid min-w-0 gap-5">
-          <DetailPanel title="Catalog Signals" icon={FileText}>
-            <div className="flex flex-wrap gap-2">
-              {details.signals.map((note) => (
-                <span key={note} className="border border-yuzu-line bg-yuzu-night px-3 py-2 text-sm text-yuzu-cream">
-                  {note}
-                </span>
-              ))}
-            </div>
-          </DetailPanel>
+      {product.assortment && <AssortmentPanel assortment={product.assortment} />}
 
-          {hasCigarSpecs && (
-            <DetailPanel title="Blend Details" icon={Leaf}>
-              <dl className="grid gap-4 text-sm sm:grid-cols-2">
-                <DataRow label="Product" value={product.vitola ?? "Not listed"} />
-                <DataRow label="Length" value={product.length ?? "Not listed"} />
-                <DataRow label="Gauge" value={product.gauge ?? "Not listed"} />
-                <DataRow label="Strength" value={product.strength ?? "Not listed"} />
-                <DataRow label="Country" value={product.origin ?? "Not listed"} />
-                <DataRow label="Wrapper" value={product.wrapper ?? "Not listed"} />
-                <DataRow label="Binder" value={product.binder ?? "Not listed"} />
-                <DataRow label="Filler" value={product.filler ?? "Not listed"} />
-              </dl>
-            </DetailPanel>
-          )}
+      <section className={`grid gap-6 ${copy.story ? "lg:grid-cols-[1.2fr_0.8fr]" : "lg:grid-cols-1"}`} aria-label="Product information">
+        {copy.story && (
+          <article className="luxury-card min-w-0 p-6 sm:p-8 lg:p-10">
+            <SectionHeading eyebrow="Overview" title="About this selection" />
+            <p data-product-summary="story" className="mt-6 max-w-3xl text-base leading-8 text-yuzu-muted">
+              {copy.story}
+            </p>
+          </article>
+        )}
 
+        <article className="luxury-card min-w-0 p-6 sm:p-8 lg:p-10">
+          <SectionHeading
+            eyebrow="Product details"
+            title={product.assortment ? "Sampler details" : specificationRows.length > 1 ? "Blend and origin" : "Catalog reference"}
+          />
+          <dl className="mt-6 grid gap-4">
+            {specificationRows.map((row) => (
+              <DataRow key={row.label} label={row.label} value={row.value} />
+            ))}
+          </dl>
+        </article>
+      </section>
+
+      <section aria-labelledby="reviews-title" className="luxury-card min-w-0 p-6 sm:p-8 lg:p-10">
+        <div className="grid gap-3 border-b border-yuzu-line/70 pb-6 md:grid-cols-[1fr_auto] md:items-end">
+          <div>
+            <p className="fine-label">Independent sources</p>
+            <h2 id="reviews-title" className="mt-2 font-heading text-3xl text-yuzu-cream sm:text-4xl">
+              Ratings &amp; reviews
+            </h2>
+          </div>
+          <p className="max-w-md text-sm leading-6 text-yuzu-muted md:text-right">Only ratings matched to this blend or product line are shown.</p>
         </div>
 
-        <div className="grid min-w-0 gap-5">
-          <DetailPanel title="Catalog Intelligence" icon={Package}>
-            <dl className="grid gap-4 text-sm">
-              <DataRow label="SKU" value={product.sku} />
-              <DataRow label="Brand" value={product.brand} />
-              <DataRow label="Category" value={product.category} />
-              <DataRow label="Package" value={product.packageLabel} />
-              <DataRow label="Source status" value={product.sourceStatus} />
-            </dl>
-          </DetailPanel>
-
-          <DetailPanel title="Ratings & Reviews" icon={Star}>
-            {product.expertReview && <ExpertReviewPanel product={product} />}
-
-            {product.reviewProfile && <ReviewProfilePanel profile={product.reviewProfile} />}
-
-            {!product.expertReview && !product.reviewProfile && <NoSourcedReviewsPanel />}
-          </DetailPanel>
-
-          <DetailPanel title="Fulfillment" icon={Truck}>
-            <ul className="grid gap-3">
-              {details.fulfillment.map((pairing) => (
-                <li key={pairing} className="flex items-center gap-3 text-sm text-yuzu-muted">
-                  <span className="size-1.5 bg-yuzu-gold" />
-                  {pairing}
-                </li>
-              ))}
-            </ul>
-          </DetailPanel>
-
-          <div className="flex min-w-0 items-start gap-3 border border-yuzu-line bg-yuzu-night p-4 text-sm leading-6 text-yuzu-muted">
-            <ShieldCheck className="mt-0.5 size-5 shrink-0 text-yuzu-gold" />
-            Adult signature and age verification are required before any order leaves the humidor.
-          </div>
+        <div className="pt-6">
+          {product.expertReview && <ExpertReviewPanel product={product} />}
+          {product.reviewProfile && <ReviewProfilePanel profile={product.reviewProfile} />}
+          {!product.expertReview && !product.reviewProfile && <NoSourcedReviewsPanel />}
         </div>
       </section>
 
       {relatedProducts.length > 0 && (
-        <section>
-          <div className="mb-4 flex items-center justify-between gap-4">
-            <h2 className="font-heading text-3xl text-yuzu-cream">Similar Items</h2>
-            <Link href="/shop" className="text-xs font-bold uppercase tracking-[0.2em] text-yuzu-gold transition hover:text-yuzu-gold-light">
+        <section aria-labelledby="related-products-title">
+          <div className="mb-5 flex items-end justify-between gap-4">
+            <div>
+              <p className="fine-label">Keep exploring</p>
+              <h2 id="related-products-title" className="mt-2 font-heading text-3xl text-yuzu-cream sm:text-4xl">
+                Similar selections
+              </h2>
+            </div>
+            <Link
+              href="/shop"
+              className="inline-flex min-h-11 items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-yuzu-gold transition hover:text-yuzu-gold-light focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yuzu-gold"
+            >
               View all
+              <ArrowRight className="size-4" />
             </Link>
           </div>
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-5 md:grid-cols-3">
             {relatedProducts.map((relatedProduct) => (
-              <ProductCard key={relatedProduct.id} product={relatedProduct} compact />
+              <RelatedProductCard key={relatedProduct.id} product={relatedProduct} />
             ))}
           </div>
         </section>
@@ -284,15 +263,110 @@ function getProduct(slug: string) {
   return getStorefrontProductBySlug(slug);
 }
 
-function Spec({ icon: Icon, label, value }: { icon: LucideIcon; label: string; value: string }) {
+function buildOverviewFacts(product: CatalogProduct): ProductFact[] {
+  if (product.assortment) {
+    return [
+      { icon: Package, label: "Pack", value: `${product.assortment.items.length} cigars` },
+      { icon: Cigarette, label: "Format", value: "60 ring · mixed lengths" },
+      { icon: Flame, label: "Strength", value: "Varied profiles" },
+    ];
+  }
+
+  const format = buildFormat(product);
+
+  return [
+    { icon: Package, label: "Pack", value: product.packageLabel },
+    format ? { icon: Cigarette, label: "Format", value: format } : null,
+    product.strength ? { icon: Flame, label: "Strength", value: product.strength } : null,
+  ].filter((fact): fact is ProductFact => Boolean(fact));
+}
+
+function buildFormat(product: CatalogProduct) {
+  const dimensions = [
+    product.length && product.length !== "Assorted" ? product.length : null,
+    product.gauge && product.gauge !== "Assorted" ? `${product.gauge} ring` : null,
+  ].filter(Boolean);
+  const size = dimensions.join(" × ");
+  const values = [product.vitola, size].filter((value) => value && value !== "Assorted");
+
+  return values.join(" · ");
+}
+
+function buildSpecificationRows(product: CatalogProduct) {
+  const rows = product.assortment
+    ? [
+        { label: "Blend & origin", value: "Varies by selection" },
+        { label: "Packaging", value: "Sealed pack" },
+      ]
+    : [
+        product.origin ? { label: "Origin", value: product.origin } : null,
+        product.wrapper ? { label: "Wrapper", value: product.wrapper } : null,
+        product.binder ? { label: "Binder", value: product.binder } : null,
+        product.filler ? { label: "Filler", value: product.filler } : null,
+      ];
+
+  return [...rows, { label: "SKU", value: product.sku }].filter((row): row is { label: string; value: string } => Boolean(row));
+}
+
+function OverviewFact({ icon: Icon, label, value }: ProductFact) {
   return (
-    <div className="flex min-w-0 items-center gap-2 border border-yuzu-line/65 bg-yuzu-night/75 p-3 md:gap-1.5 md:p-2 lg:gap-3 lg:p-4">
-      <Icon className="size-4 text-yuzu-gold md:size-3.5 lg:size-5" />
-      <div className="min-w-0">
-        <p className="text-[0.62rem] font-bold uppercase tracking-[0.12em] text-yuzu-muted md:text-[0.56rem] lg:text-[0.7rem]">{label}</p>
-        <p className="break-words font-heading text-sm text-yuzu-cream md:text-xs lg:text-lg">{value}</p>
-      </div>
+    <div className="min-w-0">
+      <dt className="flex items-center gap-2 text-[0.68rem] font-bold uppercase tracking-[0.14em] text-yuzu-muted">
+        <Icon className="size-4 shrink-0 text-yuzu-gold" />
+        {label}
+      </dt>
+      <dd className="mt-2 break-words font-heading text-lg leading-6 text-yuzu-cream">{value}</dd>
     </div>
+  );
+}
+
+function SectionHeading({ eyebrow, title }: { eyebrow: string; title: string }) {
+  return (
+    <div>
+      <p className="fine-label">{eyebrow}</p>
+      <h2 className="mt-2 font-heading text-3xl text-yuzu-cream sm:text-4xl">{title}</h2>
+    </div>
+  );
+}
+
+function AssortmentPanel({ assortment }: { assortment: NonNullable<CatalogProduct["assortment"]> }) {
+  return (
+    <section aria-labelledby="assortment-title" className="luxury-card min-w-0 p-6 sm:p-8 lg:p-10">
+      <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="fine-label">Inside the sampler</p>
+          <h2 id="assortment-title" className="mt-2 font-heading text-3xl text-yuzu-cream sm:text-4xl">
+            What&apos;s included
+          </h2>
+        </div>
+        <a
+          href={assortment.sourceUrl}
+          target="_blank"
+          rel="noreferrer"
+          aria-label={`Open sampler contents source at ${assortment.sourceName} in a new tab`}
+          className="inline-flex min-h-11 w-fit items-center gap-2 text-xs font-bold uppercase tracking-[0.14em] text-yuzu-gold transition hover:text-yuzu-gold-light focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yuzu-gold"
+        >
+          Verified by {assortment.sourceName}
+          <ExternalLink className="size-4" />
+        </a>
+      </div>
+
+      <ol className="mt-6 grid gap-px border border-yuzu-line/70 bg-yuzu-line/70 sm:grid-cols-2">
+        {assortment.items.map((item, index) => (
+          <li key={`${item.name}-${item.variant}`} className="grid grid-cols-[2.5rem_1fr] gap-4 bg-yuzu-night p-5">
+            <span aria-hidden="true" className="font-heading text-xl text-yuzu-gold">
+              {String(index + 1).padStart(2, "0")}
+            </span>
+            <div className="min-w-0">
+              <h3 className="break-words font-heading text-xl leading-7 text-yuzu-cream">{item.name}</h3>
+              <p className="mt-1 text-sm leading-6 text-yuzu-muted">
+                {item.variant} · {item.size}
+              </p>
+            </div>
+          </li>
+        ))}
+      </ol>
+    </section>
   );
 }
 
@@ -310,27 +384,23 @@ function ExpertReviewPanel({ product }: { product: NonNullable<ReturnType<typeof
   }
 
   return (
-    <div className="grid gap-4">
-      <div className="flex items-start justify-between gap-4 border border-yuzu-line bg-yuzu-night p-4">
+    <div className="grid gap-6 lg:grid-cols-[0.72fr_1.28fr] lg:items-start">
+      <div className="flex items-start justify-between gap-4 border border-yuzu-line bg-yuzu-night p-5">
         <div>
           <p className="text-xs font-bold uppercase tracking-[0.18em] text-yuzu-muted">{product.expertReview.sourceName}</p>
-          <p className="mt-1 font-heading text-5xl text-yuzu-gold">{product.expertReview.score}</p>
+          <p className="mt-2 font-heading text-6xl text-yuzu-gold" aria-label={`${product.expertReview.score} out of 100`}>
+            {product.expertReview.score}
+          </p>
         </div>
-        <a
-          href={product.expertReview.sourceUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex min-h-10 items-center gap-2 border border-yuzu-gold px-3 text-xs font-bold uppercase tracking-[0.14em] text-yuzu-gold transition hover:bg-yuzu-gold hover:text-yuzu-ink"
-        >
-          Source
-          <ExternalLink className="size-4" />
-        </a>
+        <SourceLink href={product.expertReview.sourceUrl} label={product.expertReview.sourceName} />
       </div>
-      <p className="text-sm leading-7 text-yuzu-muted">{product.expertReview.tastingSummary}</p>
-      <dl className="grid gap-4 text-sm">
-        <DataRow label="Issue" value={product.expertReview.issue} />
-        <DataRow label="Other reviews" value={formatOtherReviews(product.expertReview.otherReviews)} />
-      </dl>
+      <div className="grid gap-5">
+        <p className="text-base leading-8 text-yuzu-muted">{product.expertReview.tastingSummary}</p>
+        <dl className="grid gap-4 sm:grid-cols-2">
+          <DataRow label="Issue" value={product.expertReview.issue} />
+          <DataRow label="Other reviews" value={formatOtherReviews(product.expertReview.otherReviews)} />
+        </dl>
+      </div>
     </div>
   );
 }
@@ -341,58 +411,92 @@ function ReviewProfilePanel({ profile }: { profile: NonNullable<ReturnType<typeo
   }
 
   return (
-    <div className="grid gap-4 text-sm leading-7 text-yuzu-muted">
-      <ul className="grid gap-4">
-        {profile.sources.map((source) => (
-          <li key={source.sourceName} className="border-t border-yuzu-line/60 pt-4 first:border-t-0 first:pt-0">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-xs font-bold uppercase tracking-[0.16em] text-yuzu-gold">{source.sourceName}</p>
-                <p className="mt-1 font-heading text-lg text-yuzu-cream">{source.rating}</p>
-              </div>
-              <a
-                href={source.sourceUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex min-h-10 items-center gap-2 border border-yuzu-gold px-3 text-xs font-bold uppercase tracking-[0.14em] text-yuzu-gold transition hover:bg-yuzu-gold hover:text-yuzu-ink"
-              >
-                Source
-                <ExternalLink className="size-4" />
-              </a>
-            </div>
-          </li>
-        ))}
-      </ul>
-    </div>
+    <ul className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+      {profile.sources.map((source) => (
+        <li key={`${source.sourceName}-${source.sourceUrl}`} className="flex min-w-0 items-start justify-between gap-4 border border-yuzu-line bg-yuzu-night p-5">
+          <div className="min-w-0">
+            <p className="text-xs font-bold uppercase tracking-[0.16em] text-yuzu-gold">{source.sourceName}</p>
+            <p className="mt-2 break-words font-heading text-lg leading-7 text-yuzu-cream">{source.rating}</p>
+          </div>
+          <SourceLink href={source.sourceUrl} label={source.sourceName} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function SourceLink({ href, label }: { href: string; label: string }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      aria-label={`Open ${label} source in a new tab`}
+      className="inline-flex min-h-11 shrink-0 items-center gap-2 border border-yuzu-gold px-3 text-xs font-bold uppercase tracking-[0.12em] text-yuzu-gold transition hover:bg-yuzu-gold hover:text-yuzu-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yuzu-gold"
+    >
+      Source
+      <ExternalLink className="size-4" />
+    </a>
   );
 }
 
 function NoSourcedReviewsPanel() {
   return (
-    <div className="grid gap-3 text-sm leading-7 text-yuzu-muted">
+    <div className="flex max-w-2xl items-start gap-3 text-sm leading-7 text-yuzu-muted">
+      <Star className="mt-1 size-5 shrink-0 text-yuzu-gold" />
       <p>Verified publication or customer reviews have not been attached to this item yet.</p>
-      <p>Scores appear here only when the source clearly matches the blend and size.</p>
-    </div>
-  );
-}
-
-function DetailPanel({ title, icon: Icon, children }: { title: string; icon: LucideIcon; children: React.ReactNode }) {
-  return (
-    <div className="luxury-card min-w-0 p-5 md:p-6">
-      <div className="mb-4 flex items-center gap-3">
-        <Icon className="size-5 text-yuzu-gold" />
-        <h2 className="text-xs font-bold uppercase tracking-[0.16em] text-yuzu-gold">{title}</h2>
-      </div>
-      {children}
     </div>
   );
 }
 
 function DataRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex min-w-0 items-center justify-between gap-4 border-b border-yuzu-line/60 pb-3 last:border-b-0 last:pb-0">
-      <dt className="shrink-0 text-yuzu-muted">{label}</dt>
-      <dd className="min-w-0 break-all text-right font-heading text-lg text-yuzu-cream">{value}</dd>
+    <div className="grid min-w-0 gap-1 border-b border-yuzu-line/60 pb-4 last:border-b-0 last:pb-0 sm:grid-cols-[8rem_1fr] sm:items-start sm:gap-5">
+      <dt className="text-sm text-yuzu-muted">{label}</dt>
+      <dd className="min-w-0 break-words font-heading text-lg leading-7 text-yuzu-cream sm:text-right">{value}</dd>
     </div>
+  );
+}
+
+function RelatedProductCard({ product }: { product: CatalogProduct }) {
+  const href = `/shop/${product.slug}`;
+  const displayName = getCatalogProductDisplayName(product.name);
+
+  return (
+    <article data-related-product-card="compact" className="luxury-card min-w-0 overflow-hidden">
+      <Link href={href} className="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yuzu-gold">
+        <ReferenceImage
+          src={product.image}
+          alt={buildProductImageAlt(product)}
+          objectPosition={product.imagePosition}
+          className="h-52 border-b border-yuzu-line/70"
+          imageClassName="object-contain"
+          sizes="(max-width: 768px) 100vw, 33vw"
+        />
+      </Link>
+      <div className="grid gap-4 p-5">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-[0.16em] text-yuzu-gold">{product.brand}</p>
+          <Link href={href} className="mt-2 block font-heading text-xl leading-7 text-yuzu-cream transition hover:text-yuzu-gold">
+            {displayName}
+          </Link>
+          <p className="mt-1 text-sm text-yuzu-muted">{product.packageLabel}</p>
+        </div>
+        <div className="flex items-end justify-between gap-4 border-t border-yuzu-line/60 pt-4">
+          <ProductPrice
+            product={product}
+            priceClassName="font-heading text-2xl text-yuzu-gold"
+            captionClassName="sr-only"
+          />
+          <Link
+            href={href}
+            aria-label={`View ${displayName}`}
+            className="grid size-11 shrink-0 place-items-center border border-yuzu-line text-yuzu-gold transition hover:border-yuzu-gold hover:bg-yuzu-gold hover:text-yuzu-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yuzu-gold"
+          >
+            <ArrowRight className="size-4" />
+          </Link>
+        </div>
+      </div>
+    </article>
   );
 }

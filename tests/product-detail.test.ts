@@ -16,6 +16,7 @@ import {
 import { toMedusaProduct } from "../src/lib/commerce/medusa";
 import { importedMarketPricesBySku } from "../src/lib/imported-market-prices";
 import { importedProductDescriptions } from "../src/lib/imported-product-descriptions";
+import { buildProductPageCopy } from "../src/lib/product-page-content";
 
 const requestedSwwestLighterSkus = [
   "85318",
@@ -687,12 +688,25 @@ test("catalog products parse imported cigar details into shopper specs", () => {
   const jcNewman = catalogProducts.find((product) => product.slug === "6-x-60-sampler-jc-newman-4-bx");
 
   assert.ok(jcNewman);
-  assert.equal(jcNewman.origin, "Honduras/Nicaragua");
+  assert.equal(jcNewman.name, "J.C. Newman Sesenta Sampler");
+  assert.equal(jcNewman.brand, "J.C. Newman");
+  assert.equal(jcNewman.origin, "Varies by selection");
   assert.equal(jcNewman.wrapper, "Varies by selection");
-  assert.equal(jcNewman.vitola, "Toro Gordo");
-  assert.equal(jcNewman.length, '6"');
+  assert.equal(jcNewman.vitola, "Assorted");
+  assert.equal(jcNewman.length, "Various lengths");
   assert.equal(jcNewman.gauge, "60");
-  assert.equal(jcNewman.strength, "Medium-Full");
+  assert.equal(jcNewman.strength, "Varies by selection");
+  assert.equal(jcNewman.assortment?.sourceName, "Best Cigar Prices");
+  assert.match(jcNewman.assortment?.sourceUrl ?? "", /bestcigarprices\.com/);
+  assert.deepEqual(
+    jcNewman.assortment?.items.map((item) => [item.name, item.variant, item.size]),
+    [
+      ["Brick House Mighty Mighty", "Natural", '6¼" × 60'],
+      ["Brick House Mighty Mighty", "Maduro", '6¼" × 60'],
+      ["Perla del Mar Double Toro", "Connecticut Shade", '6" × 60'],
+      ["Perla del Mar Double Toro", "Maduro", '6" × 60'],
+    ]
+  );
 });
 
 test("catalog products expose researched cigar blend and size specs", () => {
@@ -1050,34 +1064,90 @@ test("product detail hero image is formatted as a full product shot", () => {
 test("product detail metadata rows can wrap long values on mobile", () => {
   const source = readFileSync(new URL("../src/app/shop/[slug]/page.tsx", import.meta.url), "utf8");
 
-  assert.ok(source.includes("break-all"), "long metadata values should wrap instead of widening the page");
+  assert.equal(source.includes("break-all"), false, "product metadata should not break in the middle of every word");
+  assert.ok(source.includes("break-words"), "long metadata values should wrap at word boundaries");
   assert.ok(source.includes("min-w-0"), "product detail panels should allow mobile grid items to shrink");
 });
 
-test("product cards and detail pages render icon-led cigar specs and real review panels", () => {
+test("product cards and detail pages render concise specs and real review panels", () => {
   const productCardSource = readFileSync(new URL("../src/components/product-card.tsx", import.meta.url), "utf8");
   const productPageSource = readFileSync(new URL("../src/app/shop/[slug]/page.tsx", import.meta.url), "utf8");
 
   for (const icon of ["Cigarette", "Ruler", "Gauge", "Flame"]) {
     assert.ok(productCardSource.includes(icon), `product cards should import ${icon}`);
-    assert.ok(productPageSource.includes(icon), `product detail page should import ${icon}`);
   }
 
   for (const label of ["Product", "Length", "Gauge", "Strength"]) {
     assert.ok(productCardSource.includes(label), `product cards should show ${label}`);
-    assert.ok(productPageSource.includes(label), `product detail page should show ${label}`);
   }
 
-  assert.ok(productPageSource.includes("Ratings & Reviews"), "product detail page should include review research");
+  for (const label of ["Pack", "Format", "Strength"]) {
+    assert.ok(productPageSource.includes(`label: \"${label}\"`), `product detail page should show the concise ${label} fact`);
+  }
+
+  assert.ok(productPageSource.includes("Ratings &amp; reviews"), "product detail page should include sourced reviews");
   assert.ok(productPageSource.includes("expertReview"), "product detail page should use researched review metadata");
   assert.ok(productPageSource.includes("reviewProfile"), "product detail page should render broader review snapshots");
-  assert.ok(productPageSource.includes("break-words"), "review search prompts should wrap at word boundaries");
+  assert.ok(productPageSource.includes("break-words"), "product and review details should wrap at word boundaries");
   assert.ok(productPageSource.includes("NoSourcedReviewsPanel"), "cigar detail page should render a neutral empty review state");
   assert.equal(productPageSource.includes("ReviewAuditPanel"), false, "product detail page should not render internal review-audit copy");
   assert.equal(productPageSource.includes("ReviewQueryRow"), false, "product detail page should not render research prompts");
   assert.equal(productPageSource.includes("getCatalogReviewAudit"), false, "product detail page should not source internal review audits");
   assert.equal(productPageSource.includes("Research query"), false, "product detail page should not label internal research prompts");
   assert.equal(productPageSource.includes("queued for sourced ratings"), false, "product detail page should not show workflow copy");
+});
+
+test("product detail page gives every shopper-facing fact one clear home", () => {
+  const productPageSource = readFileSync(new URL("../src/app/shop/[slug]/page.tsx", import.meta.url), "utf8");
+
+  for (const internalLabel of [
+    "Catalog Signals",
+    "Catalog Intelligence",
+    "Source status",
+    "Review details researched",
+    "SKU matched across catalog and inventory",
+  ]) {
+    assert.equal(productPageSource.includes(internalLabel), false, `${internalLabel} should stay out of the customer page`);
+  }
+
+  assert.equal(productPageSource.match(/label: \"SKU\"/g)?.length, 1, "SKU should render in one details row");
+  assert.equal(productPageSource.match(/product\.availability/g)?.length, 1, "availability should render once");
+  assert.ok(productPageSource.includes('data-product-page-layout="editorial"'));
+  assert.ok(productPageSource.includes('data-related-product-card="compact"'));
+  assert.ok(productPageSource.includes("h-12 w-full"), "primary purchase action should be at least 48px high");
+  assert.ok(productPageSource.includes("max-lg:pr-12"), "mobile and tablet purchase content should reserve the concierge corner");
+  assert.ok(productPageSource.includes("lg:grid-cols-[1.04fr_0.96fr]"), "the split hero should start after tablet widths");
+  assert.ok(productPageSource.includes("Inside the sampler"), "modeled sampler contents should have a dedicated section");
+  assert.equal(productPageSource.includes("Why it belongs in your humidor"), false, "accessories should not receive cigar-storage copy");
+});
+
+test("product page copy separates the lead from the story and removes appended spec prose", () => {
+  const sampler = catalogProducts.find((product) => product.slug === "6-x-60-sampler-jc-newman-4-bx");
+
+  assert.ok(sampler);
+  const copy = buildProductPageCopy(getCatalogProductDetails(sampler).summary, sampler.sku);
+
+  assert.match(copy.lead, /J\.C\. Newman/i);
+  assert.ok(copy.story.length > 0);
+  assert.equal(copy.story.startsWith(copy.lead), false);
+  assert.equal(copy.narrative, `${copy.lead} ${copy.story}`);
+  assert.doesNotMatch(copy.narrative, /6\s*[x×]\s*60|60[- ]ring/i);
+  assert.doesNotMatch(`${copy.lead} ${copy.story}`, /Country of Origin:|Wrapper:|Shape:|Profile:/i);
+  assert.ok(copy.metaDescription.length <= 158);
+  assert.ok(copy.metaDescription.endsWith("…"));
+});
+
+test("all product narratives stay shopper-facing and free of catalog operations language", () => {
+  const operationalCopyPattern =
+    /\b(?:SKU|inventory|storefront|catalog|fulfillment|reconcil(?:e|es|ed|ing|iation))\b|source reference/i;
+
+  for (const product of storefrontProducts) {
+    const summary = getCatalogProductDetails(product).summary;
+    const narrative = buildProductPageCopy(summary, product.sku).narrative;
+
+    assert.doesNotMatch(narrative, operationalCopyPattern, `${product.slug} should have shopper-facing page copy`);
+    assert.doesNotMatch(summary, operationalCopyPattern, `${product.slug} should have shopper-facing listing copy`);
+  }
 });
 
 test("product detail structured data omits aggregate ratings unless a real review aggregate is modeled", () => {

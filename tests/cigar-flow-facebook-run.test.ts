@@ -167,6 +167,54 @@ test("cigar flow Facebook runner defaults to today's story instead of reposting 
   }
 });
 
+test("cigar flow Facebook runner never selects a wrong-year story from a misleading dated slug", async () => {
+  const outputRoot = await mkdtemp(join(tmpdir(), "ycc-cigar-flow-wrong-year-"));
+  const server = createServer(async (request, response) => {
+    if (request.method === "GET" && request.url === "/news/stories?limit=12") {
+      return sendJson(response, {
+        stories: [
+          {
+            id: "story-wrong-year",
+            slug: "daily-cigar-flow-2026-06-10-republished-old-story",
+            title: "Cigar Industry Update: June 10, 2025",
+            dek: "An older story whose slug must not override its publication timestamp.",
+            category: "Cigar Industry News",
+            bodyMarkdown: "## Old update\nThis record was published in the prior year.",
+            images: [],
+            sourceNotes: [],
+            officialSources: [],
+            status: "published",
+            publishedAt: "2025-06-10T16:17:21.403Z",
+          },
+        ],
+      });
+    }
+
+    response.writeHead(404);
+    response.end();
+  });
+
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+
+    await assert.rejects(
+      runCigarFlowFacebookSocial({
+        apiBaseUrl: serverUrl(server, ""),
+        targetDate: "2026-06-10",
+        outputDir: outputRoot,
+        publishPage: false,
+        dryRun: true,
+      }),
+      /No published story matched date 2026-06-10/,
+    );
+  } finally {
+    server.close();
+    await once(server, "close").catch(() => undefined);
+    await rm(outputRoot, { recursive: true, force: true });
+  }
+});
+
 test("fresh Cigar Flow image search does not use cached research images by default", async () => {
   const outputRoot = await mkdtemp(join(tmpdir(), "ycc-cigar-flow-fresh-images-"));
   const imageBytes = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(15_000, 3)]);
@@ -218,6 +266,56 @@ test("fresh Cigar Flow image search does not use cached research images by defau
     assert.equal(images[0].status, "downloaded");
     assert.match(images[0].sourcePageUrl, /\/oliva-signal$/);
     assert.doesNotMatch(images[0].imageUrl, /public\/assets\/news\/researched/);
+  } finally {
+    server.close();
+    await once(server, "close").catch(() => undefined);
+    await rm(outputRoot, { recursive: true, force: true });
+  }
+});
+
+test("Cigar Flow image search deduplicates identical bytes without deleting the selected file", async () => {
+  const outputRoot = await mkdtemp(join(tmpdir(), "ycc-cigar-flow-image-content-dedupe-"));
+  const imageBytes = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(15_000, 9)]);
+  const server = createServer(async (request, response) => {
+    if (request.method === "GET" && (request.url === "/images/duplicate-a.jpg" || request.url === "/images/duplicate-b.jpg")) {
+      response.writeHead(200, { "content-type": "image/jpeg" });
+      response.end(imageBytes);
+      return;
+    }
+
+    response.writeHead(404);
+    response.end();
+  });
+
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+
+    const images = await findRelatedImagesForStory(
+      {
+        slug: "duplicate-image-bytes",
+        title: "Duplicate image byte guard",
+        dek: "Two URLs return the same approved product image.",
+        category: "Cigar Industry News",
+        bodyMarkdown: "## Product image\nOnly one copy should be selected.",
+        images: [
+          { label: "Approved product", image: serverUrl(server, "/images/duplicate-a.jpg") },
+          { label: "Approved product", image: serverUrl(server, "/images/duplicate-b.jpg") },
+        ],
+        sourceNotes: [],
+        officialSources: [],
+        status: "published",
+        publishedAt: "2026-06-10T16:17:21.403Z",
+        updatedAt: "2026-06-10T16:17:21.403Z",
+      },
+      outputRoot,
+      2,
+    );
+
+    assert.equal(images.length, 1);
+    assert.ok(images[0].contentHash, "selected image should retain its byte-level fingerprint");
+    assert.ok(images[0].localPath, "selected image should have a local upload path");
+    assert.deepEqual(await readFile(images[0].localPath!), imageBytes, "dedupe must not delete the already-selected shared path");
   } finally {
     server.close();
     await once(server, "close").catch(() => undefined);
@@ -417,6 +515,110 @@ test("Facebook Page album publisher uploads photos before creating the feed post
       calls.map((call) => `${call.method} ${call.url.split("?")[0]}`),
       ["POST /v25.0/page-123/photos", "POST /v25.0/page-123/feed", "GET /v25.0/page-123_post-456"],
     );
+  } finally {
+    server.close();
+    await once(server, "close").catch(() => undefined);
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("Facebook Page album publisher retains the accepted post ID when readback fails", async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ycc-fb-page-readback-pending-"));
+  const imagePath = join(tempDir, "image.jpg");
+  await writeFile(imagePath, Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(15_000, 5)]));
+
+  const calls: string[] = [];
+  const server = createServer(async (request, response) => {
+    calls.push(`${request.method || "GET"} ${request.url?.split("?")[0] || ""}`);
+
+    if (request.method === "POST" && request.url === "/v25.0/page-123/photos") {
+      await readBody(request);
+      return sendJson(response, { id: "photo-1", post_id: null });
+    }
+
+    if (request.method === "POST" && request.url === "/v25.0/page-123/feed") {
+      await readBody(request);
+      return sendJson(response, { id: "page-123_post-accepted" });
+    }
+
+    if (request.method === "GET" && request.url?.startsWith("/v25.0/page-123_post-accepted")) {
+      response.writeHead(503, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: { message: "Readback temporarily unavailable" } }));
+      return;
+    }
+
+    response.writeHead(404);
+    response.end();
+  });
+
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+
+    const result = await publishFacebookPageAlbum({
+      caption: "Cigar Flow | Daily update\n\nAdult 21+ only.",
+      imagePaths: [imagePath],
+      credentials: {
+        pageId: "page-123",
+        pageAccessToken: "test-token",
+        graphVersion: "v25.0",
+      },
+      graphBaseUrl: serverUrl(server, ""),
+    });
+
+    assert.equal(result.status, "published");
+    assert.equal(result.postId, "page-123_post-accepted");
+    assert.equal(result.permalinkUrl, undefined);
+    assert.match(result.reason ?? "", /accepted post page-123_post-accepted.*readback is pending/i);
+    assert.deepEqual(calls, [
+      "POST /v25.0/page-123/photos",
+      "POST /v25.0/page-123/feed",
+      "GET /v25.0/page-123_post-accepted",
+    ]);
+  } finally {
+    server.close();
+    await once(server, "close").catch(() => undefined);
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("Facebook Page album publisher performs a final remote duplicate check after uploads", async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), "ycc-fb-page-final-preflight-"));
+  const imagePath = join(tempDir, "image.jpg");
+  const caption = "Cigar Flow | Daily update\n\nAdult 21+ only.";
+  await writeFile(imagePath, Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(15_000, 6)]));
+
+  const calls: string[] = [];
+  const server = createServer(async (request, response) => {
+    calls.push(`${request.method || "GET"} ${request.url?.split("?")[0] || ""}`);
+    if (request.method === "POST" && request.url === "/v25.0/page-123/photos") {
+      await readBody(request);
+      return sendJson(response, { id: "orphaned-unpublished-photo", post_id: null });
+    }
+    if (request.method === "GET" && request.url?.startsWith("/v25.0/page-123/feed")) {
+      return sendJson(response, {
+        data: [{ id: "page-123_existing", permalink_url: "https://www.facebook.com/example/posts/existing", message: caption }],
+      });
+    }
+    response.writeHead(500);
+    response.end("unexpected feed mutation");
+  });
+
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+
+    const result = await publishFacebookPageAlbum({
+      caption,
+      imagePaths: [imagePath],
+      credentials: { pageId: "page-123", pageAccessToken: "test-token", graphVersion: "v25.0" },
+      graphBaseUrl: serverUrl(server, ""),
+      verifyNoExistingPost: true,
+    });
+
+    assert.equal(result.status, "skipped_existing");
+    assert.equal(result.postId, "page-123_existing");
+    assert.deepEqual(calls, ["POST /v25.0/page-123/photos", "GET /v25.0/page-123/feed"]);
   } finally {
     server.close();
     await once(server, "close").catch(() => undefined);

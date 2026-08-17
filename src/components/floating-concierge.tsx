@@ -2,7 +2,7 @@
 
 import Link from "@/components/static-link";
 import { AnimatePresence, motion } from "framer-motion";
-import { LoaderCircle, MessageCircle, Mic, Send, Volume2, VolumeX, X } from "lucide-react";
+import { ExternalLink, LoaderCircle, MessageCircle, Mic, Send, Volume2, VolumeX, X } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { FormEvent, useEffect, useRef, useState } from "react";
 
@@ -13,6 +13,7 @@ import {
   getLiveApiErrorMessage,
   sendConciergeChat,
   sendConciergeVoiceMessage,
+  type AiSource,
   type ConciergeChatResponse,
   type ConciergeSpeechOutput,
   type ConciergeVoiceResponse,
@@ -325,6 +326,7 @@ export function FloatingConcierge() {
   const canSendText = Boolean(message.trim()) && !isSending && !isRecording;
   const speech = response?.voice?.speech ?? null;
   const replyBlocks = response ? formatConciergeReply(response.reply) : [];
+  const citations = response ? normalizeConciergeCitations([...(response.citations || []), ...(response.ai.sources || [])]) : [];
   const isLiveReady = canUseLiveConcierge(auth.authSource);
   const isCartRoute = pathname.startsWith("/cart");
 
@@ -437,6 +439,25 @@ export function FloatingConcierge() {
                       )
                     )}
                   </div>
+                  {citations.length ? (
+                    <div className="grid gap-2 border-t border-yuzu-line/60 pt-3 text-xs text-yuzu-muted">
+                      <p className="font-bold uppercase tracking-[0.14em] text-yuzu-gold">Sources</p>
+                      <ul className="grid gap-2">
+                        {citations.map((citation, index) => (
+                          <li key={`${citation.url || citation.title}-${index}`}>
+                            {citation.url ? (
+                              <a className="inline-flex items-start gap-1 text-yuzu-cream underline decoration-yuzu-gold/50 underline-offset-4 hover:text-yuzu-gold" href={citation.url} rel="noopener noreferrer" target="_blank">
+                                <span>{citation.title}</span>
+                                <ExternalLink className="mt-0.5 size-3 shrink-0" aria-hidden="true" />
+                              </a>
+                            ) : (
+                              <span className="text-yuzu-cream">{citation.title}</span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
                   {speech?.audioBase64 ? (
                     <Button className="w-fit border-yuzu-line text-yuzu-cream" size="sm" type="button" variant="outline" onClick={() => playSpeech(speech)}>
                       <Volume2 data-icon="inline-start" />
@@ -658,6 +679,49 @@ function cleanConciergeText(value: string) {
     .replace(/\s+/g, " ")
     .replace(/\s+([.,;:!?])/g, "$1")
     .trim();
+}
+
+function normalizeConciergeCitations(sources: AiSource[]) {
+  const citations: Array<{ title: string; url?: string }> = [];
+  const seen = new Set<string>();
+
+  for (const source of sources) {
+    const rawReference = String(source.url || source.uri || "").trim().slice(0, 2048);
+    let safeUrl = "";
+
+    if (rawReference) {
+      try {
+        const parsed = new URL(rawReference);
+        if (parsed.protocol === "https:" || parsed.protocol === "http:") {
+          safeUrl = parsed.href;
+        }
+      } catch {
+        safeUrl = "";
+      }
+    }
+
+    const plainIdentifier = safeUrl ? "" : getSafeConciergeSourceIdentifier(rawReference);
+    const hostname = safeUrl ? new URL(safeUrl).hostname.replace(/^www\./, "") : "";
+    const title = String(source.title || source.label || source.domain || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 160) || hostname || plainIdentifier || String(source.sourceType || "").trim().slice(0, 80);
+    const dedupeKey = safeUrl || title.toLowerCase();
+
+    if (!title || !dedupeKey || seen.has(dedupeKey)) {
+      continue;
+    }
+
+    seen.add(dedupeKey);
+    citations.push({ title, ...(safeUrl ? { url: safeUrl } : {}) });
+  }
+
+  return citations.slice(0, 8);
+}
+
+function getSafeConciergeSourceIdentifier(value: string) {
+  const candidate = value.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 180);
+  return /^(?:s3|kb|bedrock|urn):/i.test(candidate) ? candidate : "";
 }
 
 function formatStatusLabel(value: string) {

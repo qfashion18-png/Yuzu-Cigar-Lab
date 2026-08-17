@@ -94,6 +94,11 @@ test("public chrome owns the always-on concierge and its voice controls", () => 
   assert.equal(floatingConciergeSource.includes("setMode"), false, "the widget should not maintain a manually selected specialist mode");
   assert.equal(floatingConciergeSource.includes("agent: mode"), false, "the widget should let the backend Lex router choose the agent");
   assert.equal(floatingConciergeSource.includes("cigar_guide"), false, "cigar guide should not be exposed as a UI mode");
+  assert.ok(floatingConciergeSource.includes("response.citations"), "concierge should display top-level grounded citations when returned");
+  assert.ok(floatingConciergeSource.includes("response.ai.sources"), "concierge should also display AI source metadata");
+  assert.ok(floatingConciergeSource.includes('parsed.protocol === "https:" || parsed.protocol === "http:"'), "only HTTP(S) citations should become clickable links");
+  assert.ok(floatingConciergeSource.includes('rel="noopener noreferrer"'), "external citation links should isolate the opened page");
+  assert.ok(floatingConciergeSource.includes("getSafeConciergeSourceIdentifier"), "KB and S3 provenance should render as inert labels instead of links");
   assert.equal(packageSource.includes("amazon-chime-sdk"), false, "speech input/output should not depend on Amazon Chime SDK");
 });
 
@@ -589,6 +594,51 @@ test("live API client sends authenticated cigar image identification requests", 
       imageBase64: "ZmFrZS1pbWFnZQ==",
       mimeType: "image/jpeg",
       notes: "band closeup",
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousApiBase === undefined) {
+      delete process.env.NEXT_PUBLIC_YCC_API_BASE_URL;
+    } else {
+      process.env.NEXT_PUBLIC_YCC_API_BASE_URL = previousApiBase;
+    }
+  }
+});
+
+test("live API client sends up to four labeled cigar evidence views", async () => {
+  const originalFetch = globalThis.fetch;
+  const previousApiBase = process.env.NEXT_PUBLIC_YCC_API_BASE_URL;
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+
+  process.env.NEXT_PUBLIC_YCC_API_BASE_URL = "https://api.yuzucigarclub.test/";
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  try {
+    await identifyCigarFromImage(
+      {
+        images: [
+          { imageBase64: "ZnJvbnQtYmFuZA==", mimeType: "image/jpeg", fileName: "front.jpg", role: "band_front" },
+          { imageBase64: "Ym94LWxhYmVs", mimeType: "image/webp", fileName: "box.webp", role: "box_label" },
+        ],
+        notes: "Gold secondary band and 6 x 52 box label",
+      },
+      { Authorization: "Bearer member-token" },
+    );
+
+    assert.equal(calls[0].url, "https://api.yuzucigarclub.test/humidor/identify-cigar");
+    assert.equal(calls[0].init?.method, "POST");
+    assert.deepEqual(JSON.parse(String(calls[0].init?.body)), {
+      images: [
+        { imageBase64: "ZnJvbnQtYmFuZA==", mimeType: "image/jpeg", fileName: "front.jpg", role: "band_front" },
+        { imageBase64: "Ym94LWxhYmVs", mimeType: "image/webp", fileName: "box.webp", role: "box_label" },
+      ],
+      notes: "Gold secondary band and 6 x 52 box label",
     });
   } finally {
     globalThis.fetch = originalFetch;

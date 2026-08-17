@@ -1,0 +1,104 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: YCC Google Calendar event synchronization schedule, retry policy, and dead-letter queue.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: prod
+    AllowedPattern: "^[a-z0-9-]+$"
+  ExistingLambdaLiveAliasArn:
+    Type: String
+    Default: arn:aws:lambda:us-east-1:374587466106:function:ycyyy:live
+    Description: ARN of the existing YCC API Lambda live alias invoked by the schedule.
+  ScheduleState:
+    Type: String
+    Default: DISABLED
+    AllowedValues:
+      - ENABLED
+      - DISABLED
+    Description: Enable only after the Google Calendar credential secret and Lambda environment are configured.
+
+Resources:
+  EventsSyncScheduleGroup:
+    Type: AWS::Scheduler::ScheduleGroup
+    Properties:
+      Name: !Sub ${AWS::StackName}-events-sync
+      Tags:
+        - Key: Application
+          Value: ycc
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  EventsSyncDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub ${AWS::StackName}-dlq
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+      Tags:
+        - Key: Application
+          Value: ycc
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  EventsSyncSchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+                aws:SourceArn: !GetAtt EventsSyncScheduleGroup.Arn
+      Policies:
+        - PolicyName: InvokeEventsSyncTarget
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !Ref ExistingLambdaLiveAliasArn
+              - Effect: Allow
+                Action: sqs:SendMessage
+                Resource: !GetAtt EventsSyncDeadLetterQueue.Arn
+      Tags:
+        - Key: Application
+          Value: ycc
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  GoogleCalendarEventsSyncSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: !Sub ${AWS::StackName}-google-calendar
+      Description: Synchronizes the trusted YCC Google Calendar into the event feed every 15 minutes.
+      GroupName: !Ref EventsSyncScheduleGroup
+      FlexibleTimeWindow:
+        Mode: "OFF"
+      ScheduleExpression: rate(15 minutes)
+      State: !Ref ScheduleState
+      Target:
+        Arn: !Ref ExistingLambdaLiveAliasArn
+        RoleArn: !GetAtt EventsSyncSchedulerRole.Arn
+        Input: '{"source":"ycc.events.sync","detail-type":"YCC Google Calendar Sync","action":"sync-google-calendar","provider":"google_calendar"}'
+        RetryPolicy:
+          MaximumEventAgeInSeconds: 3600
+          MaximumRetryAttempts: 3
+        DeadLetterConfig:
+          Arn: !GetAtt EventsSyncDeadLetterQueue.Arn
+
+Outputs:
+  ScheduleName:
+    Description: Name of the 15-minute Google Calendar synchronization schedule.
+    Value: !Ref GoogleCalendarEventsSyncSchedule
+  DeadLetterQueueArn:
+    Description: ARN of the queue receiving exhausted scheduler invocations.
+    Value: !GetAtt EventsSyncDeadLetterQueue.Arn
+  TargetLambdaArn:
+    Description: Existing Lambda live alias invoked by the scheduler.
+    Value: !Ref ExistingLambdaLiveAliasArn

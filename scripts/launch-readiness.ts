@@ -81,14 +81,18 @@ const placeholderPatterns = [
 const disallowedZipEntryPatterns = [/\\/u, /^out\//u, /^\.next\//u, /^node_modules\//u, /^output\//u, /^\.git\//u];
 const requiredLambdaZipEntries = [
   "index.js",
+  "event-sync.js",
   "commerce-rules.js",
   "stripe-commerce.js",
   "global-bundle.pem",
+  "cigar-news-sources.json",
   "migrations/0001_phase3_app_schema.sql",
   "migrations/0002_commerce_schema.sql",
   "migrations/0003_site_content_schema.sql",
   "migrations/0004_newsroom_schema.sql",
   "migrations/0005_member_stripe_customer_link.sql",
+  "migrations/0006_events_schema.sql",
+  "migrations/0007_newsroom_dedup.sql",
 ];
 const disallowedLambdaZipEntryPatterns = [/\\/u, /^out\//u, /^\.next\//u, /^output\//u, /^\.git\//u, /^infra\//u, /^src\//u];
 

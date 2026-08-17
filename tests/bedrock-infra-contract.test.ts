@@ -9,7 +9,21 @@ const knowledgeBaseArn = `arn:aws:bedrock:${region}:${accountId}:knowledge-base/
 const guardrailArn = `arn:aws:bedrock:${region}:${accountId}:guardrail/xczjnv3f1wzs`;
 const novaLiteModelArn = `arn:aws:bedrock:${region}::foundation-model/amazon.nova-lite-v1:0`;
 const novaMicroModelArn = `arn:aws:bedrock:${region}::foundation-model/amazon.nova-micro-v1:0`;
+const nova2LiteModelArn = `arn:aws:bedrock:${region}::foundation-model/amazon.nova-2-lite-v1:0`;
+const nova2LiteInferenceProfileArn =
+  `arn:aws:bedrock:${region}:${accountId}:inference-profile/us.amazon.nova-2-lite-v1:0`;
+const nova2LiteDestinationModelArns = [
+  `arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-2-lite-v1:0`,
+  `arn:aws:bedrock:us-east-2::foundation-model/amazon.nova-2-lite-v1:0`,
+  `arn:aws:bedrock:us-west-2::foundation-model/amazon.nova-2-lite-v1:0`,
+];
+const nova2MultimodalEmbeddingArn =
+  `arn:aws:bedrock:${region}::foundation-model/amazon.nova-2-multimodal-embeddings-v1:0`;
+const cohereRerankArn = `arn:aws:bedrock:${region}::foundation-model/cohere.rerank-v3-5:0`;
+const novaGroundingSystemToolArn = `arn:aws:bedrock::${accountId}:system-tool/amazon.nova_grounding`;
 const lexBotAliasWildcardArn = `arn:aws:lex:${region}:${accountId}:bot-alias/*/*`;
+const emailProviderSecretArn =
+  `arn:aws:secretsmanager:${region}:${accountId}:secret:ycc/email/godaddy-m365-smtp/prod-*`;
 const productionAgentArns = [
   `arn:aws:bedrock:${region}:${accountId}:agent/NDIEDXNZAV`,
   `arn:aws:bedrock:${region}:${accountId}:agent/EJI2VA7AVF`,
@@ -40,6 +54,26 @@ function statementsForAction(policy: unknown, actionName: string) {
 
 function resources(statement: Record<string, unknown>) {
   return Array.isArray(statement.Resource) ? statement.Resource : [statement.Resource];
+}
+
+function assertNova2LiteInferenceProfileAccess(policy: unknown, policyLabel: string) {
+  for (const actionName of ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"]) {
+    const statements = statementsForAction(policy, actionName);
+    assert.ok(
+      statements.some((statement) => resources(statement).includes(nova2LiteInferenceProfileArn)),
+      `${policyLabel} ${actionName} should allow the us.amazon.nova-2-lite-v1:0 inference profile`,
+    );
+    assert.ok(
+      statements.some((statement) => {
+        const condition = statement.Condition as { StringEquals?: Record<string, unknown> } | undefined;
+        return (
+          nova2LiteDestinationModelArns.every((modelArn) => resources(statement).includes(modelArn)) &&
+          condition?.StringEquals?.["bedrock:InferenceProfileArn"] === nova2LiteInferenceProfileArn
+        );
+      }),
+      `${policyLabel} ${actionName} destinations should require the Nova 2 Lite inference-profile ARN`,
+    );
+  }
 }
 
 test("Lambda runtime policy allows explicit YCC knowledge base retrieval", () => {
@@ -97,6 +131,16 @@ test("Lambda runtime policy allows transactional SNS SMS owner alerts", () => {
   );
 });
 
+test("Lambda runtime policy preserves the production support email secret permission", () => {
+  const policy = readJson("infra/ycc-phase2-lambda-runtime-policy.json");
+  for (const action of ["secretsmanager:DescribeSecret", "secretsmanager:GetSecretValue"]) {
+    assert.ok(
+      statementsForAction(policy, action).some((statement) => resources(statement).includes(emailProviderSecretArn)),
+      `${action} should preserve access to the production support email secret`,
+    );
+  }
+});
+
 test("Bedrock Agent Runtime endpoint policy allows Lambda to invoke aliases and retrieve KB context", () => {
   const policy = readJson("infra/ycc-phase45-bedrock-agent-runtime-vpce-policy.json");
   const invokeAgentStatements = statementsForAction(policy, "bedrock:InvokeAgent");
@@ -129,15 +173,56 @@ test("Bedrock Runtime endpoint policy is least privilege for Lambda models and g
 
   assert.ok(invokeStatements.some((statement) => resources(statement).includes(novaLiteModelArn)));
   assert.ok(invokeStatements.some((statement) => resources(statement).includes(novaMicroModelArn)));
+  assert.ok(invokeStatements.some((statement) => resources(statement).includes(nova2LiteModelArn)));
   assert.ok(guardrailStatements.some((statement) => resources(statement).includes(guardrailArn)));
+  assertNova2LiteInferenceProfileAccess(policy, "Bedrock Runtime VPCE policy");
 });
 
 test("Bedrock direct Runtime guardrails are enabled by default in environment examples", () => {
   const envExample = readText(".env.example");
 
   assert.match(envExample, /^BEDROCK_ENABLE_GUARDRAILS=1$/m);
+  assert.match(envExample, /^BEDROCK_MODEL_ID=us\.amazon\.nova-2-lite-v1:0$/m);
+  assert.match(envExample, /^BEDROCK_VISION_MODEL_ID=us\.amazon\.nova-2-lite-v1:0$/m);
+  assert.match(envExample, /^BEDROCK_CIGAR_IMAGE_KNOWLEDGE_BASE_ID=$/m);
+  assert.match(envExample, /^BEDROCK_KNOWLEDGE_BASE_SEARCH_TYPE=SEMANTIC$/m);
   assert.match(envExample, /^FEATURE_LEX_ROUTER=pending_bot$/m);
   assert.match(envExample, /^LEX_ROUTER_LOCALE_ID=en_US$/m);
+});
+
+test("Bedrock runtime and KB policies cover Nova 2 vision, multimodal retrieval, and optional reranking", () => {
+  const runtimePolicy = readJson("infra/ycc-phase2-lambda-runtime-policy.json");
+  const runtimeInvocations = statementsForAction(runtimePolicy, "bedrock:InvokeModel");
+  assert.ok(runtimeInvocations.some((statement) => resources(statement).includes(nova2LiteModelArn)));
+  assertNova2LiteInferenceProfileAccess(runtimePolicy, "Lambda IAM runtime policy");
+
+  const kbPolicy = readJson("infra/ycc-phase45-kb-service-policy.json");
+  const kbInvocations = statementsForAction(kbPolicy, "bedrock:InvokeModel");
+  const rerankStatements = statementsForAction(kbPolicy, "bedrock:Rerank");
+  assert.ok(kbInvocations.some((statement) => resources(statement).includes(nova2MultimodalEmbeddingArn)));
+  assert.ok(kbInvocations.some((statement) => resources(statement).includes(cohereRerankArn)));
+  assert.ok(rerankStatements.some((statement) => resources(statement).includes("*")));
+});
+
+test("Lambda IAM and Bedrock Runtime endpoint policies allow only the Nova grounding system tool", () => {
+  const policies = [
+    ["Lambda IAM runtime policy", readJson("infra/ycc-phase2-lambda-runtime-policy.json")],
+    ["Bedrock Runtime VPCE policy", readJson("infra/ycc-phase45-bedrock-runtime-vpce-policy.json")],
+  ] as const;
+
+  for (const [policyLabel, policy] of policies) {
+    const invokeToolStatements = statementsForAction(policy, "bedrock:InvokeTool");
+    assert.ok(invokeToolStatements.length > 0, `${policyLabel} should allow Bedrock system-tool invocation`);
+    assert.ok(
+      invokeToolStatements.some((statement) => resources(statement).includes(novaGroundingSystemToolArn)),
+      `${policyLabel} should scope InvokeTool to amazon.nova_grounding`,
+    );
+    assert.deepEqual(
+      [...new Set(invokeToolStatements.flatMap((statement) => resources(statement)))],
+      [novaGroundingSystemToolArn],
+      `${policyLabel} must not grant access to any other Bedrock system tool`,
+    );
+  }
 });
 
 test("operator prepare-agent policy covers all production YCC Bedrock agents", () => {
@@ -160,13 +245,36 @@ test("Bedrock Runtime endpoint setup applies the least-privilege endpoint policy
   assert.match(script, /--policy-document/);
 });
 
-test("Bedrock endpoint policy apply script covers Runtime and Agent Runtime endpoints", () => {
+test("AI endpoint policy apply script discovers Runtime, Agent Runtime, and Rekognition endpoints", () => {
   const script = readText("scripts/apply-ycc-bedrock-vpce-policies.ps1");
 
-  assert.match(script, /vpce-08ceae2011933db0e/);
+  assert.match(script, /describe-vpc-endpoints/);
+  assert.match(script, /com\.amazonaws\.\$Region\.bedrock-runtime/);
   assert.match(script, /ycc-phase45-bedrock-runtime-vpce-policy\.json/);
-  assert.match(script, /vpce-0eaf893d65f8ec9f5/);
+  assert.match(script, /com\.amazonaws\.\$Region\.bedrock-agent-runtime/);
   assert.match(script, /ycc-phase45-bedrock-agent-runtime-vpce-policy\.json/);
+  assert.match(script, /com\.amazonaws\.\$Region\.rekognition/);
+  assert.match(script, /ycc-phase45-rekognition-vpce-policy\.json/);
   assert.match(script, /modify-vpc-endpoint/);
   assert.match(script, /--policy-document/);
+});
+
+test("Rekognition endpoint policy only permits YCC Lambda cigar image analysis", () => {
+  const policy = readJson("infra/ycc-phase45-rekognition-vpce-policy.json");
+  for (const action of ["rekognition:DetectText", "rekognition:DetectLabels"]) {
+    const statements = statementsForAction(policy, action);
+    assert.equal(statements.length, 1);
+    assert.deepEqual(statements[0].Principal, { AWS: lambdaRoleArn });
+    assert.deepEqual(resources(statements[0]), ["*"]);
+  }
+});
+
+test("phase 2 permissions helper merges Lambda environment with a revision guard", () => {
+  const script = readText("scripts/apply-ycc-phase2-permissions.ps1");
+
+  assert.match(script, /get-function-configuration/);
+  assert.match(script, /Environment\.Variables\.PSObject\.Properties/);
+  assert.match(script, /--revision-id/);
+  assert.doesNotMatch(script, /\"FEATURE_BEDROCK\":\s*\"pending_agent\"/);
+  assert.doesNotMatch(script, /\"DB_SECRET_ARN\"\s*:/);
 });

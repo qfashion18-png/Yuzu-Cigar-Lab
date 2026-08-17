@@ -1,6 +1,6 @@
 import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
-import { copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { basename, extname, join, resolve } from "node:path";
+import { copyFile, mkdir, open, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { basename, dirname, extname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createHash } from "node:crypto";
 
@@ -31,6 +31,8 @@ type NewsStory = {
   images?: NewsStoryImage[];
   sourceNotes?: NewsSourceNote[];
   officialSources?: string[];
+  contentFingerprint?: string | null;
+  sourceFingerprint?: string | null;
   status?: string;
   publishedAt?: string | null;
   updatedAt?: string | null;
@@ -67,6 +69,7 @@ export type ImageSearchCandidate = {
   status: "candidate" | "downloaded" | "skipped" | "failed";
   statusReason?: string;
   localPath?: string;
+  contentHash?: string;
 };
 
 type FacebookCredentials = {
@@ -139,11 +142,15 @@ type GraphReadbackResponse = {
   status_type?: string;
 };
 
+type GraphPageFeedResponse = {
+  data?: Array<{ id?: string; permalink_url?: string; message?: string }>;
+  error?: unknown;
+};
+
 const defaultOutputRoot = "output/social";
 const defaultGraphVersion = "v25.0";
 const adultComplianceClose =
   "Adults 21+ only. Editorial education and culture coverage.";
-let insecureTlsRetryEnabled = process.env.NODE_TLS_REJECT_UNAUTHORIZED === "0";
 
 const blockedCaptionPatterns = [
   /\bbuy\b/i,
@@ -214,6 +221,7 @@ export async function runCigarFlowFacebookSocial(options: Partial<CigarFlowFaceb
   await mkdir(normalizedOptions.outputDir, { recursive: true });
 
   const story = await fetchTargetStory(normalizedOptions);
+  const socialKey = buildFacebookSocialKey(story);
   const storyOutputDir = resolveOutputDir(normalizedOptions.outputDir, story, normalizedOptions.targetDate);
   await mkdir(storyOutputDir, { recursive: true });
 
@@ -237,13 +245,23 @@ export async function runCigarFlowFacebookSocial(options: Partial<CigarFlowFaceb
   const manifestPath = join(storyOutputDir, "cigar-flow-facebook-social-manifest.json");
 
   let pagePost: FacebookPagePostResult | undefined;
+  let pagePublishError: Error | null = null;
   if (normalizedOptions.publishPage) {
     try {
-      pagePost = await maybePublishPagePost(storyOutputDir, caption, selectedImages, normalizedOptions);
+      pagePost = await maybePublishPagePost(
+        story,
+        socialKey,
+        normalizedOptions.outputDir,
+        storyOutputDir,
+        caption,
+        selectedImages,
+        normalizedOptions,
+      );
     } catch (error) {
+      pagePublishError = error instanceof Error ? error : new Error("Page publish step failed before a post could be created.");
       pagePost = {
         status: "no_action",
-        reason: error instanceof Error ? error.message : "Page publish step failed before a post could be created.",
+        reason: pagePublishError.message,
       };
     }
   } else {
@@ -274,6 +292,8 @@ export async function runCigarFlowFacebookSocial(options: Partial<CigarFlowFaceb
     JSON.stringify(
       {
         generated_at: new Date().toISOString(),
+        social_key: socialKey,
+        caption_fingerprint: fingerprintText(caption),
         story: summarizeStory(story),
         caption_file: captionPath,
         image_search_file: imageSearchPath,
@@ -287,6 +307,10 @@ export async function runCigarFlowFacebookSocial(options: Partial<CigarFlowFaceb
     ),
     "utf8",
   );
+
+  if (pagePublishError) {
+    throw pagePublishError;
+  }
 
   return result;
 }
@@ -341,7 +365,7 @@ async function fetchTargetStory(options: CigarFlowFacebookOptions) {
   }
 
   const payload = (await response.json()) as PublishedNewsStoriesResponse;
-  const stories = Array.isArray(payload.stories) ? payload.stories : [];
+  const stories = deduplicateSocialStories(Array.isArray(payload.stories) ? payload.stories : []);
   if (stories.length === 0) {
     throw new Error("No published Cigar Flow stories were returned by the live API.");
   }
@@ -365,77 +389,73 @@ async function fetchTargetStory(options: CigarFlowFacebookOptions) {
   return stories[0];
 }
 
-function storyMatchesDate(story: NewsStory, targetDate: string) {
-  if (story.publishedAt && story.publishedAt.slice(0, 10) === targetDate) {
+function deduplicateSocialStories(stories: NewsStory[]) {
+  const seen = new Set<string>();
+  return stories.filter((story) => {
+    const dailyDate = story.slug.match(/^daily-cigar-flow-(20\d{2}-\d{2}-\d{2})(?:-|$)/)?.[1] || "";
+    const identities = [
+      story.id ? `id:${story.id}` : "",
+      story.slug ? `slug:${story.slug.toLowerCase()}` : "",
+      dailyDate ? `daily:${dailyDate}` : "",
+      buildSocialSourceIdentity(story),
+      buildFacebookSocialKey(story),
+    ].filter(Boolean);
+    if (identities.some((identity) => seen.has(identity))) {
+      return false;
+    }
+    identities.forEach((identity) => seen.add(identity));
     return true;
-  }
-
-  const normalizedSlug = (story.slug || "").toLowerCase();
-  if (normalizedSlug.includes(targetDate) || normalizedSlug.includes(targetDate.replace(/-/g, ""))) {
-    return true;
-  }
-
-  const monthSlug = monthDaySlugForDate(targetDate);
-  if (monthSlug && normalizedSlug.includes(monthSlug)) {
-    return true;
-  }
-
-  return normalizedDateTitle(story.title, targetDate.slice(0, 4)).includes(targetDate);
+  });
 }
 
-function normalizedDateTitle(title: string, year: string) {
-  const months: Record<string, string> = {
-    jan: "01",
-    january: "01",
-    feb: "02",
-    february: "02",
-    mar: "03",
-    march: "03",
-    apr: "04",
-    april: "04",
-    may: "05",
-    jun: "06",
-    june: "06",
-    jul: "07",
-    july: "07",
-    aug: "08",
-    august: "08",
-    sep: "09",
-    sept: "09",
-    september: "09",
-    oct: "10",
-    october: "10",
-    nov: "11",
-    november: "11",
-    dec: "12",
-    december: "12",
-  };
-  const match = title
-    .toLowerCase()
-    .match(/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+(\d{1,2})\b/);
-  if (!match) {
-    return title.toLowerCase();
+function buildSocialSourceIdentity(story: NewsStory) {
+  if (story.sourceFingerprint) {
+    return `sources:${story.sourceFingerprint}`;
   }
 
-  const month = months[match[1]];
-  const day = match[2].padStart(2, "0");
-  return `${year || getPhoenixDate().slice(0, 4)}-${month}-${day}`;
+  const sources = [...new Set((story.officialSources ?? []).map(canonicalizeSocialUrl).filter(Boolean))].sort();
+  return sources.length ? `sources:${sources.join("|")}` : "";
 }
 
-function monthDaySlugForDate(targetDate: string) {
-  const date = new Date(`${targetDate}T00:00:00.000Z`);
-  if (Number.isNaN(date.getTime())) {
+function canonicalizeSocialUrl(value: string) {
+  try {
+    const url = new URL(value);
+    const hostname = url.hostname.toLowerCase().replace(/^www\./, "");
+    const pathname = (url.pathname || "/").replace(/\/{2,}/g, "/").replace(/\/$/, "") || "/";
+    return `https://${hostname}${pathname}`;
+  } catch {
     return "";
   }
+}
 
-  const month = new Intl.DateTimeFormat("en-US", { month: "long", timeZone: "UTC" }).format(date).toLowerCase();
-  const day = String(date.getUTCDate());
-  return `${month}-${day}`;
+function storyMatchesDate(story: NewsStory, targetDate: string) {
+  if (!/^20\d{2}-\d{2}-\d{2}$/.test(targetDate)) {
+    return false;
+  }
+
+  if (story.publishedAt) {
+    const publishedAt = new Date(story.publishedAt);
+    return !Number.isNaN(publishedAt.getTime()) && getPhoenixDate(publishedAt) === targetDate;
+  }
+
+  const slugDate = (story.slug || "").match(/(?:^|-)\b(20\d{2}-\d{2}-\d{2})\b(?:-|$)/)?.[1];
+  return slugDate === targetDate;
 }
 
 function resolveOutputDir(rootDir: string, story: NewsStory, targetDate?: string) {
   const date = targetDate ?? story.publishedAt?.slice(0, 10) ?? new Date().toISOString().slice(0, 10);
   return join(rootDir, `cigar-flow-facebook-${date}-${slugify(story.slug || story.title)}`);
+}
+
+function buildFacebookSocialKey(story: NewsStory) {
+  const content = [story.title, story.dek, story.bodyMarkdown]
+    .map((value) => stripMarkdown(value || "").toLowerCase().replace(/\s+/g, " ").trim())
+    .join("\n");
+  return `story-${createHash("sha256").update(content).digest("hex")}`;
+}
+
+function fingerprintText(value: string) {
+  return createHash("sha256").update(value.replace(/\s+/g, " ").trim()).digest("hex");
 }
 
 export function buildFacebookCaption(story: NewsStory, baseUrl = "https://www.yuzucigarclub.com") {
@@ -601,6 +621,10 @@ async function downloadCandidatesUntil({
   requireNewLabel: boolean;
 }) {
   const selectedUrls = new Set(downloaded.map((candidate) => candidate.imageUrl.toLowerCase()));
+  const selectedContentHashes = new Set(downloaded.map((candidate) => candidate.contentHash).filter((value): value is string => Boolean(value)));
+  const selectedLocalPaths = new Set(
+    downloaded.map((candidate) => canonicalLocalPath(candidate.localPath)).filter((value): value is string => Boolean(value)),
+  );
   const selectedDomains = new Set(downloaded.map((candidate) => candidateDomainKey(candidate)).filter(Boolean));
 
   for (const candidate of orderedCandidates) {
@@ -625,11 +649,25 @@ async function downloadCandidatesUntil({
     const downloadedCandidate =
       candidate.status === "downloaded" && candidate.localPath ? candidate : await downloadImageCandidate(candidate, imageDir);
     if (downloadedCandidate.status === "downloaded") {
+      if (downloadedCandidate.contentHash && selectedContentHashes.has(downloadedCandidate.contentHash)) {
+        const duplicateLocalPath = canonicalLocalPath(downloadedCandidate.localPath);
+        if (downloadedCandidate.localPath && (!duplicateLocalPath || !selectedLocalPaths.has(duplicateLocalPath))) {
+          await rm(downloadedCandidate.localPath, { force: true }).catch(() => undefined);
+        }
+        continue;
+      }
       downloaded.push(downloadedCandidate);
       selectedUrls.add(downloadedCandidate.imageUrl.toLowerCase());
       selectedLabels.add(labelKey);
       if (domainKey) {
         selectedDomains.add(domainKey);
+      }
+      if (downloadedCandidate.contentHash) {
+        selectedContentHashes.add(downloadedCandidate.contentHash);
+      }
+      const selectedLocalPath = canonicalLocalPath(downloadedCandidate.localPath);
+      if (selectedLocalPath) {
+        selectedLocalPaths.add(selectedLocalPath);
       }
     }
   }
@@ -915,8 +953,9 @@ async function downloadImageCandidate(candidate: ImageSearchCandidate, imageDir:
     return { ...candidate, status: "skipped", statusReason: `image file too small: ${bytes.length} bytes` };
   }
 
+  const contentHash = hash(bytes);
   const extension = extensionFromContentType(contentType) || extensionFromUrl(candidate.imageUrl) || ".jpg";
-  const fileName = `${slugify(candidate.label)}-${hash(candidate.imageUrl).slice(0, 10)}${extension}`;
+  const fileName = `${slugify(candidate.label)}-${contentHash.slice(0, 10)}${extension}`;
   const localPath = join(imageDir, fileName);
   await writeFile(localPath, bytes);
 
@@ -924,6 +963,7 @@ async function downloadImageCandidate(candidate: ImageSearchCandidate, imageDir:
     ...candidate,
     status: "downloaded",
     localPath,
+    contentHash,
     statusReason: `downloaded ${bytes.length} bytes`,
   };
 }
@@ -944,7 +984,9 @@ async function copyLocalCandidate(target: ImageSearchTarget, imageDir: string): 
   }
 
   const extension = extname(absoluteSource) || ".jpg";
-  const localPath = join(imageDir, `${slugify(target.label)}-${hash(absoluteSource).slice(0, 10)}${extension}`);
+  const bytes = await readFile(absoluteSource);
+  const contentHash = hash(bytes);
+  const localPath = join(imageDir, `${slugify(target.label)}-${contentHash.slice(0, 10)}${extension}`);
   await copyFile(absoluteSource, localPath);
 
   return {
@@ -955,6 +997,7 @@ async function copyLocalCandidate(target: ImageSearchTarget, imageDir: string): 
     reasons: [`copied ${target.source.replaceAll("_", " ")} image from project cache`],
     status: "downloaded",
     localPath,
+    contentHash,
   };
 }
 
@@ -966,6 +1009,10 @@ async function copyLocalCacheFallbacks(
 ) {
   const storyText = `${story.title}\n${story.dek}\n${story.bodyMarkdown}`;
   const existingNames = new Set(existing.map((candidate) => basename(candidate.localPath || candidate.imageUrl).toLowerCase()));
+  const existingContentHashes = new Set(existing.map((candidate) => candidate.contentHash).filter((value): value is string => Boolean(value)));
+  const existingLocalPaths = new Set(
+    existing.map((candidate) => canonicalLocalPath(candidate.localPath)).filter((value): value is string => Boolean(value)),
+  );
   const copied: ImageSearchCandidate[] = [];
 
   for (const hint of localCacheHints) {
@@ -983,12 +1030,24 @@ async function copyLocalCacheFallbacks(
     }
 
     const key = basename(candidate.localPath || candidate.imageUrl).toLowerCase();
-    if (existingNames.has(key)) {
+    if (existingNames.has(key) || (candidate.contentHash && existingContentHashes.has(candidate.contentHash))) {
+      const duplicateLocalPath = canonicalLocalPath(candidate.localPath);
+      if (candidate.localPath && (!duplicateLocalPath || !existingLocalPaths.has(duplicateLocalPath))) {
+        await rm(candidate.localPath, { force: true }).catch(() => undefined);
+      }
       continue;
     }
 
     candidate.reasons.push("fallback used after live source-page image search did not fill the requested image limit");
     copied.push(candidate);
+    existingNames.add(key);
+    if (candidate.contentHash) {
+      existingContentHashes.add(candidate.contentHash);
+    }
+    const copiedLocalPath = canonicalLocalPath(candidate.localPath);
+    if (copiedLocalPath) {
+      existingLocalPaths.add(copiedLocalPath);
+    }
   }
 
   return copied;
@@ -1038,6 +1097,9 @@ Source desk: ${trimTrailingSlash(baseUrl)}/cigar-flow/#cigar-flow-news
 }
 
 async function maybePublishPagePost(
+  story: NewsStory,
+  socialKey: string,
+  outputRoot: string,
   storyOutputDir: string,
   caption: string,
   selectedImages: readonly ImageSearchCandidate[],
@@ -1059,17 +1121,112 @@ async function maybePublishPagePost(
   }
 
   const credentials = await resolveFacebookCredentials(options);
-  return publishFacebookPageAlbum({
-    caption,
-    imagePaths: selectedImages.map((image) => {
-      if (!image.localPath) {
-        throw new Error(`Selected image has no local file path: ${image.imageUrl}`);
+  const ledgerPath = join(outputRoot, ".facebook-publications", slugify(credentials.pageId), `${socialKey}.json`);
+  await mkdir(dirname(ledgerPath), { recursive: true });
+
+  if (!options.force) {
+    const existingLedger = await readExistingPagePost(ledgerPath);
+    if (existingLedger?.postId) {
+      return {
+        status: "skipped_existing",
+        postId: existingLedger.postId,
+        permalinkUrl: existingLedger.permalinkUrl,
+        existingManifestPath: ledgerPath,
+      } satisfies FacebookPagePostResult;
+    }
+  }
+
+  await acquireFacebookPublicationClaim(ledgerPath, { socialKey, story, caption, pageId: credentials.pageId });
+
+  try {
+    if (!options.force) {
+      const remotePost = await findExistingFacebookPagePost(caption, credentials, options.graphBaseUrl);
+      if (remotePost?.postId) {
+        const recovered = { ...remotePost, status: "skipped_existing", existingManifestPath: ledgerPath } satisfies FacebookPagePostResult;
+        await writeFacebookPublicationLedger(ledgerPath, socialKey, story, caption, recovered);
+        return recovered;
       }
-      return image.localPath;
-    }),
-    credentials,
-    graphBaseUrl: options.graphBaseUrl,
-  });
+    }
+
+    const published = await publishFacebookPageAlbum({
+      caption,
+      imagePaths: selectedImages.map((image) => {
+        if (!image.localPath) {
+          throw new Error(`Selected image has no local file path: ${image.imageUrl}`);
+        }
+        return image.localPath;
+      }),
+      credentials,
+      graphBaseUrl: options.graphBaseUrl,
+      verifyNoExistingPost: true,
+    });
+    await writeFacebookPublicationLedger(ledgerPath, socialKey, story, caption, published);
+    return published;
+  } catch (error) {
+    await rm(ledgerPath, { force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function acquireFacebookPublicationClaim(
+  ledgerPath: string,
+  claimDetails: { socialKey: string; story: NewsStory; caption: string; pageId: string },
+) {
+  try {
+    const handle = await open(ledgerPath, "wx");
+    await handle.writeFile(
+      JSON.stringify(
+        {
+          status: "pending",
+          claimed_at: new Date().toISOString(),
+          social_key: claimDetails.socialKey,
+          story: summarizeStory(claimDetails.story),
+          caption_fingerprint: fingerprintText(claimDetails.caption),
+          page_id: claimDetails.pageId,
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    await handle.close();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+      throw error;
+    }
+
+    const fileStat = await stat(ledgerPath).catch(() => null);
+    if (fileStat && Date.now() - fileStat.mtimeMs > 30 * 60 * 1000) {
+      await rm(ledgerPath, { force: true });
+      return acquireFacebookPublicationClaim(ledgerPath, claimDetails);
+    }
+    throw new Error("A Facebook publication for this exact story is already published or in progress.");
+  }
+}
+
+async function writeFacebookPublicationLedger(
+  ledgerPath: string,
+  socialKey: string,
+  story: NewsStory,
+  caption: string,
+  pagePost: FacebookPagePostResult,
+) {
+  await writeFile(
+    ledgerPath,
+    JSON.stringify(
+      {
+        status: pagePost.status,
+        completed_at: new Date().toISOString(),
+        social_key: socialKey,
+        story: summarizeStory(story),
+        caption_fingerprint: fingerprintText(caption),
+        facebook_page: pagePost,
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
 }
 
 async function readExistingPagePost(manifestPath: string) {
@@ -1121,16 +1278,7 @@ async function resolveFacebookCredentials(options: CigarFlowFacebookOptions): Pr
 
 async function readJsonSecret(secretId: string, region: string) {
   const client = new SecretsManagerClient({ region });
-  let result;
-  try {
-    result = await client.send(new GetSecretValueCommand({ SecretId: secretId }));
-  } catch (error) {
-    if (!shouldRetryWithInsecureTls(error)) {
-      throw error;
-    }
-    enableInsecureTlsRetry(`AWS secret read for ${secretId}`);
-    result = await client.send(new GetSecretValueCommand({ SecretId: secretId }));
-  }
+  const result = await client.send(new GetSecretValueCommand({ SecretId: secretId }));
 
   const secretString = result.SecretString || (result.SecretBinary ? Buffer.from(result.SecretBinary).toString("utf8") : "");
   if (!secretString) {
@@ -1159,16 +1307,45 @@ async function derivePageAccessToken(pageId: string, systemUserToken: string, gr
   return page.access_token;
 }
 
+async function findExistingFacebookPagePost(
+  caption: string,
+  credentials: FacebookCredentials,
+  graphBaseUrl: string,
+): Promise<FacebookPagePostResult | null> {
+  const url = new URL(`${trimTrailingSlash(graphBaseUrl)}/${credentials.graphVersion}/${credentials.pageId}/feed`);
+  url.searchParams.set("fields", "id,permalink_url,message");
+  url.searchParams.set("limit", "100");
+  url.searchParams.set("access_token", credentials.pageAccessToken);
+  const response = await fetchWithTlsRetry(url);
+  const payload = (await response.json()) as GraphPageFeedResponse;
+  if (!response.ok) {
+    throw new Error(`Facebook duplicate preflight failed: ${graphErrorMessage(payload, response.status)}`);
+  }
+
+  const captionFingerprint = fingerprintText(caption);
+  const existing = payload.data?.find((post) => post.id && post.message && fingerprintText(post.message) === captionFingerprint);
+  return existing?.id
+    ? {
+        status: "skipped_existing",
+        postId: existing.id,
+        permalinkUrl: existing.permalink_url,
+        reason: "Matched the exact caption on the Facebook Page before uploading media.",
+      }
+    : null;
+}
+
 export async function publishFacebookPageAlbum({
   caption,
   imagePaths,
   credentials,
   graphBaseUrl = "https://graph.facebook.com",
+  verifyNoExistingPost = false,
 }: {
   caption: string;
   imagePaths: readonly string[];
   credentials: FacebookCredentials;
   graphBaseUrl?: string;
+  verifyNoExistingPost?: boolean;
 }): Promise<FacebookPagePostResult> {
   const uploadedPhotos: Array<{ image: string; photoId: string; postId?: string | null }> = [];
 
@@ -1188,6 +1365,17 @@ export async function publishFacebookPageAlbum({
     uploadedPhotos.push({ image: imagePath, photoId: payload.id, postId: payload.post_id ?? null });
   }
 
+  if (verifyNoExistingPost) {
+    const existingPost = await findExistingFacebookPagePost(caption, credentials, graphBaseUrl);
+    if (existingPost) {
+      return {
+        ...existingPost,
+        uploadedPhotos,
+        reason: "Matched the exact caption during the final pre-feed check; no duplicate feed post was created.",
+      };
+    }
+  }
+
   const feedUrl = `${trimTrailingSlash(graphBaseUrl)}/${credentials.graphVersion}/${credentials.pageId}/feed`;
   const feedForm = new URLSearchParams();
   feedForm.set("access_token", credentials.pageAccessToken);
@@ -1202,12 +1390,20 @@ export async function publishFacebookPageAlbum({
     throw new Error(`Facebook feed post failed: ${graphErrorMessage(feedPayload, feedResponse.status)}`);
   }
 
-  const readback = await readFacebookPost(feedPayload.id, credentials, graphBaseUrl);
+  let readback: GraphReadbackResponse | null = null;
+  let readbackReason: string | undefined;
+  try {
+    readback = await readFacebookPost(feedPayload.id, credentials, graphBaseUrl);
+  } catch (error) {
+    readbackReason = `Facebook accepted post ${feedPayload.id}, but readback is pending: ${error instanceof Error ? error.message : String(error)}`;
+    console.warn(`[cigar-flow-facebook-run] ${readbackReason}`);
+  }
   return {
     status: "published",
     postId: feedPayload.id,
-    permalinkUrl: readback.permalink_url,
+    permalinkUrl: readback?.permalink_url,
     uploadedPhotos,
+    ...(readbackReason ? { reason: readbackReason } : {}),
   };
 }
 
@@ -1231,44 +1427,7 @@ function graphErrorMessage(payload: { error?: unknown }, status: number) {
 }
 
 async function fetchWithTlsRetry(input: string | URL, init?: RequestInit) {
-  try {
-    return await fetch(input, init);
-  } catch (error) {
-    if (!shouldRetryWithInsecureTls(error)) {
-      throw error;
-    }
-    enableInsecureTlsRetry(typeof input === "string" ? input : input.toString());
-    return fetch(input, init);
-  }
-}
-
-function shouldRetryWithInsecureTls(error: unknown) {
-  const values = [collectErrorString(error), collectErrorString((error as { cause?: unknown } | null)?.cause)];
-  return values.some((value) =>
-    /UNABLE_TO_VERIFY_LEAF_SIGNATURE|unable to verify the first certificate|unable to get local issuer certificate|CERTIFICATE_VERIFY_FAILED/i.test(
-      value,
-    ),
-  );
-}
-
-function collectErrorString(error: unknown) {
-  if (!error) {
-    return "";
-  }
-  if (error instanceof Error) {
-    return `${error.name} ${error.message}`;
-  }
-  return String(error);
-}
-
-function enableInsecureTlsRetry(target: string) {
-  if (insecureTlsRetryEnabled) {
-    return;
-  }
-
-  insecureTlsRetryEnabled = true;
-  process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-  console.warn(`[cigar-flow-facebook-run] Retrying with insecure TLS after certificate validation failure for ${target}.`);
+  return fetch(input, init);
 }
 
 function summarizeStory(story: NewsStory) {
@@ -1524,6 +1683,10 @@ function candidateDomainKey(candidate: ImageSearchCandidate) {
   }
 }
 
+function canonicalLocalPath(value?: string) {
+  return value ? resolve(value).toLowerCase() : "";
+}
+
 function slugify(value: string) {
   return value
     .toLowerCase()
@@ -1532,7 +1695,7 @@ function slugify(value: string) {
     .slice(0, 90);
 }
 
-function hash(value: string) {
+function hash(value: string | Buffer) {
   return createHash("sha256").update(value).digest("hex");
 }
 

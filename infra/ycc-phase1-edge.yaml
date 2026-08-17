@@ -494,6 +494,59 @@ Resources:
       AuthorizerId: !Ref JwtAuthorizer
       Target: !Sub integrations/${LambdaIntegration}
 
+  EventsReadRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /events
+      AuthorizationType: NONE
+      Target: !Sub integrations/${LambdaIntegration}
+
+  AdminEventsReadRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /admin/events
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${LambdaIntegration}
+
+  AdminEventCreateRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /admin/events
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${LambdaIntegration}
+
+  AdminEventUpdateRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: "PATCH /admin/events/{id}"
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${LambdaIntegration}
+
+  AdminEventPublishRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: "POST /admin/events/{id}/publish"
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${LambdaIntegration}
+
+  AdminEventArchiveRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: "POST /admin/events/{id}/archive"
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${LambdaIntegration}
+
   CommerceCheckoutSessionRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:

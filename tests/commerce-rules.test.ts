@@ -13,7 +13,7 @@ function loadRules() {
       ok: boolean;
       errors: Array<{ code: string; message: string }>;
       holdReasons: string[];
-      normalizedItems: Array<{ sku: string; quantity: number; unitAmountCents: number }>;
+      normalizedItems: Array<{ sku: string; quantity: number; unitAmountCents: number; stripePriceId: string | null }>;
       shipping: {
         methodId: string;
         submittedMethodId: string;
@@ -43,6 +43,22 @@ const launchCatalog = [
     adultSignatureRequired: true,
     stripeProductId: "prod_approved",
     stripePriceId: "price_approved",
+  },
+  {
+    sku: "DUAL-PRICE",
+    slug: "dual-price",
+    name: "Dual Price Box",
+    price: 150,
+    publicPrice: 150,
+    memberPrice: 120,
+    publishStatus: "published",
+    inventoryPolicy: "track",
+    sourceQuantity: 5,
+    shippable: true,
+    adultSignatureRequired: true,
+    stripeProductId: "prod_dual_price",
+    stripePriceId: " price_dual_public ",
+    memberStripePriceId: " price_dual_member ",
   },
   {
     sku: "DRAFT-BOX",
@@ -124,6 +140,9 @@ test("checkout compliance accepts AgeChecker-verified non-required states with U
   const { validateCheckoutReadiness } = loadRules();
   const result = validateCheckoutReadiness({
     ...readyCheckout,
+    catalog: launchCatalog.map((product) =>
+      product.sku === "APPROVED-BOX" ? { ...product, adultSignatureRequired: false } : product
+    ),
     destination: {
       country: "US",
       state: "AZ",
@@ -175,6 +194,9 @@ test("checkout compliance waives the shipping and handling fee for trusted membe
   const { validateCheckoutReadiness } = loadRules();
   const guestResult = validateCheckoutReadiness({
     ...readyCheckout,
+    catalog: launchCatalog.map((product) =>
+      product.sku === "APPROVED-BOX" ? { ...product, adultSignatureRequired: false } : product
+    ),
     shippingMethodId: "usps-ground-advantage",
     quote: {
       subtotal: 240,
@@ -184,6 +206,9 @@ test("checkout compliance waives the shipping and handling fee for trusted membe
   });
   const memberResult = validateCheckoutReadiness({
     ...readyCheckout,
+    catalog: launchCatalog.map((product) =>
+      product.sku === "APPROVED-BOX" ? { ...product, adultSignatureRequired: false } : product
+    ),
     shippingMethodId: "usps-ground-advantage",
     quote: {
       subtotal: 240,
@@ -201,6 +226,61 @@ test("checkout compliance waives the shipping and handling fee for trusted membe
   assert.equal((guestResult.shipping as typeof guestResult.shipping & { handlingFeeCents?: number }).handlingFeeCents, 1000);
   assert.equal(memberResult.ok, true);
   assert.equal((memberResult.shipping as typeof memberResult.shipping & { handlingFeeCents?: number }).handlingFeeCents, 0);
+});
+
+test("checkout compliance uses the public catalog price and normalized public Stripe price id for guests", () => {
+  const { validateCheckoutReadiness } = loadRules();
+  const result = validateCheckoutReadiness({
+    ...readyCheckout,
+    items: [{ sku: "DUAL-PRICE", quantity: 2, unitPrice: 150 }],
+    quote: {
+      subtotal: 300,
+      handling: 10,
+      currency: "USD",
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.normalizedItems[0].unitAmountCents, 15000);
+  assert.equal(result.normalizedItems[0].stripePriceId, "price_dual_public");
+
+  const memberPriceAttempt = validateCheckoutReadiness({
+    ...readyCheckout,
+    items: [{ sku: "DUAL-PRICE", quantity: 1, unitPrice: 120 }],
+    quote: undefined,
+  });
+  assert.equal(memberPriceAttempt.errors.some((error) => error.code === "stale_price"), true);
+});
+
+test("checkout compliance uses the member catalog price and normalized member Stripe price id for trusted members", () => {
+  const { validateCheckoutReadiness } = loadRules();
+  const membership = {
+    status: "member",
+    trusted: true,
+    tiers: ["sensei"],
+  };
+  const result = validateCheckoutReadiness({
+    ...readyCheckout,
+    items: [{ sku: "DUAL-PRICE", quantity: 2, unitPrice: 120 }],
+    quote: {
+      subtotal: 240,
+      handling: 0,
+      currency: "USD",
+    },
+    membership,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.normalizedItems[0].unitAmountCents, 12000);
+  assert.equal(result.normalizedItems[0].stripePriceId, "price_dual_member");
+
+  const publicPriceAttempt = validateCheckoutReadiness({
+    ...readyCheckout,
+    items: [{ sku: "DUAL-PRICE", quantity: 1, unitPrice: 150 }],
+    quote: undefined,
+    membership,
+  });
+  assert.equal(publicPriceAttempt.errors.some((error) => error.code === "stale_price"), true);
 });
 
 test("checkout compliance rejects a non-member quote that omits the handling fee", () => {
@@ -234,7 +314,7 @@ test("checkout compliance uses USPS adult-signature states and rejects UPS metho
   assert.equal(adultSignatureShippingMethodIds.has("ups-adult-signature-ground"), false);
   assert.equal(requiresAdultSignatureDelivery([{ adultSignatureRequired: false }], { state: "CA" }), true);
   assert.equal(requiresAdultSignatureDelivery([{ adultSignatureRequired: false }], { state: "AZ" }), false);
-  assert.equal(requiresAdultSignatureDelivery([{ adultSignatureRequired: true }], { state: "AZ" }), false);
+  assert.equal(requiresAdultSignatureDelivery([{ adultSignatureRequired: true }], { state: "AZ" }), true);
 
   const result = validateCheckoutReadiness({
     ...readyCheckout,
