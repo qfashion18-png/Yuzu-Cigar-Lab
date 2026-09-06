@@ -49,11 +49,13 @@ jobs:
           YCC_DAILY_NEWSROOM_VERIFY_PUBLISHED: "false"
         run: npm run cigar-flow:daily
 
-      - name: Upload operator-review draft
+      - name: Upload draft and run outcome for operator review
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: cigar-flow-draft-${{ github.run_id }}
-          path: output/cigar-flow-drafts/*.json
-          if-no-files-found: ignore
+          path: |
+            output/cigar-flow-drafts/*.json
+            output/cigar-flow-run-status.json
+          if-no-files-found: error
           retention-days: 14
